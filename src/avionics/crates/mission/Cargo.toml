@@ -1,0 +1,14 @@
+[package]
+name = "mission"
+description = "The per-launch mission: launch.config, its rules, and the zone geometry against the launch point (src/glider mission.py)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+control.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+golden.workspace = true

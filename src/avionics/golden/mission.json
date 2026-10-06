@@ -1,0 +1,5870 @@
+{
+ "clocks": [
+  {
+   "input": 946684800,
+   "name": "epoch_2000",
+   "output": "2000-01-01T00:00:00"
+  },
+  {
+   "input": 951782400,
+   "name": "leap_day_2000",
+   "output": "2000-02-29T00:00:00"
+  },
+  {
+   "input": 951868800,
+   "name": "after_the_leap_day_2000",
+   "output": "2000-03-01T00:00:00"
+  },
+  {
+   "input": 978307199,
+   "name": "last_second_of_2000",
+   "output": "2000-12-31T23:59:59"
+  },
+  {
+   "input": 978307200,
+   "name": "first_second_of_2001",
+   "output": "2001-01-01T00:00:00"
+  },
+  {
+   "input": 1709164800,
+   "name": "leap_day_2024",
+   "output": "2024-02-29T00:00:00"
+  },
+  {
+   "input": 1781000000,
+   "name": "moment_in_2026",
+   "output": "2026-06-09T10:13:20"
+  },
+  {
+   "input": 4102444799,
+   "name": "last_second_of_2099",
+   "output": "2099-12-31T23:59:59"
+  },
+  {
+   "input": 4107542399,
+   "name": "day_before_march_2100",
+   "output": "2100-02-28T23:59:59"
+  },
+  {
+   "input": 4107542400,
+   "name": "march_2100_not_leap",
+   "output": "2100-03-01T00:00:00"
+  },
+  {
+   "input": 970651509,
+   "name": "sweep_00",
+   "output": "2000-10-04T09:25:09"
+  },
+  {
+   "input": 995989521,
+   "name": "sweep_01",
+   "output": "2001-07-24T15:45:21"
+  },
+  {
+   "input": 1072294587,
+   "name": "sweep_02",
+   "output": "2003-12-24T19:36:27"
+  },
+  {
+   "input": 1084689743,
+   "name": "sweep_03",
+   "output": "2004-05-16T06:42:23"
+  },
+  {
+   "input": 1204144040,
+   "name": "sweep_04",
+   "output": "2008-02-27T20:27:20"
+  },
+  {
+   "input": 1291806169,
+   "name": "sweep_05",
+   "output": "2010-12-08T11:02:49"
+  },
+  {
+   "input": 1295955660,
+   "name": "sweep_06",
+   "output": "2011-01-25T11:41:00"
+  },
+  {
+   "input": 1315637693,
+   "name": "sweep_07",
+   "output": "2011-09-10T06:54:53"
+  },
+  {
+   "input": 1409388688,
+   "name": "sweep_08",
+   "output": "2014-08-30T08:51:28"
+  },
+  {
+   "input": 1447028825,
+   "name": "sweep_09",
+   "output": "2015-11-09T00:27:05"
+  },
+  {
+   "input": 1496708299,
+   "name": "sweep_10",
+   "output": "2017-06-06T00:18:19"
+  },
+  {
+   "input": 1523205421,
+   "name": "sweep_11",
+   "output": "2018-04-08T16:37:01"
+  },
+  {
+   "input": 1648891296,
+   "name": "sweep_12",
+   "output": "2022-04-02T09:21:36"
+  },
+  {
+   "input": 1660024006,
+   "name": "sweep_13",
+   "output": "2022-08-09T05:46:46"
+  },
+  {
+   "input": 1793400574,
+   "name": "sweep_14",
+   "output": "2026-10-30T22:49:34"
+  },
+  {
+   "input": 1857804589,
+   "name": "sweep_15",
+   "output": "2028-11-14T08:49:49"
+  },
+  {
+   "input": 1881784259,
+   "name": "sweep_16",
+   "output": "2029-08-18T21:50:59"
+  },
+  {
+   "input": 1948243173,
+   "name": "sweep_17",
+   "output": "2031-09-27T02:39:33"
+  },
+  {
+   "input": 1957410350,
+   "name": "sweep_18",
+   "output": "2032-01-11T05:05:50"
+  },
+  {
+   "input": 2052004470,
+   "name": "sweep_19",
+   "output": "2035-01-10T01:14:30"
+  },
+  {
+   "input": 2177561505,
+   "name": "sweep_20",
+   "output": "2039-01-02T06:11:45"
+  },
+  {
+   "input": 2186617534,
+   "name": "sweep_21",
+   "output": "2039-04-17T01:45:34"
+  },
+  {
+   "input": 2529635354,
+   "name": "sweep_22",
+   "output": "2050-02-28T04:29:14"
+  },
+  {
+   "input": 2779915899,
+   "name": "sweep_23",
+   "output": "2058-02-02T22:51:39"
+  },
+  {
+   "input": 2912947896,
+   "name": "sweep_24",
+   "output": "2062-04-22T16:11:36"
+  },
+  {
+   "input": 2929614925,
+   "name": "sweep_25",
+   "output": "2062-11-01T13:55:25"
+  },
+  {
+   "input": 3071838940,
+   "name": "sweep_26",
+   "output": "2067-05-05T16:35:40"
+  },
+  {
+   "input": 3088372037,
+   "name": "sweep_27",
+   "output": "2067-11-13T01:07:17"
+  },
+  {
+   "input": 3136364889,
+   "name": "sweep_28",
+   "output": "2069-05-21T12:28:09"
+  },
+  {
+   "input": 3195194348,
+   "name": "sweep_29",
+   "output": "2071-04-02T09:59:08"
+  },
+  {
+   "input": 3200394014,
+   "name": "sweep_30",
+   "output": "2071-06-01T14:20:14"
+  },
+  {
+   "input": 3287097194,
+   "name": "sweep_31",
+   "output": "2074-03-01T02:33:14"
+  },
+  {
+   "input": 3347736296,
+   "name": "sweep_32",
+   "output": "2076-01-31T22:44:56"
+  },
+  {
+   "input": 3418344011,
+   "name": "sweep_33",
+   "output": "2078-04-28T04:00:11"
+  },
+  {
+   "input": 3632618568,
+   "name": "sweep_34",
+   "output": "2085-02-10T04:42:48"
+  },
+  {
+   "input": 3731268312,
+   "name": "sweep_35",
+   "output": "2088-03-27T23:25:12"
+  },
+  {
+   "input": 3810935985,
+   "name": "sweep_36",
+   "output": "2090-10-06T01:19:45"
+  },
+  {
+   "input": 3841613310,
+   "name": "sweep_37",
+   "output": "2091-09-26T02:48:30"
+  },
+  {
+   "input": 3990907718,
+   "name": "sweep_38",
+   "output": "2096-06-19T01:28:38"
+  },
+  {
+   "input": 4087016384,
+   "name": "sweep_39",
+   "output": "2099-07-06T10:19:44"
+  }
+ ],
+ "compare": {
+  "kind": "abs",
+  "tol": 5.01e-08
+ },
+ "meta": {
+  "commit": "2299726dbfd443c9e5c83d7e1278c75e8812912a",
+  "generator": "mission",
+  "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
+  "python": "3.12",
+  "source": "src/glider/mission.py, src/glider/navigation.py",
+  "tag": "micropython_plan_B"
+ },
+ "scenarios": [
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": null
+   },
+   "name": "hprc_default_updates",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 125.8,
+        "gate_b": 81.0,
+        "target": 49.5
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "launch_point": [
+        25.514379,
+        -80.391795
+       ],
+       "launch_source": "set",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "launch_id": "flight.7"
+      }
+     },
+     "out": {
+      "changed": [
+       "launch_id"
+      ],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 125.8,
+        "gate_b": 81.0,
+        "target": 49.5
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.514379,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.514379,
+        -80.391795
+       ],
+       "launch_source": "set",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.514379,
+       "launch_id": "flight.7",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "launch_id": "flight.7"
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 125.8,
+        "gate_b": 81.0,
+        "target": 49.5
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.514379,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.514379,
+        -80.391795
+       ],
+       "launch_source": "set",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.514379,
+       "launch_id": "flight.7",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": 25.5141,
+       "longitude": -80.3921,
+       "site": "HPRC west pad"
+      }
+     },
+     "out": {
+      "changed": [
+       "site",
+       "latitude",
+       "longitude"
+      ],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": 999
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": -90.5
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "longitude": 180.25
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": true
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "longitude": "-80.39"
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": null,
+       "longitude": null
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "altitude": 5
+      }
+     },
+     "out": {
+      "changed": [
+       "altitude"
+      ],
+      "inspect": {
+       "altitude": 5,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "altitude": 5.0
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 5,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "altitude": null
+      }
+     },
+     "out": {
+      "changed": [
+       "altitude"
+      ],
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "altitude": 2.5
+      }
+     },
+     "out": {
+      "changed": [
+       "altitude"
+      ],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 114.6,
+        "gate_b": 123.8,
+        "target": 74.1
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": [
+        [
+         48.0,
+         11.0
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": [
+        [
+         200.0,
+         11.0
+        ],
+        [
+         48.0,
+         11.0
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": [
+        [
+         25.5,
+         false
+        ],
+        [
+         25.4,
+         -80.3
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": "north"
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": null
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "clock": "x",
+       "target": [
+        0,
+        0
+       ],
+       "unknown": 1
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "sites": [
+        {
+         "name": "east",
+         "pad": [
+          48.0,
+          11.002
+         ],
+         "zone": [
+          [
+           48.001,
+           11.003
+          ],
+          [
+           48.0005,
+           11.005
+          ]
+         ]
+        }
+       ]
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "cc_position": [
+        25.5,
+        -80.25
+       ],
+       "epoch": 1781000000,
+       "source": "cc-auto",
+       "utc_offset": -240
+      }
+     },
+     "out": {
+      "changed": [
+       "epoch"
+      ],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "epoch": "now",
+       "source": "cc-auto"
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 2.5,
+       "distances_m": {
+        "gate_a": 164.1,
+        "gate_b": 137.3,
+        "target": 113.1
+       },
+       "gates": [
+        [
+         25.5151,
+         -80.3933
+        ],
+        [
+         25.5151,
+         -80.3913
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "launch_point": [
+        25.5141,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "target": [
+        25.5151,
+        -80.3923
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.5,
+       "latitude": 25.5141,
+       "launch_id": "flight.7",
+       "longitude": -80.3921,
+       "site": "HPRC west pad",
+       "zone": [
+        [
+         25.5153,
+         -80.3933
+        ],
+        [
+         25.5149,
+         -80.3913
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "altitude": 3.25,
+       "epoch": 1781000060,
+       "latitude": 25.5144,
+       "launch_id": "L2",
+       "longitude": -80.3916,
+       "site": "pad-b",
+       "zone": [
+        [
+         25.5152,
+         -80.3931
+        ],
+        [
+         25.5147,
+         -80.391
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "launch_id",
+       "site",
+       "latitude",
+       "longitude",
+       "altitude",
+       "zone",
+       "epoch"
+      ],
+      "inspect": {
+       "altitude": 3.25,
+       "distances_m": {
+        "gate_a": 162.7,
+        "gate_b": 85.9,
+        "target": 76.1
+       },
+       "gates": [
+        [
+         25.51495,
+         -80.3931
+        ],
+        [
+         25.51495,
+         -80.391
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.5144,
+       "launch_id": "L2",
+       "launch_point": [
+        25.5144,
+        -80.3916
+       ],
+       "launch_source": "set",
+       "longitude": -80.3916,
+       "site": "pad-b",
+       "target": [
+        25.51495,
+        -80.39205000000001
+       ],
+       "zone": [
+        [
+         25.5152,
+         -80.3931
+        ],
+        [
+         25.5147,
+         -80.391
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 3.25,
+       "latitude": 25.5144,
+       "launch_id": "L2",
+       "longitude": -80.3916,
+       "site": "pad-b",
+       "zone": [
+        [
+         25.5152,
+         -80.3931
+        ],
+        [
+         25.5147,
+         -80.391
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": null
+   },
+   "name": "zone_range",
+   "steps": [
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": 48.00025,
+       "longitude": 11.0005,
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "latitude",
+       "longitude",
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 37.2,
+        "gate_b": 37.2,
+        "target": 0.0
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.001
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.00025,
+       "launch_id": "",
+       "launch_point": [
+        48.00025,
+        11.0005
+       ],
+       "launch_source": "set",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "target": [
+        48.00025,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 48.00025,
+       "launch_id": "",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.0011
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 37.2,
+        "gate_b": 44.7,
+        "target": 3.7
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.0011
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.00025,
+       "launch_id": "",
+       "launch_point": [
+        48.00025,
+        11.0005
+       ],
+       "launch_source": "set",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "target": [
+        48.00025,
+        11.00055
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.0011
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 48.00025,
+       "launch_id": "",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.0011
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": 48.005
+      }
+     },
+     "out": {
+      "changed": [
+       "latitude"
+      ],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 530.1,
+        "gate_b": 530.7,
+        "target": 528.8
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.0011
+        ]
+       ],
+       "in_range": false,
+       "latitude": 48.005,
+       "launch_id": "",
+       "launch_point": [
+        48.005,
+        11.0005
+       ],
+       "launch_source": "set",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "target": [
+        48.00025,
+        11.00055
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.0011
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 48.005,
+       "launch_id": "",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.0011
+        ]
+       ]
+      },
+      "probe": "launch/zone: landing zone out of range (531 m > 200 m)",
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": 48.0012
+      }
+     },
+     "out": {
+      "changed": [
+       "latitude"
+      ],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 112.1,
+        "gate_b": 114.8,
+        "target": 105.8
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.0011
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0012,
+       "launch_id": "",
+       "launch_point": [
+        48.0012,
+        11.0005
+       ],
+       "launch_source": "set",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "target": [
+        48.00025,
+        11.00055
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.0011
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 48.0012,
+       "launch_id": "",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.0011
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 10.0,
+    "stored": null
+   },
+   "name": "tight_range",
+   "steps": [
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": 48.00025,
+       "longitude": 11.0005,
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "latitude",
+       "longitude",
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 37.2,
+        "gate_b": 37.2,
+        "target": 0.0
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.001
+        ]
+       ],
+       "in_range": false,
+       "latitude": 48.00025,
+       "launch_id": "",
+       "launch_point": [
+        48.00025,
+        11.0005
+       ],
+       "launch_source": "set",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "target": [
+        48.00025,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 48.00025,
+       "launch_id": "",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "probe": "launch/zone: landing zone out of range (37 m > 10 m)",
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": [
+        [
+         48.00027,
+         11.0004
+        ],
+        [
+         48.00023,
+         11.0006
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 7.4,
+        "gate_b": 7.4,
+        "target": 0.0
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0004
+        ],
+        [
+         48.00025,
+         11.0006
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.00025,
+       "launch_id": "",
+       "launch_point": [
+        48.00025,
+        11.0005
+       ],
+       "launch_source": "set",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "target": [
+        48.00025,
+        11.0005
+       ],
+       "zone": [
+        [
+         48.00027,
+         11.0004
+        ],
+        [
+         48.00023,
+         11.0006
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 48.00025,
+       "launch_id": "",
+       "longitude": 11.0005,
+       "site": "HPRC",
+       "zone": [
+        [
+         48.00027,
+         11.0004
+        ],
+        [
+         48.00023,
+         11.0006
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "{}"
+   },
+   "name": "gnss_launch_point",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "launch_point": null,
+       "launch_source": null,
+       "longitude": null,
+       "site": "",
+       "zone": null
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "longitude": null,
+       "site": "",
+       "zone": null
+      },
+      "probe": "launch/zone: launch position not set (CC or GNSS)",
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "observe",
+      "fix": [
+       480000000,
+       110000000
+      ],
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "launch_point": [
+        48.0,
+        11.0
+       ],
+       "launch_source": "gnss",
+       "longitude": null,
+       "site": "",
+       "zone": null
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "longitude": null,
+       "site": "",
+       "zone": null
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": [
+       480003100,
+       110005200
+      ],
+      "properties": {
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "zone"
+      ],
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 39.3,
+        "gate_b": 36.4,
+        "target": 6.8
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.001
+        ]
+       ],
+       "in_range": true,
+       "latitude": null,
+       "launch_id": "",
+       "launch_point": [
+        48.00031,
+        11.00052
+       ],
+       "launch_source": "gnss",
+       "longitude": null,
+       "site": "",
+       "target": [
+        48.00025,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "longitude": null,
+       "site": "",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": [
+       480003100,
+       110005200
+      ],
+      "properties": {
+       "latitude": 48.0002
+      }
+     },
+     "out": {
+      "changed": [
+       "latitude"
+      ],
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 39.3,
+        "gate_b": 36.4,
+        "target": 6.8
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.001
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0002,
+       "launch_id": "",
+       "launch_point": [
+        48.00031,
+        11.00052
+       ],
+       "launch_source": "gnss",
+       "longitude": null,
+       "site": "",
+       "target": [
+        48.00025,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0002,
+       "launch_id": "",
+       "longitude": null,
+       "site": "",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "latitude": 48.0002,
+       "launch_id": "",
+       "launch_point": null,
+       "launch_source": null,
+       "longitude": null,
+       "site": "",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0002,
+       "launch_id": "",
+       "longitude": null,
+       "site": "",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "probe": "launch/zone: launch position not set (CC or GNSS)",
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "longitude": 11.0004
+      }
+     },
+     "out": {
+      "changed": [
+       "longitude"
+      ],
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 30.3,
+        "gate_b": 45.0,
+        "target": 9.3
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.001
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0002,
+       "launch_id": "",
+       "launch_point": [
+        48.0002,
+        11.0004
+       ],
+       "launch_source": "set",
+       "longitude": 11.0004,
+       "site": "",
+       "target": [
+        48.00025,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0002,
+       "launch_id": "",
+       "longitude": 11.0004,
+       "site": "",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "observe",
+      "fix": [
+       490000000,
+       120000000
+      ],
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 30.3,
+        "gate_b": 45.0,
+        "target": 9.3
+       },
+       "gates": [
+        [
+         48.00025,
+         11.0
+        ],
+        [
+         48.00025,
+         11.001
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0002,
+       "launch_id": "",
+       "launch_point": [
+        48.0002,
+        11.0004
+       ],
+       "launch_source": "set",
+       "longitude": 11.0004,
+       "site": "",
+       "target": [
+        48.00025,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0002,
+       "launch_id": "",
+       "longitude": 11.0004,
+       "site": "",
+       "zone": [
+        [
+         48.0005,
+         11.0
+        ],
+        [
+         48.0,
+         11.001
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "{\"launch_id\": \"hprc-t1\", \"site\": \"pad-a\", \"latitude\": 45.5, \"longitude\": -73.5, \"altitude\": 120}"
+   },
+   "name": "loaded_fields",
+   "steps": [
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 120,
+       "latitude": 45.5,
+       "launch_id": "hprc-t1",
+       "launch_point": [
+        45.5,
+        -73.5
+       ],
+       "launch_source": "set",
+       "longitude": -73.5,
+       "site": "pad-a",
+       "zone": null
+      },
+      "persisted": {
+       "altitude": 120,
+       "latitude": 45.5,
+       "launch_id": "hprc-t1",
+       "longitude": -73.5,
+       "site": "pad-a",
+       "zone": null
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "altitude": 120.0,
+       "launch_id": "hprc-t1"
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 120,
+       "latitude": 45.5,
+       "launch_id": "hprc-t1",
+       "launch_point": [
+        45.5,
+        -73.5
+       ],
+       "launch_source": "set",
+       "longitude": -73.5,
+       "site": "pad-a",
+       "zone": null
+      },
+      "persisted": {
+       "altitude": 120,
+       "latitude": 45.5,
+       "launch_id": "hprc-t1",
+       "longitude": -73.5,
+       "site": "pad-a",
+       "zone": null
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "zone": [
+        [
+         45.5006,
+         -73.5007
+        ],
+        [
+         45.5003,
+         -73.4992
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 120,
+       "distances_m": {
+        "gate_a": 74.1,
+        "gate_b": 80.0,
+        "target": 50.2
+       },
+       "gates": [
+        [
+         45.50045,
+         -73.5007
+        ],
+        [
+         45.50045,
+         -73.4992
+        ]
+       ],
+       "in_range": true,
+       "latitude": 45.5,
+       "launch_id": "hprc-t1",
+       "launch_point": [
+        45.5,
+        -73.5
+       ],
+       "launch_source": "set",
+       "longitude": -73.5,
+       "site": "pad-a",
+       "target": [
+        45.50045,
+        -73.49995
+       ],
+       "zone": [
+        [
+         45.5006,
+         -73.5007
+        ],
+        [
+         45.5003,
+         -73.4992
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 120,
+       "latitude": 45.5,
+       "launch_id": "hprc-t1",
+       "longitude": -73.5,
+       "site": "pad-a",
+       "zone": [
+        [
+         45.5006,
+         -73.5007
+        ],
+        [
+         45.5003,
+         -73.4992
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "{\"latitude\": 200, \"longitude\": -73.5, \"zone\": [[45.5, -73.5], [45.4, -73.4]]}"
+   },
+   "name": "loaded_out_of_range",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "launch_point": null,
+       "launch_source": null,
+       "longitude": -73.5,
+       "site": "",
+       "zone": [
+        [
+         45.5,
+         -73.5
+        ],
+        [
+         45.4,
+         -73.4
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "longitude": -73.5,
+       "site": "",
+       "zone": [
+        [
+         45.5,
+         -73.5
+        ],
+        [
+         45.4,
+         -73.4
+        ]
+       ]
+      },
+      "probe": "launch/zone: launch position not set (CC or GNSS)",
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "observe",
+      "fix": [
+       454500000,
+       -734500000
+      ],
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 5566.0,
+        "gate_b": 5566.0,
+        "target": 0.0
+       },
+       "gates": [
+        [
+         45.5,
+         -73.45
+        ],
+        [
+         45.4,
+         -73.45
+        ]
+       ],
+       "in_range": false,
+       "latitude": null,
+       "launch_id": "",
+       "launch_point": [
+        45.45,
+        -73.45
+       ],
+       "launch_source": "gnss",
+       "longitude": -73.5,
+       "site": "",
+       "target": [
+        45.45,
+        -73.45
+       ],
+       "zone": [
+        [
+         45.5,
+         -73.5
+        ],
+        [
+         45.4,
+         -73.4
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "longitude": -73.5,
+       "site": "",
+       "zone": [
+        [
+         45.5,
+         -73.5
+        ],
+        [
+         45.4,
+         -73.4
+        ]
+       ]
+      },
+      "probe": "launch/zone: landing zone out of range (5566 m > 200 m)",
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "{\"latitude\": true, \"longitude\": \"11.0\", \"zone\": [[48.0, 11.0], [48.1]], \"sites\": \"none\"}"
+   },
+   "name": "loaded_wrong_types",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "launch_point": null,
+       "launch_source": null,
+       "longitude": null,
+       "site": "",
+       "zone": null
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": null,
+       "launch_id": "",
+       "longitude": null,
+       "site": "",
+       "zone": null
+      },
+      "probe": "launch/zone: launch position not set (CC or GNSS)",
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "{ not json"
+   },
+   "name": "corrupt_text",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 125.8,
+        "gate_b": 81.0,
+        "target": 49.5
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "launch_point": [
+        25.514379,
+        -80.391795
+       ],
+       "launch_source": "set",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "[1, 2]"
+   },
+   "name": "not_an_object",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 125.8,
+        "gate_b": 81.0,
+        "target": 49.5
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "launch_point": [
+        25.514379,
+        -80.391795
+       ],
+       "launch_source": "set",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "null"
+   },
+   "name": "json_null",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 125.8,
+        "gate_b": 81.0,
+        "target": 49.5
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "launch_point": [
+        25.514379,
+        -80.391795
+       ],
+       "launch_source": "set",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": ""
+   },
+   "name": "empty_text",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 2.0,
+       "distances_m": {
+        "gate_a": 125.8,
+        "gate_b": 81.0,
+        "target": 49.5
+       },
+       "gates": [
+        [
+         25.5147635,
+         -80.392972
+        ],
+        [
+         25.5147635,
+         -80.391111
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "launch_point": [
+        25.514379,
+        -80.391795
+       ],
+       "launch_source": "set",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "target": [
+        25.5147635,
+        -80.3920415
+       ],
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 2.0,
+       "latitude": 25.514379,
+       "launch_id": "",
+       "longitude": -80.391795,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.514944,
+         -80.392972
+        ],
+        [
+         25.514583,
+         -80.391111
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "{\"site\": \"south-west\", \"latitude\": -34.6037, \"longitude\": -58.3816, \"altitude\": 25.5, \"zone\": [[-34.603, -58.383], [-34.604, -58.381]]}"
+   },
+   "name": "southern_and_western",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 25.5,
+       "distances_m": {
+        "gate_a": 130.2,
+        "gate_b": 59.3,
+        "target": 42.9
+       },
+       "gates": [
+        [
+         -34.6035,
+         -58.383
+        ],
+        [
+         -34.6035,
+         -58.381
+        ]
+       ],
+       "in_range": true,
+       "latitude": -34.6037,
+       "launch_id": "",
+       "launch_point": [
+        -34.6037,
+        -58.3816
+       ],
+       "launch_source": "set",
+       "longitude": -58.3816,
+       "site": "south-west",
+       "target": [
+        -34.6035,
+        -58.382000000000005
+       ],
+       "zone": [
+        [
+         -34.603,
+         -58.383
+        ],
+        [
+         -34.604,
+         -58.381
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 25.5,
+       "latitude": -34.6037,
+       "launch_id": "",
+       "longitude": -58.3816,
+       "site": "south-west",
+       "zone": [
+        [
+         -34.603,
+         -58.383
+        ],
+        [
+         -34.604,
+         -58.381
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "latitude": -33.8688,
+       "longitude": 151.2093,
+       "site": "south-east",
+       "zone": [
+        [
+         -33.868,
+         151.2085
+        ],
+        [
+         -33.8695,
+         151.209
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "site",
+       "latitude",
+       "longitude",
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 25.5,
+       "distances_m": {
+        "gate_a": 102.5,
+        "gate_b": 93.0,
+        "target": 51.1
+       },
+       "gates": [
+        [
+         -33.868,
+         151.20875
+        ],
+        [
+         -33.8695,
+         151.20875
+        ]
+       ],
+       "in_range": true,
+       "latitude": -33.8688,
+       "launch_id": "",
+       "launch_point": [
+        -33.8688,
+        151.2093
+       ],
+       "launch_source": "set",
+       "longitude": 151.2093,
+       "site": "south-east",
+       "target": [
+        -33.868750000000006,
+        151.20875
+       ],
+       "zone": [
+        [
+         -33.868,
+         151.2085
+        ],
+        [
+         -33.8695,
+         151.209
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 25.5,
+       "latitude": -33.8688,
+       "launch_id": "",
+       "longitude": 151.2093,
+       "site": "south-east",
+       "zone": [
+        [
+         -33.868,
+         151.2085
+        ],
+        [
+         -33.8695,
+         151.209
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": "{\"site\": \"field\", \"latitude\": 48.0, \"longitude\": 11.0, \"zone\": [[48.0006, 10.9995], [48.0003, 11.0012]], \"sites\": [{\"name\": \"north\", \"pad\": [48.001, 11.0], \"zone\": [[48.002, 10.999], [48.0015, 11.001]]}, {\"name\": \"south\", \"pad\": [48.0, 11.0], \"zone\": [[47.999, 10.999], [47.9985, 11.001]]}, {\"pad\": [200.0, 11.0], \"zone\": [[1, 1], [2, 2]]}, {\"name\": \"no-zone\", \"pad\": [48.0, 11.0]}, {\"pad\": [48.0005, 11.0005], \"zone\": [[48.0008, 11.0], [48.0006, 11.001]]}]}"
+   },
+   "name": "sites_survive_set_config",
+   "steps": [
+    {
+     "in": {
+      "action": "observe",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 62.4,
+        "gate_b": 102.5,
+        "target": 56.5
+       },
+       "gates": [
+        [
+         48.00045,
+         10.9995
+        ],
+        [
+         48.00045,
+         11.0012
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0,
+       "launch_id": "",
+       "launch_point": [
+        48.0,
+        11.0
+       ],
+       "launch_source": "set",
+       "longitude": 11.0,
+       "site": "field",
+       "target": [
+        48.00045,
+        11.000350000000001
+       ],
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0,
+       "launch_id": "",
+       "longitude": 11.0,
+       "site": "field",
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": [
+       {
+        "name": "north",
+        "pad": [
+         48.001,
+         11.0
+        ],
+        "zone": [
+         [
+          48.002,
+          10.999
+         ],
+         [
+          48.0015,
+          11.001
+         ]
+        ]
+       },
+       {
+        "name": "south",
+        "pad": [
+         48.0,
+         11.0
+        ],
+        "zone": [
+         [
+          47.999,
+          10.999
+         ],
+         [
+          47.9985,
+          11.001
+         ]
+        ]
+       },
+       {
+        "name": "site2",
+        "pad": [
+         48.0005,
+         11.0005
+        ],
+        "zone": [
+         [
+          48.0008,
+          11.0
+         ],
+         [
+          48.0006,
+          11.001
+         ]
+        ]
+       }
+      ]
+     }
+    },
+    {
+     "in": {
+      "action": "set_config",
+      "fix": null,
+      "properties": {
+       "launch_id": "f1"
+      }
+     },
+     "out": {
+      "changed": [
+       "launch_id"
+      ],
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 62.4,
+        "gate_b": 102.5,
+        "target": 56.5
+       },
+       "gates": [
+        [
+         48.00045,
+         10.9995
+        ],
+        [
+         48.00045,
+         11.0012
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "launch_point": [
+        48.0,
+        11.0
+       ],
+       "launch_source": "set",
+       "longitude": 11.0,
+       "site": "field",
+       "target": [
+        48.00045,
+        11.000350000000001
+       ],
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "longitude": 11.0,
+       "site": "field",
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": [
+       {
+        "name": "north",
+        "pad": [
+         48.001,
+         11.0
+        ],
+        "zone": [
+         [
+          48.002,
+          10.999
+         ],
+         [
+          48.0015,
+          11.001
+         ]
+        ]
+       },
+       {
+        "name": "south",
+        "pad": [
+         48.0,
+         11.0
+        ],
+        "zone": [
+         [
+          47.999,
+          10.999
+         ],
+         [
+          47.9985,
+          11.001
+         ]
+        ]
+       },
+       {
+        "name": "site2",
+        "pad": [
+         48.0005,
+         11.0005
+        ],
+        "zone": [
+         [
+          48.0008,
+          11.0
+         ],
+         [
+          48.0006,
+          11.001
+         ]
+        ]
+       }
+      ]
+     }
+    },
+    {
+     "divergence": {
+      "note": "plan B drops sites from persisted() and ignores them in set-config; the Rust port keeps them and replaces them with a set-config list",
+      "sites": [
+       {
+        "name": "north",
+        "pad": [
+         48.001,
+         11.0
+        ],
+        "zone": [
+         [
+          48.002,
+          10.999
+         ],
+         [
+          48.0015,
+          11.001
+         ]
+        ]
+       },
+       {
+        "name": "south",
+        "pad": [
+         48.0,
+         11.0
+        ],
+        "zone": [
+         [
+          47.999,
+          10.999
+         ],
+         [
+          47.9985,
+          11.001
+         ]
+        ]
+       },
+       {
+        "name": "site2",
+        "pad": [
+         48.0005,
+         11.0005
+        ],
+        "zone": [
+         [
+          48.0008,
+          11.0
+         ],
+         [
+          48.0006,
+          11.001
+         ]
+        ]
+       }
+      ]
+     },
+     "in": {
+      "action": "reboot",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 62.4,
+        "gate_b": 102.5,
+        "target": 56.5
+       },
+       "gates": [
+        [
+         48.00045,
+         10.9995
+        ],
+        [
+         48.00045,
+         11.0012
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "launch_point": [
+        48.0,
+        11.0
+       ],
+       "launch_source": "set",
+       "longitude": 11.0,
+       "site": "field",
+       "target": [
+        48.00045,
+        11.000350000000001
+       ],
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "longitude": 11.0,
+       "site": "field",
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "changed": [
+       "sites"
+      ],
+      "note": "plan B drops sites from persisted() and ignores them in set-config; the Rust port keeps them and replaces them with a set-config list",
+      "sites": [
+       {
+        "name": "east",
+        "pad": [
+         48.0,
+         11.002
+        ],
+        "zone": [
+         [
+          48.001,
+          11.003
+         ],
+         [
+          48.0005,
+          11.005
+         ]
+        ]
+       }
+      ]
+     },
+     "in": {
+      "action": "set_config",
+      "fix": null,
+      "properties": {
+       "sites": [
+        {
+         "name": "east",
+         "pad": [
+          48.0,
+          11.002
+         ],
+         "zone": [
+          [
+           48.001,
+           11.003
+          ],
+          [
+           48.0005,
+           11.005
+          ]
+         ]
+        },
+        {
+         "name": "bad",
+         "pad": [
+          48.0
+         ]
+        }
+       ]
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 62.4,
+        "gate_b": 102.5,
+        "target": 56.5
+       },
+       "gates": [
+        [
+         48.00045,
+         10.9995
+        ],
+        [
+         48.00045,
+         11.0012
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "launch_point": [
+        48.0,
+        11.0
+       ],
+       "launch_source": "set",
+       "longitude": 11.0,
+       "site": "field",
+       "target": [
+        48.00045,
+        11.000350000000001
+       ],
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "longitude": 11.0,
+       "site": "field",
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "note": "plan B drops sites from persisted() and ignores them in set-config; the Rust port keeps them and replaces them with a set-config list",
+      "sites": [
+       {
+        "name": "east",
+        "pad": [
+         48.0,
+         11.002
+        ],
+        "zone": [
+         [
+          48.001,
+          11.003
+         ],
+         [
+          48.0005,
+          11.005
+         ]
+        ]
+       }
+      ]
+     },
+     "in": {
+      "action": "reboot",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 62.4,
+        "gate_b": 102.5,
+        "target": 56.5
+       },
+       "gates": [
+        [
+         48.00045,
+         10.9995
+        ],
+        [
+         48.00045,
+         11.0012
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "launch_point": [
+        48.0,
+        11.0
+       ],
+       "launch_source": "set",
+       "longitude": 11.0,
+       "site": "field",
+       "target": [
+        48.00045,
+        11.000350000000001
+       ],
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "longitude": 11.0,
+       "site": "field",
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "note": "plan B drops sites from persisted() and ignores them in set-config; the Rust port keeps them and replaces them with a set-config list",
+      "sites": [
+       {
+        "name": "east",
+        "pad": [
+         48.0,
+         11.002
+        ],
+        "zone": [
+         [
+          48.001,
+          11.003
+         ],
+         [
+          48.0005,
+          11.005
+         ]
+        ]
+       }
+      ]
+     },
+     "in": {
+      "action": "set_config",
+      "fix": null,
+      "properties": {
+       "sites": "none"
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 62.4,
+        "gate_b": 102.5,
+        "target": 56.5
+       },
+       "gates": [
+        [
+         48.00045,
+         10.9995
+        ],
+        [
+         48.00045,
+         11.0012
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "launch_point": [
+        48.0,
+        11.0
+       ],
+       "launch_source": "set",
+       "longitude": 11.0,
+       "site": "field",
+       "target": [
+        48.00045,
+        11.000350000000001
+       ],
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "longitude": 11.0,
+       "site": "field",
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "changed": [
+       "sites"
+      ],
+      "note": "plan B drops sites from persisted() and ignores them in set-config; the Rust port keeps them and replaces them with a set-config list"
+     },
+     "in": {
+      "action": "set_config",
+      "fix": null,
+      "properties": {
+       "sites": []
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": null,
+       "distances_m": {
+        "gate_a": 62.4,
+        "gate_b": 102.5,
+        "target": 56.5
+       },
+       "gates": [
+        [
+         48.00045,
+         10.9995
+        ],
+        [
+         48.00045,
+         11.0012
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "launch_point": [
+        48.0,
+        11.0
+       ],
+       "launch_source": "set",
+       "longitude": 11.0,
+       "site": "field",
+       "target": [
+        48.00045,
+        11.000350000000001
+       ],
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": null,
+       "latitude": 48.0,
+       "launch_id": "f1",
+       "longitude": 11.0,
+       "site": "field",
+       "zone": [
+        [
+         48.0006,
+         10.9995
+        ],
+        [
+         48.0003,
+         11.0012
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": null
+   },
+   "name": "set_config_round_trip",
+   "steps": [
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "set_config",
+      "fix": null,
+      "properties": {
+       "altitude": 5,
+       "latitude": 25.51461,
+       "launch_id": "save-me",
+       "longitude": -80.3921,
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "launch_id",
+       "latitude",
+       "longitude",
+       "altitude",
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 5,
+       "distances_m": {
+        "gate_a": 78.3,
+        "gate_b": 117.1,
+        "target": 65.1
+       },
+       "gates": [
+        [
+         25.51515,
+         -80.3926
+        ],
+        [
+         25.51515,
+         -80.3911
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.51461,
+       "launch_id": "save-me",
+       "launch_point": [
+        25.51461,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC",
+       "target": [
+        25.51515,
+        -80.39185
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 5,
+       "latitude": 25.51461,
+       "launch_id": "save-me",
+       "longitude": -80.3921,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "reboot",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 5,
+       "distances_m": {
+        "gate_a": 78.3,
+        "gate_b": 117.1,
+        "target": 65.1
+       },
+       "gates": [
+        [
+         25.51515,
+         -80.3926
+        ],
+        [
+         25.51515,
+         -80.3911
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.51461,
+       "launch_id": "save-me",
+       "launch_point": [
+        25.51461,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC",
+       "target": [
+        25.51515,
+        -80.39185
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 5,
+       "latitude": 25.51461,
+       "launch_id": "save-me",
+       "longitude": -80.3921,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "set_config",
+      "fix": null,
+      "properties": {
+       "epoch": 1781000000,
+       "launch_id": "with-clock"
+      }
+     },
+     "out": {
+      "changed": [
+       "launch_id",
+       "epoch"
+      ],
+      "inspect": {
+       "altitude": 5,
+       "distances_m": {
+        "gate_a": 78.3,
+        "gate_b": 117.1,
+        "target": 65.1
+       },
+       "gates": [
+        [
+         25.51515,
+         -80.3926
+        ],
+        [
+         25.51515,
+         -80.3911
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.51461,
+       "launch_id": "with-clock",
+       "launch_point": [
+        25.51461,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC",
+       "target": [
+        25.51515,
+        -80.39185
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 5,
+       "latitude": 25.51461,
+       "launch_id": "with-clock",
+       "longitude": -80.3921,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "reboot",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 5,
+       "distances_m": {
+        "gate_a": 78.3,
+        "gate_b": 117.1,
+        "target": 65.1
+       },
+       "gates": [
+        [
+         25.51515,
+         -80.3926
+        ],
+        [
+         25.51515,
+         -80.3911
+        ]
+       ],
+       "in_range": true,
+       "latitude": 25.51461,
+       "launch_id": "with-clock",
+       "launch_point": [
+        25.51461,
+        -80.3921
+       ],
+       "launch_source": "set",
+       "longitude": -80.3921,
+       "site": "HPRC",
+       "target": [
+        25.51515,
+        -80.39185
+       ],
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 5,
+       "latitude": 25.51461,
+       "launch_id": "with-clock",
+       "longitude": -80.3921,
+       "site": "HPRC",
+       "zone": [
+        [
+         25.5153,
+         -80.3926
+        ],
+        [
+         25.515,
+         -80.3911
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "max_range_m": 200.0,
+    "stored": null
+   },
+   "name": "numbers_sent_as_integers",
+   "steps": [
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float"
+     },
+     "in": {
+      "action": "update",
+      "fix": null,
+      "properties": {
+       "altitude": 500,
+       "latitude": 48,
+       "longitude": 11,
+       "zone": [
+        [
+         48,
+         11
+        ],
+        [
+         47.9995,
+         11.001
+        ]
+       ]
+      }
+     },
+     "out": {
+      "changed": [
+       "latitude",
+       "longitude",
+       "altitude",
+       "zone"
+      ],
+      "inspect": {
+       "altitude": 500,
+       "distances_m": {
+        "gate_a": 27.8,
+        "gate_b": 79.5,
+        "target": 46.5
+       },
+       "gates": [
+        [
+         47.99975,
+         11
+        ],
+        [
+         47.99975,
+         11.001
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48,
+       "launch_id": "",
+       "launch_point": [
+        48,
+        11
+       ],
+       "launch_source": "set",
+       "longitude": 11,
+       "site": "HPRC",
+       "target": [
+        47.99975,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48,
+         11
+        ],
+        [
+         47.9995,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 500,
+       "latitude": 48,
+       "launch_id": "",
+       "longitude": 11,
+       "site": "HPRC",
+       "zone": [
+        [
+         48,
+         11
+        ],
+        [
+         47.9995,
+         11.001
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "changed": [
+       "sites"
+      ],
+      "floats": true,
+      "note": "plan B drops sites from persisted() and ignores them in set-config; the Rust port keeps them and replaces them with a set-config list; plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float",
+      "sites": [
+       {
+        "name": "whole-degree pad",
+        "pad": [
+         48,
+         11
+        ],
+        "zone": [
+         [
+          48,
+          11
+         ],
+         [
+          47.9995,
+          11.001
+         ]
+        ]
+       }
+      ]
+     },
+     "in": {
+      "action": "set_config",
+      "fix": null,
+      "properties": {
+       "sites": [
+        {
+         "name": "whole-degree pad",
+         "pad": [
+          48,
+          11
+         ],
+         "zone": [
+          [
+           48,
+           11
+          ],
+          [
+           47.9995,
+           11.001
+          ]
+         ]
+        }
+       ]
+      }
+     },
+     "out": {
+      "changed": [],
+      "inspect": {
+       "altitude": 500,
+       "distances_m": {
+        "gate_a": 27.8,
+        "gate_b": 79.5,
+        "target": 46.5
+       },
+       "gates": [
+        [
+         47.99975,
+         11
+        ],
+        [
+         47.99975,
+         11.001
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48,
+       "launch_id": "",
+       "launch_point": [
+        48,
+        11
+       ],
+       "launch_source": "set",
+       "longitude": 11,
+       "site": "HPRC",
+       "target": [
+        47.99975,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48,
+         11
+        ],
+        [
+         47.9995,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 500,
+       "latitude": 48,
+       "launch_id": "",
+       "longitude": 11,
+       "site": "HPRC",
+       "zone": [
+        [
+         48,
+         11
+        ],
+        [
+         47.9995,
+         11.001
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    },
+    {
+     "divergence": {
+      "floats": true,
+      "note": "plan B drops sites from persisted() and ignores them in set-config; the Rust port keeps them and replaces them with a set-config list; plan B echoes the integer it was given; the Rust port holds metres as f32 and degrees as 1e-7 units, and writes every one as a JSON float",
+      "sites": [
+       {
+        "name": "whole-degree pad",
+        "pad": [
+         48,
+         11
+        ],
+        "zone": [
+         [
+          48,
+          11
+         ],
+         [
+          47.9995,
+          11.001
+         ]
+        ]
+       }
+      ]
+     },
+     "in": {
+      "action": "reboot",
+      "fix": null,
+      "properties": null
+     },
+     "out": {
+      "inspect": {
+       "altitude": 500,
+       "distances_m": {
+        "gate_a": 27.8,
+        "gate_b": 79.5,
+        "target": 46.5
+       },
+       "gates": [
+        [
+         47.99975,
+         11
+        ],
+        [
+         47.99975,
+         11.001
+        ]
+       ],
+       "in_range": true,
+       "latitude": 48,
+       "launch_id": "",
+       "launch_point": [
+        48,
+        11
+       ],
+       "launch_source": "set",
+       "longitude": 11,
+       "site": "HPRC",
+       "target": [
+        47.99975,
+        11.000499999999999
+       ],
+       "zone": [
+        [
+         48,
+         11
+        ],
+        [
+         47.9995,
+         11.001
+        ]
+       ]
+      },
+      "persisted": {
+       "altitude": 500,
+       "latitude": 48,
+       "launch_id": "",
+       "longitude": 11,
+       "site": "HPRC",
+       "zone": [
+        [
+         48,
+         11
+        ],
+        [
+         47.9995,
+         11.001
+        ]
+       ]
+      },
+      "probe": null,
+      "sites": []
+     }
+    }
+   ]
+  }
+ ],
+ "time_sets": [
+  {
+   "input": {
+    "cc_position": [
+     25.5,
+     -80.25
+    ],
+    "epoch": 1781000000,
+    "source": "cc-auto",
+    "utc_offset": -240
+   },
+   "name": "full",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000000,
+    "time_set": {
+     "cc_position": [
+      25.5,
+      -80.25
+     ],
+     "source": "cc-auto",
+     "utc_offset": -240
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000060,
+    "source": "dashboard"
+   },
+   "name": "epoch_and_source",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000060,
+    "time_set": {
+     "cc_position": null,
+     "source": "dashboard",
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "cc_position": [
+     200.0,
+     0.0
+    ],
+    "epoch": 1781000120,
+    "source": "a;b",
+    "utc_offset": "-240"
+   },
+   "name": "bad_extras_text",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000120,
+    "time_set": {
+     "cc_position": null,
+     "source": "a;b",
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "cc_position": [
+     25.5
+    ],
+    "epoch": 1781000180,
+    "source": 7,
+    "utc_offset": true
+   },
+   "name": "bad_extras_types",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000180,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000200,
+    "utc_offset": -720
+   },
+   "name": "offset_west_edge",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": -720
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000200,
+    "utc_offset": 840
+   },
+   "name": "offset_east_edge",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": 840
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000200,
+    "utc_offset": -721
+   },
+   "name": "offset_past_west",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000200,
+    "utc_offset": 841
+   },
+   "name": "offset_past_east",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000200,
+    "utc_offset": 100000
+   },
+   "name": "offset_huge",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000200,
+    "utc_offset": 60.0
+   },
+   "name": "offset_float",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "cc_position": [
+     -33.8688,
+     151.2093
+    ],
+    "epoch": 1781000200
+   },
+   "name": "cc_position_southern_eastern",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": [
+      -33.8688,
+      151.2093
+     ],
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "cc_position": [
+     25.5,
+     true
+    ],
+    "epoch": 1781000200
+   },
+   "name": "cc_position_bool",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "cc_position": {
+     "latitude": 25.5,
+     "longitude": -80.25
+    },
+    "epoch": 1781000200
+   },
+   "name": "cc_position_object",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 1781000200,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 946684800,
+    "source": "dashboard",
+    "utc_offset": -240
+   },
+   "name": "epoch_at_2000",
+   "output": {
+    "changed": [
+     "epoch"
+    ],
+    "epoch": 946684800,
+    "time_set": {
+     "cc_position": null,
+     "source": "dashboard",
+     "utc_offset": -240
+    }
+   }
+  },
+  {
+   "input": {
+    "epoch": 946684799,
+    "source": "dashboard"
+   },
+   "name": "epoch_before_2000",
+   "output": {
+    "changed": [],
+    "epoch": null,
+    "time_set": null
+   }
+  },
+  {
+   "input": {
+    "epoch": -1
+   },
+   "name": "epoch_negative",
+   "output": {
+    "changed": [],
+    "epoch": null,
+    "time_set": null
+   }
+  },
+  {
+   "input": {
+    "epoch": "now",
+    "source": "cc-auto"
+   },
+   "name": "epoch_text",
+   "output": {
+    "changed": [],
+    "epoch": null,
+    "time_set": null
+   }
+  },
+  {
+   "input": {
+    "epoch": true
+   },
+   "name": "epoch_bool",
+   "output": {
+    "changed": [],
+    "epoch": null,
+    "time_set": null
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000000.0
+   },
+   "name": "epoch_float",
+   "output": {
+    "changed": [],
+    "epoch": null,
+    "time_set": null
+   }
+  },
+  {
+   "input": {
+    "epoch": null
+   },
+   "name": "epoch_null",
+   "output": {
+    "changed": [],
+    "epoch": null,
+    "time_set": null
+   }
+  },
+  {
+   "input": {
+    "cc_position": [
+     25.5,
+     -80.25
+    ],
+    "source": "cc-auto",
+    "utc_offset": -240
+   },
+   "name": "extras_without_epoch",
+   "output": {
+    "changed": [],
+    "epoch": null,
+    "time_set": null
+   }
+  },
+  {
+   "input": {
+    "epoch": 1781000000,
+    "launch_id": "synced"
+   },
+   "name": "epoch_with_a_field",
+   "output": {
+    "changed": [
+     "launch_id",
+     "epoch"
+    ],
+    "epoch": 1781000000,
+    "time_set": {
+     "cc_position": null,
+     "source": null,
+     "utc_offset": null
+    }
+   }
+  }
+ ],
+ "tolerance": "5.01e-8: degrees to half the Rust 1e-7 degree unit plus float slack (a zone centre is the integer mean, at most half a unit off; a one-unit slip fails); metres exactly, since every distance is reported rounded to 0.1 m and no case lies closer to a rounding boundary than the Rust f32 answer can differ; an altitude goes out as its shortest f32 text"
+}

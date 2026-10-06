@@ -20,6 +20,9 @@ authors = ["Alexander Moiseichuk"]
 cc_protocol = { path = "crates/cc_protocol" }
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 sequencer = { path = "crates/sequencer" }
+golden = { path = "crates/golden" }
+control = { path = "crates/control" }
+mission = { path = "crates/mission" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a JSON number parses to the exact f64 Python's json reads (config_id hashes the repr)
 serde_json = { version = "1", features = ["float_roundtrip"] }

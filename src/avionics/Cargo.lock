@@ -258,6 +258,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "control"
+version = "0.1.0"
+dependencies = [
+ "golden",
+ "serde_json",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -635,6 +643,8 @@ dependencies = [
  "embuild",
  "esp-idf-svc",
  "log",
+ "mission",
+ "sequencer",
  "serde",
  "serde_json",
 ]
@@ -734,6 +744,14 @@ dependencies = [
  "bitflags 1.3.2",
  "ignore",
  "walkdir",
+]
+
+[[package]]
+name = "golden"
+version = "0.1.0"
+dependencies = [
+ "cc_protocol",
+ "serde_json",
 ]
 
 [[package]]
@@ -924,6 +942,15 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "mission"
+version = "0.1.0"
+dependencies = [
+ "control",
+ "golden",
+ "serde_json",
+]
 
 [[package]]
 name = "nb"

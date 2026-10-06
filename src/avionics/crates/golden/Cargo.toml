@@ -1,0 +1,11 @@
+[package]
+name = "golden"
+description = "Golden vectors: load a fixture generated from plan B (src/avionics/golden) and compare a port's answers by its kind"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+cc_protocol.workspace = true  # the dispatcher fixture's reply lines are parsed as the hub parses them
+serde_json.workspace = true
