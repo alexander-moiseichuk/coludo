@@ -5,7 +5,10 @@ target = "riscv32imafc-esp-espidf"
 [target.riscv32imafc-esp-espidf]
 linker = "ldproxy"
 runner = "./flash.sh"
-rustflags = ["--cfg", "espidf_time64"]
+# The HP core is rv32imafc + Zcb + Zcmp (+ Espressif's PIE SIMD / hardware loops, which only esp-dsp reaches):
+# Espressif clang's -mcpu=esp32p4, confirmed instruction by instruction on rev v1.3 (src/bin/isa.rs). Zba, Zbb,
+# Zbs, Zbc and Zicond TRAP there, so they stay off. Zcmt needs the OS to set up its jump table: off.
+rustflags = ["--cfg", "espidf_time64", "-C", "target-feature=+zcb,+zcmp"]
 
 [unstable]
 build-std = ["std", "panic_abort"]
