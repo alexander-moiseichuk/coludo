@@ -14,16 +14,26 @@ use std::time::Duration;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
+use firmware::thermal::Thermometer;
 
 fn main() {
     esp_idf_svc::sys::link_patches();
+    let thermometer = esp_idf_svc::hal::peripherals::Peripherals::take()
+        .ok()
+        .and_then(|peripherals| Thermometer::new(peripherals.temp_sensor).ok());
+    let die = |when: &str| {
+        let celsius = thermometer.as_ref().and_then(Thermometer::celsius).unwrap_or(f32::NAN);
+        println!("bench;thermal;die_{when};{celsius:.1};C");
+    };
     std::thread::sleep(Duration::from_millis(500)); // let the boot log drain first
+    die("start");
     let hertz = cycle_hertz();
-    report("meta", "cpu_clock", hertz as f64 / 1e6, "MHz");
+    report("meta", "cpu_clock", hertz as f32 / 1e6, "MHz");
     cpu(hertz);
     fpu(hertz);
     memory(hertz);
     threads(hertz);
+    die("end");
     println!("bench;done");
     loop {
         std::thread::sleep(Duration::from_secs(3600));
@@ -31,7 +41,7 @@ fn main() {
 }
 
 /// Print one result line.
-fn report(group: &str, name: &str, value: f64, unit: &str) {
+fn report(group: &str, name: &str, value: f32, unit: &str) {
     println!("bench;{group};{name};{value:.3};{unit}");
 }
 
@@ -60,7 +70,7 @@ fn cycle_hertz() -> u64 {
 
 /// Nanoseconds per call of `body`, the best of 5 runs of `count` calls each (the best run is the one the
 /// fewest interrupts landed in).
-fn per_call(hertz: u64, count: u32, mut body: impl FnMut()) -> f64 {
+fn per_call(hertz: u64, count: u32, mut body: impl FnMut()) -> f32 {
     let mut best = u32::MAX;
     for _ in 0..5 {
         let start = cycles();
@@ -69,7 +79,7 @@ fn per_call(hertz: u64, count: u32, mut body: impl FnMut()) -> f64 {
         }
         best = best.min(cycles().wrapping_sub(start));
     }
-    best as f64 * 1e9 / hertz as f64 / count as f64
+    best as f32 * 1e9 / hertz as f32 / count as f32
 }
 
 /// The IEEE CRC32 table (the polynomial of zlib / Python binascii.crc32, the recorder wire's CRC).
@@ -111,7 +121,7 @@ fn cpu(hertz: u64) {
     report("cpu", "crc32_64k_rom", rom / 1000.0, "us");
     // SAFETY: as above.
     let same = crc32(&table, &data) == unsafe { sys::esp_rom_crc32_le(0, data.as_ptr(), data.len() as u32) };
-    report("cpu", "crc32_rom_matches_zlib", same as u8 as f64, "bool");
+    report("cpu", "crc32_rom_matches_zlib", same as u8 as f32, "bool");
 
     // a 20-field telemetry row, formatted and wrapped the way the recorder wire does it
     let mut row = String::with_capacity(256);
@@ -143,7 +153,8 @@ fn cpu(hertz: u64) {
     report("cpu", "health_json", json_cost / 1000.0, "us");
 }
 
-/// B2: f32 (hardware) vs f64 (software) vs i32 fixed-point, per operation.
+/// B2: f32 (hardware) vs f64 (software) vs i32 fixed-point, per operation. The f64 here exists only to price the
+/// rule "no f64 anywhere in the firmware" -- the core has no double-precision unit.
 fn fpu(hertz: u64) {
     const COUNT: u32 = 10_000;
     let (mut a32, b32) = (1.000_1f32, 0.999_9f32);
@@ -285,19 +296,19 @@ fn memory(hertz: u64) {
         report(
             "memory",
             "internal_free",
-            sys::heap_caps_get_free_size(internal) as f64 / 1024.0,
+            sys::heap_caps_get_free_size(internal) as f32 / 1024.0,
             "KB",
         );
         report(
             "memory",
             "internal_largest",
-            sys::heap_caps_get_largest_free_block(internal) as f64 / 1024.0,
+            sys::heap_caps_get_largest_free_block(internal) as f32 / 1024.0,
             "KB",
         );
         report(
             "memory",
             "psram_free",
-            sys::heap_caps_get_free_size(psram) as f64 / 1024.0,
+            sys::heap_caps_get_free_size(psram) as f32 / 1024.0,
             "KB",
         );
     }
@@ -320,7 +331,7 @@ fn memory(hertz: u64) {
             report(
                 "memory",
                 &format!("copy_{route}_{label}"),
-                size as f64 * 1e3 / nanoseconds,
+                size as f32 * 1e3 / nanoseconds,
                 "MB/s",
             );
         }
@@ -334,7 +345,7 @@ fn memory(hertz: u64) {
             report(
                 "memory",
                 &format!("fill_psram_{label}"),
-                size as f64 * 1e3 / nanoseconds,
+                size as f32 * 1e3 / nanoseconds,
                 "MB/s",
             );
         }
@@ -377,7 +388,7 @@ fn per_mille(samples: &mut [u32], rank: usize) -> u32 {
 
 /// Report a latency sample (cycles) as p50 / p99 / p99.9 / max microseconds.
 fn report_latency(group: &str, name: &str, hertz: u64, samples: &mut [u32]) {
-    let micros = |value: u32| value as f64 * 1e6 / hertz as f64;
+    let micros = |value: u32| value as f32 * 1e6 / hertz as f32;
     report(group, &format!("{name}_p50"), micros(per_mille(samples, 500)), "us");
     report(group, &format!("{name}_p99"), micros(per_mille(samples, 990)), "us");
     report(group, &format!("{name}_p999"), micros(per_mille(samples, 999)), "us");

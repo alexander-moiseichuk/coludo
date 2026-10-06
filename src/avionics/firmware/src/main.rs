@@ -13,6 +13,7 @@ use std::sync::Arc;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use firmware::thermal::Thermometer;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -21,7 +22,10 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let event_loop = EspSystemEventLoop::take()?;
     let partition = EspDefaultNvsPartition::take()?;
-    let board = Arc::new(board::Board::open(partition.clone())?);
+    let thermometer = Thermometer::new(peripherals.temp_sensor)
+        .inspect_err(|error| log::warn!("thermometer :: {error}"))
+        .ok();
+    let board = Arc::new(board::Board::open(partition.clone(), thermometer)?);
     // the console first: installing its UART driver mid-line would cut whatever is still printing
     console::start(
         peripherals.uart0,

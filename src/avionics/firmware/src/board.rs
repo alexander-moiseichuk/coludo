@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys;
+use firmware::thermal::Thermometer;
 
 /// The id the hub registers this board under, until board config lands (src/glider: `board.id`).
 const BOARD_ID: &str = "taster";
@@ -20,18 +21,28 @@ pub struct Board {
     pub boot_id: Option<i32>,
     /// The `coludo` NVS namespace (boot count, Wi-Fi credentials).
     pub store: Mutex<EspNvs<NvsDefault>>,
+    /// The die temperature sensor; None when it would not start (health then reports no temperature). Behind
+    /// a lock: IDF does not promise its read is thread-safe, and the console and the link both ask.
+    pub thermometer: Mutex<Option<Thermometer>>,
 }
 
 impl Board {
-    /// Open the store and count this boot.
-    pub fn open(partition: EspDefaultNvsPartition) -> anyhow::Result<Self> {
+    /// Open the store, count this boot, keep the thermometer.
+    pub fn open(partition: EspDefaultNvsPartition, thermometer: Option<Thermometer>) -> anyhow::Result<Self> {
         let store = EspNvs::new(partition, NAMESPACE, true)?;
         let boot_id = count_boot(&store);
         Ok(Self {
             id: BOARD_ID,
             boot_id,
             store: Mutex::new(store),
+            thermometer: Mutex::new(thermometer),
         })
+    }
+
+    /// The die temperature in °C, rounded to 0.1 (what health reports).
+    pub fn celsius(&self) -> Option<f32> {
+        let celsius = self.thermometer.lock().unwrap().as_ref()?.celsius()?;
+        Some((celsius * 10.0).round() / 10.0)
     }
 
     /// The prefix this boot's capture files carry: the boot id as `%06u`, None when the boot was not counted.
@@ -45,7 +56,7 @@ impl Board {
         // SAFETY: esp_chip_info fills the struct it is handed and keeps no reference to it.
         unsafe { sys::esp_chip_info(&mut chip) };
         format!(
-            "{FIRMWARE_VERSION} board {} boot {} reset {} chip rev v{}.{} cores {} cpu {} MHz psram {} KB heap {} KB",
+            "{FIRMWARE_VERSION} board {} boot {} reset {} chip rev v{}.{} cores {} cpu {} MHz psram {} KB heap {} KB die {:?} C",
             self.id,
             self.session().unwrap_or_else(|| "uncounted".into()),
             reset_reason(),
@@ -55,6 +66,7 @@ impl Board {
             cpu_mhz(),
             heap_free(sys::MALLOC_CAP_SPIRAM) / 1024,
             heap_free(sys::MALLOC_CAP_INTERNAL) / 1024,
+            self.celsius(),
         )
     }
 

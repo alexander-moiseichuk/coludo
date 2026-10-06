@@ -20,6 +20,7 @@ use std::time::Duration;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
+use firmware::thermal::Thermometer;
 
 /// The stall test's loop period.
 const PERIOD_MICROS: u64 = 1000;
@@ -28,17 +29,25 @@ const TICKS: usize = 10_000;
 
 fn main() {
     esp_idf_svc::sys::link_patches();
+    let thermometer = esp_idf_svc::hal::peripherals::Peripherals::take()
+        .ok()
+        .and_then(|peripherals| Thermometer::new(peripherals.temp_sensor).ok());
+    let die = |when: &str| {
+        let celsius = thermometer.as_ref().and_then(Thermometer::celsius).unwrap_or(f32::NAN);
+        println!("flash;thermal;die_{when};{celsius:.1};C");
+    };
     std::thread::sleep(Duration::from_millis(300));
+    die("start");
     report(
         "meta",
         "xip_from_psram",
-        cfg!(esp_idf_spiram_xip_from_psram) as u8 as f64,
+        cfg!(esp_idf_spiram_xip_from_psram) as u8 as f32,
         "bool",
     );
     let partition = log_partition();
     // SAFETY: a found partition descriptor lives for the program.
     let size = unsafe { (*partition.0).size } as usize;
-    report("meta", "partition_size", size as f64 / 1024.0, "KB");
+    report("meta", "partition_size", size as f32 / 1024.0, "KB");
     latencies(partition);
     stall(partition, false);
     stall(partition, true);
@@ -48,16 +57,17 @@ fn main() {
     report(
         "throughput",
         "erase_whole_partition",
-        (micros() - start) as f64 / 1e6,
+        (micros() - start) as f32 / 1e6,
         "s",
     );
+    die("end");
     println!("flash;done");
     loop {
         std::thread::sleep(Duration::from_secs(3600));
     }
 }
 
-fn report(group: &str, name: &str, value: f64, unit: &str) {
+fn report(group: &str, name: &str, value: f32, unit: &str) {
     println!("flash;{group};{name};{value:.3};{unit}");
 }
 
@@ -100,14 +110,14 @@ fn latencies(partition: Partition) {
         for sector in 0..16 {
             let start = micros();
             sys::esp!(sys::esp_partition_erase_range(partition.0, sector * 4096, 4096)).expect("erase");
-            timings.push((micros() - start) as f64 / 1000.0);
+            timings.push((micros() - start) as f32 / 1000.0);
         }
         report_spread("latency", "erase_4k", &mut timings, "ms");
         timings.clear();
         for block in 1..9 {
             let start = micros();
             sys::esp!(sys::esp_partition_erase_range(partition.0, block * 65536, 65536)).expect("erase");
-            timings.push((micros() - start) as f64 / 1000.0);
+            timings.push((micros() - start) as f32 / 1000.0);
         }
         report_spread("latency", "erase_64k", &mut timings, "ms");
         timings.clear();
@@ -120,7 +130,7 @@ fn latencies(partition: Partition) {
                 256
             ))
             .expect("program");
-            timings.push((micros() - start) as f64);
+            timings.push((micros() - start) as f32);
         }
         report_spread("latency", "program_256b", &mut timings, "us");
         // sustained: 512 KB of erased flash in 4 KB programs
@@ -137,7 +147,7 @@ fn latencies(partition: Partition) {
         report(
             "throughput",
             "program_sustained",
-            512.0 * 1e6 / 1024.0 / (micros() - start) as f64,
+            512.0 * 1e6 / 1024.0 / (micros() - start) as f32,
             "MB/s",
         );
         let mut readback = vec![0u8; 65536];
@@ -151,19 +161,19 @@ fn latencies(partition: Partition) {
             ))
             .expect("read");
         }
-        report("throughput", "read", 1.0 * 1e6 / (micros() - start) as f64, "MB/s");
+        report("throughput", "read", 1.0 * 1e6 / (micros() - start) as f32, "MB/s");
         report(
             "integrity",
             "readback_matches",
-            readback.iter().take(4096).all(|byte| *byte == 0x5a) as u8 as f64,
+            readback.iter().take(4096).all(|byte| *byte == 0x5a) as u8 as f32,
             "bool",
         );
     }
 }
 
 /// Sort `values` and report min / p50 / max.
-fn report_spread(group: &str, name: &str, values: &mut [f64], unit: &str) {
-    values.sort_by(f64::total_cmp);
+fn report_spread(group: &str, name: &str, values: &mut [f32], unit: &str) {
+    values.sort_by(f32::total_cmp);
     report(group, &format!("{name}_min"), values[0], unit);
     report(group, &format!("{name}_p50"), values[values.len() / 2], unit);
     report(group, &format!("{name}_max"), values[values.len() - 1], unit);
@@ -271,17 +281,17 @@ fn stall(partition: Partition, writing: bool) {
         writer.join().unwrap();
     }
     lateness.sort_unstable();
-    let at = |rank: usize| lateness[(lateness.len() - 1) * rank / 1000] as f64;
+    let at = |rank: usize| lateness[(lateness.len() - 1) * rank / 1000] as f32;
     report("stall", &format!("{label}_lateness_p50"), at(500), "us");
     report("stall", &format!("{label}_lateness_p99"), at(990), "us");
     report("stall", &format!("{label}_lateness_p999"), at(999), "us");
     report("stall", &format!("{label}_lateness_max"), at(1000), "us");
     let missed = lateness.iter().filter(|value| **value as u64 >= PERIOD_MICROS).count();
-    report("stall", &format!("{label}_missed_ticks"), missed as f64, "ticks");
+    report("stall", &format!("{label}_missed_ticks"), missed as f32, "ticks");
     report(
         "stall",
         &format!("{label}_blocks_written"),
-        operations.load(Ordering::Relaxed) as f64,
+        operations.load(Ordering::Relaxed) as f32,
         "64KB",
     );
 }

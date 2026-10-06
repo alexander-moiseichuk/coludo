@@ -16,6 +16,7 @@ use std::time::Duration;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
+use firmware::thermal::Thermometer;
 
 unsafe extern "C" {
     /// EEMBC CoreMark's `main()`, renamed by components/coremark_entry.
@@ -24,9 +25,17 @@ unsafe extern "C" {
 
 fn main() {
     esp_idf_svc::sys::link_patches();
+    let thermometer = esp_idf_svc::hal::peripherals::Peripherals::take()
+        .ok()
+        .and_then(|peripherals| Thermometer::new(peripherals.temp_sensor).ok());
+    let die = |when: &str| {
+        let celsius = thermometer.as_ref().and_then(Thermometer::celsius).unwrap_or(f32::NAN);
+        println!("peak;thermal;die_{when};{celsius:.1};C");
+    };
     std::thread::sleep(Duration::from_millis(300));
+    die("start");
     let hertz = cycle_hertz();
-    report("meta", "cpu_clock", hertz as f64 / 1e6, "MHz");
+    report("meta", "cpu_clock", hertz as f32 / 1e6, "MHz");
     // SAFETY: CoreMark runs once, single-threaded, on this task; it only prints and returns.
     unsafe { coremark_main() };
     for (name, unit, kernel) in KERNELS {
@@ -35,13 +44,14 @@ fn main() {
         report("one_core", name, one, unit);
         report("two_cores", name, both, unit);
     }
+    die("end");
     println!("peak;done");
     loop {
         std::thread::sleep(Duration::from_secs(3600));
     }
 }
 
-fn report(group: &str, name: &str, value: f64, unit: &str) {
+fn report(group: &str, name: &str, value: f32, unit: &str) {
     println!("peak;{group};{name};{value:.1};{unit}");
 }
 
@@ -81,7 +91,7 @@ const KERNELS: &[(&str, &str, Kernel)] = &[
 ];
 
 /// Run `kernel` on each of `cores` at the same time (one pinned thread each): the summed rate in millions/s.
-fn run_on(cores: &[Core], hertz: u64, kernel: Kernel) -> f64 {
+fn run_on(cores: &[Core], hertz: u64, kernel: Kernel) -> f32 {
     let kernel = Arc::new(kernel);
     let handles: Vec<_> = cores
         .iter()
@@ -106,7 +116,7 @@ fn run_on(cores: &[Core], hertz: u64, kernel: Kernel) -> f64 {
     handles
         .into_iter()
         .map(|handle| handle.join().unwrap())
-        .map(|(operations, elapsed)| operations as f64 * hertz as f64 / elapsed as f64 / 1e6)
+        .map(|(operations, elapsed)| operations as f32 * hertz as f32 / elapsed as f32 / 1e6)
         .sum()
 }
 
@@ -180,7 +190,8 @@ fn f32_mul() -> u64 {
     ROUNDS * 8
 }
 
-/// Eight independent f64 chains of mul + add (software floating point): 2 FLOP each.
+/// Eight independent f64 chains of mul + add (software floating point): 2 FLOP each. Only here to price the rule
+/// "no f64 anywhere in the firmware".
 fn f64_fma() -> u64 {
     const ROUNDS: u64 = 20_000;
     let (multiplier, addend) = (black_box(0.999_999f64), black_box(1e-7f64));

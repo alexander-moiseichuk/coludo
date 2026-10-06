@@ -16,6 +16,7 @@ use std::time::Duration;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
+use firmware::thermal::Thermometer;
 
 /// [magic, 1 + index of the probe running]: survives a panic reset in RTC memory.
 #[unsafe(link_section = ".rtc_noinit")]
@@ -38,7 +39,15 @@ const PROBES: &[Probe] = &[
 
 fn main() {
     esp_idf_svc::sys::link_patches();
+    let thermometer = esp_idf_svc::hal::peripherals::Peripherals::take()
+        .ok()
+        .and_then(|peripherals| Thermometer::new(peripherals.temp_sensor).ok());
+    let die = |when: &str| {
+        let celsius = thermometer.as_ref().and_then(Thermometer::celsius).unwrap_or(f32::NAN);
+        println!("isa;thermal;die_{when};{celsius:.1};C");
+    };
     std::thread::sleep(Duration::from_millis(300));
+    die("start");
     identity();
     // SAFETY: the crumb is touched by this thread only.
     let resume = unsafe { if CRUMB[0] == MAGIC { CRUMB[1] as usize } else { 0 } };
@@ -52,7 +61,7 @@ fn main() {
         report(
             "extension",
             name,
-            correct as u8 as f64,
+            correct as u8 as f32,
             if correct { "supported" } else { "wrong-result" },
         );
     }
@@ -62,13 +71,14 @@ fn main() {
     atomics(hertz);
     locks(hertz);
     dsp(hertz);
+    die("end");
     println!("isa;done");
     loop {
         std::thread::sleep(Duration::from_secs(3600));
     }
 }
 
-fn report(group: &str, name: &str, value: f64, unit: &str) {
+fn report(group: &str, name: &str, value: f32, unit: &str) {
     println!("isa;{group};{name};{value:.3};{unit}");
 }
 
@@ -233,7 +243,7 @@ fn both_cores(body: impl Fn() + Send + Sync + 'static) -> u32 {
 /// (`compare_exchange` spin lock around a plain counter). The totals must come out exact.
 fn atomics(hertz: u64) {
     const COUNT: u32 = 200_000;
-    let nanoseconds = |cycles: u32, operations: u32| cycles as f64 * 1e9 / hertz as f64 / operations as f64;
+    let nanoseconds = |cycles: u32, operations: u32| cycles as f32 * 1e9 / hertz as f32 / operations as f32;
     for (capabilities, label) in [
         (sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_8BIT, "internal"),
         (sys::MALLOC_CAP_SPIRAM | sys::MALLOC_CAP_8BIT, "psram"),
@@ -249,7 +259,7 @@ fn atomics(hertz: u64) {
         report(
             "atomics",
             &format!("fetch_add_two_cores_{label}_exact"),
-            (total == 2 * COUNT) as u8 as f64,
+            (total == 2 * COUNT) as u8 as f32,
             "bool",
         );
         report(
@@ -279,7 +289,7 @@ fn atomics(hertz: u64) {
         report(
             "atomics",
             &format!("spinlock_two_cores_{label}_exact"),
-            (total == 2 * COUNT) as u8 as f64,
+            (total == 2 * COUNT) as u8 as f32,
             "bool",
         );
         report(
@@ -305,7 +315,7 @@ fn atomics(hertz: u64) {
 /// std Mutex (a FreeRTOS mutex with priority inheritance underneath): uncontended and contended.
 fn locks(hertz: u64) {
     const COUNT: u32 = 100_000;
-    let nanoseconds = |cycles: u32, operations: u32| cycles as f64 * 1e9 / hertz as f64 / operations as f64;
+    let nanoseconds = |cycles: u32, operations: u32| cycles as f32 * 1e9 / hertz as f32 / operations as f32;
     let mutex = Mutex::new(0u32);
     let start = cycles();
     for _ in 0..COUNT {
@@ -327,7 +337,7 @@ fn locks(hertz: u64) {
     report(
         "locks",
         "mutex_two_cores_exact",
-        (*shared.lock().unwrap() == 2 * COUNT) as u8 as f64,
+        (*shared.lock().unwrap() == 2 * COUNT) as u8 as f32,
         "bool",
     );
     report("locks", "mutex_two_cores", nanoseconds(elapsed, COUNT), "ns/op");
@@ -366,14 +376,14 @@ fn locks(hertz: u64) {
 }
 
 /// Best-of-5 cycles of `body`, in microseconds.
-fn time_micros(hertz: u64, mut body: impl FnMut()) -> f64 {
+fn time_micros(hertz: u64, mut body: impl FnMut()) -> f32 {
     let mut best = u32::MAX;
     for _ in 0..5 {
         let start = cycles();
         body();
         best = best.min(cycles().wrapping_sub(start));
     }
-    best as f64 * 1e6 / hertz as f64
+    best as f32 * 1e6 / hertz as f32
 }
 
 /// esp-dsp's P4 kernels (PIE SIMD + hardware loops, `_arp4`) against its portable C (`_ansi`) and plain Rust.
@@ -403,7 +413,7 @@ fn dsp(hertz: u64) {
         report(
             "dsp",
             &format!("{name}_agrees"),
-            ((result - expected).abs() < 1e-2) as u8 as f64,
+            ((result - expected).abs() < 1e-2) as u8 as f32,
             "bool",
         );
     }
@@ -436,14 +446,14 @@ fn dsp(hertz: u64) {
             report(
                 "dsp",
                 "dotprod_s16_ansi_vs_rust_q15",
-                (narrow as i64 - (wide >> 15)) as f64,
+                (narrow as i64 - (wide >> 15)) as f32,
                 "lsb",
             );
         } else {
             report(
                 "dsp",
                 &format!("{name}_agrees_with_ansi"),
-                ((narrow - reference).abs() <= 1) as u8 as f64,
+                ((narrow - reference).abs() <= 1) as u8 as f32,
                 "bool",
             );
         }
