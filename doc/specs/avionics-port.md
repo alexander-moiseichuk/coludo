@@ -462,7 +462,22 @@ for these parts.
   holds it from, and the console would be the only way back.
 - **Video by stage:** recording starts when the glider stands **vertical on the rod** (attitude-based, from
   M9; until then arm is the trigger) at 1920×1080@25, 8 Mbit/s, and stops at DONE (M11b). The console default
-  fps goes from 20 to 25 (`console.rs` `video`).
+  is 25 fps (GCL `video start`, done).
+  - **Segments (operator, 2026-10-06):** on the pad the recorder starts a new file every 5 minutes, bounding what
+    one damaged file can cost. Once ignition is detected the current file keeps running through the whole
+    flight: a file switch never happens in the air.
+  - **Image tuning for flight:** the taster's 2026-10-06 daylight clip was sharp but rotated 90° (the module sits
+    sideways), lavender-cast (no AWB: Espressif's esp_ipa does not run on rev v1.3) and overexposed in the
+    whites (no AE). Set fixed daylight white-balance gains and a fixed exposure in the ISP; fix the rotation in
+    the mount or with the PPA.
+- **Camera preview in CC (operator, 2026-10-06; the pad's killer feature):** check where the camera points
+  without touching the airframe.
+  - Board: once a second, the latest captured frame is scaled to 640×480 by the P4's PPA (which can also turn
+    the 90° rotation upright) and compressed by the hardware JPEG encoder, so the H.264 encoder takes no extra
+    load and the flight core is untouched. `GET /camera/preview.jpg` on the file server serves it. With no
+    recording running, the camera runs preview-only (capture on, H.264 off).
+  - CC: the hub proxies the image; the dashboard's board panel shows it, refreshed at 1 Hz.
+  - Gated to SETTING: the preview stops at BOOSTING (Wi-Fi is off from then on anyway).
 - **Pad sequence** (the operator's; the gates fit it): (1) assemble glider and booster, plug the battery,
   close the cover; (2) CC check, time sync and probe; (3) if there is time, wait 5 min for GNSS; (4) place on
   the rod; (5) tie to the ignition system; (6) launch.
