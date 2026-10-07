@@ -14,7 +14,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
@@ -76,7 +76,8 @@ static DROPPED: AtomicU32 = AtomicU32::new(0);
 struct Boot {
     boot_id: u32,
     session: String,
-    config_id: String,
+    /// The config id: the saved config's at [`start`], the post-layout one from [`name_config`] on.
+    config_id: Mutex<String>,
 }
 
 /// An oops on its way to the flash.
@@ -145,7 +146,8 @@ fn field(bytes: &[core::ffi::c_char]) -> String {
 /// Args:
 /// * `boot_id` - this boot's id.
 /// * `session` - its session label.
-/// * `config_id` - the board config's id it runs.
+/// * `config_id` - the saved board config's id: the layout has not rewritten it yet ([`name_config`] names the
+///   rewritten one).
 pub fn start(boot_id: u32, session: &str, config_id: &str) {
     let opened = Partition::by_label(LABEL)
         .ok_or_else(|| "the partition table has no `panic` partition".to_string())
@@ -158,16 +160,32 @@ pub fn start(boot_id: u32, session: &str, config_id: &str) {
         // SAFETY: the previous boot's capture is in the log (or never can be): forget it
         unsafe { sys::panic_capture_clear() };
     }
+    name_context(boot_id, session, config_id);
+    let _ = BOOT.set(Boot {
+        boot_id,
+        session: session.to_string(),
+        config_id: Mutex::new(config_id.to_string()),
+    });
+    install_hook();
+}
+
+/// Names the config this boot runs once the layout has rewritten it (plan B main.py:120-124: the post-layout id),
+/// for this boot's capture and its oopses from here on. [`start`] named the saved config's id, since a panic in the
+/// layout itself is that config's.
+pub fn name_config(config_id: &str) {
+    let Some(boot) = BOOT.get() else {
+        return;
+    };
+    name_context(boot.boot_id, &boot.session, config_id);
+    *boot.config_id.lock().unwrap_or_else(PoisonError::into_inner) = config_id.to_string();
+}
+
+/// Hands this boot's names to panic_capture, which copies them into a capture when one begins.
+fn name_context(boot_id: u32, session: &str, config_id: &str) {
     let names = |text: &str| std::ffi::CString::new(text.replace('\0', "")).unwrap_or_default();
     let (session_name, firmware, config) = (names(session), names(board::FIRMWARE_VERSION), names(config_id));
     // SAFETY: NUL-terminated strings; panic_capture copies them.
     unsafe { sys::panic_capture_context(boot_id, session_name.as_ptr(), firmware.as_ptr(), config.as_ptr()) };
-    let _ = BOOT.set(Boot {
-        boot_id,
-        session: session.to_string(),
-        config_id: config_id.to_string(),
-    });
-    install_hook();
 }
 
 /// Writes the record of the last boot's fatal panic: when it reset in one of [`FATAL_RESETS`], or left a capture. Its
@@ -323,7 +341,7 @@ fn write_oopses(oopses: Receiver<Oops>) {
             session: boot.session.clone(),
             uptime_ms: oops.uptime_ms,
             firmware: board::FIRMWARE_VERSION.to_string(),
-            config: boot.config_id.clone(),
+            config: boot.config_id.lock().unwrap_or_else(PoisonError::into_inner).clone(),
             recorded: boot.boot_id,
             intact: true,
             ..Tags::default()

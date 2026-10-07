@@ -71,7 +71,7 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `board.rs`, `thermal.rs`, `sd.rs`, `video.rs`, `files.rs`, `diagnostics.rs`, `console.rs`, `link.rs` | **Exist.** `board.rs` loses its hard-coded `taster` (M2). `files.rs` gains `GET /ring` and `GET /ring/image` (M3) and an answer for locked files (M4). |
 | `commands/{mod,identity,control,inspection,config,diagnostics,streaming,system}.rs` | Replaces `commands.rs`. One table and one executor thread (§4.4). |
 | `config.rs` | Config store on the `cfg` NVS partition. Boot load, then `Box::leak` into a `&'static` resolved document, typed view and cached `config_id`. |
-| `controller.rs` | Sequential bring-up: `DeviceEntry` table, setup retries, the alternatives pass, the static databoard topology. |
+| `devices.rs`, `sensors.rs` | Sequential bring-up: `DeviceEntry` table, setup retries, the alternatives pass, the static databoard topology; the parts over the drivers crate. |
 | `inspector.rs` | The frozen `&'static [&'static dyn Inspectable]`, sorted by name. |
 | `recorder.rs` | The ring bring-up (scan, block table, positions, session-start record) and the three ring tasks: `ring_writer`, `ring_saver`, `ring_eraser` (§3). It glues `crates/recorder` and `crates/flash_ring` to `esp_partition_*` and FatFs. |
 | `logging.rs`, `components/log_hook` | The `log` crate bridge and IDF's `esp_log_set_vprintf` hook, into recorder.log. |
@@ -436,7 +436,7 @@ to get a record.
 (`assemble_capture`, `flight_svg`, `flight_report`, `flight_kpi`, `recorder_flight`). The flash empties itself
 to the SD in the background, and a board without a card keeps the newest ~26 min.
 
-### M5. Buses, layout, databoard, device registry (2 days)
+### M5. Buses, layout, databoard, device registry (2 days; DONE 2026-10-07 on the taster and TMS-7F)
 
 **Scope**
 - **`I2cPort`** for ports 0 (SDA7/SCL8) and 1 (SDA31/SCL30). Each implements `embedded_hal::i2c::I2c` over
@@ -481,9 +481,12 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   excluded; each walk is an oops record (`cause=i2c-general-call`, §4.8). The camera (0x36) and the ES8311 (0x18)
   are no registry members.
 - **SPI2:** a thin `spi_master` wrapper, DMA off, `intr_flags` 0, polling, one full-duplex chip-select frame of at
-  most 64 B, `isr_cpu_id` core 1, one handle per chip select, 16 framed reads discarded on first use. Its owner is
-  M6's control thread; in M5 the SPI parts are set up on main and held.
-- **The registry (`crates/controller`, plan B's controller.py rules; the firmware's `controller.rs`):**
+  most 64 B, `isr_cpu_id` core 1, one handle per chip select, 16 framed reads of register 0 discarded on first use
+  (plan B counts nothing, and register 0 reads 0x00 on the LSM6DSO32 anyway). Its owner is M6's control thread; in
+  M5 the SPI parts are set up on main and held. The taster carries an LSM6DSO32 too: WHO_AM_I 0x6C on CS 50
+  (2026-10-07). No SPI code needs IRAM (§4.7): linking `spi_master` costs 1.2 KB of it.
+- **The registry (`crates/controller`, plan B's controller.py rules; the firmware's `devices.rs`, with the parts in
+  `sensors.rs`: a firmware module named `controller` would be ambiguous with the crate):**
   `directory()` (enabled, named entries; parts layout disabled are absent), Up/Failed/Unfitted/Crashed, retries
   200 ms apart with diagnose on the last, the alternatives pass with its four rules (XSHUT included), Crashed only
   for errors that escape the per-part glue (M6+). Entries with no M5 driver: native ones (recorder, cc, wifi,
@@ -511,10 +514,17 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
     float, losing the bus;
   - an int `addr` outside 0..=0x7f reads as no address, as an absent or null one does (the entry's raw fields
     still tell the three apart). Plan B keeps it and the driver fails at its first transfer.
-- **Open (operator):** plan B's `bustune` counts every config entry on the bus, disabled ones included, as down, so
-  the CC sweep never finds a ceiling; port it faithfully, or skip entries that are not enabled? And if the OV5647
-  honours a general call (measured in M5), what an ICP general call on port 0 (v0.1 boards only) should do to the
-  camera.
+- **bustune (operator, 2026-10-07):** the verdicts are the parts that came up on that bus, probed after the retune.
+  Plan B counts every config entry on the bus as down, disabled ones included (and, in the port, the parts whose
+  drivers are not ported yet), so its sweep never found a ceiling on a bus with one. A wedge cure in the middle of a
+  rung restores the configured speed and is logged as a warning (plan B did the same silently). `bustune spi` waits
+  for SPI2's owner, M6's control thread (`err unsupported`).
+- **Who honours the general call** (measured 2026-10-07 on the taster, `i2c general-call rearm=no`, then a probe):
+  the SDP810 (it NAKs until re-armed) and the INA226 (CALIB cleared: 0 mA and 0 mW while the die id still reads).
+  The BMI323, the BMM350, the ICP-10111 and the VL53L1X carry on unchanged. The BMP581 reads the same 101032 Pa before
+  and after, which is inconclusive at that resolution. The OV5647 ignores it: colour bars streamed through both
+  ports' calls with 0 missed frames. So the open question of what an ICP general call does to the camera does not
+  arise. With `rearm=yes` every part probes ok, and each call is an `i2c-general-call` oops record.
 
 **Proof**
 - Golden `layout.json`: the `_TMS7C`, `_TASTER` (derived, not recorded) and `_LEGACY` scans give the
@@ -523,11 +533,53 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   hashes to `92d537918c7c`). tms7f by scan on v1.1 with no SEN0253 gives `d18751e70f6c`.
 - Host databoard tests: rank handover, born stale, window equals the tightest timeout of the lowest-rank tier,
   `fresh_below`.
-- On the taster: the scan set equals `_TASTER` minus `0x29` (the VL53L1X, now on 7F) plus `0x36` (OV5647
-  SCCB, while the camera is powered): i2c:0 {0x15, 0x18, 0x36, 0x40, 0x47, 0x69} and i2c:1 {0x25, 0x63}.
-  `detect` gives `v1.1`. A
-  `bustune taster i2c 0` ladder restores the frequency afterwards. A forced general call on each port is
-  followed by a re-init of every device registered there, and each reads valid data afterwards.
+- On the taster: the scan set the golden `m5_detect_taster` case records is `_TASTER` minus `0x29` plus `0x36`
+  (OV5647 SCCB, while the camera is powered): i2c:0 {0x15, 0x18, 0x36, 0x40, 0x47, 0x69} and i2c:1 {0x25, 0x63}.
+  `detect` gives `v1.1`. The taster has since been fitted with a SEN0253 and a VL53L1X. On 2026-10-07 its boot scan
+  answered i2c:0 {0x15, 0x18, 0x28, 0x36, 0x40, 0x47, 0x69, 0x76} and i2c:1 {0x25, 0x29, 0x63}. Plan B's own
+  `layout.resolve`, over the taster's saved config and that scan, logs the board's two lines word for word and
+  hashes to the board's post-layout id (8090b3ddeea5; saved 3aa09342698a). That is the comparison the golden case
+  stands for, now that the hardware has moved. A declared `v0.1` logs `(declared) already matched` and runs no scan,
+  while `detect` still answers `detected` v1.1.
+- Ghosts and strangers in the scans (2026-10-07). The taster's boot scan once saw 0x2b on i2c:1, and 7F's once saw
+  0x15 there. Each appeared only in the first scan after the bus was created; rescans never repeated them, and a
+  read of 7F's 0x15 NAKs. 7F's i2c:0 also answers 0x0c on every scan. It reads 0x00 at registers 0x00..0x02, so it
+  is no AKM magnetometer, and the SEN0697 carries nothing there (BMI323, BMM350 and BMP581 only, per DFRobot's wiki
+  and schematic). The likeliest source is a lens-motor (VCM) driver on 7F's Arducam module: it arrived with the
+  camera, and 0x0c is the VCM address. The test is a scan with the CSI ribbon unplugged. None of these addresses is
+  a layout vote or the anchor.
+- The bring-up, on the taster and on TMS-7F (2026-10-07):
+  - every fitted part comes up in config order: the LSM6DSO32 (SPI2, CS 50), the ICP-10111, BMI323, BMM350, BMP581,
+    SDP810, VL53L1X and INA226. Bring-up takes 1056 ms on the taster and 761 ms on 7F;
+  - the taster's VL53L4CX entry fails its three attempts 200 ms apart, then is reported as plan B words it,
+    `vl53l4cx not fitted -- vl53l1x (laser_agl_l1x) answers i2c:1 0x29`. That is the alternatives pass on hardware;
+  - the parts not ported yet fail with `no driver/activity -- not ported yet`, so `arm` refuses on them;
+  - `health.tasks`, `verify` (devices, problems, alternatives), `inspect controller` and `probe all` (its two maps)
+    answer from the table;
+  - the databoard topology is logged one quantity a line, its sources in rank order;
+  - internal RAM 8 s after boot (before Wi-Fi joins) fell 5.2 KB with the bring-up (112.0 → 106.8 KB). The review
+    fixes then put the topology in internal RAM on purpose (+~4.2 KB) and trimmed the owner stacks (−2 KB):
+    104.4 KB. The bring-up's peak on main's stack is ~3.6 KB.
+- Stage 7 (close):
+  - the owner stacks are trimmed to 5 KB, against a measured peak of 3.4 KB (probe all, the bustune ladders, and
+    general calls with every part re-armed);
+  - the review fixes:
+    - setup-time general calls make one oops per entry, and none when nothing was re-armed;
+    - a ranger's XSHUT driver is never released;
+    - a part on an undefined bus fails with no transport;
+    - `probe all` lists every entry that came up;
+    - each Parameter is boxed, which keeps it internal.
+  - TMS-7F soaked ~21 minutes of FHD@25 colour bars plus the flight-rate ring load: 31,664 frames, 2 missed, 0 ring
+    loss, internal low-water flat at 78.2–78.4 KB, no panic records.
+  - M5's price in internal RAM, the stage 2 build against the close on the taster, measured 60 s after boot with
+    Wi-Fi up: 113.5 → 104.0 KB free (DMA-capable 85.8 → 76.3 KB). Wi-Fi's join costs about 1 KB of it either
+    way: 114.4 → 104.8 KB at 8 s.
+- `bustune` ladders on the taster: i2c:0 at 100 kHz, 1 MHz, then 400 kHz, and i2c:1 at 400 kHz, 1 MHz, then
+  100 kHz, all `all_ok`. Afterwards `i2c touch` shows each port at its post-layout speed (400000 and 100000).
+- A forced general call on each port, measured part by part (the M5 decisions above), with every part probing ok
+  after the re-arm.
+- `tools/cc_contract.py taster --serial /dev/ttyACM0 --milestone M5 --allow-active`: 0 violations, diagnostics
+  8 of 8.
 
 **Operator gains.** The detect-layout and bus-tune cards work. The dashboard layout column is real.
 
@@ -1791,9 +1843,11 @@ untraced: no console was attached.
 - the flight threads (core 1) keep internal stacks and allocate internal. What the CC executor builds for them (the
   activated config, the mission) lives in PSRAM: copy what the flight loop reads into its own memory when M6/M7 hand
   it over;
-- M5: the LSM6DSO32's SPI bus keeps esp-idf-hal's empty `intr_flags`, since its ISR runs the Rust `post_cb` from
-  PSRAM. Budget ~3.6 KB of IRAM for the SPI master and GDMA ISR code when `spi_master` links. Install the GNSS UART
-  driver from a core-0 thread.
+- M5: SPI2 is polled (`buses/spi.rs`: no interrupt, no `post_cb`, `intr_flags` 0), so no SPI code needs IRAM.
+  `SPI_MASTER_ISR_IN_IRAM` is off, and so are the defaults that would select the GDMA IRAM options for parts
+  never used: the SPI slave, PARLIO and esp_cam_sensor's SPI camera. With them on, linking `spi_master` cost
+  10.9 KB of IRAM. With them off it costs 1.2 KB (the bus lock), measured at M5 stage 4: `.iram0.text` 85.5 →
+  86.7 KB. Install the GNSS UART driver from a core-0 thread.
 
 **Not done, and why:**
 - `SPI_FLASH_AUTO_SUSPEND`, and every knob only it unlocks (esp_timer, log, libc misc, FreeRTOS ISR functions in
@@ -1801,7 +1855,8 @@ untraced: no console was attached.
 - `FREERTOS_PLACE_FUNCTIONS_INTO_FLASH` (~11.6 KB): on the P4 it moves part of every interrupt-exit context switch
   (`pxPortGetCoprocArea`, through `hwlp_restore_if_used`) into PSRAM, on both cores. It also gives up
   `SPI_MASTER_IN_IRAM`. Revisit only against M5's measured control step and I2C transaction p99.
-- `HEAP_PLACE_FUNCTION_INTO_FLASH` (8.6 KB): it forces the SPI master ISR out of IRAM.
+- `HEAP_PLACE_FUNCTION_INTO_FLASH` (8.6 KB): malloc and free run on every hot path, Wi-Fi's and lwIP's included.
+  It was first kept for the SPI master ISR, which SPI2's polling no longer needs; it has not been evaluated since.
 - Fewer capture buffers: they are in PSRAM already, so nothing internal is saved.
 
 **Remaining levers**, in order of yield, each measured the same way:

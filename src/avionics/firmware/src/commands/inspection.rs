@@ -4,6 +4,8 @@
 //! inspector.Inspector). The registry is fixed: the controller (the flight state), the mission, and the recorder
 //! (with the flash ring and the ring_saver) when it opened; device tasks join as their drivers are ported.
 
+use std::collections::BTreeMap;
+
 use cc_protocol::Message;
 use serde_json::{Value, json};
 
@@ -38,14 +40,17 @@ pub fn inspect(message: &Message, context: &mut Context) -> Reply {
         .first()
         .ok_or_else(|| Fault::new(Code::BadArguments, "inspect <object>"))?;
     match name.as_str() {
-        "controller" => super::ok_json(&json!({
-            "stage": STATUS.stage().name(),
-            "armed": STATUS.armed(),
-            "manual": STATUS.manual(),
-            "tasks": [],
-            "failures": {},
-            "alternatives": {},
-        })),
+        "controller" => {
+            let inspection = context.devices.inspect();
+            super::ok_json(&json!({
+                "stage": STATUS.stage().name(),
+                "armed": STATUS.armed(),
+                "manual": STATUS.manual(),
+                "tasks": inspection.tasks,
+                "failures": inspection.failures.into_iter().collect::<BTreeMap<_, _>>(),
+                "alternatives": inspection.alternatives.into_iter().collect::<BTreeMap<_, _>>(),
+            }))
+        }
         "mission" => super::ok_json(&context.mission.inspect(None, &clock::text(), clock::epoch())),
         RECORDER => super::ok_json(&crate::recorder::inspect_report().ok_or_else(|| no_object(RECORDER))?),
         other => Err(no_object(other)),

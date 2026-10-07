@@ -43,10 +43,17 @@ pub struct Context {
     pub store: crate::config::Store,
     /// The per-launch mission (src/glider mission.Mission), owned here until a supervisor thread takes it.
     pub mission: Mission,
-    /// The board config this boot runs, how it was chosen, and its validation errors (plan B config.load).
-    pub config: board_config::Loaded,
-    /// The running config's id, hashed once at boot (it is immutable for the run).
+    /// The board config this boot runs, as the layout rewrote it, how it was chosen, and its validation errors (plan
+    /// B config.load, then layout.resolve); frozen for the run.
+    pub config: &'static board_config::Loaded,
+    /// The running config's id, hashed once at boot after the layout rewrote the document (it is immutable for the
+    /// run).
     pub config_id: String,
+    /// The revision this boot runs as (layout::Resolved::label): health's `layout`, detect's `applied`.
+    pub layout: String,
+    /// Every directory entry and how its bring-up ended (crate::devices): health's tasks, verify's devices, the
+    /// failures `arm` refuses with.
+    pub devices: &'static controller::Table<'static>,
 }
 
 /// The error codes on the wire (cc-protocol.md "Errors"), as plan B answers them.

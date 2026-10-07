@@ -68,10 +68,20 @@ CONFIG_LIBC_LOCKS_PLACE_IN_IRAM=n
 CONFIG_WIFI_RMT_SLP_IRAM_OPT=n
 CONFIG_PM_SLEEP_FUNC_IN_IRAM=n
 CONFIG_PM_SLP_IRAM_OPT=n
+# - The SPI master: SPI2 is polled (buses/spi.rs), so no SPI interrupt ever runs, and the polled path runs in task
+#   context with the cache on. With the option on, the driver's whole transaction path and the GDMA helpers it
+#   references went to IRAM: +10.9 KB at M5 stage 4, measured. No SPI slave is used, and its default would keep
+#   selecting the same GDMA options (as would esp_cam_sensor's SPI camera, off below, and PARLIO, off here). The
+#   camera's DMA is DW-GDMA, under its own options (CAM_CTLR_MIPI_CSI_ISR_*).
+CONFIG_SPI_MASTER_ISR_IN_IRAM=n
+CONFIG_SPI_SLAVE_ISR_IN_IRAM=n
+# - The parallel IO driver, unused: its ISR handlers' IRAM default selects the GDMA control functions into IRAM too.
+CONFIG_PARLIO_TX_ISR_HANDLER_IN_IRAM=n
+CONFIG_PARLIO_RX_ISR_HANDLER_IN_IRAM=n
 # NOT here, each for its reason (avionics-port.md §4.7): SPI_FLASH_AUTO_SUSPEND (this GD part, 0xC84019, is not on
 # IDF's suspend list: esp_flash_init aborts every boot), FREERTOS_PLACE_FUNCTIONS_INTO_FLASH (it moves part of every
-# interrupt-exit context switch into PSRAM, on both cores), HEAP_PLACE_FUNCTION_INTO_FLASH (forces the SPI master ISR
-# out of IRAM, the IMU's path from M5).
+# interrupt-exit context switch into PSRAM, on both cores), HEAP_PLACE_FUNCTION_INTO_FLASH (malloc and free run on
+# every hot path, Wi-Fi's and lwIP's included; not evaluated).
 
 # FreeRTOS: a 1 ms tick so sleeps and timeouts resolve at 1 ms, not 10
 CONFIG_FREERTOS_HZ=1000
@@ -186,6 +196,9 @@ CONFIG_ESP_VIDEO_DISABLE_ISP_ERROR_INTERRUPT=y
 # CONFIG_ESP_VIDEO_ENABLE_HW_JPEG_ENC_VIDEO_DEVICE is not set
 # CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE is not set
 # CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE is not set
+# esp_cam_sensor's SPI-camera controller (the OV5647 is MIPI-CSI): off, and with it its cache-safe ISR option, which
+# would select SPI_SLAVE_ISR_IN_IRAM and through it the AHB/AXI GDMA IRAM options (~1.2 KB of IRAM with SPI2 linked)
+# CONFIG_CAM_CTRL_SPI_ENABLE is not set
 
 # Keep the CSI frame-done interrupt alive while flash is erased/programmed (telemetry ring).
 # CONFIG_ISP_ISR_IRAM_SAFE=y does NOT compile on v5.5.5 (isp_core.c etc.: esp_ptr_in_iram undeclared,

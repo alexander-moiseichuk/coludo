@@ -210,8 +210,6 @@ struct Recording {
     boot_id: Option<u32>,
     /// This boot's file prefix, which every block header carries.
     session: Session,
-    /// The running config's id, for the session-start record.
-    config_id: String,
 }
 
 /// The recorder once [`open`] built it.
@@ -313,11 +311,13 @@ pub fn session_prefix(document: &Value, boot_id: Option<i32>) -> String {
 ///   `recorder.session` (only to log a label that was ignored) and the board id.
 /// * `boot_id` - this boot's NVS count; None when uncounted.
 /// * `session` - this boot's file prefix ([`session_prefix`]).
-/// * `config_id` - the running config's id, for session.csv and the session-start record.
+///
+/// The config id comes later, with [`start`]: the layout rewrites the config after this, and the id is the
+/// rewritten config's (plan B main.py:120-124).
 ///
 /// Errors: PSRAM would not hold a ring, the prefix is not a session label, the registry refused a
 /// stream, or the recorder opened before. The board runs on without recording then.
-pub fn open(document: &Value, boot_id: Option<i32>, session: &str, config_id: &str) -> anyhow::Result<()> {
+pub fn open(document: &Value, boot_id: Option<i32>, session: &str) -> anyhow::Result<()> {
     let session = Session::new(session).ok_or_else(|| anyhow::anyhow!("{session:?} is not a session label"))?;
     let mut registry = Registry::new();
     let health = registry
@@ -338,7 +338,6 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, config_id: &s
         session,
         board: board_config::board_id(document),
         firmware: board::FIRMWARE_VERSION.into(),
-        config_id: config_id.into(),
     };
     // the crumb that would start the writer in flight comes with the warm start (M8): every boot starts on the pad
     let flight = false;
@@ -356,7 +355,6 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, config_id: &s
         health,
         boot_id,
         session,
-        config_id: config_id.into(),
     };
     RECORDING
         .set(recording)
@@ -389,21 +387,25 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, config_id: &s
 /// * `settings` - the `cfg` partition: the ring positions and the session-start record live there.
 /// * `card` - the mounted microSD card; None without one. Its volume serial tells whether the previous boot's saver
 ///   position is this card's (see the module notes).
+/// * `config_id` - the running config's id, the post-layout one: bound into the session.csv rows and written into
+///   the session-start record.
 ///
 /// Errors: the recorder did not open, or the thread would not spawn.
-pub fn start(settings: EspCustomNvsPartition, card: Option<Card>) -> anyhow::Result<()> {
+pub fn start(settings: EspCustomNvsPartition, card: Option<Card>, config_id: &str) -> anyhow::Result<()> {
     let recording = RECORDING
         .get()
         .ok_or_else(|| anyhow::anyhow!("the recorder did not open"))?;
+    recording.recorder.bind_config_id(config_id);
+    let config_id = config_id.to_string();
     spawn(c"ring_writer", WRITER_STACK, BRING_UP_PRIORITY, move || {
-        write(recording, settings, card)
+        write(recording, settings, card, &config_id)
     })
 }
 
 /// The ring_writer thread: the bring-up routine, then [`Writer::step`] on every ~10 ms tick or durable record's
 /// wake, forever. A ring that cannot come up (no `log` partition, a scan that keeps failing) parks the thread with a
 /// log line: the records then stay in PSRAM until their rings fill, and drop counted.
-fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: Option<Card>) {
+fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: Option<Card>, config_id: &str) {
     if let Some(current) = task::current() {
         WRITER_TASK.store(current, Ordering::Release);
     }
@@ -469,7 +471,7 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
     let record = json!({
         "boot": recording.boot_id,
         "session": recording.session.as_str(),
-        "config_id": recording.config_id,
+        "config_id": config_id,
         "reset_cause": board::reset_reason(),
         "card": card.map(Card::name),
         "writer": [first.block_sequence, first.offset],

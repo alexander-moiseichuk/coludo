@@ -2,16 +2,19 @@
 //!
 //! Avionics bring-up (doc/specs/avionics-port.md "Bring-up order"): start the clock, count the boot and load the
 //! board config, which name this boot's records; open the recorder before anything else logs, so every later line is
-//! kept; mount the card (one FAT volume, or two: the recordings and the videos) and start the ring tasks (the writer,
-//! the eraser, and the saver that copies the flash to the card); then the board, the supervisor, the mission, the CC
-//! executor and the UART console, and finally join Wi-Fi through the C6 and serve the CC hub forever. A panic
-//! anywhere prints its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
+//! kept; mount the card (one FAT volume, or two: the recordings and the videos); create the I2C ports and decide the
+//! layout by their scan, which rewrites the config and so names its id; start the ring tasks (the writer, the eraser,
+//! and the saver that copies the flash to the card); then the board, the devices in config order on the lent ports
+//! (each port then goes back to its owner with the parts that came up), the supervisor, the mission, the CC executor
+//! and the UART console, and finally join Wi-Fi through the C6 and serve the CC hub forever. A panic anywhere prints
+//! its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
 
 mod board;
 mod clock;
 mod commands;
 mod config;
 mod console;
+mod devices;
 mod diagnostics;
 mod files;
 mod link;
@@ -19,6 +22,7 @@ mod logging;
 mod owner;
 mod panics_logger;
 mod recorder;
+mod sensors;
 mod status;
 mod supervisor;
 
@@ -42,19 +46,20 @@ fn main() -> anyhow::Result<()> {
     let boot_id = board::count_boot(partition.clone())?;
     let settings = config::partition()?;
     let store = config::Store::open(settings.clone())?;
-    let loaded = board_config::load(store.board().as_deref(), config::defaults());
-    let config_id = board_config::config_id(&loaded.document);
+    let mut loaded = board_config::load(store.board().as_deref(), config::defaults());
+    // the saved config's id: what `set-config board` answered for it. The boot runs under the post-layout one below
+    let saved_config_id = board_config::config_id(&loaded.document);
     let session = recorder::session_prefix(&loaded.document, boot_id);
     // storage first: from here on every log line and row is kept, queued in PSRAM until the ring_writer runs
-    if let Err(error) = recorder::open(&loaded.document, boot_id, &session, &config_id) {
+    if let Err(error) = recorder::open(&loaded.document, boot_id, &session) {
         log::error!("Recorder :: not recording this boot: {error}");
     }
-    log::info!("config :: {config_id} {}", loaded.source);
+    log::info!("config :: {saved_config_id} {}", loaded.source);
     for error in &loaded.errors {
         log::warn!("config :: {error}");
     }
     // the last boot's panic into the panic log, before anything here can panic again; then this boot's capture
-    panics_logger::start(boot_id.unwrap_or(0) as u32, &session, &config_id);
+    panics_logger::start(boot_id.unwrap_or(0) as u32, &session, &saved_config_id);
     let thermometer = Thermometer::new(peripherals.temp_sensor)
         .inspect_err(|error| log::warn!("thermometer :: {error}"))
         .ok();
@@ -87,20 +92,60 @@ fn main() -> anyhow::Result<()> {
     {
         log::warn!("video :: encoder not reserved, `video start` will try again: {error}");
     }
+    // the oops thread before the bring-up, which records a general call as an oops (its control block is internal,
+    // so after the encoder's reservation)
+    if let Err(error) = panics_logger::start_oops() {
+        log::error!("panic :: the oops thread did not start, oopses are dropped: {error}");
+    }
     // the I2C ports, each created by its owner thread on core 1 and lent here; port 0 always (the camera's SCCB is
-    // wired to it), port 1 when the config defines it. Back to their owners at once until layout and setup use them
+    // wired to it), port 1 when the config defines it
+    let mut lent = Vec::new();
     for id in 0..2u8 {
-        let Some((sda, scl, clock_hz)) = i2c_pins(&loaded.document, id).or((id == 0).then_some((7, 8, 400_000))) else {
+        let Some(bus) = board_config::i2c_bus(&loaded.document, id).or((id == 0).then_some(PORT0_STOCK)) else {
             continue;
         };
-        match owner::spawn(id, sda, scl, clock_hz).and_then(|(parked, port)| owner::start(parked, port)) {
-            Ok(()) => {}
+        match owner::spawn(id, bus.sda, bus.scl, bus.clock_hz) {
+            Ok(loan) => lent.push(loan),
             Err(error) => log::error!("i2c:{id} :: no bus: {error}"),
         }
     }
+    // which board this is, by the scan of the lent ports, before anything reads the config for its devices (plan B
+    // main.py:91-104): the config is rewritten in place, and from here on it is the one this boot runs
+    // a bus spec the view cannot read (a pin past 255) votes nothing, as plan B's Pin() raised on it, even though
+    // port 0 runs on the stock pins then
+    let readable = [0, 1].map(|bus| board_config::i2c_bus(&loaded.document, bus).is_some());
+    let resolved = layout::resolve(&mut loaded.document, |bus, _| {
+        let Some((_, port)) = lent
+            .iter_mut()
+            .find(|(_, port)| port.id() == bus && readable[usize::from(bus)])
+        else {
+            return Err(());
+        };
+        port.scan()
+            .map_err(|error| log::warn!("layout :: i2c:{bus} scan failed ({error}): no votes from this bus"))
+    });
+    let undecided = matches!(resolved, layout::Resolved::Undecided { .. });
+    for line in resolved.log_lines() {
+        if undecided {
+            log::warn!("{line}");
+        } else {
+            log::info!("{line}");
+        }
+    }
+    // the ports at the rewritten config's clocks
+    for (_, port) in &mut lent {
+        let id = port.id();
+        let clock_hz = board_config::i2c_bus(&loaded.document, id).map_or(PORT0_STOCK.clock_hz, |bus| bus.clock_hz);
+        if let Err(error) = port.configure(clock_hz) {
+            log::warn!("i2c:{id} :: not at the config's {clock_hz} Hz: {error}");
+        }
+    }
+    // the id this boot runs under: the rewritten config's (plan B main.py:120-124), in its records from here on
+    let config_id = board_config::config_id(&loaded.document);
+    panics_logger::name_config(&config_id);
     // the ring_writer scans the `log` partition in its own thread, then starts the ring_eraser and, with a card, the
     // ring_saver: all three after the encoder's reservation. Boot goes on, and the producers queue meanwhile
-    if let Err(error) = recorder::start(settings.clone(), card) {
+    if let Err(error) = recorder::start(settings.clone(), card, &config_id) {
         log::error!("Recorder :: the ring_writer did not start: {error}");
     }
     let board = Arc::new(board::Board::new(
@@ -110,9 +155,11 @@ fn main() -> anyhow::Result<()> {
         thermometer,
         sd_mounted,
     ));
-    // provenance (plan B main): the build and the config this capture comes from, stamped into the capture itself
+    // provenance (plan B main): the build and the config this capture comes from, stamped into the capture itself;
+    // the saved config's id last, the one `set-config board` answered
     log::info!(
-        "main :: boot: board {} | firmware {} | config {config_id} {} | reset_cause {} | boot {} | session {}",
+        "main :: boot: board {} | firmware {} | config {config_id} {} | reset_cause {} | boot {} | session {} | \
+         saved_config {saved_config_id}",
         board.id,
         board::FIRMWARE_VERSION,
         loaded.source,
@@ -122,6 +169,22 @@ fn main() -> anyhow::Result<()> {
             .map_or_else(|| "None".to_string(), |boot_id| boot_id.to_string()),
         board.session,
     );
+    // the config is frozen for the run from here; the devices come up in its order on the lent ports, with nothing
+    // else running (plan B's Controller.setup), and each port goes back to its owner with the parts that came up
+    let loaded: &'static board_config::Loaded = Box::leak(Box::new(loaded));
+    let devices::Devices {
+        table,
+        topology: _topology,
+        mut members,
+        spi: _spi,
+        spi_bus: _spi_bus,
+    } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
+    for (parked, port) in lent {
+        let id = port.id();
+        if let Err(error) = owner::start(parked, port, std::mem::take(&mut members[usize::from(id)])) {
+            log::error!("i2c:{id} :: {error}");
+        }
+    }
     if let Err(error) = supervisor::start(board.clone()) {
         log::error!("supervisor :: {error}");
     }
@@ -134,9 +197,6 @@ fn main() -> anyhow::Result<()> {
     firmware::gcl::set_cc_names(commands::names());
     register_system_commands();
     owner::register_commands();
-    if let Err(error) = panics_logger::start_oops() {
-        log::error!("panic :: the oops thread did not start, oopses are dropped: {error}");
-    }
     panics_logger::register_commands();
     diagnostics::register_commands();
     credentials.register_commands();
@@ -153,6 +213,8 @@ fn main() -> anyhow::Result<()> {
         mission,
         config: loaded,
         config_id,
+        layout: resolved.label(),
+        devices: table,
     })?;
     // the console drains the UART before taking it over, so the lines above survive
     console::start(
@@ -165,21 +227,14 @@ fn main() -> anyhow::Result<()> {
     link::run(peripherals.modem, event_loop, partition, wifi, credentials, &executor)
 }
 
-/// Port `id`'s pins and speed from the board config's `buses.i2c.<id>` (`sda`, `scl`, `freq` default 400 kHz, plan B
-/// i2cbus.py:91-96); None when the config does not define it.
-fn i2c_pins(document: &serde_json::Value, id: u8) -> Option<(u8, u8, u32)> {
-    let bus = document.get("buses")?.get("i2c")?.get(id.to_string())?;
-    let pin = |key: &str| {
-        bus.get(key)
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|pin| u8::try_from(pin).ok())
-    };
-    let clock_hz = bus
-        .get("freq")
-        .and_then(serde_json::Value::as_u64)
-        .map_or(400_000, |hz| hz as u32);
-    Some((pin("sda")?, pin("scl")?, clock_hz))
-}
+/// Port 0 when the config defines no i2c:0: the WaveShare board's own wiring (the camera's SCCB and the codec are on
+/// SDA 7 / SCL 8), at plan B's default clock.
+const PORT0_STOCK: board_config::I2cSpecification = board_config::I2cSpecification {
+    id: 0,
+    sda: 7,
+    scl: 8,
+    clock_hz: 400_000,
+};
 
 /// Logs the mounted card: partition 1's serial (the name the session-start record keeps), how its volumes are
 /// mounted (one partition or two, doc/specs/avionics-port.md "SD and flash file layout"), the videos partition's

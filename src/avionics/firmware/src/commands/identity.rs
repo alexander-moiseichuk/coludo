@@ -54,7 +54,7 @@ pub fn ping(_message: &Message, _context: &mut Context) -> Reply {
 /// The heartbeat vitals the dashboard top table shows (plan B's keys; `internal_free` and `sd_free_mb` are this
 /// firmware's own).
 #[derive(Serialize)]
-struct Health {
+struct Health<'a> {
     /// Die temperature, °C to 0.1.
     temp: Option<f32>,
     /// Free heap of every kind (internal RAM + PSRAM), bytes.
@@ -66,8 +66,8 @@ struct Health {
     sd_free_mb: Option<u32>,
     uptime: i64,
     stage: &'static str,
-    /// The board revision the firmware runs as; undecided until the buses and layout land (port plan M5).
-    layout: &'static str,
+    /// The board revision the firmware runs as: 'v1.1', 'v0.1 (declared)' or 'undecided' (layout::Resolved::label).
+    layout: &'a str,
     /// The board's own GNSS fix, null until there is a fresh one (the GNSS driver lands with port plan M11).
     position: Option<[f64; 2]>,
     /// The laser height above ground, null unless fresh (the laser lands with port plan M10).
@@ -81,9 +81,18 @@ struct Health {
     /// The selected launch site's name.
     site: Option<String>,
     armed: bool,
-    /// The running device tasks: none yet.
-    tasks: Vec<String>,
+    /// The device tasks that came up, false once a task's loop crashed (plan B's `{name, ok}`).
+    tasks: Vec<Task<'a>>,
     degraded: Vec<String>,
+}
+
+/// One `health.tasks` item.
+#[derive(Serialize)]
+struct Task<'a> {
+    /// The device's name.
+    name: &'a str,
+    /// False once its loop crashed.
+    ok: bool,
 }
 
 /// `ok <json>`: the heartbeat vitals.
@@ -100,7 +109,7 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         },
         uptime: board::uptime_ms(),
         stage: STATUS.stage().name(),
-        layout: "undecided",
+        layout: &context.layout,
         position: None,
         agl: None,
         clock: clock::text(),
@@ -110,7 +119,12 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         launchpad_set: mission.position_set(),
         site: Some(mission.site.clone()).filter(|site| !site.is_empty()),
         armed: STATUS.armed(),
-        tasks: Vec::new(),
+        tasks: context
+            .devices
+            .tasks()
+            .into_iter()
+            .map(|(name, ok)| Task { name, ok })
+            .collect(),
         degraded: degraded(context),
     };
     super::ok_json(&info)

@@ -28,6 +28,9 @@ pub const WEDGE_FAILURES: u32 = 4;
 /// The general-call address and its software-reset command (I2C spec 3.1.14).
 pub const GENERAL_CALL: (u8, u8) = (0x00, 0x06);
 
+/// The addresses a scan probes: MicroPython's `I2C.scan` range (the reserved ones at both ends left out).
+const SCAN_ADDRESSES: core::ops::RangeInclusive<u8> = 0x08..=0x77;
+
 /// How many device handles a port keeps at most: its devices, the general-call one and a few touched addresses.
 const MOST_HANDLES: usize = 16;
 
@@ -209,6 +212,32 @@ impl I2cPort {
             sys::ESP_ERR_TIMEOUT => Err(I2cError::BusBusy),
             code => Err(I2cError::Driver(code)),
         }
+    }
+
+    /// What acknowledges on the port, probed as MicroPython's `scan` probes ([`SCAN_ADDRESSES`]), for the layout
+    /// (plan B layout.py `_scan`). An address whose probe fails reads as absent, as MicroPython's scan reads it, so
+    /// one glitch or long clock stretch costs one address, not the bus's votes. Never counted toward a wedge.
+    ///
+    /// Errors: [`WEDGE_FAILURES`] probes failed in a row (a stuck or shorted bus, each failure a timeout): the layout
+    /// reads that as no votes from this bus, as plan B's scan of such a bus found nothing, only sooner.
+    pub fn scan(&mut self) -> Result<layout::Addresses, I2cError> {
+        let mut found = layout::Addresses::EMPTY;
+        let mut failures = 0;
+        for address in SCAN_ADDRESSES {
+            match self.probe(address) {
+                Ok(true) => found.insert(address),
+                Ok(false) => {}
+                Err(error) => {
+                    failures += 1;
+                    if failures >= WEDGE_FAILURES {
+                        return Err(error);
+                    }
+                    continue;
+                }
+            }
+            failures = 0;
+        }
+        Ok(found)
     }
 
     /// Sends the general call's software reset (0x00, 0x06): every part that honours it resets. Counted toward a

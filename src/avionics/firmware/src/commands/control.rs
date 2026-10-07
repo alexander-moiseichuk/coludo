@@ -41,7 +41,8 @@ pub fn stage(message: &Message, _context: &mut Context) -> Reply {
 /// `arm`: enable actuation only when nothing is wrong; refused with every problem otherwise. Until the flight
 /// loop exists it always refuses, naming that first.
 pub fn arm(_message: &Message, context: &mut Context) -> Reply {
-    let mut problems: BTreeMap<&str, String> = BTreeMap::new();
+    // every device that is not up, as plan B's arm lists its controller's failures (cc_client.py:566)
+    let mut problems: BTreeMap<&str, String> = context.devices.failures().into_iter().collect();
     problems.insert("flight", NOT_PORTED.into());
     if let Some(problem) = super::stage_problem() {
         problems.insert("stage", problem);
@@ -51,6 +52,7 @@ pub fn arm(_message: &Message, context: &mut Context) -> Reply {
         if let Some(problem) = super::diagnostics::probe_mission(context) {
             problems.insert("mission", problem);
         }
+        problems.extend(super::diagnostics::probe_problems(context));
     }
     let json = serde_json::to_string(&problems).map_err(|error| Fault::new(Code::Internal, error.to_string()))?;
     Err(Fault::new(Code::Unsafe, json))
