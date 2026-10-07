@@ -97,8 +97,8 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
             .and_then(|parameter| parameter.channel(name)?.latest())
     };
     let (healthy, own) = match entry.implementation {
-        "lsm6dso32" => {
-            let (_, interrupt, interrupt_silent, healthy) = crate::control::imu().filter(|(imu, ..)| *imu == name)?;
+        "lsm6dso32" if crate::control::imu().is_some_and(|(imu, ..)| imu == name) => {
+            let (_, interrupt, interrupt_silent, healthy) = crate::control::imu()?;
             let own = Own::Imu {
                 interrupt,
                 interrupt_silent,
@@ -108,11 +108,17 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
             (healthy, own)
         }
         "icp10111" => {
-            // healthy while its pressure is fresh within the quantity's window (plan B: its last read succeeded)
+            // healthy while its pressure is fresher than three of its periods (plan B: its last read succeeded)
+            let period_ms = board_config::directory(&context.config.document)
+                .into_iter()
+                .find(|configured| configured.name == name)
+                .and_then(|configured| configured.fields.get("period_ms").and_then(Value::as_u64))
+                .map_or(u64::from(drivers::icp10111::DEFAULT_PERIOD_MS), |period| period.max(1));
+            let window_us = (period_ms * 3 * 1000).min(u64::from(u32::MAX)) as u32;
             let healthy = topology.scalar("pressure").is_some_and(|parameter| {
                 parameter
                     .channel(name)
-                    .is_some_and(|channel| channel.fresh(now_us, parameter.window_us()))
+                    .is_some_and(|channel| channel.fresh(now_us, window_us))
             });
             let own = Own::Barometer {
                 altitude_m: latest("altitude"),

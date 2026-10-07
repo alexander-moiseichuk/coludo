@@ -90,10 +90,27 @@ static SEPARATION_EDGE: AtomicBool = AtomicBool::new(false);
 /// The separation switch's debounced latch, for the console and (M8) the warm-start gate: true = separated.
 static SEPARATED: AtomicBool = AtomicBool::new(false);
 
+/// The separation switch's entry name and GPIO, once the control thread drives it (its probe reads the pin).
+static SWITCH: OnceLock<(&'static str, u8)> = OnceLock::new();
+
+/// Publishes the separation latch: bring-up seeds it from the level it read, the tick keeps it.
+pub fn publish_separated(separated: bool) {
+    SEPARATED.store(separated, Ordering::Relaxed);
+}
+
+/// The separation switch's name and pin level (true = HIGH = nested), for its probe; None without one.
+pub fn switch_level() -> Option<(&'static str, bool)> {
+    let (name, gpio) = *SWITCH.get()?;
+    // SAFETY: a plain read of the input bring-up configured.
+    Some((name, unsafe { sys::gpio_get_level(i32::from(gpio)) } != 0))
+}
+
 /// The separation switch as the control thread drives it: its pin, its debounce and its stream.
 struct Switch {
     /// Its GPIO.
     gpio: u8,
+    /// No edge interrupt: every tick reads the pin through the debounce (a polled switch).
+    polled: bool,
     /// The debounced latch.
     part: drivers::separation::Separation,
     /// separation.csv, with a recorder.
@@ -103,15 +120,24 @@ struct Switch {
 impl Switch {
     /// The switch of `member`, its edge interrupt armed on this thread (core 1).
     fn new(member: SeparationMember) -> Switch {
-        if let Err(error) = arm_edges(member.gpio) {
-            log::warn!(
-                "separation :: GPIO{} edge interrupt not armed ({error}): no settle starts",
-                member.gpio
-            );
-        }
+        let polled = match arm_edges(member.gpio) {
+            Ok(()) => false,
+            Err(error) => {
+                log::warn!(
+                    "separation :: GPIO{} edge interrupt not armed ({error}): the pin is polled every tick",
+                    member.gpio
+                );
+                true
+            }
+        };
+        // one settle against the live level: the pads may have opened between bring-up's read and the arming, with
+        // no edge left to tell (a settle at the latch's own level changes nothing)
+        SEPARATION_EDGE.store(true, Ordering::Relaxed);
         SEPARATED.store(member.part.separated(), Ordering::Relaxed);
+        let _ = SWITCH.set((member.name, member.gpio));
         Switch {
             gpio: member.gpio,
+            polled,
             part: member.part,
             telemetry: crate::recorder::get()
                 .zip(crate::recorder::device_stream(member.name))
@@ -123,7 +149,7 @@ impl Switch {
     /// separation._apply): the stage advances, the row is written, the event is logged.
     fn tick(&mut self, now_us: u64) {
         let now_ms = (now_us / 1000) as u32;
-        let edge = SEPARATION_EDGE.swap(false, Ordering::Relaxed);
+        let edge = SEPARATION_EDGE.swap(false, Ordering::Relaxed) || self.polled;
         // SAFETY: a plain read of the input bring-up configured.
         let high = unsafe { sys::gpio_get_level(i32::from(self.gpio)) } != 0;
         let Some(event) = self.part.step(now_ms, high, edge, STATUS.stage()) else {
@@ -190,6 +216,10 @@ struct Imu {
     failing: bool,
     /// A row was refused and none written since: one log line per run.
     overflowing: bool,
+    /// Its sampling period, microseconds (`period_ms`, plan B's 10).
+    period_us: u64,
+    /// When the next read is due, microseconds.
+    next_due_us: u64,
 }
 
 impl Imu {
@@ -212,6 +242,8 @@ impl Imu {
             part: member.part,
             failing: false,
             overflowing: false,
+            period_us: u64::from(member.period_ms) * 1000,
+            next_due_us: 0,
         }
     }
 
@@ -239,8 +271,15 @@ impl Imu {
         }
     }
 
-    /// One tick: take the INT1 edges, read a sample, push it and write its row.
-    fn tick(&mut self, now_us: u64, period_ms: u32) {
+    /// One tick: when its period is due (within half a tick, `slack_us`), take the INT1 edges since the last read,
+    /// read a sample, push it and write its row. A tick faster than the period skips reads; edges accumulate.
+    fn tick(&mut self, now_us: u64, slack_us: u64) {
+        if now_us + slack_us < self.next_due_us {
+            return;
+        }
+        // the next read a period on, or a period from now when the reads fell behind
+        self.next_due_us = (self.next_due_us + self.period_us).max(now_us + self.period_us - slack_us);
+        let period_ms = self.period_us / 1000;
         let runs = INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
         IRQ_RUNS_LAST.store(runs, Ordering::Relaxed);
         if self.part.wake(runs) {
@@ -407,6 +446,14 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMembe
         }
         INTERRUPT_WIRED.store(member.interrupt.is_some(), Ordering::Relaxed);
         let _ = IMU_NAME.set(member.name);
+        if u64::from(member.period_ms) * 1000 < period_us as u64 {
+            log::warn!(
+                "control :: {} wants a sample every {} ms, the tick comes every {} ms: read every tick",
+                member.name,
+                member.period_ms,
+                period_us / 1000
+            );
+        }
         Imu::new(member, topology)
     });
     let (mailbox, requests) = sync_channel(REQUESTS_PER_TICK);
@@ -456,7 +503,7 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMembe
             LATE_OVER_BUDGET.fetch_add(1, Ordering::Relaxed);
         }
         if let Some(imu) = &mut imu {
-            imu.tick(now_us as u64, (period_us / 1000) as u32);
+            imu.tick(now_us as u64, period_us as u64 / 2);
         }
         if let Some(switch) = &mut switch {
             switch.tick(now_us as u64);

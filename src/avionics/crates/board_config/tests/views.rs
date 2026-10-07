@@ -704,3 +704,21 @@ fn an_address_is_a_seven_bit_int_and_a_bus_is_text() {
     let kinds: Vec<Option<&str>> = directory(&buses).into_iter().map(|entry| entry.bus).collect();
     assert_eq!(kinds, [Some("spi"), None, None, None]);
 }
+
+#[test]
+fn entries_keep_the_disabled_ones_the_directory_drops() {
+    let document = json!({
+        "sensors": [{"name": "imu_bno055", "driver": "bno055", "enabled": false}, {"name": "baro", "driver": "icp10111"}],
+        "components": [{"name": "cc", "activity": "cc"}, {"driver": "unnamed"}],
+    });
+    let entries: Vec<&str> = board_config::entries(&document)
+        .iter()
+        .map(|entry| entry.name)
+        .collect();
+    let directory: Vec<&str> = board_config::directory(&document)
+        .iter()
+        .map(|entry| entry.name)
+        .collect();
+    assert_eq!(entries, ["imu_bno055", "baro", "cc"]);
+    assert_eq!(directory, ["baro", "cc"]);
+}

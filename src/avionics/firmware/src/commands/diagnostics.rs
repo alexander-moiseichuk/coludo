@@ -22,14 +22,28 @@ const SPI_BUSTUNE: &str = "is not ported: SPI2 runs at the config's baud (its ow
 fn probe_parts(name: Option<&str>) -> (Vec<crate::owner::Verdict>, Vec<(&'static str, String)>) {
     let mut verdicts = Vec::new();
     let mut errors = Vec::new();
-    // the SPI IMU, on the control thread (SPI2's owner)
-    match crate::control::probe_imu() {
-        Some(Ok((imu, verdict))) if name.is_none_or(|name| name == imu) => verdicts.push((imu, verdict)),
-        Some(Err(error)) if name.is_none_or(|name| crate::control::imu().is_some_and(|(imu, ..)| imu == name)) => {
-            log::warn!("probe :: {error}");
-            errors.push(("control", error));
+    // the SPI IMU, on the control thread (SPI2's owner): asked only when it is the one named, or for all
+    let imu = crate::control::imu().map(|(imu, ..)| imu);
+    if imu.is_some_and(|imu| name.is_none_or(|name| name == imu)) {
+        match crate::control::probe_imu() {
+            Some(Ok(verdict)) => verdicts.push(verdict),
+            Some(Err(error)) => {
+                log::warn!("probe :: {error}");
+                errors.push(("control", error));
+            }
+            None => {}
         }
-        _ => {}
+    }
+    // the separation switch: its pin, read here (plan B separation.py:138-160)
+    if let Some((switch, high)) = crate::control::switch_level()
+        && name.is_none_or(|name| name == switch)
+    {
+        log::info!("{switch} :: probe: separation pin ...");
+        log::info!(
+            "{switch} :: probe: pin ok ({})",
+            if high { "nested" } else { "separated" }
+        );
+        verdicts.push((switch, None));
     }
     for (port, label) in [(0, "i2c0"), (1, "i2c1")] {
         match crate::owner::probe_port(port, name) {

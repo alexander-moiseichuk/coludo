@@ -220,21 +220,27 @@ fn own(
     resumed: Receiver<(I2cPort, Vec<Member>)>,
     requests: Receiver<Envelope>,
 ) {
-    // SAFETY: a plain read of this task's own handle; the task lives for the program.
+    // published before the port is created, so the control thread finds it (main starts the control thread right
+    // after this owner's start); withdrawn on every way out, so the tick never notifies a task that ended
+    // SAFETY: a plain read of this task's own handle.
     TASKS[usize::from(id)].store(unsafe { sys::xTaskGetCurrentTaskHandle() }.cast(), Ordering::Release);
+    let withdraw = || TASKS[usize::from(id)].store(core::ptr::null_mut(), Ordering::Release);
     let port = match I2cPort::create(id, sda, scl, clock_hz) {
         Ok(port) => port,
         Err(error) => {
+            withdraw();
             let _ = lend.send(Err(error));
             return;
         }
     };
     log::info!("i2c:{id} :: bus created on core 1 (SDA {sda}, SCL {scl}, {clock_hz} Hz, internal pull-ups on)");
     if lend.send(Ok(port)).is_err() {
+        withdraw();
         return;
     }
     // the parts live as long as their owner: a ranger's XSHUT pin is released when its part is dropped
     let Ok((mut port, mut members)) = resumed.recv() else {
+        withdraw();
         return;
     };
     // the owner's own producer ring: its parts' rows and log lines never contend with another thread's

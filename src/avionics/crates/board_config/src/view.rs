@@ -512,8 +512,18 @@ pub struct Entry<'d> {
 /// A part layout disabled is not here, as in plan B: crates/layout writes `enabled` false into the document this
 /// reads (layout.py:430-453 `_fit`, for the parts layout.py:291-321 `fitted` rules out).
 pub fn directory(document: &Value) -> Vec<Entry<'_>> {
+    entries(document)
+        .into_iter()
+        .filter(|entry| enabled(entry.fields))
+        .collect()
+}
+
+/// Every named device entry, enabled or not, sensors first then components, each in its config order (the
+/// [`directory`] before its `enabled` filter): what a part could be once the layout has fitted it. The recorder
+/// registers its streams from these before the layout runs, so a part the layout enables (a fitted SEN0253) still has
+/// one.
+pub fn entries(document: &Value) -> Vec<Entry<'_>> {
     devices(document)
-        .filter(|(_, device)| enabled(device))
         .filter_map(|(section, device)| {
             let name = device
                 .get("name")

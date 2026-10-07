@@ -66,15 +66,25 @@ fn current_core() -> usize {
     core
 }
 
-/// Queues `line` for the printer without waiting; a full queue drops it, counted.
+/// The mark a queued line cut short ends with.
+const CUT: &str = " [...]";
+
+/// Queues `line` for the printer without waiting; a full queue drops it, counted. A line longer than the slot is cut
+/// and marked.
 fn enqueue(queue: sys::QueueHandle_t, line: &str) {
-    let mut taken = line.len().min(QUEUED_LINE_BYTES - 2);
+    let room = QUEUED_LINE_BYTES - 2;
+    let cut = line.len() > room;
+    let mut taken = if cut { room - CUT.len() } else { line.len() };
     while !line.is_char_boundary(taken) {
         taken -= 1;
     }
     let mut item = [0u8; QUEUED_LINE_BYTES];
-    item[..2].copy_from_slice(&(taken as u16).to_le_bytes());
     item[2..2 + taken].copy_from_slice(&line.as_bytes()[..taken]);
+    if cut {
+        item[2 + taken..2 + taken + CUT.len()].copy_from_slice(CUT.as_bytes());
+        taken += CUT.len();
+    }
+    item[..2].copy_from_slice(&(taken as u16).to_le_bytes());
     // SAFETY: a live queue of QUEUED_LINE_BYTES items; the item is copied in; 0 ticks: never waits.
     if unsafe { sys::xQueueGenericSend(queue, item.as_ptr().cast(), 0, 0) } != 1 {
         DROPPED.fetch_add(1, Ordering::Relaxed);
@@ -136,11 +146,18 @@ impl log::Log for Logger {
     }
 
     fn log(&self, record: &log::Record) {
-        if !log::Log::enabled(&CONSOLE, record.metadata()) {
-            return;
-        }
         let queue = QUEUE.load(Ordering::Acquire);
         let queued = !queue.is_null() && current_core() == FLIGHT_CORE;
+        // the console filter locks a mutex and IDF's level table: on the flight core the global level decides,
+        // lock-free (the per-target exceptions are for core-0 targets)
+        let enabled = if queued {
+            record.level() <= log::max_level()
+        } else {
+            log::Log::enabled(&CONSOLE, record.metadata())
+        };
+        if !enabled {
+            return;
+        }
         if !queued {
             log::Log::log(&CONSOLE, record);
         }
@@ -219,10 +236,7 @@ impl Write for Line {
 ///
 /// Runs on whichever task logged, IDF's own with tight stacks among them, so it stays shallow: no allocation, no
 /// copy, no logging (a log here would re-enter the hook, which then skips the line).
-unsafe extern "C" fn idf_line(text: *const core::ffi::c_char, length: usize) {
-    let Some(recorder) = crate::recorder::get() else {
-        return;
-    };
+unsafe extern "C" fn idf_line(text: *const core::ffi::c_char, length: usize) -> bool {
     // SAFETY: the hook hands over `length` bytes of its line buffer, valid for this call.
     let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
     let line = plain(bytes);
@@ -231,8 +245,17 @@ unsafe extern "C" fn idf_line(text: *const core::ffi::c_char, length: usize) {
         Ok(line) => line,
         Err(error) => core::str::from_utf8(&line[..error.valid_up_to()]).unwrap_or_default(),
     };
+    // the flight core's console copy goes to the printer: the hook then prints nothing in place
+    let queue = QUEUE.load(Ordering::Acquire);
+    let queued = !queue.is_null() && current_core() == FLIGHT_CORE;
+    if queued && !line.is_empty() {
+        enqueue(queue, line);
+    }
+    let Some(recorder) = crate::recorder::get() else {
+        return queued;
+    };
     if line.is_empty() {
-        return;
+        return queued;
     }
     let parsed = line
         .strip_prefix(['E', 'W', 'I', 'D', 'V'])
@@ -243,6 +266,7 @@ unsafe extern "C" fn idf_line(text: *const core::ffi::c_char, length: usize) {
         Some((tag, message)) => recorder.log(tag, message),
         None => recorder.log("idf", line),
     };
+    queued
 }
 
 /// The line without its end and its colour: IDF wraps a coloured line in `ESC [ 0 ; 3x m` ... `ESC [ 0 m` (only with

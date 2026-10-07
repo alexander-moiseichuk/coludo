@@ -52,6 +52,8 @@ pub struct SpiMember {
     pub part: Lsm6dso32<OverSpi>,
     /// Its INT1 data-ready GPIO, when the config wires one (`int_pin`).
     pub interrupt: Option<u8>,
+    /// Its sampling period, ms (`period_ms`, plan B's 10; at least 1).
+    pub period_ms: u32,
 }
 
 /// The separation switch once it came up: the control thread reads it every tick (crate::control).
@@ -63,6 +65,9 @@ pub struct SeparationMember {
     /// The debounced latch.
     pub part: Separation,
 }
+
+/// The LSM6DSO32's sampling period when its entry gives none, ms (plan B lsm6dso32.py:39 `period_ms` 10).
+const IMU_PERIOD_MS: u32 = 10;
 
 /// The pin name plan B's separation driver takes when its entry names none (`_pin_gpio('pin', 'separation_switch')`).
 const SEPARATION_PIN: &str = "separation_switch";
@@ -338,6 +343,8 @@ fn set_up_separation(
                 Ok(()) => {
                     // SAFETY: a plain read of the input just configured.
                     let high = unsafe { sys::gpio_get_level(i32::from(gpio)) } != 0;
+                    // the latch from now: the warm start (M8) reads it before the control thread runs
+                    crate::control::publish_separated(!high);
                     came_up = Some(SeparationMember {
                         name: entry.name,
                         gpio,
@@ -553,11 +560,17 @@ fn set_up_spi(
         |line| log::info!("{line}"),
     );
     if let (Some(part), Some(handle)) = (came_up, handle) {
+        let period_ms = entry
+            .fields
+            .get("period_ms")
+            .and_then(Value::as_u64)
+            .map_or(IMU_PERIOD_MS, |period| period.clamp(1, u64::from(u32::MAX)) as u32);
         members.push(SpiMember {
             name: entry.name,
             handle,
             part,
             interrupt,
+            period_ms,
         });
     }
     outcome

@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "esp_cpu.h"
 #include "esp_log.h"
 #include "panic_capture.h"
 
@@ -30,9 +31,15 @@ static atomic_flag busy = ATOMIC_FLAG_INIT;
 /* Lines the sink missed because `line` was busy. */
 static atomic_uint_least32_t dropped;
 
-/* The vprintf IDF calls once per log line: a copy for the sink, then the console as before. */
+/* The flight core: a line logged there never prints in place (a console write blocks once the UART's transmit
+ * buffer fills); the sink queues it for a core-0 printer, or its console copy is dropped. */
+#define FLIGHT_CORE 1
+
+/* The vprintf IDF calls once per log line: a copy for the sink, then the console as before -- except on the flight
+ * core, where the sink takes the console's copy too. */
 static int hook(const char *format, va_list arguments)
 {
+    bool queued = false;
     if (sink != NULL) {
         if (!atomic_flag_test_and_set_explicit(&busy, memory_order_acquire)) {
             va_list copy;
@@ -41,7 +48,7 @@ static int hook(const char *format, va_list arguments)
             va_end(copy);
             if (length > 0) {
                 size_t kept = length < (int)sizeof line ? (size_t)length : sizeof line - 1;
-                sink(line, kept);
+                queued = sink(line, kept);
                 /* the panic log keeps the newest lines before a panic */
                 panic_capture_log(line, kept);
             }
@@ -49,6 +56,9 @@ static int hook(const char *format, va_list arguments)
         } else {
             atomic_fetch_add_explicit(&dropped, 1, memory_order_relaxed);
         }
+    }
+    if (queued || (sink != NULL && esp_cpu_get_core_id() == FLIGHT_CORE)) {
+        return 0;
     }
     /* `console` is stored just after esp_log_set_vprintf returns: a line logged in between finds it unset, and the
      * console IDF starts with is plain vprintf */

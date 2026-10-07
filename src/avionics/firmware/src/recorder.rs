@@ -342,10 +342,11 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str) -> anyhow::Re
     let health = registry
         .add(supervisor::HEALTH_FILE, &supervisor::HEALTH_FIELDS, 0, false)
         .map_err(|error| anyhow::anyhow!("{}: {error:?}", supervisor::HEALTH_FILE))?;
-    // the devices' streams, from the saved config's entries (layout moves no name): a part that fails never writes
+    // the devices' streams, from every entry of the saved config, enabled or not: the layout moves no name but may
+    // enable a part (a fitted SEN0253), and the registry is fixed from here; a part that never comes up never writes
     // its header, so a stream registered for it costs nothing
     let mut devices = Vec::new();
-    for entry in board_config::directory(document) {
+    for entry in board_config::entries(document) {
         let Some(stream) = crate::sensors::stream(&entry) else {
             continue;
         };

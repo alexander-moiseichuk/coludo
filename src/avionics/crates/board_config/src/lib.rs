@@ -47,7 +47,7 @@ use sha2::{Digest, Sha256};
 pub use validate::validate;
 pub use view::{
     Camera, CameraClock, Entry, Hub, I2cSpecification, Network, Provide, Section, SpiSpecification, Wifi, board_id,
-    camera, directory, i2c_bus, max_range_m, mcu, pin, provides, schedule_hz, setup_retries, spi_bus, wifi,
+    camera, directory, entries, i2c_bus, max_range_m, mcu, pin, provides, schedule_hz, setup_retries, spi_bus, wifi,
 };
 pub use writer::write;
 

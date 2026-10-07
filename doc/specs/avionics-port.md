@@ -614,6 +614,55 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - On the taster: `pace` under FHD@25 plus a real I2C/SPI load shows 0 missed ticks and max ≤ 200 µs.
 - Still-board noise matches the plan B `measure_noise` provenance numbers within their spread.
 
+**Decisions (2026-10-07, as built):**
+- **One clock.** `board_config::schedule_hz` is the flight entry's `schedule_hz`, enabled or not, 1..=1000 Hz, else
+  100. It paces the whole control thread, where plan B's timer paced only its flight task (and `schedule_hz` 0 ran
+  that task on asyncio). The gptimer is created on the control thread, so its interrupt lands on core 1; its ISR
+  only notifies (eIncrement) the control thread and each I2C owner.
+- **The owners wake on the tick or on a request** (`ask` notifies) and do their work by time, so an extra wake
+  costs a clock read; they serve at most two requests a wake and clear their notification count on each take.
+- **The IMU is read on every tick**, not on its INT1 edge (plan B sampled on its period too). A core-1 GPIO
+  interrupt only counts edges; `irq_runs` is the tick's count. The data-ready is level-high, so edges coalesce
+  against the 104 Hz ODR: rows read 1, about 1 % read 0, none read 2. The driver's silent verdict (three empty
+  ticks in a row) logs plan B's line once.
+- **The ICP-10111 cycle is 120-130 ms** (about 8 Hz) on the 100 Hz tick: the collect lands on the tick after its
+  12 ms conversion, and the next issue a period after the collect, as plan B's sleep-after-read (about 112 ms).
+  Both are inside the quantities' 200 ms window.
+- **Separation** is stepped once a tick (10 ms), so a verdict comes 20-30 ms after the level settles; its stream is
+  durable (the stage transition's record). The GPIO interrupt service is installed from the control thread, which
+  latches every GPIO interrupt on core 1.
+- **The CC surface.** Every device that came up is an inspectable object (plan B's `Task.inspect`), its own keys read
+  off the databoard: the IMU's `rate_dps` is in deg/s (D18; plan B's held centideg/s ints under that name), and the
+  barometer is `healthy` while its pressure is fresh. In M6 only the ICP-10111 has a calibration (it asks for its
+  ground until it holds one, and setup captures it); the SDP810's tare and the BMM350's hard iron join `calibrate` and
+  `health.calibration` with their restores (M9, M10). `bustune spi` is not ported.
+- **The flight core never prints in place** (found by the timing proof, below): a console write blocks once the
+  UART's transmit buffer fills, and an IMU probe's two log lines made the control tick 4.5 ms late. Lines logged on
+  core 1 go into a bounded queue (non-blocking send, dropped and counted when full) that a core-0 printer drains;
+  their recorder.log copies are unchanged. An IDF C log line on core 1 still prints in place (rare; none on the tick's
+  path).
+
+**Proof (2026-10-07, the taster and TMS-7F):**
+- Interrupt placement (`interrupts`, esp_intr_dump): the gptimer (TG0_T0), GPIO (INT1, the separation pin), SPI2 and
+  both I2C ports (one shared vector) on CPU 1; SDIO, the H.264 encoder and UART0 on CPU 0.
+- The tick under FHD@25 colour bars, the flight-rate ring load, `probe all` and bustune ladders on both buses, ~1-2
+  minutes: max lateness 40 us on the taster and 77 us on 7F (budget 200 us), 0 overruns, every tick's IMU read, 0
+  frames missed. Stack peaks: control 3.5 KB of 6 KB, the owners 3.5 KB of 5 KB.
+- The IMU at rest: rows 10.000 ms apart (9989-10012 us); |a| 1.013 g (sd 0.0017 g); gyro bias < 0.5 deg/s, sd
+  0.036 deg/s, inside plan B's measure_noise spread (0.03-0.095 deg/s, its only recorded noise number).
+- The ICP at rest: pressure sd 1.55 Pa (datasheet 1.6 Pa RMS); `update {"rezero": true}` -> `[ground]`, a text
+  ground refused, `ground 42.5` -> elevation 0.37 m; `calibrate baro_icp10111` -> null with plan B's ground line.
+- `cc_contract --milestone M6 --allow-active`: 0 violations (inspect 28 cases).
+- Owed: the separation switch's live edge (pads opened; a sub-20 ms blip must not count) needs the operator's hands.
+
+**Carried into M7 (from the M6 review):**
+- The control thread's mailbox answers through std mpsc, which takes a mutex and a condvar on core 1 when the
+  executor waits. That is harmless for the SETTING-only probe, but M7 routes `disarm` and holds through it, and they
+  stay open in flight: give them a lock-free reply slot.
+- The stage has two writers now: the executor's `stage` command and the separation's BOOSTING -> GLIDING. M7's single
+  writer moves `stage` into the control thread's mailbox, so an operator's hold cannot be overwritten between the
+  separation's read and its write.
+
 **Operator gains.** Real attitude-grade IMU and baro data in the telemetry pane. Probe all and calibrate work
 for these parts.
 
