@@ -640,8 +640,10 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - **The ICP-10111 cycle is 120-130 ms** (about 8 Hz) on the 100 Hz tick: the collect lands on the tick after its
   12 ms conversion, and the next issue a period after the collect, as plan B's sleep-after-read (about 112 ms).
   Both are inside the quantities' 200 ms window.
-- **Separation (operator, 2026-10-07).** The pads are 2 cm long and part at about 3 m/s, so up to about 7 ms of
-  lost/restored contact may come before the line holds open. The driver is a thin latch over a generic two-level
+- **Separation (operator, 2026-10-07).** The contact is a copper ring on the booster, 5 mm wide, bridging two copper
+  strips on the glider, 2 cm long, laid across it like a П. At separation the glider slides out (П, Н, U, out); while
+  the strips' 2 cm pass over the ring the contact may wobble 1->0->1 (the tubes do not fit perfectly), for under
+  10 ms and less than 2 cm at 3 m/s (~7 ms), since the blast and the drag slow the booster as the glider is pushed on. The driver is a thin latch over a generic two-level
   debounce (drivers::debounce, in the drivers' pattern: `Settings::from_config` infallible, `new(&settings)`), on the
   caller's microsecond clock. With the interrupt armed the hold is timed from the edge stamps: a quiet read a debounce
   after the last edge decides; the default debounce is 10 ms ("10 ms or less"), above the wobble's gaps (a shorter one
