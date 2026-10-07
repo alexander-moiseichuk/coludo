@@ -265,7 +265,8 @@ def test_dry_run() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     lines = result.stdout.splitlines()
     assert lines[0] == 'board config %s: valid, board.id TMS-7F, config_id %s' % (BOARD, BOARD_CONFIG_ID), lines
-    assert lines[1] == 'cfg image verified: %#x bytes for the cfg partition at %s; it holds' % (CFG_SIZE, CFG_OFFSET), lines
+    verified = 'cfg image verified: %#x bytes for the cfg partition at %s; it holds' % (CFG_SIZE, CFG_OFFSET)
+    assert lines[1] == verified, lines
     expected = sorted(['  config/board     blob, %d bytes' % os.path.getsize(BOARD),
                        '  config/launch    blob, %d bytes' % os.path.getsize(_path('launch.config'))]
                       + ['  %-16s string: the password for %s' % ('creds/' + KEYS[ssid], ssid)
