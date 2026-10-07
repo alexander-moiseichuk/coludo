@@ -11,9 +11,10 @@
 //! The stacks are internal: the bus threads are flight-path threads (§4.7, internal RAM budget), and an internal
 //! stack also keeps the thread's allocations internal (crate::allocator's rule).
 
-use std::sync::OnceLock;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use embedded_hal::i2c::I2c;
@@ -79,6 +80,13 @@ pub enum Request {
     /// Send the general call's software reset, let the parts settle, re-arm them unless `rearm` is false, then probe
     /// every part (`i2c general-call`).
     GeneralCall { rearm: bool },
+    /// Apply an operator property change to the part `name` (CC `update`).
+    Update {
+        name: String,
+        properties: serde_json::Value,
+    },
+    /// Run the part `name`'s calibration (CC `calibrate <name>`).
+    Calibrate { name: String },
 }
 
 /// A part's probe verdict: None when healthy, else why (plan B's `probe()`).
@@ -104,6 +112,33 @@ pub enum Answer {
         probed: Vec<Verdict>,
         figures: PortFigures,
     },
+    /// None when no part of that name is on this port; else the changed properties, or the refusal.
+    Updated(Option<Result<Vec<&'static str>, String>>),
+    /// None when no part of that name is on this port; else plan B's calibrate answer (None success, else why).
+    Calibrated(Option<Option<String>>),
+}
+
+/// The calibrations the parts wait for, by name: what `health.calibration` and `calibrate` list (plan B
+/// `Inspector.calibration_all()`). The owners keep it current; the executor reads it.
+static CALIBRATIONS: Mutex<BTreeMap<&'static str, &'static str>> = Mutex::new(BTreeMap::new());
+
+/// Records `member`'s pending calibration, or that none is pending.
+fn note_calibration(member: &Member) {
+    let mut calibrations = CALIBRATIONS.lock().unwrap_or_else(PoisonError::into_inner);
+    match member.part.calibration() {
+        "" => calibrations.remove(member.name),
+        pending => calibrations.insert(member.name, pending),
+    };
+}
+
+/// Every part's pending calibration, by name, sorted: empty when nothing is pending.
+pub fn calibrations() -> Vec<(&'static str, &'static str)> {
+    CALIBRATIONS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .map(|(name, text)| (*name, *text))
+        .collect()
 }
 
 /// A request and where its answer goes.
@@ -165,6 +200,7 @@ pub fn start(
     members.sort_by(|left, right| left.name.cmp(right.name));
     for member in &mut members {
         member.run = Run::new(member.name, &member.part, topology);
+        note_calibration(member);
     }
     parked
         .resume
@@ -303,6 +339,22 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
                 figures: port.figures(),
             }
         }
+        Request::Update { name, properties } => {
+            Answer::Updated(members.iter_mut().find(|member| member.name == name).map(|member| {
+                // SAFETY: a plain read of the monotonic timer.
+                let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+                let changed = member.part.update(member.run.as_ref(), &properties, now_us);
+                note_calibration(member);
+                changed
+            }))
+        }
+        Request::Calibrate { name } => {
+            Answer::Calibrated(members.iter_mut().find(|member| member.name == name).map(|member| {
+                let result = member.part.calibrate(member.name, port, delay);
+                note_calibration(member);
+                result
+            }))
+        }
         Request::GeneralCall { rearm } => {
             let acknowledged = port.general_call_reset().is_ok();
             let _ = port.take_general_call();
@@ -431,6 +483,42 @@ pub fn probe_port(port: u8, name: Option<&str>) -> Result<Vec<Verdict>, String> 
         Answer::Probed(verdicts) => Ok(verdicts),
         _ => Err(format!("i2c port {port}'s owner answered another request")),
     }
+}
+
+/// The part `name`'s property change, on whichever owner holds it (CC `update`): None when no owner holds it.
+///
+/// Errors: the owner did not answer in time; the inner error is the part's refusal.
+pub fn update(name: &str, properties: &serde_json::Value) -> Result<Option<Result<Vec<&'static str>, String>>, String> {
+    for port in 0..2 {
+        if task(port).is_none() || MAILBOXES[usize::from(port)].get().is_none() {
+            continue;
+        }
+        let request = Request::Update {
+            name: name.to_string(),
+            properties: properties.clone(),
+        };
+        if let Answer::Updated(Some(result)) = ask(port, request, ANSWER_DEADLINE)? {
+            return Ok(Some(result));
+        }
+    }
+    Ok(None)
+}
+
+/// The part `name`'s calibration, on whichever owner holds it (CC `calibrate <name>`): None when no owner holds it;
+/// else plan B's answer (None success, else why).
+///
+/// Errors: the owner did not answer in time.
+pub fn calibrate(name: &str) -> Result<Option<Option<String>>, String> {
+    for port in 0..2 {
+        if MAILBOXES[usize::from(port)].get().is_none() {
+            continue;
+        }
+        let request = Request::Calibrate { name: name.to_string() };
+        if let Answer::Calibrated(Some(result)) = ask(port, request, ANSWER_DEADLINE)? {
+            return Ok(Some(result));
+        }
+    }
+    Ok(None)
 }
 
 /// Port `port` run at `clock_hz` on its owner, and its parts probed there (`bustune`).

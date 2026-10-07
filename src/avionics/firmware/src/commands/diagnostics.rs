@@ -21,6 +21,15 @@ const NO_SPI_OWNER: &str = "comes with the control thread, SPI2's owner (port pl
 fn probe_parts(name: Option<&str>) -> (Vec<crate::owner::Verdict>, Vec<(&'static str, String)>) {
     let mut verdicts = Vec::new();
     let mut errors = Vec::new();
+    // the SPI IMU, on the control thread (SPI2's owner)
+    match crate::control::probe_imu() {
+        Some(Ok((imu, verdict))) if name.is_none_or(|name| name == imu) => verdicts.push((imu, verdict)),
+        Some(Err(error)) if name.is_none_or(|name| crate::control::imu().is_some_and(|(imu, ..)| imu == name)) => {
+            log::warn!("probe :: {error}");
+            errors.push(("control", error));
+        }
+        _ => {}
+    }
     for (port, label) in [(0, "i2c0"), (1, "i2c1")] {
         match crate::owner::probe_port(port, name) {
             Ok(probed) => verdicts.extend(probed),
@@ -72,13 +81,7 @@ pub fn probe(message: &Message, context: &mut Context) -> Reply {
         return super::ok_json(&json!({"mission": probe_mission(context)}));
     }
     let entry = table.find(target);
-    if entry.is_some_and(|entry| entry.implementation == "lsm6dso32" && entry.active()) {
-        return Err(Fault::new(
-            Code::Unsupported,
-            format!("{target}'s probe {NO_SPI_OWNER}"),
-        ));
-    }
-    let (verdicts, errors) = if entry.is_some_and(|entry| entry.socket.is_some()) {
+    let (verdicts, errors) = if entry.is_some_and(|entry| entry.active()) {
         probe_parts(Some(target))
     } else {
         (Vec::new(), Vec::new())
@@ -164,16 +167,25 @@ pub fn probe_mission(context: &Context) -> Option<String> {
     problem
 }
 
-/// `calibrate`: what needs calibrating (nothing yet); `calibrate <device>` runs one (no device has one yet).
-pub fn calibrate(message: &Message, _context: &mut Context) -> Reply {
+/// `calibrate`: what needs calibrating, {name: instruction} (plan B `Inspector.calibration_all()`, possibly {});
+/// `calibrate <device>` runs one, on the ground only, answering {device: null} on success, else why (plan B
+/// cc_client.py:873-904). A device that came up with nothing to calibrate succeeds (plan B's default); one that
+/// never came up, or no device, has no calibrate.
+pub fn calibrate(message: &Message, context: &mut Context) -> Reply {
     let Some(target) = message.args.first() else {
-        return super::ok_json(&json!({}));
+        return super::ok_json(&crate::owner::calibrations().into_iter().collect::<BTreeMap<_, _>>());
     };
     if let Some(airborne) = super::outside_setting() {
         // a baro calibrate mid-air re-zeroes elevation: the ground, to the stage machine
         return Err(Fault::new(Code::Unsafe, airborne));
     }
-    Err(Fault::new(Code::BadArguments, format!("no calibrate for {target}")))
+    if !context.devices.find(target).is_some_and(|entry| entry.active()) {
+        return Err(Fault::new(Code::BadArguments, format!("no calibrate for {target}")));
+    }
+    let result = crate::owner::calibrate(target)
+        .map_err(|error| Fault::new(Code::Internal, error))?
+        .unwrap_or(None);
+    super::ok_json(&json!({ target.as_str(): result }))
 }
 
 /// The `detect` payload, in plan B's key order.

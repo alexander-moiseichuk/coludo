@@ -222,6 +222,7 @@ fn main() -> anyhow::Result<()> {
         config_id,
         layout: resolved.label(),
         devices: table,
+        topology,
     })?;
     // the console drains the UART before taking it over, so the lines above survive
     console::start(

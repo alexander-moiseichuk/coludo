@@ -2,6 +2,8 @@
 //!
 //! whoami / ping / health -- who the board is and how it is doing (src/glider cc_client `_register_identity`).
 
+use std::collections::BTreeMap;
+
 use cc_protocol::Message;
 use esp_idf_svc::sys;
 use serde::Serialize;
@@ -83,6 +85,10 @@ struct Health<'a> {
     armed: bool,
     /// The device tasks that came up, false once a task's loop crashed (plan B's `{name, ok}`).
     tasks: Vec<Task<'a>>,
+    /// The calibrations the devices wait for, {name: instruction}; absent when none is pending (plan B
+    /// cc_client.py:443-514).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    calibration: Option<BTreeMap<&'static str, &'static str>>,
     degraded: Vec<String>,
 }
 
@@ -125,6 +131,8 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
             .into_iter()
             .map(|(name, ok)| Task { name, ok })
             .collect(),
+        calibration: Some(crate::owner::calibrations().into_iter().collect::<BTreeMap<_, _>>())
+            .filter(|pending| !pending.is_empty()),
         degraded: degraded(context),
     };
     super::ok_json(&info)
@@ -161,6 +169,9 @@ fn degraded(context: &Context) -> Vec<String> {
     if context.config.source.starts_with("default(fallback") {
         // board.config failed to load, so this airframe booted the bench default: id taster, watchdog off
         degraded.push(format!("CONFIG FALLBACK -- {}", context.config.source));
+    }
+    if !crate::owner::calibrations().is_empty() {
+        degraded.push("needs-calibration".into()); // a device waits for its calibration (health.calibration says how)
     }
     if mission.site == "fallback" {
         degraded.push("cc-less-fallback".into());

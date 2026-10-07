@@ -16,6 +16,9 @@
 //! BOOSTING moves the stage to GLIDING, recorded in the durable separation.csv.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::OnceLock;
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::time::Duration;
 
 use databoard::Writer;
 use drivers::lsm6dso32::{Lsm6dso32, OverSpi};
@@ -65,6 +68,23 @@ static IMU_FAILURES: AtomicU32 = AtomicU32::new(0);
 static IRQ_RUNS_LAST: AtomicU32 = AtomicU32::new(0);
 /// Whether INT1 is silent (the driver's verdict: three wakes in a row with no edge).
 static INTERRUPT_SILENT: AtomicBool = AtomicBool::new(false);
+/// The IMU's entry name, once the control thread drives one.
+static IMU_NAME: OnceLock<&'static str> = OnceLock::new();
+/// Whether the IMU's INT1 is wired (its `int_pin` names a GPIO).
+static INTERRUPT_WIRED: AtomicBool = AtomicBool::new(false);
+/// Whether the IMU's latest read succeeded (plan B's `healthy`).
+static IMU_HEALTHY: AtomicBool = AtomicBool::new(false);
+
+/// What the control thread is asked between its ticks' work (§4.3, step 4): a probe of the IMU, its answer going back
+/// through the sender (None healthy, else why).
+static MAILBOX: OnceLock<SyncSender<SyncSender<Option<String>>>> = OnceLock::new();
+
+/// How many requests a tick serves at most (§4.3: two).
+const REQUESTS_PER_TICK: usize = 2;
+
+/// How long a probe waits for the control thread's answer: a tick and a frame, with a wide margin.
+const PROBE_DEADLINE: Duration = Duration::from_secs(2);
+
 /// A separation-pin edge since the tick last looked: the GPIO interrupt sets it, the tick takes it.
 static SEPARATION_EDGE: AtomicBool = AtomicBool::new(false);
 /// The separation switch's debounced latch, for the console and (M8) the warm-start gate: true = separated.
@@ -195,6 +215,30 @@ impl Imu {
         }
     }
 
+    /// Plan B's probe (lsm6dso32.py:248-278): WHO_AM_I and one sample, logged in plan B's shape. None when healthy,
+    /// else why.
+    fn probe(&mut self) -> Option<String> {
+        let step = "who_am_i + sample";
+        log::info!("{} :: probe: {step} ...", self.name);
+        match self.part.probe(&mut self.handle) {
+            Ok(sample) => {
+                let [x, y, z] = sample.accel_g();
+                let [roll, pitch, yaw] = sample.rate_degrees_per_second();
+                log::info!(
+                    "{} :: probe: {step} ok {:.2}g ({roll:.1},{pitch:.1},{yaw:.1}) dps",
+                    self.name,
+                    (x * x + y * y + z * z).sqrt()
+                );
+                None
+            }
+            Err(fault) => {
+                let message = format!("{step}: {fault}");
+                log::warn!("{} :: probe FAILED: {message}", self.name);
+                Some(message)
+            }
+        }
+    }
+
     /// One tick: take the INT1 edges, read a sample, push it and write its row.
     fn tick(&mut self, now_us: u64, period_ms: u32) {
         let runs = INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
@@ -207,6 +251,7 @@ impl Imu {
             Ok(sample) => sample,
             Err(fault) => {
                 IMU_FAILURES.fetch_add(1, Ordering::Relaxed);
+                IMU_HEALTHY.store(false, Ordering::Relaxed);
                 if !self.failing {
                     log::warn!("lsm6dso32 :: read {fault}");
                     self.failing = true;
@@ -216,6 +261,7 @@ impl Imu {
         };
         self.failing = false;
         IMU_READS.fetch_add(1, Ordering::Relaxed);
+        IMU_HEALTHY.store(true, Ordering::Relaxed);
         let accel = sample.accel_g();
         if let Some(writer) = &mut self.accel {
             writer.push(accel, now_us);
@@ -359,8 +405,12 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMembe
                 member.name
             );
         }
+        INTERRUPT_WIRED.store(member.interrupt.is_some(), Ordering::Relaxed);
+        let _ = IMU_NAME.set(member.name);
         Imu::new(member, topology)
     });
+    let (mailbox, requests) = sync_channel(REQUESTS_PER_TICK);
+    let _ = MAILBOX.set(mailbox);
     for extra in spi {
         log::warn!("control :: {} not driven: one SPI IMU only", extra.name);
     }
@@ -411,7 +461,56 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMembe
         if let Some(switch) = &mut switch {
             switch.tick(now_us as u64);
         }
+        serve(&requests, imu.as_mut());
     }
+}
+
+/// Serves at most [`REQUESTS_PER_TICK`] requests waiting in the mailbox: each a probe of the IMU.
+fn serve(requests: &Receiver<SyncSender<Option<String>>>, mut imu: Option<&mut Imu>) {
+    for _ in 0..REQUESTS_PER_TICK {
+        match requests.try_recv() {
+            Ok(reply) => {
+                let verdict = imu.as_deref_mut().and_then(Imu::probe);
+                let _ = reply.send(verdict);
+            }
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return,
+        }
+    }
+}
+
+/// The IMU's probe on the control thread (CC `probe`): its name and verdict (None healthy, else why); None when the
+/// thread drives no IMU.
+///
+/// Errors: the control thread did not answer in time.
+pub fn probe_imu() -> Option<Result<(&'static str, Option<String>), String>> {
+    let name = *IMU_NAME.get()?;
+    let mailbox = MAILBOX.get()?;
+    let (reply, answer) = sync_channel(1);
+    if mailbox.try_send(reply).is_err() {
+        return Some(Err("the control thread is busy".to_string()));
+    }
+    Some(
+        answer
+            .recv_timeout(PROBE_DEADLINE)
+            .map(|verdict| (name, verdict))
+            .map_err(|_| "the control thread did not answer".to_string()),
+    )
+}
+
+/// What `inspect` shows of the IMU the control thread drives (plan B lsm6dso32.py:300-308, beyond the channels):
+/// its name, whether INT1 is wired, whether INT1 is silent, whether its latest read succeeded. None without one.
+pub fn imu() -> Option<(&'static str, bool, bool, bool)> {
+    Some((
+        *IMU_NAME.get()?,
+        INTERRUPT_WIRED.load(Ordering::Relaxed),
+        INTERRUPT_SILENT.load(Ordering::Relaxed),
+        IMU_HEALTHY.load(Ordering::Relaxed),
+    ))
+}
+
+/// The separation switch's debounced latch (plan B `separated()`): true = separated.
+pub fn separated() -> bool {
+    SEPARATED.load(Ordering::Relaxed)
 }
 
 /// The tick's gptimer: an auto-reloading alarm every `period_us`, its ISR notifying `wakers`; created on this thread

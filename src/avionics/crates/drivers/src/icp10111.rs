@@ -332,6 +332,11 @@ impl Icp10111 {
         self.address
     }
 
+    /// The measurement period, ms (`period_ms`): a re-zero takes an altitude fresher than three of them.
+    pub fn period_ms(&self) -> u32 {
+        self.period_ms
+    }
+
     /// The OTP constants setup read.
     pub fn otp(&self) -> Option<Otp> {
         self.otp

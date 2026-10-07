@@ -500,6 +500,55 @@ impl Part {
         }
     }
 
+    /// The calibration the part waits for, in plan B's words (`calibration()`); empty when none. The ICP-10111 asks
+    /// for its ground until it holds one (setup captures it, so an up ICP never asks); the other parts' calibrations
+    /// come with their milestones (M9, M10).
+    pub fn calibration(&self) -> &'static str {
+        match self {
+            Part::Icp10111(barometer) => barometer.instruction(),
+            _ => "",
+        }
+    }
+
+    /// Plan B's `calibrate()`: None on success, else why. The ICP-10111 captures its ground again from fresh
+    /// conversions (plan B icp10111.py:337-344); a part with nothing to calibrate succeeds when nothing is pending
+    /// (plan B's default `calibration() or None`).
+    pub fn calibrate(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Option<String> {
+        match self {
+            Part::Icp10111(barometer) => match barometer.capture_ground(port, delay) {
+                Ok(ground) => {
+                    log::info!("{name} :: calibrated: ground {ground:.1} m AMSL");
+                    None
+                }
+                Err(fault) => Some(format!("ground zero: {fault}")),
+            },
+            other => Some(other.calibration().to_string()).filter(|pending| !pending.is_empty()),
+        }
+    }
+
+    /// Plan B's `update()`: the changed properties. The ICP-10111 takes `ground`, and `rezero` from its own altitude
+    /// channel when fresher than three periods; a part with nothing writable changes nothing.
+    ///
+    /// Errors: the part refused the change (CC answers `err refused <text>`).
+    pub fn update(&mut self, run: Option<&Run>, properties: &Value, now_us: u64) -> Result<Vec<&'static str>, String> {
+        match self {
+            Part::Icp10111(barometer) => {
+                let window_us = barometer.period_ms().saturating_mul(3).saturating_mul(1000);
+                let fresh = match run {
+                    Some(Run::Barometer(outputs)) => outputs
+                        .altitude
+                        .as_ref()
+                        .and_then(|writer| writer.recent(window_us, now_us)),
+                    None => None,
+                };
+                barometer
+                    .update(properties, fresh)
+                    .map_err(|refusal| refusal.to_string())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
     /// Whether the part sent a general call since the last ask: only the ICP-10111 sends one, to free itself.
     pub fn take_general_call(&mut self) -> bool {
         match self {

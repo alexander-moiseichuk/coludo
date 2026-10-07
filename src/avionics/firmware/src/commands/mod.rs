@@ -54,6 +54,8 @@ pub struct Context {
     /// Every directory entry and how its bring-up ended (crate::devices): health's tasks, verify's devices, the
     /// failures `arm` refuses with.
     pub devices: &'static controller::Table<'static>,
+    /// The databoard's quantities: what `inspect` reads a device's latest values from.
+    pub topology: &'static crate::devices::Topology,
 }
 
 /// The error codes on the wire (cc-protocol.md "Errors"), as plan B answers them.

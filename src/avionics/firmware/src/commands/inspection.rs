@@ -1,12 +1,15 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! objects / inspect / update / stats -- the operator-facing objects (src/glider cc_client `_register_inspection`,
-//! inspector.Inspector). The registry is fixed: the controller (the flight state), the mission, and the recorder
-//! (with the flash ring and the ring_saver) when it opened; device tasks join as their drivers are ported.
+//! inspector.Inspector). The registry: the controller (the flight state), the mission, the recorder (with the flash
+//! ring and the ring_saver) when it opened, and every device that came up (plan B registers each task as it comes
+//! up), whose snapshot is plan B's `Task.inspect` -- name, ok, healthy -- and, for the parts the port drives so far,
+//! their own keys read off the databoard (the IMU, the barometer, the separation switch).
 
 use std::collections::BTreeMap;
 
 use cc_protocol::Message;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{Code, Context, Fault, Reply};
@@ -19,18 +22,115 @@ const OBJECTS: [&str; 2] = ["controller", "mission"];
 /// The recorder's object name (plan B `Recorder.name`), listed while a recorder runs.
 const RECORDER: &str = "recorder";
 
-/// The object names `inspect`/`update`/`stats` accept now, sorted: the fixed ones, and the recorder when it opened.
-fn names() -> Vec<&'static str> {
+/// The object names `inspect`/`update`/`stats` accept now, sorted: the fixed ones, the recorder when it opened, and
+/// every device that came up.
+fn names(context: &Context) -> Vec<&'static str> {
     let mut names = OBJECTS.to_vec();
     if crate::recorder::get().is_some() {
         names.push(RECORDER);
     }
+    names.extend(context.devices.tasks().into_iter().map(|(name, _)| name));
+    names.sort_unstable();
+    names.dedup();
     names
 }
 
 /// `objects`: the names `inspect`/`update`/`stats` accept.
-pub fn objects(_message: &Message, _context: &mut Context) -> Reply {
-    super::ok_json(&names())
+pub fn objects(_message: &Message, context: &mut Context) -> Reply {
+    super::ok_json(&names(context))
+}
+
+/// A device's snapshot, plan B's `Task.inspect` (name, ok, healthy) and its driver's own keys, in plan B's order.
+/// Typed: a `json!` value would widen every f32 to f64 (a reading of 0.774944 would print as 0.774944007396698).
+#[derive(Serialize)]
+struct Snapshot<'a> {
+    name: &'a str,
+    /// It came up and its loop has not crashed (plan B's `ok`).
+    ok: bool,
+    /// Its latest reading succeeded (plan B's `healthy`).
+    healthy: bool,
+    /// The driver's own keys.
+    #[serde(flatten)]
+    own: Own,
+}
+
+/// A driver's own inspect keys (plan B lsm6dso32.py:300-308, icp10111.py:455-459, separation.py:190-193).
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Own {
+    /// The LSM6DSO32: its INT1 line, and its own channels' latest values (g, deg/s).
+    Imu {
+        interrupt: bool,
+        interrupt_silent: bool,
+        accel_g: Option<[f32; 3]>,
+        rate_dps: Option<[f32; 3]>,
+    },
+    /// The ICP-10111: its own channels' latest values.
+    Barometer {
+        altitude_m: Option<f32>,
+        temperature_c: Option<f32>,
+        pressure_pa: Option<f32>,
+        elevation_m: Option<f32>,
+    },
+    /// The separation switch: its debounced latch.
+    Separation { separated: bool },
+    /// Any other device: nothing of its own yet.
+    None {},
+}
+
+/// A device's snapshot (plan B `Task.inspect` and its drivers' own keys): None for a name that is no device that
+/// came up.
+fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
+    let entry = context.devices.find(name).filter(|entry| entry.active())?;
+    let ok = matches!(entry.status(), controller::Status::Up);
+    let topology = context.topology;
+    // SAFETY: a plain read of the monotonic timer.
+    let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() } as u64;
+    let latest = |quantity: &str| {
+        topology
+            .scalar(quantity)
+            .and_then(|parameter| parameter.channel(name)?.latest())
+    };
+    let vector = |quantity: &str| {
+        topology
+            .vector(quantity)
+            .and_then(|parameter| parameter.channel(name)?.latest())
+    };
+    let (healthy, own) = match entry.implementation {
+        "lsm6dso32" => {
+            let (_, interrupt, interrupt_silent, healthy) = crate::control::imu().filter(|(imu, ..)| *imu == name)?;
+            let own = Own::Imu {
+                interrupt,
+                interrupt_silent,
+                accel_g: vector("accel"),
+                rate_dps: vector("rate"),
+            };
+            (healthy, own)
+        }
+        "icp10111" => {
+            // healthy while its pressure is fresh within the quantity's window (plan B: its last read succeeded)
+            let healthy = topology.scalar("pressure").is_some_and(|parameter| {
+                parameter
+                    .channel(name)
+                    .is_some_and(|channel| channel.fresh(now_us, parameter.window_us()))
+            });
+            let own = Own::Barometer {
+                altitude_m: latest("altitude"),
+                temperature_c: latest("temperature"),
+                pressure_pa: latest("pressure"),
+                elevation_m: latest("elevation"),
+            };
+            (healthy, own)
+        }
+        "separation" => (
+            true,
+            Own::Separation {
+                separated: crate::control::separated(),
+            },
+        ),
+        _ => (ok, Own::None {}),
+    };
+    Some(Snapshot { name, ok, healthy, own })
 }
 
 /// `inspect <object>`: its property snapshot.
@@ -53,7 +153,7 @@ pub fn inspect(message: &Message, context: &mut Context) -> Reply {
         }
         "mission" => super::ok_json(&context.mission.inspect(None, &clock::text(), clock::epoch())),
         RECORDER => super::ok_json(&crate::recorder::inspect_report().ok_or_else(|| no_object(RECORDER))?),
-        other => Err(no_object(other)),
+        other => super::ok_json(&device(context, other).ok_or_else(|| no_object(other))?),
     }
 }
 
@@ -65,7 +165,7 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
     // plan B's order: the JSON is parsed inside the refusal guard (bad JSON answers `refused`), the object is
     // looked up next (`badargs`), and only the object sees the properties
     let properties: Value = super::parse_json(properties, Code::Refused, None)?;
-    if !names().contains(&name.as_str()) {
+    if !names(context).contains(&name.as_str()) {
         return Err(no_object(name));
     }
     let properties = properties
@@ -74,7 +174,12 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
     let changed: Vec<&str> = match name.as_str() {
         "mission" => apply_mission(context, properties),
         RECORDER => apply_recorder(properties),
-        _ => Vec::new(), // the controller: nothing on it is writable
+        "controller" => Vec::new(), // nothing on it is writable
+        // a device: the part on its owner (the barometer's ground and rezero); the others change nothing
+        device => crate::owner::update(device, &Value::Object(properties.clone()))
+            .map_err(|error| Fault::new(Code::Internal, error))?
+            .unwrap_or(Ok(Vec::new()))
+            .map_err(|refusal| Fault::new(Code::Refused, refusal))?,
     };
     super::ok_json(&json!({"changed": changed}))
 }
@@ -129,7 +234,7 @@ pub fn set_clock(properties: &serde_json::Map<String, Value>) -> bool {
 }
 
 /// `stats <object>`: its runtime numbers.
-pub fn stats(message: &Message, _context: &mut Context) -> Reply {
+pub fn stats(message: &Message, context: &mut Context) -> Reply {
     let name = message
         .args
         .first()
@@ -138,6 +243,8 @@ pub fn stats(message: &Message, _context: &mut Context) -> Reply {
         "controller" => super::ok_json(&json!({"stage": STATUS.stage().name(), "tasks": {}})),
         "mission" => super::ok_json(&json!({})),
         RECORDER => super::ok_json(&crate::recorder::stats_report().ok_or_else(|| no_object(RECORDER))?),
+        // a device: plan B's Inspectable.stats() default
+        device if context.devices.find(device).is_some_and(|entry| entry.active()) => super::ok_json(&json!({})),
         other => Err(no_object(other)),
     }
 }
