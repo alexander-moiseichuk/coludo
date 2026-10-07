@@ -1283,6 +1283,9 @@ Partition 2, the videos (mounted at /sdcard/videos):
     garbage collection. They are not a cost of the two-partition layout. A strict proof would re-prepare one card in
     the other layout (operator, card reader). Either way the flight budget must ride out a ~0.6 s card stall: the
     saver lags (the flash ring absorbs it) and the video writer drops a few frames.
+  - **Re-run after several days of use (operator).** AB58 had just been put into service; 267D had been powered
+    much longer. A fresh card may still be doing its first-use housekeeping, so repeat the A/B and the raw `sdtest`
+    once both cards have run for days.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
   partition 1. A session is `GET /sd/<session>/recordings/`, its videos `GET /sd/videos/<session>/`.
 - **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and
