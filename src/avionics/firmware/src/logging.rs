@@ -15,8 +15,16 @@
 //! own PSRAM ring, or `try_lock`s the shared `misc` one: a full or busy ring drops the line and counts it. Lines
 //! logged before the recorder opens reach the console only; main opens it right after the board config, so that is
 //! the boot count and the config load.
+//!
+//! A line logged on the flight core (core 1: the control thread, the bus owners) never prints in place: a console
+//! write blocks once the UART's transmit buffer fills (115200 baud drains ~11 KB a second, and a CC reply can be
+//! kilobytes), and a blocked control tick ran 4.5 ms late (M6, measured). It goes into a bounded FreeRTOS queue with
+//! a non-blocking send instead, dropped and counted when the queue is full, and a printer thread on core 0 writes it
+//! out. Its recorder.log copy is unchanged: the thread's own ring, lock-free.
 
 use core::fmt::Write;
+use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use std::io::Write as _;
 
 use esp_idf_svc::log::{EspIdfLogFilter, EspIdfLogger};
 use esp_idf_svc::sys;
@@ -24,6 +32,96 @@ use esp_idf_svc::sys;
 /// The longest log text kept for recorder.log, descriptor and message together, bytes: the recorder's own message
 /// limit (1 KiB). The console prints the whole line regardless.
 const LINE_BYTES: usize = 1024;
+
+/// The core the flight threads run on: their lines go through the printer's queue, never straight to the console.
+const FLIGHT_CORE: usize = 1;
+
+/// A queued console line's room, bytes: two of them carry the length, the rest the line, cut at a character
+/// boundary.
+const QUEUED_LINE_BYTES: usize = 200;
+
+/// How many flight-core lines wait for the printer at most (PSRAM: 6.4 KB); a full queue drops the line.
+const QUEUED_LINES: u32 = 32;
+
+/// The printer thread's stack (PSRAM: a slow core-0 thread that never calls esp_mmu_map/unmap).
+const PRINTER_STACK: usize = 4 << 10;
+
+/// The printer's queue, once [`install`] made it (null before: the flight core's lines print in place then, which
+/// is only the boot, before any flight thread runs).
+static QUEUE: AtomicPtr<sys::QueueDefinition> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Flight-core lines the full queue dropped (their recorder.log copies were kept).
+static DROPPED: AtomicU32 = AtomicU32::new(0);
+
+/// Flight-core console lines dropped because the printer's queue was full.
+pub fn console_dropped() -> u32 {
+    DROPPED.load(Ordering::Relaxed)
+}
+
+/// The core this code runs on.
+fn current_core() -> usize {
+    let core: usize;
+    // SAFETY: reads the hart id CSR, nothing else.
+    unsafe { core::arch::asm!("csrr {}, mhartid", out(reg) core) };
+    core
+}
+
+/// Queues `line` for the printer without waiting; a full queue drops it, counted.
+fn enqueue(queue: sys::QueueHandle_t, line: &str) {
+    let mut taken = line.len().min(QUEUED_LINE_BYTES - 2);
+    while !line.is_char_boundary(taken) {
+        taken -= 1;
+    }
+    let mut item = [0u8; QUEUED_LINE_BYTES];
+    item[..2].copy_from_slice(&(taken as u16).to_le_bytes());
+    item[2..2 + taken].copy_from_slice(&line.as_bytes()[..taken]);
+    // SAFETY: a live queue of QUEUED_LINE_BYTES items; the item is copied in; 0 ticks: never waits.
+    if unsafe { sys::xQueueGenericSend(queue, item.as_ptr().cast(), 0, 0) } != 1 {
+        DROPPED.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The printer thread (core 0, priority 3): each queued flight-core line to the console, forever.
+fn print(queue: usize) {
+    let queue = queue as sys::QueueHandle_t;
+    let mut item = [0u8; QUEUED_LINE_BYTES];
+    loop {
+        // SAFETY: a live queue of QUEUED_LINE_BYTES items, received into a buffer of that size.
+        if unsafe { sys::xQueueReceive(queue, item.as_mut_ptr().cast(), u32::MAX) } != 1 {
+            continue;
+        }
+        let length = usize::from(u16::from_le_bytes([item[0], item[1]])).min(QUEUED_LINE_BYTES - 2);
+        let mut stdout = std::io::stdout().lock();
+        let _ = stdout.write_all(&item[2..2 + length]);
+        let _ = stdout.write_all(b"\n");
+    }
+}
+
+/// Makes the printer's queue and spawns the printer on core 0.
+fn start_printer() -> anyhow::Result<()> {
+    use esp_idf_svc::hal::cpu::Core;
+    use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
+    // SAFETY: a plain queue allocation, in PSRAM.
+    let queue = unsafe { sys::xQueueCreateWithCaps(QUEUED_LINES, QUEUED_LINE_BYTES as u32, sys::MALLOC_CAP_SPIRAM) };
+    anyhow::ensure!(!queue.is_null(), "no memory for the console queue");
+    ThreadSpawnConfiguration {
+        name: Some(c"log_print"),
+        stack_size: PRINTER_STACK,
+        priority: 3,
+        pin_to_core: Some(Core::Core0),
+        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
+        ..Default::default()
+    }
+    .set()?;
+    let address = queue as usize;
+    let spawned = std::thread::Builder::new()
+        .stack_size(PRINTER_STACK)
+        .spawn(move || print(address));
+    ThreadSpawnConfiguration::default().set()?;
+    spawned?;
+    QUEUE.store(queue, Ordering::Release);
+    Ok(())
+}
 
 /// The console logger with IDF's own settings filter (esp-idf-svc's default). It prints straight to stdout, never
 /// through IDF's vprintf, so a Rust line does not come back through the hook a second time.
@@ -38,9 +136,13 @@ impl log::Log for Logger {
     }
 
     fn log(&self, record: &log::Record) {
-        log::Log::log(&CONSOLE, record);
         if !log::Log::enabled(&CONSOLE, record.metadata()) {
             return;
+        }
+        let queue = QUEUE.load(Ordering::Acquire);
+        let queued = !queue.is_null() && current_core() == FLIGHT_CORE;
+        if !queued {
+            log::Log::log(&CONSOLE, record);
         }
         let mut line = Line::default();
         let text = match record.args().as_str() {
@@ -59,6 +161,10 @@ impl log::Log for Logger {
         let _ = write!(tail, "{level} ({timestamp}) {}: {text}", record.target());
         // SAFETY: the line's bytes, valid for the call; panic_capture copies them.
         unsafe { sys::panic_capture_log(tail.0.as_ptr().cast(), tail.0.len()) };
+        // the same shape is the console's: the printer writes it for the flight core
+        if queued {
+            enqueue(queue, &tail.0);
+        }
         let Some(recorder) = crate::recorder::get() else {
             return;
         };
@@ -86,6 +192,9 @@ pub fn install() {
     }
     // SAFETY: installs a plain C callback once; it records the line and never logs, blocks or allocates.
     unsafe { sys::log_hook_install(Some(idf_line)) };
+    if let Err(error) = start_printer() {
+        log::warn!("logging :: the flight core's lines print in place: {error}");
+    }
 }
 
 /// A formatted log text, cut to [`LINE_BYTES`] so a runaway message cannot grow the heap.

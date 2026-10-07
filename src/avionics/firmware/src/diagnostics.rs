@@ -436,6 +436,23 @@ pub fn register_commands() {
     firmware::gcl::register(vec![
         Command {
             owner: "diagnostics",
+            words: "interrupts",
+            about: "IDF's interrupt table, printed on the USB console: each allocated interrupt's core, level, source \
+                    and whether it is IRAM-safe (esp_intr_dump): where the tick's, the GPIO's and the buses' ISRs run",
+            gate: Gate::Open,
+            reach: Reach::Console,
+            parameters: &[],
+            bare_words: &[],
+            run: Box::new(|_| {
+                // SAFETY: a null stream is stdout (intr_alloc.c:1017-1019), the USB console's UART.
+                match unsafe { sys::esp_intr_dump(core::ptr::null_mut()) } {
+                    sys::ESP_OK => cc_protocol::build("ok", &["interrupts", "printed on the console"], &[]),
+                    code => cc_protocol::build("err", &["interrupts", &format!("esp_intr_dump {code:#x}")], &[]),
+                }
+            }),
+        },
+        Command {
+            owner: "diagnostics",
             words: "heap",
             about: "where the RAM is: free, largest block and lowest-ever free of internal, DMA-capable, RTC, SPM and \
                     PSRAM heaps",

@@ -548,7 +548,8 @@ pub fn register_commands() {
         words: "control",
         about: "the control tick: its rate, ticks, overruns (ticks the thread missed) and lateness (the latest, the \
                 largest, and how many ticks passed the 200 us budget); the IMU's reads, failures, INT1 edges at the \
-                latest tick and whether INT1 is silent",
+                latest tick and whether INT1 is silent; the separation latch; flight-core log lines the console queue \
+                dropped",
         gate: Gate::Open,
         reach: Reach::Everywhere,
         parameters: &[],
@@ -572,6 +573,7 @@ pub fn register_commands() {
                     ("irq_runs_last", &IRQ_RUNS_LAST.load(Ordering::Relaxed).to_string()),
                     ("int1_silent", &INTERRUPT_SILENT.load(Ordering::Relaxed).to_string()),
                     ("separated", &SEPARATED.load(Ordering::Relaxed).to_string()),
+                    ("console_dropped", &crate::logging::console_dropped().to_string()),
                 ],
             )
         }),

@@ -13,8 +13,9 @@ use serde_json::json;
 
 use super::{Code, Context, Fault, Reply};
 
-/// What a probe or a bustune of the SPI bus answers until SPI2's owner exists.
-const NO_SPI_OWNER: &str = "comes with the control thread, SPI2's owner (port plan M6)";
+/// What a bustune of the SPI bus answers.
+const SPI_BUSTUNE: &str = "is not ported: SPI2 runs at the config's baud (its owner, the control thread, has no \
+                            retune)";
 
 /// The I2C parts probed on both ports' owners, the one named or every one, in port order (plan B's
 /// `Inspector.probe_all` over the device tasks), and why an owner did not answer, under its port's name.
@@ -238,7 +239,7 @@ pub fn bustune(message: &Message, context: &mut Context) -> Reply {
         return super::ok_json(&json!({"error": format!("bus {kind}:{id} not defined")}));
     }
     if kind == "spi" {
-        return Err(Fault::new(Code::Unsupported, format!("spi bustune {NO_SPI_OWNER}")));
+        return Err(Fault::new(Code::Unsupported, format!("spi bustune {SPI_BUSTUNE}")));
     }
     let port: u8 = id
         .parse()
