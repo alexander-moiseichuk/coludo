@@ -1314,6 +1314,27 @@ Partition 2, the videos (mounted at /sdcard/videos):
       ran longer (its downloads were slower).
     - Two partitions stays the layout (the operator, 2026-10-07: it does better on frames), one partition the
       fallback.
+  - **Fourth run (2026-10-07): both cards discarded and prepared alike, layouts swapped.** Both were prepared with
+    `sd_prepare.sh` in panda's own reader (Realtek RTS522A, which passes discards on: granularity 4 MiB): a whole-card
+    discard, partitions on the 4 MiB grid, 32 KiB clusters, half the card. AB58 got `--partitions 1`, 267D the two
+    partitions; each stayed in its board, so only the layout changed. AB58's old partitions had both started 1 MiB
+    off the 4 MiB grid that is its preferred erase size (a hand-made table); 267D's old table was not read.
+
+    | | taster, AB58, one partition | 7F, 267D, two partitions |
+    |---|---|---|
+    | missed frames | 0.10 % (3 of 2988) | 0.16 % (5 of 3060) |
+    | SD write max | 136 ms | 141 ms |
+    | SD busy | 38.3 % | 45.9 % |
+    | saver backlog over the run, mean / peak | 27 / 137 KB | 32 / 113 KB |
+    | 20 MB downloads under video and saver | 22–29 s | 23–28 s |
+    | raw `sdtest` flat out | 9.2 MB/s, worst 30 ms | 4.9–7.5 MB/s, worst 128–198 ms |
+
+    No failure on either. The preparation is what mattered: missed frames fell from 0.5–1.9 % to 0.10–0.16 % on both
+    cards. AB58's 400–590 ms stalls left the video run (two paced `sdtest` runs still met 226 and 367 ms), and its
+    flat-out speed rose from 2.5–3.9 to 9.2 MB/s. Between the layouts, with the cards prepared alike, what is left is
+    within noise. Two partitions stays the layout for its own reasons (a lock and a FAT per volume, the recordings'
+    FAT safe from a cut mid-video). **Rule: prepare every card with `sd_prepare.sh`** (a whole-card discard, the 4 MiB
+    grid); a card partitioned by hand can sit off its erase grid.
     - The operator's next step: discard both cards and make their file systems again (`tools/sd_prepare.sh`
       discards first), the same layout on both or swapped, then repeat the A/B. AB58 may also have been doing its
       first-use housekeeping.
