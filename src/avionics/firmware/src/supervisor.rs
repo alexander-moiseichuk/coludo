@@ -65,7 +65,7 @@ pub fn start(board: Arc<Board>) -> anyhow::Result<()> {
         priority: PRIORITY,
         pin_to_core: Some(Core::Core0),
         // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
-        // esp_mmu_map, the one runtime path that turns the cache off
+        // esp_mmu_map/unmap, the one runtime path that turns the cache off
         stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
         ..Default::default()
     }

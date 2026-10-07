@@ -46,10 +46,11 @@ pub fn start(
         name: Some(c"console"),
         stack_size: STACK_SIZE,
         priority: 5,
-        // core 0 with the rest of the link: pthread's default leaves it unpinned, free to run on core 1, the flight core
+        // core 0 with the rest of the link: pthread's default leaves it unpinned, free to run on core 1, the flight
+        // core
         pin_to_core: Some(Core::Core0),
         // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
-        // esp_mmu_map, the one runtime path that turns the cache off
+        // esp_mmu_map/unmap, the one runtime path that turns the cache off
         stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
         ..Default::default()
     }

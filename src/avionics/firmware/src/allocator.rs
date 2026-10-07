@@ -8,12 +8,17 @@
 //! `set-config board` of a 7 KB config took the internal heap from ~70 KB free to 20 bytes, on the CC executor.
 //!
 //! The slow core-0 threads (the CC executor, the console, the supervisor, the file server) already run on PSRAM stacks
-//! (they never call esp_mmu_map, the one runtime path that turns the cache off). The stack pointer is the marker: a
-//! Rust allocation made on a PSRAM stack goes to PSRAM, and falls back to std's path when PSRAM has none. Everything
-//! else -- the flight and ring threads, boot on main, interrupts -- allocates exactly as before. C code (NVS, FatFs,
-//! esp_hosted) calls malloc itself and is untouched.
+//! (they never call esp_mmu_map or esp_mmu_unmap, the one runtime path that turns the cache off). The stack pointer is
+//! the marker: a Rust allocation made on a PSRAM stack goes to PSRAM, and falls back to std's path when PSRAM has none
+//! (a fallback only while CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS stays off, IDF's default: with it a full PSRAM
+//! aborts). Everything else -- the flight and ring threads, boot on main, interrupts -- allocates exactly as before.
+//! C code (NVS, FatFs, esp_hosted) calls malloc itself and is untouched.
+//!
+//! What such a thread needs in internal RAM it asks for by name: [`InternalBuffer`] (a flash read's destination).
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::ops::{Deref, DerefMut};
+use std::ptr::NonNull;
 
 use esp_idf_svc::sys;
 
@@ -71,6 +76,7 @@ unsafe impl GlobalAlloc for Allocator {
             // SAFETY: forwarded from the caller; the block holds layout.size() bytes.
             let block = unsafe { psram_alloc(layout) };
             if !block.is_null() {
+                // SAFETY: the block was just allocated with layout.size() bytes.
                 unsafe { block.write_bytes(0, layout.size()) };
                 return block;
             }
@@ -107,5 +113,56 @@ unsafe impl GlobalAlloc for Allocator {
         }
         // SAFETY: forwarded from the caller.
         unsafe { System.realloc(block, layout, new_size) }
+    }
+}
+
+/// A zeroed byte buffer in internal RAM, whatever the calling thread's stack.
+///
+/// For a destination that must be internal on a PSRAM-stack thread: esp_flash_read fills internal RAM directly, and
+/// reads into any other memory through an internal bounce buffer it allocates per call, after walking the internal
+/// heap for its largest block with core 0's interrupts masked -- thousands of times per ring pull, and a failed
+/// allocation fails the read.
+pub struct InternalBuffer {
+    /// The buffer, `length` bytes from heap_caps_calloc.
+    pointer: NonNull<u8>,
+    /// Its length in bytes, never zero.
+    length: usize,
+}
+
+// SAFETY: the buffer is owned memory with no thread affinity; free() releases it from any thread.
+unsafe impl Send for InternalBuffer {}
+
+impl InternalBuffer {
+    /// `length` (not zero) zeroed bytes of internal RAM; None when the internal heap has no such block.
+    pub fn zeroed(length: usize) -> Option<Self> {
+        if length == 0 {
+            return None;
+        }
+        // SAFETY: a plain heap call; the block is owned by the returned value and freed on its drop.
+        let block = unsafe { sys::heap_caps_calloc(1, length, sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_8BIT) };
+        NonNull::new(block as *mut u8).map(|pointer| Self { pointer, length })
+    }
+}
+
+impl Deref for InternalBuffer {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        // SAFETY: `length` initialised (zeroed) bytes, owned by self.
+        unsafe { std::slice::from_raw_parts(self.pointer.as_ptr(), self.length) }
+    }
+}
+
+impl DerefMut for InternalBuffer {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as deref, and borrowed mutably through self.
+        unsafe { std::slice::from_raw_parts_mut(self.pointer.as_ptr(), self.length) }
+    }
+}
+
+impl Drop for InternalBuffer {
+    fn drop(&mut self) {
+        // SAFETY: the block came from heap_caps_calloc and is freed once.
+        unsafe { sys::heap_caps_free(self.pointer.as_ptr().cast()) };
     }
 }

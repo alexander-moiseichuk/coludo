@@ -51,13 +51,13 @@
 //! power-cut bound).
 //!
 //! Nothing here runs on core 1, the flight core, and no producer takes a lock (crates/recorder). Every big buffer is
-//! in PSRAM. What stays in internal RAM is the four thread stacks (writer 8 KiB, eraser 6 KiB, saver 8 KiB, and
-//! the supervisor's 6 KiB in supervisor.rs) and the crates' working buffers: about 18 KiB for the writer and the
-//! eraser (the writer's chunk, the ring's chunk and its 4 KiB erased-check buffer, the eraser's per-slot failure
+//! in PSRAM. What stays in internal RAM is the three ring threads' stacks (writer 8 KiB, eraser 6 KiB, saver 8 KiB;
+//! the supervisor's runs in PSRAM, supervisor.rs) and the crates' working buffers: about 18 KiB for the writer and
+//! the eraser (the writer's chunk, the ring's chunk and its 4 KiB erased-check buffer, the eraser's per-slot failure
 //! counts), and for the saver its 4 KiB block buffer, which esp_flash fills directly (a PSRAM buffer would bounce
 //! through internal DMA memory), its 1 KiB tail buffer, and its batch while it collects: the lines of up to a second,
-//! one growing buffer per file, internal while a file's buffer is under 16 KiB. The 48 KiB block table is in PSRAM:
-//! the heap puts any allocation of 16 KiB or more there (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL).
+//! one growing buffer per file, internal while a file's buffer is 4 KiB or less. The 48 KiB block table is in PSRAM:
+//! the heap puts any allocation over 4 KiB there (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL).
 
 use std::ffi::CStr;
 use std::num::NonZeroU32;
@@ -941,8 +941,9 @@ impl Partition {
 impl Flash for Partition {
     type Error = sys::EspError;
 
-    /// Reads with esp_partition_read. The callers read into internal RAM (a ≤ 4 KiB buffer): esp_flash reads a PSRAM
-    /// buffer through a bounce buffer of up to 16 KiB of internal DMA memory, the kind esp_hosted cannot do without.
+    /// Reads with esp_partition_read. The callers read into internal RAM (a ≤ 4 KiB buffer; on the file server's
+    /// PSRAM stack an allocator::InternalBuffer): esp_flash reads a PSRAM buffer through a bounce buffer of up to
+    /// 16 KiB of internal DMA memory, the kind esp_hosted cannot do without.
     fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), Self::Error> {
         // SAFETY: esp_partition_read checks the range against the partition and fills at most the buffer's length.
         sys::esp!(unsafe { sys::esp_partition_read(self.0, offset as usize, buffer.as_mut_ptr().cast(), buffer.len()) })

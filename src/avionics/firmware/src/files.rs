@@ -41,6 +41,7 @@ use flash_ring::{BLOCK_BYTES, Flash, Slot};
 use recorder::{Decoder, Recorder};
 
 use crate::recorder::{Partition, RingView};
+use firmware::allocator::InternalBuffer;
 use firmware::sd;
 use recorder::layout;
 
@@ -62,8 +63,8 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
         // `/ring` on core 1, the flight core
         core: Some(Core::Core0),
         // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): it reads the card and the ring with
-        // esp_flash_read, never esp_mmu_map, the one runtime path that turns the cache off (no OTA here: M15's runs
-        // elsewhere)
+        // esp_flash_read, never esp_mmu_map/unmap, the one runtime path that turns the cache off (no OTA here: M15's
+        // runs elsewhere); its Rust allocations go to PSRAM too (crate::allocator)
         task_caps: esp_idf_svc::sys::MALLOC_CAP_SPIRAM | esp_idf_svc::sys::MALLOC_CAP_8BIT,
         ..Default::default()
     })?;
@@ -174,9 +175,11 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
                 ("Content-Length", &length),
             ],
         )?;
-        // read a block at a time into internal RAM, which esp_flash fills directly, and send in PSRAM chunks: a read
-        // into PSRAM would go through up to 16 KiB of internal DMA memory per call, the kind esp_hosted needs
-        let mut block = vec![0u8; BLOCK_BYTES as usize];
+        // read a block at a time into internal RAM, which esp_flash fills directly, and send in PSRAM chunks: this
+        // thread's own allocations go to PSRAM (crate::allocator), and a read into PSRAM bounces through internal DMA
+        // memory, the kind esp_hosted needs, allocated anew per call
+        let mut block = InternalBuffer::zeroed(BLOCK_BYTES as usize)
+            .ok_or_else(|| anyhow::anyhow!("no internal RAM for a block buffer"))?;
         let mut image = Vec::with_capacity(CHUNK);
         for offset in (0..size).step_by(BLOCK_BYTES as usize) {
             if let Err(error) = read_retrying(&view.partition, offset, &mut block) {
@@ -256,7 +259,7 @@ fn decode_ring(
     send: &mut dyn FnMut(&[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let geometry = view.table.geometry();
-    // sized for every slot at once (72 KiB, so the heap puts it in PSRAM), rather than grown through internal RAM
+    // sized for every slot at once (72 KiB), rather than grown
     let mut blocks: Vec<(u32, u32, bool)> = Vec::with_capacity(geometry.blocks() as usize);
     blocks.extend((0..geometry.blocks()).filter_map(|slot| match view.table.slot(slot) {
         Slot::Valid { block_sequence, .. } => Some((block_sequence, slot, false)),
@@ -266,12 +269,16 @@ fn decode_ring(
     blocks.sort_unstable_by_key(|&(block_sequence, _, _)| block_sequence);
     let mut decoder = Decoder::new();
     // the boot (session, boot id) the decoder holds: it remembers each file's column list and the newest uptime per
-    // boot, for as long as it lives, in nodes too small for PSRAM (the heap puts anything under 16 KiB in internal
-    // RAM first, the RAM esp_hosted needs to send this very reply). A boot's blocks come one after another in
-    // sequence order, so once the next boot starts the last one's memory is never asked for again: a fresh decoder
-    // per boot prints the same lines and holds one boot's files at a time, however many boots the ring keeps
+    // boot, for as long as it lives (in PSRAM: this thread's allocations go there, crate::allocator). A boot's blocks
+    // come one after another in sequence order, so once the next boot starts the last one's memory is never asked
+    // for again: a fresh decoder per boot prints the same lines and holds one boot's files at a time, however many
+    // boots the ring keeps
     let mut decoding: Option<(Session, u32)> = None;
-    let mut block = vec![0u8; BLOCK_BYTES as usize];
+    // the flash reads' destinations in internal RAM, which esp_flash fills directly (see /ring/image)
+    let mut block = InternalBuffer::zeroed(BLOCK_BYTES as usize)
+        .ok_or_else(|| anyhow::anyhow!("no internal RAM for a block buffer"))?;
+    let mut next =
+        InternalBuffer::zeroed(HEADER_BYTES).ok_or_else(|| anyhow::anyhow!("no internal RAM for a header"))?;
     let mut text = Vec::with_capacity(2 * CHUNK);
     for (index, &(block_sequence, slot, open)) in blocks.iter().enumerate() {
         let length = if open {
@@ -298,7 +305,6 @@ fn decode_ring(
         }
         let boot_goes_on = open
             || blocks.get(index + 1).is_some_and(|&(_, next_slot, _)| {
-                let mut next = [0u8; HEADER_BYTES];
                 read_retrying(&view.partition, geometry.slot_offset(next_slot), &mut next).is_ok()
                     && BlockHeader::decode(&next)
                         .is_ok_and(|next| next.boot_id == header.boot_id && next.session == header.session)
