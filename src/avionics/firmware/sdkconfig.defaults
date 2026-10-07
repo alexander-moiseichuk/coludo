@@ -92,14 +92,23 @@ CONFIG_LWIP_TCP_SACK_OUT=y
 # FatFs on the microSD: long file names (session files like 000135_flight.csv); FatFs defaults to 8.3 only
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=255
-# FatFs's file lock table, one entry per open file or directory, at least components/sd_card's max_files (40): the
-# video writer, the ring_saver's appends and the HTTP reads share the card. IDF's default 0 has no table, so FatFs lets
-# the saver append to a file an HTTP pull is reading through a second handle (FatFs calls that an illegal open: the
-# read sees the size before the batch, at best). With the table a file open for writing refuses every other open
-# (FR_LOCKED, EACCES through the VFS): files.rs answers 503, and the saver goes on with that file at its next step.
-# A table smaller than max_files would answer FR_TOO_MANY_OPEN_FILES (ENFILE) before the VFS ran out of handles.
-# Its cost is 16 B a file of internal RAM.
+# FatFs's file lock table, one entry per open file or directory, ONE table for every volume: at least the sum of
+# components/sd_card's max_files, 32 on the recordings volume and 8 on the videos volume (40 on a one-partition card's
+# only volume; sd_card.c refuses to build below). The video writer, the ring_saver's appends and the HTTP reads share
+# the card. IDF's default 0 has no table, so FatFs lets the saver append to a file an HTTP pull is reading through a
+# second handle (FatFs calls that an illegal open: the read sees the size before the batch, at best). With the table
+# a file open for writing refuses every other open (FR_LOCKED, EACCES through the VFS): files.rs answers 503, and the
+# saver goes on with that file at its next step. A table smaller than max_files would answer FR_TOO_MANY_OPEN_FILES
+# (ENFILE) before the VFS ran out of handles. Its cost is 16 B a file of internal RAM.
 CONFIG_FATFS_FS_LOCK=40
+# Two FatFs volumes, one card (components/sd_card): partition 1 (the recordings) at /sdcard, partition 2 (the videos)
+# at /sdcard/videos. IDF's default, stated because the two-partition mount depends on it.
+CONFIG_FATFS_VOLUME_COUNT=2
+# The VFS's table of mounted file systems (IDF default 8, 4 B an entry). Counted on the taster: /dev/uart,
+# /dev/secondary, /dev/null, /dev/console and lwIP's sockets at boot, /sdcard, then /dev/video0 and /dev/video20 at
+# `video start`: 8, the table full. The videos partition's /sdcard/videos is a ninth, which would leave esp_video no
+# entry and fail `video start` on a two-partition card. 12 leaves room.
+CONFIG_VFS_MAX_COUNT=12
 # f_getlabel, for the card's FAT volume serial (components/sd_card): the session-start record names the card, and the
 # next boot trusts the ring_saver's position hint only for that same card
 CONFIG_FATFS_USE_LABEL=y

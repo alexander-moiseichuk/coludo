@@ -20,7 +20,8 @@ pub struct Board {
     /// This boot's NVS count (src/glider main._next_boot); None when the store would not count it.
     pub boot_id: Option<i32>,
     /// The prefix this boot's capture files carry (crate::recorder::session_prefix): a valid `recorder.session`
-    /// label, else the boot id as `%06u`, else the legacy date form.
+    /// label the card's layout does not reserve (`videos`, `recordings`, `video`), else the boot id as `%06u`, else
+    /// the legacy date form.
     pub session: String,
     /// The die temperature sensor; None when it would not start (health then reports no temperature). Behind
     /// a lock: IDF does not promise its read is thread-safe, and the console and the link both ask.

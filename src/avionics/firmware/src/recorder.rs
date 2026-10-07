@@ -10,8 +10,8 @@
 //!   supervisor, executor, eraser,          + misc ring          |  one chunk per ~10 ms tick    |          ^
 //!   everyone else (log bridge, IDF)                             +--> CC tees (`log`, `tlm`)     |          | 4 KiB erases
 //!                                                                                               v          |
-//!                       /sdcard/recordings/<session>/... <-- ring_saver (core 0, prio 4) -- saver_position --+
-//!                                                            text, batches, fsync           ring_eraser (core 0, prio 3)
+//!                       /sdcard/<session>/recordings/... <-- ring_saver (core 0, prio 4) -- saver_position --+
+//!                       /sdcard/sessions.csv                 text, batches, fsync           ring_eraser (core 0, prio 3)
 //! ```
 //!
 //! The bring-up runs in two steps, so no line of the boot is lost and boot never waits on flash:
@@ -80,7 +80,7 @@ use flash_ring::{
 };
 use recorder::{
     BATCH_BLOCKS, Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, SaveError, Saved, Saver, Settings, StdFs,
-    StreamId, TICK_US, Writer,
+    StreamId, TICK_US, Writer, layout,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -227,12 +227,10 @@ pub struct Card {
 }
 
 impl Card {
-    /// The card as the session-start record names it: the serial as `blkid` shows it (`1A2B-3C4D`), or `unknown`.
+    /// The card as the session-start record names it: partition 1's serial as `blkid` shows it (`1A2B-3C4D`), or
+    /// `unknown`.
     pub fn name(self) -> String {
-        self.serial.map_or_else(
-            || "unknown".to_string(),
-            |serial| format!("{:04X}-{:04X}", serial >> 16, serial & 0xFFFF),
-        )
+        self.serial.map_or_else(|| "unknown".to_string(), sd::serial_name)
     }
 }
 
@@ -285,13 +283,21 @@ pub fn ring() -> Option<&'static RingView> {
 /// config's `recorder.session` when it is a valid label, else the boot id as `%06u`, else
 /// `YYYYMMDD_HHMMSS_<6 random digits>` from the clock (2000-01-01 plus the uptime while it is unset).
 ///
+/// A label the card's layout reserves (`videos`, `recordings` or `video`, in any case: crates/recorder layout
+/// `is_reserved`) counts as no label: `videos` would put the session's recordings into the videos directory, on a
+/// two-partition card the videos partition, and the other two are an M4 card's root directories, which the tools
+/// still read. [`open`] logs that it was ignored.
+///
 /// Args:
 /// * `document` - the board config this boot runs.
 /// * `boot_id` - this boot's NVS count; None when uncounted.
 ///
 /// Returns the prefix: it names the SD directory, every file of the boot, the video directory and whoami's session.
 pub fn session_prefix(document: &Value, boot_id: Option<i32>) -> String {
-    let label = recorder_wire::session_label(document["recorder"]["session"].as_str().unwrap_or_default());
+    let label = match recorder_wire::session_label(document["recorder"]["session"].as_str().unwrap_or_default()) {
+        recorder_wire::SessionLabel::Valid(label) if layout::is_reserved(&label) => recorder_wire::SessionLabel::Unset,
+        label => label,
+    };
     let boot_id = boot_id.and_then(|boot_id| u32::try_from(boot_id).ok());
     // SAFETY: a plain read of the hardware random number generator.
     let random = unsafe { sys::esp_random() };
@@ -357,10 +363,16 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, config_id: &s
         .map_err(|_| anyhow::anyhow!("the recorder opened twice"))?;
     let recorder = get().ok_or_else(|| anyhow::anyhow!("the recorder did not publish"))?;
     let configured = document["recorder"]["session"].as_str().unwrap_or_default();
-    if let recorder_wire::SessionLabel::Ignored(label) = recorder_wire::session_label(configured) {
-        log::warn!(
+    match recorder_wire::session_label(configured) {
+        recorder_wire::SessionLabel::Ignored(label) => log::warn!(
             "Recorder :: recorder.session {label:?} ignored (letters, digits and '-' only, one letter at least, 32 at most)"
-        );
+        ),
+        recorder_wire::SessionLabel::Valid(label) if layout::is_reserved(&label) => log::warn!(
+            "Recorder :: recorder.session {label:?} ignored: it names a directory at the card's root that is no \
+             session's (the videos partition's mount point, or an M4 card's recordings/ or video/), so the boot id \
+             names this session"
+        ),
+        _ => {}
     }
     register_commands(recorder);
     Ok(())
@@ -688,7 +700,7 @@ static SAVER: SaverFigures = SaverFigures {
     stack_free: AtomicU32::new(0),
 };
 
-/// Spawns the ring_saver (core 0, priority 4) over the mounted card's recordings directory, from `start`. A spawn
+/// Spawns the ring_saver (core 0, priority 4) over the mounted card, from its root, from `start`. A spawn
 /// that fails is logged: nothing then reaches the card, `saver-behind` comes up after a minute, and newest wins keeps
 /// the newest ~26 min in flash, as with no card.
 ///
@@ -710,7 +722,8 @@ fn start_saver(
             .inspect_err(|error| log::warn!("ring :: the saver keeps no position, the cfg NVS would not open: {error}"))
             .ok();
         // the saver's buffers are allocated here, on its own thread, after the encoder's reservation (start)
-        let saver = Saver::new(recorder, partition, table, StdFs::new(sd::RECORDINGS), start);
+        // the card's root: the saver files each session where crates/recorder's layout says, under <session>/recordings
+        let saver = Saver::new(recorder, partition, table, StdFs::new(sd::MOUNT), start);
         save(saver, store)
     };
     if let Err(error) = spawn(c"ring_saver", SAVER_STACK, SAVER_PRIORITY, body) {

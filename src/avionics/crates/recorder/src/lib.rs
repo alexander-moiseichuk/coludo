@@ -12,7 +12,8 @@
 //! flash block --> Decoder::block --> wire lines `[@<routing>@]{OPEN};<payload>;<CLOSE>\n` (ring_saver, /ring, tools)
 //!
 //! flash_ring::Ring --> Saver::step: Walk (in sequence order, up to writer_position) --> Decoder --> batches
-//!   --> Fs: <session>/<session>_<file>, <session>/recorder.log, <session>/session.csv + session.csv; fsync
+//!   --> Fs, the card's root: <session>/recordings/<session>_<file>, <session>/recordings/recorder.log,
+//!       <session>/recordings/session.csv + sessions.csv (layout); fsync
 //!   --> saver_position (the eraser erases behind it)
 //! ```
 //!
@@ -26,6 +27,8 @@
 //! * [`Saver`]: the ring_saver's loop body, [`Saver::step`], over a [`Walk`] of the ring and the card's [`Fs`]
 //!   ([`StdFs`] on the board and the host): the flash emptied to the SD in batches, `saver_position` published only
 //!   once a batch is fsynced.
+//! * [`layout`]: the one place that maps (session, kind) to a directory on the card, and the global index's name;
+//!   the saver, the firmware's camera and the host tests all ask it.
 //!
 //! Nothing on a producer's path or in the writer prints a record: the records are binary from the producer to
 //! flash, and only the decoder and a tee's drain make text, off the flight path (invariant 4).
@@ -37,6 +40,7 @@
 mod byte_ring;
 mod decoder;
 mod fs;
+pub mod layout;
 mod published;
 mod record;
 mod recorder;

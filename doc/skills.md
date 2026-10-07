@@ -265,24 +265,33 @@ so it must run on both.
   passwords, so it exists only in a temporary directory removed on every exit; `--dry-run` builds and verifies it
   and lists its keys, never the values. `CREDS_DIR` points it at another creds directory (the test's made-up
   ones). Exit 1 is a refusal or a failure (esptool's included), 2 a usage error.
-- **`tools/sd_prepare.sh [--dry-run] [--use PERCENT] <device>`** prepares a microSD card for a **Rust** board,
-  **destroying everything on it**: a discard of the whole card, an MBR with ONE FAT32 partition (type 0x0c, label
-  COLUDO, a fresh random volume serial) from 4 MiB up to `--use` 25..50 % of the card (default 50), and the rest
-  left unpartitioned as spare area for the card's controller. The firmware mounts the first partition and never
-  formats. The serial it prints is how the board names the card (`sd :: mounted card XXXX-XXXX`): the ring_saver
-  resumes at its saved position only on the same card, so a card prepared again gets everything still in flash.
+- **`tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] <device>`** prepares a microSD card for a
+  **Rust** board, **destroying everything on it**: a discard of the whole card, an MBR with TWO primary FAT32
+  partitions (type 0x0c, each with a fresh random volume serial) -- partition 1, label METRICS, the recordings, from
+  4 MiB for `--recordings-gib` (1..256, default 4), and partition 2, label VIDEOS, the videos, from there up to
+  `--use` 25..50 % of the card (default 50) -- and the rest left unpartitioned as spare area for the card's
+  controller. The firmware mounts partition 1 at `/sdcard` and partition 2 at `/sdcard/videos`, and never formats;
+  a card with one FAT partition (an M4-era card) still runs, with `videos/` a plain directory on it. A card with no
+  room for 512 MiB of videos past the recordings is refused (an 8 GB card needs `--recordings-gib 1`), as is a size
+  with a leading zero (bash arithmetic would read it as octal). Partition 1's serial, printed first, is how the
+  board names the card (`sd :: mounted card XXXX-XXXX`): the ring_saver resumes at its saved position only on the
+  same card, so a card prepared again gets everything still in flash.
   There is no default device; it refuses a partition, a loop/dm/md device, a disk that is not removable, an MMC/SD
   disk that is not SD media (eMMC is refused), one over 256 GiB, anything mounted, in swap or held by a mapper; it
   goes on only when the card's size in MiB (the plan's `card:` line) is typed back, and checks again after that
   answer that the device is still the card it planned for. A plain file is taken as a card image (how its test runs,
   with no root and no device).
 - **`tools/board_pull.sh <host>[:port] [session] [outdir]`** pulls a session off a Rust board's card over Wi-Fi
-  (the file server on port 8000, no proxy) into `<outdir>/recordings/` and `<outdir>/videos/` (default
-  `/tmp/flights/<session>`; the default session is the newest boot id, never a label), checks every file against
-  the size the board's `X-Coludo-Bytes` header says it held when the board opened it (the chunked reply would hide a
-  cut-short body; curl 7.84 or later), lists the session again at the end and fails on any file that appeared or
-  shrank, retries a file the saver holds (503), and flags a 0-byte stream (exit 3). An incomplete pull
-  never replaces an earlier one. Then `assemble_capture.py <session> <outdir>/recordings <capture>` as usual.
+  (the file server on port 8000, no proxy): `/sd/<session>/recordings/` into `<outdir>/recordings/` and
+  `/sd/videos/<session>/` into `<outdir>/videos/` (default `/tmp/flights/<session>`; the default session is the
+  newest boot id, never a label), still reading a card the M4 firmware wrote (`/sd/recordings/<session>/`,
+  `/sd/video/<session>/`) when the session is not in the new place (a session in both places, the boot that ran when
+  an M4 card's board was reflashed, is refused: pull it by hand); `videos`, `recordings` and `video` (the card
+  root's other names) are refused as a session, and an earlier boot labelled so is pulled as `_<label>`. It checks
+  every file against the size the board's `X-Coludo-Bytes` header says it held when the board opened it (the chunked
+  reply would hide a cut-short body; curl 7.84 or later), lists the session again at the end and fails on any file
+  that appeared or shrank, retries a file the saver holds (503), and flags a 0-byte stream (exit 3). An incomplete
+  pull never replaces an earlier one. Then `assemble_capture.py <session> <outdir>/recordings <capture>` as usual.
 - The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
   one line — the plain password) is gitignored (`*.creds`) and pushed by `tools/deploy.sh`; `wifi.py`
   reads it for the password.

@@ -1,12 +1,14 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The SD card as the ring_saver uses it (doc/specs/avionics-port.md "The ring_saver", "SD and flash file layout"):
-//! the recordings directory, `/sdcard/recordings` on the board, holding one directory per session and the global
-//! session.csv. The saver owns every file under it, so nothing else appends there while it runs.
+//! the card's root, `/sdcard` on the board (the first partition), holding one directory per session and the global
+//! index, where [`crate::layout`] places them. The saver owns every file of a session's `recordings/` and the global
+//! index, so nothing else appends there while it runs.
 //!
-//! [`Fs`] is the few calls the saver makes, each naming its file by a path relative to that directory with `/`
-//! between the parts (`000123/000123_health.csv`, `session.csv`). It exists so that the host tests can cut the
-//! card's power at any call; [`StdFs`] serves the board (IDF's FatFs VFS under `std::fs`) and the host tests alike.
+//! [`Fs`] is the few calls the saver makes, each naming its file by a path relative to the card's root with `/`
+//! between the parts (`000123/recordings/000123_health.csv`, `sessions.csv`). It exists so that the host tests can
+//! cut the card's power at any call; [`StdFs`] serves the board (IDF's FatFs VFS under `std::fs`) and the host tests
+//! alike.
 //!
 //! What the saver relies on, as FatFs gives it: an append lands at the file's end, and the bytes written since the
 //! last `fsync` may be lost at a cut, whole or in part, never the ones before it. So what a file holds after a cut or
@@ -45,16 +47,15 @@ pub trait Fs {
     fn fsync(&mut self, file: &mut Self::File) -> Result<(), Self::Error>;
 }
 
-/// The card through `std::fs`, under a root directory: the board's `/sdcard/recordings`, or a host test's temporary
-/// directory.
+/// The card through `std::fs`, under a root directory: the board's `/sdcard`, or a host test's temporary directory.
 #[derive(Clone, Debug)]
 pub struct StdFs {
-    /// The recordings directory every path is relative to.
+    /// The card's root every path is relative to.
     root: PathBuf,
 }
 
 impl StdFs {
-    /// The card's recordings under `root`. Nothing is touched until the first call.
+    /// The card whose root is `root`. Nothing is touched until the first call.
     pub fn new(root: impl Into<PathBuf>) -> StdFs {
         StdFs { root: root.into() }
     }
@@ -112,10 +113,10 @@ mod tests {
     fn appends_and_reads_the_end_under_its_root() {
         let root = scratch("append");
         let mut card = StdFs::new(&root);
-        let path = "000123/recorder.log";
+        let path = "000123/recordings/recorder.log";
         let mut end = [0u8; 4];
-        card.create_dir_all("000123").unwrap();
-        card.create_dir_all("000123").unwrap(); // an existing directory is fine
+        card.create_dir_all("000123/recordings").unwrap(); // the parent too
+        card.create_dir_all("000123/recordings").unwrap(); // an existing directory is fine
         assert_eq!(card.tail(path, &mut end).unwrap(), 0, "missing");
         let mut file = card.open_append(path).unwrap();
         assert_eq!(card.tail(path, &mut end).unwrap(), 0, "empty");
@@ -142,9 +143,9 @@ mod tests {
         let root = scratch("missing");
         let mut card = StdFs::new(&root);
         assert!(
-            card.open_append("000123/x.csv").is_err(),
+            card.open_append("000123/recordings/x.csv").is_err(),
             "the saver creates the directory first"
         );
-        assert_eq!(card.tail("000123/x.csv", &mut [0; 8]).unwrap(), 0);
+        assert_eq!(card.tail("000123/recordings/x.csv", &mut [0; 8]).unwrap(), 0);
     }
 }

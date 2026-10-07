@@ -20,10 +20,12 @@
 //!   touches no card (every card decision is made when the batch goes to the card), and a part is staged once per
 //!   run, a card error included, so M19 would get each line once and an SD stall never repeats a decode.
 //!
-//! **Routing** (recorderd's, spec "The ring_saver"), under the block header's session directory: a stream line to
-//! `<session>/<session>_<file>`, a session.csv line to `<session>/session.csv` and to the global `session.csv`, a
-//! log line (and a record the saver would not file) to `<session>/recorder.log`. The bytes are the wire line after
-//! its routing, `{OPEN};<payload>;<CLOSE>\n`, as recorderd appended them.
+//! **Routing** (recorderd's, spec "The ring_saver"), into the recordings directory of the block header's session
+//! that [`crate::layout`] names, `<session>/recordings`: a stream line to `<session>/recordings/<session>_<file>`, a
+//! session.csv line to `<session>/recordings/session.csv` and to the global index at the card's root
+//! (`sessions.csv`, [`layout::GLOBAL_INDEX`]), a log line (and a record the saver would not file) to
+//! `<session>/recordings/recorder.log`. The bytes are the wire line after its routing, `{OPEN};<payload>;<CLOSE>\n`,
+//! as recorderd appended them; the global index's lines keep the routing `session.csv`, the file's name aside.
 //!
 //! **Batches** are at most [`BATCH_BLOCKS`] blocks or [`BATCH_MS`] of collecting, whichever comes first, of one boot
 //! (a stricter rule than the spec's one session: two boots under one label are two batches), touching at most
@@ -53,9 +55,9 @@
 //! run first looked at it (whole lines: a fragment a cut left alone is none):
 //! * under a label of one boot (the boot id `%06u`, or the dated form; never a `recorder.session` label) a file that
 //!   held a line holds that boot's header, whatever the hint;
-//! * the global session.csv holds every boot: it holds a boot's header when its last row names that boot (a row
-//!   carries the boot id and the session). A hint stale across a boot boundary prints the earlier boot's header
-//!   there once more, which the tools leave out of session.csv anyway;
+//! * the global index holds every boot: it holds a boot's header when its last row names that boot (a row carries
+//!   the boot id and the session). A hint stale across a boot boundary prints the earlier boot's header there once
+//!   more, which the tools leave out of session.csv anyway;
 //! * under a `recorder.session` label reused across boots, a file holds several boots' lines and no stream line
 //!   names its boot. A header of the boot the run began in is dropped from a file that held lines; any later
 //!   boot's prints, so the splice still shows. That is exact when the run begins in the label's last boot on the
@@ -84,13 +86,14 @@ use recorder_wire::{SESSION_INDEX, is_label};
 
 use crate::decoder::{BlockSummary, DecodedLine, Decoder};
 use crate::fs::Fs;
+use crate::layout;
 use crate::record::LOG_FILE;
 use crate::recorder::Recorder;
 
 /// The most blocks one batch holds (256 KiB of flash): a part of a block read earlier counts with it.
 pub const BATCH_BLOCKS: u32 = 64;
 
-/// The most files one batch appends to, the global session.csv included. With per-session directories that is
+/// The most files one batch appends to, the global index included. With per-session directories that is
 /// every stream of a boot, its recorder.log and both indexes; the board's `max_files` (40) also serves video and HTTP.
 pub const BATCH_FILES: usize = 32;
 
@@ -102,8 +105,8 @@ pub const BATCH_MS: u32 = 1000;
 pub const WRITE_BYTES: usize = 32 << 10;
 
 /// How much of a file's end the saver reads when it looks at the file: more than any header or session.csv line, so
-/// a fragment a cut left alone is told from a file that holds a whole line, and the global session.csv's last row
-/// is read whole.
+/// a fragment a cut left alone is told from a file that holds a whole line, and the global index's last row is read
+/// whole.
 pub const TAIL_BYTES: usize = 1024;
 
 /// A boot as its block headers name it: (session label, boot id).
@@ -317,7 +320,7 @@ pub enum SaveError<FlashError, CardError> {
 /// One file's lines in a batch.
 #[derive(Debug)]
 struct Pending {
-    /// The file, relative to the recordings directory.
+    /// The file, relative to the card's root ([`layout`]).
     path: String,
     /// Its lines, as they go on the card; final once `base` is known.
     bytes: Vec<u8>,
@@ -434,8 +437,7 @@ struct Known {
     held: bool,
     /// Its last line has no `\n`: a cut tore it, so a `\n` goes before the next append.
     torn: bool,
-    /// For the global session.csv: the boot its last whole line named, when that line is a row. None for any other
-    /// file.
+    /// For the global index: the boot its last whole line named, when that line is a row. None for any other file.
     last_row: Option<Boot>,
 }
 
@@ -448,12 +450,13 @@ fn look<S: Fs>(card: &mut S, tail: &mut [u8], path: &str) -> Result<Known, S::Er
         // a line end in the tail, or more bytes than the tail holds, which no fragment of one line has
         held: end.contains(&b'\n') || size > end.len() as u64,
         torn: end.last().is_some_and(|&byte| byte != b'\n'),
-        last_row: (path == SESSION_INDEX).then(|| last_row(end)).flatten(),
+        last_row: (path == layout::GLOBAL_INDEX).then(|| last_row(end)).flatten(),
     })
 }
 
-/// The boot (session, boot id) a session.csv row names, read from the last whole line in `end`; None when that
-/// line is a header, does not verify, or `end` holds none. A boot nothing counted has an empty boot cell: id 0.
+/// The boot (session, boot id) a session.csv row names, read from the last whole line in `end` (a line of the global
+/// index, routed `session.csv`); None when that line is a header, does not verify, or `end` holds none. A boot
+/// nothing counted has an empty boot cell: id 0.
 fn last_row(end: &[u8]) -> Option<Boot> {
     let whole = &end[..end.iter().rposition(|&byte| byte == b'\n')?];
     let line = whole.rsplit(|&byte| byte == b'\n').next()?;
@@ -474,7 +477,7 @@ fn last_row(end: &[u8]) -> Option<Boot> {
 /// Whether the file `known` describes holds the header line of `boot` already (see the module notes, "Headers
 /// after a reboot"); `began` is the boot the run began in.
 fn holds_header(path: &str, known: &Known, boot: Boot, began: Option<Boot>) -> bool {
-    if path == SESSION_INDEX {
+    if path == layout::GLOBAL_INDEX {
         return known.last_row == Some(boot);
     }
     known.held && (!is_label(boot.0.as_str()) || began == Some(boot))
@@ -487,7 +490,7 @@ pub struct Saver<'r, 't, F: Flash, S: Fs> {
     recorder: &'r Recorder,
     /// The cursor and the decoder.
     walk: Walk<'r, 't, F>,
-    /// The card's recordings directory.
+    /// The card, from its root.
     card: S,
     /// What is on the card and fsynced: everything before it.
     published: Position,
@@ -501,7 +504,7 @@ pub struct Saver<'r, 't, F: Flash, S: Fs> {
     began: Option<Boot>,
     /// The boot of the part staged last.
     boot: Option<Boot>,
-    /// Each file the run has looked at, while the walk is in its boot (the global session.csv for the whole run).
+    /// Each file the run has looked at, while the walk is in its boot (the global index for the whole run).
     files: BTreeMap<String, Known>,
     /// The file path being built for a line.
     path: String,
@@ -517,7 +520,7 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
     /// * `recorder` - this boot's recorder.
     /// * `flash` - the saver's handle on the `log` partition.
     /// * `table` - the scan's block table, shared with the writer and the eraser.
-    /// * `card` - the mounted card's recordings directory.
+    /// * `card` - the mounted card, from its root (`/sdcard` on the board).
     /// * `start` - [`BlockTable::saver_start`] of the `cfg` NVS hint when the mounted card is the one the previous
     ///   boot's session-start record names, else of none (spec "Bring-up", step 4).
     pub fn new(
@@ -580,15 +583,15 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
     }
 
     /// Decodes the part the walk peeked into the staging area, routing each line to its files. No card is touched.
-    /// When the part is of another boot than the last, the run forgets the files it looked at (the global
-    /// session.csv aside): the walk never comes back to a boot it left.
+    /// When the part is of another boot than the last, the run forgets the files it looked at (the global index
+    /// aside): the walk never comes back to a boot it left.
     ///
     /// This is where M19's uart_saver takes the part's lines, before any of them goes to the card.
     fn stage(&mut self, header: BlockHeader) {
         let boot = (header.session, header.boot_id);
         self.began.get_or_insert(boot);
         if self.boot.replace(boot) != Some(boot) {
-            self.files.retain(|path, _| path == SESSION_INDEX);
+            self.files.retain(|path, _| path == layout::GLOBAL_INDEX);
         }
         let Saver { walk, staged, path, .. } = self;
         walk.decode(|line| stage_line(staged, path, line));
@@ -622,7 +625,7 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
         } = self;
         if let Some(boot) = batch.boot {
             if batch.done == 0 && !batch.files.is_empty() {
-                card.create_dir_all(boot.0.as_str())?;
+                card.create_dir_all(&layout::directory(boot.0.as_str(), layout::RECORDINGS))?;
             }
             while let Some(pending) = batch.files.get_mut(batch.done) {
                 put(card, files, tail, pending, boot, *began)?;
@@ -694,18 +697,17 @@ fn put<S: Fs>(
     Ok(())
 }
 
-/// Routes one decoded line into `staged`, its path built in `path`: to its session's file, and a session.csv line
-/// to the global index too. A header line's place is kept, for the card to decide on.
+/// Routes one decoded line into `staged`, its path built in `path`: to its file in its session's recordings
+/// directory ([`layout`]), and a session.csv line to the global index too. A header line's place is kept, for the
+/// card to decide on.
 fn stage_line(staged: &mut Batch, path: &mut String, line: DecodedLine<'_>) {
-    path.clear();
-    path.push_str(line.session);
-    path.push('/');
-    path.push_str(line.routing.unwrap_or(LOG_FILE));
+    let name = line.routing.unwrap_or(LOG_FILE);
+    layout::file_path(path, line.session, layout::RECORDINGS, name);
     let body = line.body();
     let header = line.header.then_some(0..body.len());
     staged.append(path, body, header.clone());
     if line.routing == Some(SESSION_INDEX) {
-        staged.append(SESSION_INDEX, body, header);
+        staged.append(layout::GLOBAL_INDEX, body, header);
     }
     staged.lines += 1;
 }

@@ -2,10 +2,10 @@
 //!
 //! Avionics bring-up (doc/specs/avionics-port.md "Bring-up order"): start the clock, count the boot and load the
 //! board config, which name this boot's records; open the recorder before anything else logs, so every later line is
-//! kept; mount the card and start the ring tasks (the writer, the eraser, and the saver that copies the flash to the
-//! card); then the board, the supervisor, the mission, the CC executor and the UART console, and finally join Wi-Fi
-//! through the C6 and serve the CC hub forever. A panic anywhere prints its backtrace and reboots (sdkconfig:
-//! PANIC_PRINT_REBOOT).
+//! kept; mount the card (one FAT volume, or two: the recordings and the videos) and start the ring tasks (the writer,
+//! the eraser, and the saver that copies the flash to the card); then the board, the supervisor, the mission, the CC
+//! executor and the UART console, and finally join Wi-Fi through the C6 and serve the CC hub forever. A panic
+//! anywhere prints its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
 
 mod board;
 mod clock;
@@ -55,18 +55,13 @@ fn main() -> anyhow::Result<()> {
         .inspect_err(|error| log::warn!("thermometer :: {error}"))
         .ok();
     let sd_mounted = firmware::sd::mount();
-    // the card by its volume serial: the ring_saver's position hint is trusted only for the card it was saved to
+    // the card by partition 1's volume serial: the ring_saver's position hint is trusted only for the card it was
+    // saved to
     let card = sd_mounted.then(|| recorder::Card {
         serial: firmware::sd::volume_serial(),
     });
-    if let Some(card) = card {
-        let start = std::time::Instant::now();
-        let free = firmware::sd::measure_free();
-        log::info!(
-            "sd :: mounted card {}, {free:?} MB free (measured in {} ms)",
-            card.name(),
-            start.elapsed().as_millis()
-        );
+    if let (Some(card), Some(layout)) = (card, firmware::sd::layout()) {
+        log_card(card, layout);
     } else {
         log::warn!("sd :: no usable microSD -- running without it");
     }
@@ -133,6 +128,35 @@ fn main() -> anyhow::Result<()> {
     )?;
     log::info!("{}", board.banner());
     link::run(peripherals.modem, event_loop, partition, wifi, credentials, &executor)
+}
+
+/// Logs the mounted card: partition 1's serial (the name the session-start record keeps), how its volumes are
+/// mounted (one partition or two, doc/specs/avionics-port.md "SD and flash file layout"), the videos partition's
+/// serial, and each volume's size and free space; and, loudly, a videos partition that would not mount.
+fn log_card(card: recorder::Card, layout: firmware::sd::Layout) {
+    let start = std::time::Instant::now();
+    let volumes = firmware::sd::measure_free();
+    let videos = match layout {
+        firmware::sd::Layout::TwoPartitions => format!(
+            " (videos {})",
+            firmware::sd::videos_serial().map_or_else(|| "unknown".to_string(), firmware::sd::serial_name)
+        ),
+        firmware::sd::Layout::OnePartition => " (videos/ a directory beside the sessions)".to_string(),
+        firmware::sd::Layout::VideosFailed => String::new(),
+    };
+    log::info!(
+        "sd :: mounted card {}, {}{videos}: {} (measured in {} ms)",
+        card.name(),
+        layout.name(),
+        firmware::sd::describe(&volumes),
+        start.elapsed().as_millis()
+    );
+    if layout == firmware::sd::Layout::VideosFailed {
+        log::error!(
+            "sd :: partition 2 is not mounted (it would not mount, or the table is unsound: sd_card's line above says \
+             which): no video this boot"
+        );
+    }
 }
 
 /// The system's own console command (the Glider Command Language): `panic confirm`, which proves a panic reboots the

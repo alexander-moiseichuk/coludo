@@ -3,9 +3,11 @@
 //! M4's host proof (doc/specs/avionics-port.md "M4. ring_saver, SD, HTTP pull", Proof): producers, then the writer,
 //! the saver and the eraser over an in-memory flash, into an SD card that the host tools then read as the operator
 //! reads a pulled session (`tools/board_pull.sh`): `recorder_flight` with 0 rejected, a board.log that is not empty
-//! and a session.csv that dates the boot, and `assemble_capture` plus `flight_telemetry` strict, all good. The cards:
+//! and a session.csv that dates the boot, and `assemble_capture` plus `flight_telemetry` strict, all good. Each card
+//! is laid out as the board's `/sdcard` ([`recorder::layout`]): the tools read the session's
+//! `<session>/recordings/`, and the global `sessions.csv` at the root names the session's boot. The cards:
 //! * N producer threads (control, i2c0, supervisor, executor, and an unattached one through `misc`) on a real
-//!   clock, the three ring tasks on one core-0 thread, the card a temporary directory through [`StdFs`];
+//!   clock, the three ring tasks on one core-0 thread, the card a temporary directory (its root) through [`StdFs`];
 //! * a saver cut at every call of a batch, in flight, the board dying with the card: boot 124 resumes at the
 //!   published position (and, for a few cuts, at one a batch older) on the same card, saving the batch again into
 //!   duplicates the tools drop, never a header twice;
@@ -26,7 +28,7 @@
 mod common;
 
 use common::board::{Board, Flight, Plan, Streams, flight_registry};
-use common::card::{Card, Keep, headers, lines, payload, unique};
+use common::card::{Card, Keep, headers, lines, payload, recorded, unique};
 use common::*;
 
 use std::collections::BTreeMap;
@@ -37,6 +39,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use flash_ring::{Eraser, Erasure, Geometry, Hints, MemoryFlash, scan};
+use recorder::layout::{self, GLOBAL_INDEX, RECORDINGS};
 use recorder::{BATCH_MS, Buffers, Cell, MERGE_HORIZON_US, Recorder, Saver, StdFs, StreamId, Telemetry, Writer};
 use serde_json::Value;
 
@@ -74,19 +77,26 @@ fn python<S: AsRef<OsStr>>(arguments: &[S], kept: &Path) -> Option<String> {
     Some(stdout)
 }
 
-/// The tools' verdict (tests/sd_tools.py) on each of `directories`, sessions `session`; None with no python3.
-fn verdicts(session: &str, directories: &[PathBuf], kept: &Path) -> Option<Vec<Value>> {
+/// The tools' verdict (tests/sd_tools.py) on session `session` of each of `cards` (each the card's root); None with
+/// no python3.
+fn verdicts(session: &str, cards: &[PathBuf], kept: &Path) -> Option<Vec<Value>> {
     let (driver, tools) = (Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sd_tools.py"), tools());
     let mut arguments: Vec<&OsStr> = vec![driver.as_os_str(), tools.as_os_str(), OsStr::new(session)];
-    arguments.extend(directories.iter().map(|directory| directory.as_os_str()));
+    arguments.extend(cards.iter().map(|card| card.as_os_str()));
     let stdout = python(&arguments, kept)?;
     Some(stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect())
 }
 
 /// Asserts the tools found `verdict`'s card all good: no line rejected or salvaged by recorder_flight (none proving
 /// nothing elsewhere either), board.log not empty, every line of assemble_capture's capture good in
-/// flight_telemetry, and no file spliced.
+/// flight_telemetry, no file spliced, and the global index at the card's root whole, naming the session as its own
+/// session.csv does (the same row sources).
 fn assert_good(verdict: &Value, context: &str) {
+    assert_eq!(verdict["index_damaged"], 0, "{context}: the global index: {verdict}");
+    assert_eq!(
+        verdict["indexed"], verdict["sources"],
+        "{context}: the global index names the session as its session.csv does: {verdict}"
+    );
     for (stream, counts) in verdict["tally"].as_object().unwrap() {
         assert_eq!(
             (counts[1].as_u64(), counts[2].as_u64()),
@@ -113,8 +123,8 @@ fn assert_good(verdict: &Value, context: &str) {
     );
 }
 
-/// recorder_flight's command line over the session directory `directory`, its flight cut into `out`: its report,
-/// checked for 0 rejected everywhere and a board.log that is not empty. None with no python3.
+/// recorder_flight's command line over the session's recordings directory `directory`, its flight cut into `out`: its
+/// report, checked for 0 rejected everywhere and a board.log that is not empty. None with no python3.
 fn recorder_flight(directory: &Path, out: &Path, kept: &Path) -> Option<String> {
     let tool = tools().join("recorder_flight.py");
     let arguments = [
@@ -269,7 +279,7 @@ fn many_producers_record_and_the_card_reads_back_good_in_the_host_tools() {
         }),
     )));
     let root = scratch("threads");
-    let card = root.join("recordings");
+    let card = root.join("card"); // the card's root, as /sdcard on the board
     let producing = AtomicBool::new(true);
     let unattached_logged = AtomicU32::new(0);
     let losses = std::thread::scope(|scope| {
@@ -376,14 +386,13 @@ fn many_producers_record_and_the_card_reads_back_good_in_the_host_tools() {
 
     // the card itself: every line verifies, every row once, one header a file
     let read = |name: &str| std::fs::read(card.join(name)).unwrap_or_default();
-    let session = Path::new(SESSION);
     for (name, rows) in [
         ("imu_lsm6dso32.csv", IMU_ROWS),
         ("baro_icp10111.csv", BARO_ROWS),
         ("health.csv", HEALTH_ROWS),
         ("sequencer.csv", 5),
     ] {
-        let path = format!("{SESSION}/{SESSION}_{name}");
+        let path = recorded(SESSION, &format!("{SESSION}_{name}"));
         let bytes = read(&path);
         assert_eq!(
             lines(&bytes).len() as u32,
@@ -397,25 +406,35 @@ fn many_producers_record_and_the_card_reads_back_good_in_the_host_tools() {
             "{path}: every line verifies"
         );
     }
-    let log = read(&format!("{SESSION}/recorder.log"));
+    let log = read(&recorded(SESSION, "recorder.log"));
     let vprintf = lines(&log)
         .into_iter()
         .filter_map(|line| payload("recorder.log", line))
         .filter(|payload| String::from_utf8_lossy(payload).contains(" vprintf :: "))
         .count();
     assert_eq!(vprintf as u32, unattached_logged.load(Ordering::Relaxed));
-    for index in [session.join("session.csv"), PathBuf::from("session.csv")] {
-        let bytes = read(index.to_str().unwrap());
+    for index in [recorded(SESSION, "session.csv"), GLOBAL_INDEX.to_string()] {
+        let bytes = read(&index);
         assert_eq!(
             lines(&bytes).len(),
             4,
-            "{}: the header, the boot row, two clock sets",
-            index.display()
+            "{index}: the header, the boot row, two clock sets"
+        );
+        assert!(
+            lines(&bytes).into_iter().all(|line| payload(&index, line).is_some()),
+            "{index}: every line verifies"
         );
     }
+    // negative: the old layout's directories are not there, and nothing but the session and the index is
+    let mut top: Vec<String> = std::fs::read_dir(&card)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    top.sort();
+    assert_eq!(top, [SESSION, GLOBAL_INDEX], "the card's root");
 
     // the host tools, as the operator reads a pulled session
-    let directory = card.join(SESSION);
+    let directory = card.join(layout::directory(SESSION, RECORDINGS));
     let Some(report) = recorder_flight(&directory, &root.join("flight"), &root) else {
         return;
     };
@@ -425,8 +444,9 @@ fn many_producers_record_and_the_card_reads_back_good_in_the_host_tools() {
         report.contains("ignition at 2026-10-03T14:21:") && report.contains("Z UTC"),
         "{report}"
     );
-    let verdict = &verdicts(SESSION, &[directory], &root).unwrap()[0];
+    let verdict = &verdicts(SESSION, &[card], &root).unwrap()[0];
     assert_good(verdict, "threads");
+    assert_eq!(verdict["indexed"], serde_json::json!(["boot", "cc-auto"]), "{verdict}");
     assert_eq!(verdict["rows"]["imu_lsm6dso32.csv"], IMU_ROWS, "{verdict}");
     assert_eq!(verdict["duplicates"], 0);
     std::fs::remove_dir_all(&root).unwrap();
@@ -534,7 +554,7 @@ fn sweep(from: u64) {
     );
     let root = scratch(&format!("cuts-{from}"));
     reference.write_to(&root.join("reference"));
-    let mut directories = vec![root.join("reference").join(SESSION)];
+    let mut cards = vec![root.join("reference")];
     let mut duplicates = 0;
     let mut cuts: Vec<(u32, Keep, bool)> = [Keep::Synced, Keep::Written]
         .into_iter()
@@ -563,16 +583,16 @@ fn sweep(from: u64) {
                 "{context}: {path}, its duplicates dropped, is the uncut card's"
             );
             duplicates += lines(bytes).len() - lines(&kept).len();
-            if path.ends_with(".csv") && path != "session.csv" {
+            if path.ends_with(".csv") && path != GLOBAL_INDEX {
                 assert_eq!(headers(path, bytes), 1, "{context}: {path}: no header printed again");
             }
         }
         let name = format!("{keep:?}-{at}-{}", if stale { "stale" } else { "hint" });
         card.write_to(&root.join(&name));
-        directories.push(root.join(name).join(SESSION));
+        cards.push(root.join(name));
     }
     assert!(duplicates > 0, "the cut batches went again");
-    let Some(verdicts) = verdicts(SESSION, &directories, &root) else {
+    let Some(verdicts) = verdicts(SESSION, &cards, &root) else {
         return;
     };
     let reference = &verdicts[0];
@@ -650,7 +670,7 @@ fn stale_across_boots(lost: bool) {
     let mut nvs = parts.recorder.saver_position();
     let mut pad = Flight::new(parts.recorder, streams, PAD);
     let mut tick = 0;
-    while !card.files().keys().any(|path| path.starts_with("000123/")) {
+    while !card.files().keys().any(|path| path.starts_with("000123/recordings/")) {
         pad.fly(&mut board, tick);
         tick += 1;
         if tick.is_multiple_of(100) {
@@ -684,7 +704,7 @@ fn stale_across_boots(lost: bool) {
     let mut duplicates = 0;
     for (path, bytes) in card.files() {
         duplicates += lines(&bytes).len() - lines(&unique(&path, &bytes)).len();
-        if path.ends_with(".csv") && path != "session.csv" {
+        if path.ends_with(".csv") && path != GLOBAL_INDEX {
             assert_eq!(headers(&path, &bytes), 1, "{context}: {path}: no header printed again");
         }
     }
@@ -692,7 +712,7 @@ fn stale_across_boots(lost: bool) {
     let root = scratch(if lost { "lost-hint" } else { "stale-hint" });
     card.write_to(&root);
     for (boot, session) in [(122, "000122"), (123, "000123")] {
-        let Some(verdicts) = verdicts(session, &[root.join(session)], &root) else {
+        let Some(verdicts) = verdicts(session, std::slice::from_ref(&root), &root) else {
             return;
         };
         assert_good(&verdicts[0], &format!("{context}: {session}"));
@@ -744,7 +764,7 @@ fn with_a_dead_card_newest_wins_gives_up_the_pad_first_keeps_the_flight_and_logs
     assert!(parts.recorder.set_stats_ms(3_600_000));
     board.settle(300);
     assert_eq!(board.losses.len(), losses.len(), "nothing lost once the card works");
-    let imu_path = format!("{SESSION}/{SESSION}_imu_lsm6dso32.csv");
+    let imu_path = recorded(SESSION, &format!("{SESSION}_imu_lsm6dso32.csv"));
     let imu = card.file(&imu_path);
     let ticks: Vec<u64> = lines(&imu)
         .into_iter()
@@ -769,7 +789,7 @@ fn with_a_dead_card_newest_wins_gives_up_the_pad_first_keeps_the_flight_and_logs
         1,
         "the header repeat gave the file its header"
     );
-    let log_path = format!("{SESSION}/recorder.log");
+    let log_path = recorded(SESSION, "recorder.log");
     let log = card.file(&log_path);
     let loss_lines: Vec<String> = lines(&log)
         .into_iter()
@@ -806,12 +826,12 @@ fn with_a_dead_card_newest_wins_gives_up_the_pad_first_keeps_the_flight_and_logs
     assert!(loss_lines[0].contains(&format!("(boot {BOOT_ID}, session {SESSION}, flight 0)")));
     let root = scratch("dead-card");
     card.write_to(&root);
-    let Some(verdicts) = verdicts(SESSION, &[root.join(SESSION)], &root) else {
+    let Some(verdicts) = verdicts(SESSION, std::slice::from_ref(&root), &root) else {
         return;
     };
     assert_good(&verdicts[0], "a new card after a dead one");
     let out = root.join("flight");
-    recorder_flight(&root.join(SESSION), &out, &root).unwrap();
+    recorder_flight(&root.join(layout::directory(SESSION, RECORDINGS)), &out, &root).unwrap();
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -850,7 +870,7 @@ fn a_session_longer_than_2_30_us_is_dated_by_its_anchor_row() {
     board.settle(300);
     assert!(board.now_us > 1 << 30, "a boot longer than 2^30 us");
     assert!(board.losses.is_empty());
-    let index_path = format!("{SESSION}/session.csv");
+    let index_path = recorded(SESSION, "session.csv");
     let index = card.file(&index_path);
     let rows: Vec<String> = lines(&index)
         .into_iter()
@@ -870,7 +890,7 @@ fn a_session_longer_than_2_30_us_is_dated_by_its_anchor_row() {
     );
     let root = scratch("long");
     card.write_to(&root);
-    let directory = root.join(SESSION);
+    let directory = root.join(layout::directory(SESSION, RECORDINGS));
     let Some(report) = recorder_flight(&directory, &root.join("flight"), &root) else {
         return;
     };
@@ -879,8 +899,13 @@ fn a_session_longer_than_2_30_us_is_dated_by_its_anchor_row() {
         report.contains("ignition at 2026-10-03T14:38:") && report.contains("Z UTC, from the anchor row"),
         "the flight past the 2^30 us mark gets its UTC: {report}"
     );
-    let verdict = &verdicts(SESSION, &[directory], &root).unwrap()[0];
+    let verdict = &verdicts(SESSION, std::slice::from_ref(&root), &root).unwrap()[0];
     assert_good(verdict, "a long session");
     assert_eq!(verdict["dated"], serde_json::json!(["cc-auto", "anchor"]), "{verdict}");
+    assert_eq!(
+        verdict["indexed"],
+        serde_json::json!(["anchor", "boot", "cc-auto"]),
+        "the global index holds every row: {verdict}"
+    );
     std::fs::remove_dir_all(&root).unwrap();
 }

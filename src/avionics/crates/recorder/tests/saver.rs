@@ -24,7 +24,7 @@
 mod common;
 
 use common::board::{Board, Flight, Plan, Streams, flight_registry};
-use common::card::{Card, CardError, Keep, contains, headers, lines, payload, unique};
+use common::card::{Card, CardError, Keep, contains, headers, lines, payload, recorded, unique};
 use common::*;
 
 use std::cell::Cell as Counter;
@@ -32,6 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use flash_ring::header::Session;
 use flash_ring::{BLOCK_BYTES, BlockTable, Flash, Geometry, Hints, MemoryError, MemoryFlash, Position, scan};
+use recorder::layout::GLOBAL_INDEX;
 use recorder::{
     BATCH_BLOCKS, BATCH_FILES, BATCH_MS, Cell, Decoder, Recorder, Registry, SaveError, Saver, TICK_US, Telemetry,
     Writer,
@@ -60,8 +61,9 @@ fn flight_recorder(boot: u32) -> (Parts, Streams) {
 }
 
 /// What recorderd files from the decoder's lines of every block of this layout in `image`, by the saver's routing
-/// as the spec states it: a stream line to `<session>/<routing>`, a session.csv line there and to the global
-/// `session.csv`, any other line to `<session>/recorder.log`. Path to bytes.
+/// as the spec states it, in the session's recordings directory: a stream line to `<session>/recordings/<routing>`,
+/// a session.csv line there and to the global `sessions.csv` at the card's root, any other line to
+/// `<session>/recordings/recorder.log`. Path to bytes.
 fn routed(image: &[u8], geometry: Geometry) -> BTreeMap<String, Vec<u8>> {
     let all = blocks(image, geometry);
     let mut decoder = Decoder::new();
@@ -73,11 +75,11 @@ fn routed(image: &[u8], geometry: Geometry) -> BTreeMap<String, Vec<u8>> {
         let boot_goes_on = all[index + 1..].iter().any(same_boot);
         decoder
             .block(slot_bytes(image, block.slot), boot_goes_on, |line| {
-                let path = format!("{}/{}", line.session, line.routing.unwrap_or("recorder.log"));
+                let path = format!("{}/recordings/{}", line.session, line.routing.unwrap_or("recorder.log"));
                 files.entry(path).or_default().extend_from_slice(line.body());
                 if line.routing == Some("session.csv") {
                     files
-                        .entry("session.csv".into())
+                        .entry("sessions.csv".into())
                         .or_default()
                         .extend_from_slice(line.body());
                 }
@@ -126,18 +128,36 @@ fn the_card_holds_byte_for_byte_what_recorderd_files_from_the_decoders_lines() {
     quiet(parts.recorder);
     board.settle(300);
     same_files(&card.files(), &routed(&flash.image(), geometry), "one run");
-    let imu = card.file("000123/000123_imu_lsm6dso32.csv");
+    let imu_path = recorded("000123", "000123_imu_lsm6dso32.csv");
+    assert_eq!(imu_path, "000123/recordings/000123_imu_lsm6dso32.csv");
+    let imu = card.file(&imu_path);
     assert_eq!(
         lines(&imu).len() as u32,
         flight.rows[0] + 1,
         "the header, then every row once"
     );
     assert_eq!(
-        payload("000123/000123_imu_lsm6dso32.csv", lines(&imu)[0]),
+        payload(&imu_path, lines(&imu)[0]),
         Some(&b"uptime;ax;ay;az;gx;gy;gz;irq_runs"[..]),
         "it opens with its header"
     );
-    assert_eq!(headers("000123/000123_imu_lsm6dso32.csv", &imu), 1);
+    assert_eq!(headers(&imu_path, &imu), 1);
+    // the global index at the card's root, its lines routed as session.csv's: every one of the session's own
+    let index = card.file(GLOBAL_INDEX);
+    assert!(!index.is_empty() && index == card.file(&recorded("000123", "session.csv")));
+    assert!(
+        lines(&index)
+            .into_iter()
+            .all(|line| payload(GLOBAL_INDEX, line).is_some())
+    );
+    // negative: nothing lands outside the session's recordings directory but the global index
+    assert!(
+        card.files()
+            .keys()
+            .all(|path| path.starts_with("000123/recordings/") || path == GLOBAL_INDEX),
+        "{:?}",
+        card.files().keys()
+    );
     assert_eq!(board.card_errors, 0);
     assert!(
         board.commits.len() >= 9,
@@ -381,7 +401,7 @@ fn a_batch_holds_one_boot_and_a_new_card_gets_every_boot_still_in_flash() {
     assert!(
         first
             .iter()
-            .all(|path| path.starts_with("000123/") || path == "session.csv"),
+            .all(|path| path.starts_with("000123/recordings/") || path == GLOBAL_INDEX),
         "the first batch is boot 123's alone: {first:?}"
     );
     let position = board.commits[0].saved.position;
@@ -397,11 +417,11 @@ fn a_batch_holds_one_boot_and_a_new_card_gets_every_boot_still_in_flash() {
         flight.fly(&mut board, tick);
         tick += 1;
     }
-    assert!(card.files().keys().any(|path| path.starts_with("000124/")));
-    let index = card.file("session.csv");
+    assert!(card.files().keys().any(|path| path.starts_with("000124/recordings/")));
+    let index = card.file(GLOBAL_INDEX);
     let boots: Vec<String> = lines(&index)
         .into_iter()
-        .filter_map(|line| payload("session.csv", line))
+        .filter_map(|line| payload(GLOBAL_INDEX, line))
         .map(|payload| String::from_utf8_lossy(payload).into_owned())
         .filter(|row| row.ends_with(";boot;;"))
         .collect();
@@ -491,7 +511,7 @@ fn a_locked_file_holds_its_batch_and_nothing_reaches_the_card_twice() {
     let mut flight = Flight::new(parts.recorder, streams, plan);
     fly(&mut flight, &mut board, 0..350);
     // an HTTP pull holds health.csv open for 10 s: FatFs refuses the saver's write-open, again and again
-    card.lock(Some("000123/000123_health.csv"));
+    card.lock(Some(&recorded("000123", "000123_health.csv")));
     let mut held = None;
     for tick in 350..1350 {
         flight.fly(&mut board, tick);
@@ -572,14 +592,14 @@ fn a_dead_card_costs_no_flash_read_and_no_decode_again() {
         while saver.step(now_ms + later).unwrap().is_some() {} // the backlog, then the last part once it is due
     }
     assert_eq!(Some(saver.position()), parts.recorder.writer_position(), "caught up");
-    let path = "000123/000123_imu_lsm6dso32.csv";
-    let imu = card.file(path);
+    let path = recorded("000123", "000123_imu_lsm6dso32.csv");
+    let imu = card.file(&path);
     assert_eq!(
         lines(&imu).len() as u32,
         flight.rows[0] + 1,
         "its header, then every row once"
     );
-    assert!(unique(path, &imu) == imu, "no line twice");
+    assert!(unique(&path, &imu) == imu, "no line twice");
 }
 
 #[test]
@@ -622,7 +642,7 @@ fn a_reboot_resumes_at_the_hint_and_a_reused_label_still_shows_its_splice() {
     quiet(parts.recorder);
     board.settle(300);
     for (path, bytes) in card.files() {
-        if path.starts_with("flightday/flightday_") {
+        if path.starts_with("flightday/recordings/flightday_") {
             assert_eq!(
                 headers(&path, &bytes),
                 2,
@@ -630,14 +650,59 @@ fn a_reboot_resumes_at_the_hint_and_a_reused_label_still_shows_its_splice() {
             );
         }
     }
-    let imu = card.file("flightday/flightday_imu_lsm6dso32.csv");
-    let kept = unique("flightday/flightday_imu_lsm6dso32.csv", &imu);
+    let imu_path = recorded("flightday", "flightday_imu_lsm6dso32.csv");
+    let imu = card.file(&imu_path);
+    let kept = unique(&imu_path, &imu);
     assert!(kept.len() < imu.len(), "the cut batch went again: duplicates");
     assert_eq!(
         lines(&kept).len() as u32,
         rows_41 + flight.rows[0] + 2, // every row queued was programmed in its tick, before the cut
         "every row of both boots once, after the duplicate filter"
     );
+}
+
+#[test]
+fn an_earlier_boots_reserved_label_is_filed_under_its_escape_and_nothing_lands_on_the_videos_partition() {
+    // the M4 firmware took `videos` as a label (in any case); this firmware refuses it for its own boot, but the
+    // saver files every boot still in flash by its header's label
+    for label in ["videos", "Videos", "recordings"] {
+        let geometry = Geometry::new(128).unwrap();
+        let card = Card::new();
+        let flash = MemoryFlash::new(geometry.bytes());
+        let scanned = bring_up(&flash, geometry);
+        let (registry, streams) = flight_registry();
+        let identity = labelled(41, Session::new(label).unwrap());
+        let parts = recorder_as(identity, registry, 0, 256 << 10, SETTINGS, false);
+        let mut board = Board::new(&flash, &scanned, &parts, 41, Some(card.clone()), None);
+        let mut flight = Flight::new(parts.recorder, streams, PLAN);
+        fly(&mut flight, &mut board, 0..300);
+        quiet(parts.recorder);
+        board.settle(300);
+        let files = card.files();
+        let escaped = format!("_{label}/recordings/");
+        assert!(
+            files.contains_key(&format!("{escaped}{label}_imu_lsm6dso32.csv"))
+                && files.contains_key(&format!("{escaped}recorder.log"))
+                && files.contains_key(&format!("{escaped}session.csv")),
+            "{label}: the session's files under {escaped}: {:?}",
+            files.keys()
+        );
+        assert!(
+            files
+                .keys()
+                .all(|path| path.starts_with(&escaped) || path == GLOBAL_INDEX),
+            "{label}: {:?}",
+            files.keys()
+        );
+        // negative: no file and no directory under the videos mount point or a reserved name at the root
+        for directory in card.directories() {
+            let top = directory.split('/').next().unwrap();
+            assert!(
+                !recorder::layout::is_reserved(top),
+                "{label}: {directory} made on the card"
+            );
+        }
+    }
 }
 
 /// Boot `boot` over `image`, the flash the last boot left, with `card` in the slot: the scan takes `hints`, the saver
@@ -704,7 +769,7 @@ fn a_line_a_cut_tore_ends_before_the_next_boots_append_and_stays_one_damaged_lin
     let expected = routed(&image, geometry); // boot 123's lines are all in it
     next_boot(image, geometry, &card, BOOT_ID + 1, hints, 100);
     for (path, bytes) in card.files() {
-        if !path.starts_with("000123/") {
+        if !path.starts_with("000123/recordings/") {
             continue;
         }
         let damaged: Vec<&[u8]> = lines(&bytes)
@@ -768,7 +833,7 @@ fn a_fragment_of_a_new_files_first_line_is_no_line_and_the_file_still_gets_its_h
             .count();
         next_boot(image, geometry, &card, BOOT_ID + 1, hints, 100);
         for (path, bytes) in card.files() {
-            if path.starts_with("000123/000123_") {
+            if path.starts_with("000123/recordings/000123_") {
                 assert_eq!(
                     headers(&path, &bytes),
                     1,
@@ -816,21 +881,21 @@ fn the_global_index_gets_one_header_a_boot_when_a_cut_falls_in_a_boots_first_sec
     assert_eq!(hints.saver, Some(first));
     drop(board);
     next_boot(flash.into_image(), geometry, &card, BOOT_ID + 2, hints, 300);
-    let index = card.file("session.csv");
+    let index = card.file(GLOBAL_INDEX);
     assert_eq!(
-        headers("session.csv", &index),
+        headers(GLOBAL_INDEX, &index),
         3,
         "one header line a boot, as recorderd wrote, none twice:\n{}",
         String::from_utf8_lossy(&index)
     );
-    let boots = lines(&unique("session.csv", &index))
+    let boots = lines(&unique(GLOBAL_INDEX, &index))
         .into_iter()
-        .filter_map(|line| payload("session.csv", line))
+        .filter_map(|line| payload(GLOBAL_INDEX, line))
         .filter(|row| row.ends_with(b";boot;;"))
         .count();
     assert_eq!(boots, 3, "each boot's boot row once");
     for session in ["000123", "000124", "000125"] {
-        let path = format!("{session}/session.csv");
+        let path = recorded(session, "session.csv");
         assert_eq!(headers(&path, &card.file(&path)), 1, "{path}");
     }
 }
@@ -874,7 +939,7 @@ fn the_eraser_erases_behind_the_saver_100_to_200_ms_after_it_passed_and_loses_no
             "block {block_sequence} erased {after_us} us after the saver passed it"
         );
     }
-    let imu = card.file("000123/000123_imu_lsm6dso32.csv");
+    let imu = card.file(&recorded("000123", "000123_imu_lsm6dso32.csv"));
     assert_eq!(
         lines(&imu).len() as u32,
         flight.rows[0] + 1,
@@ -923,10 +988,11 @@ fn the_backlog_counts_against_the_saver_and_the_write_rate_makes_it_ring_unsaved
         stats.ring.saved + stats.ring.erased_ahead >= geometry.blocks() - 5,
         "{stats:?}"
     );
-    let log = card.file("000123/recorder.log");
+    let log_path = recorded("000123", "recorder.log");
+    let log = card.file(&log_path);
     let status: Vec<&[u8]> = lines(&log)
         .into_iter()
-        .filter_map(|line| payload("000123/recorder.log", line))
+        .filter_map(|line| payload(&log_path, line))
         .filter(|payload| contains(payload, b" Recorder :: "))
         .collect();
     let saver_named = |payload: &&[u8]| contains(payload, b"'saver': (");

@@ -3,10 +3,13 @@
 //! Read-only HTTP access to the microSD and to the flash ring: how recordings and logs come off the board over Wi-Fi
 //! -- on the pad, and after landing. Nothing is ever written.
 //! * `GET /sd/<path>` returns a file, or a directory's listing (one `<name>;<bytes>` line per entry). Paths are
-//!   confined to the card. A file another task holds open for writing (the ring_saver appending a batch, the video
-//!   writer) answers `503` with `Retry-After: 1`: FatFs's lock table (CONFIG_FATFS_FS_LOCK) refuses the open
-//!   (FR_LOCKED, EACCES through the VFS), as it refuses a full table (ENFILE). A saver batch holds a file for a
-//!   moment, so the client asks again; the video file being recorded stays busy until `video stop`.
+//!   confined to the card, laid out as crates/recorder's layout says: a session's recordings at
+//!   `/sd/<session>/recordings/`, its videos at `/sd/videos/<session>/`, the global index `/sd/sessions.csv`. On a
+//!   two-partition card `videos` is the videos partition's mount point, which partition 1's root does not hold, so
+//!   the root's listing names it itself. A file another task holds open for writing (the ring_saver appending a
+//!   batch, the video writer) answers `503` with `Retry-After: 1`: FatFs's lock table (CONFIG_FATFS_FS_LOCK) refuses
+//!   the open (FR_LOCKED, EACCES through the VFS), as it refuses a full table (ENFILE). A saver batch holds a file for
+//!   a moment, so the client asks again; the video file being recorded stays busy until `video stop`.
 //!
 //!   A file's reply carries its size as of the open in `X-Coludo-Bytes`, the one proof a client has that the file
 //!   came whole: esp-idf-svc 0.53 drops the Content-Length and sends the body chunked, and when a read fails
@@ -39,6 +42,7 @@ use recorder::{Decoder, Recorder};
 
 use crate::recorder::{Partition, RingView};
 use firmware::sd;
+use recorder::layout;
 
 /// The port the file server listens on (the hub owns 1234/1235, its dashboard 8080).
 const PORT: u16 = 8000;
@@ -83,9 +87,16 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
                 Err(error) => return Err(error.into()),
             };
             let mut listing = String::new();
+            let mut videos_listed = false;
             for entry in entries.flatten() {
                 let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
-                listing.push_str(&format!("{};{bytes}\n", entry.file_name().to_string_lossy()));
+                let name = entry.file_name().to_string_lossy().into_owned();
+                videos_listed |= name.eq_ignore_ascii_case(layout::VIDEOS); // FAT folds case
+                listing.push_str(&format!("{name};{bytes}\n"));
+            }
+            // the videos partition is mounted at the root's `videos`, a mount point partition 1 does not list
+            if relative.trim_matches('/').is_empty() && sd::videos_mounted() && !videos_listed {
+                listing.push_str(&format!("{};0\n", layout::VIDEOS));
             }
             request.into_ok_response()?.write_all(listing.as_bytes())?;
             return Ok(());

@@ -61,7 +61,8 @@ struct Health {
     mem_free: usize,
     /// Free internal RAM, bytes: the scarce kind (DMA, interrupt-safe code paths).
     internal_free: usize,
-    /// Free space on the microSD in MB, measured at mount (never on this path: f_getfree stalls the link).
+    /// Free space on the microSD's recordings volume (the ring_saver's: partition 1, or a one-partition card's only
+    /// volume) in MB, measured at mount and after writes (never on this path: f_getfree stalls the link).
     sd_free_mb: Option<u32>,
     uptime: i64,
     stage: &'static str,

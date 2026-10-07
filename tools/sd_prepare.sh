@@ -4,28 +4,32 @@
 # Prepare a microSD card for a Rust (src/avionics) board, the operator's pre-cook (doc/specs/avionics-port.md "SD and
 # flash file layout", Card preparation). DESTRUCTIVE: everything on the card is gone afterwards.
 #
-#   tools/sd_prepare.sh [--dry-run] [--use PERCENT] <device>
+#   tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] <device>
 #
 # What it does, in this order:
 #   1. wipes the card's old signatures and discards the whole card (wipefs, blkdiscard), so its controller knows every
 #      block is free; a reader that cannot pass a discard on (many USB readers) only costs that knowledge, and the
 #      script says so and goes on;
-#   2. writes an MBR with ONE primary partition, type 0x0c (FAT32, LBA), from 4 MiB (the card's usual allocation-unit
-#      alignment) up to PERCENT of the card, rounded down to 4 MiB (--use, 25..50, default 50);
-#   3. formats it FAT32 (label COLUDO, a fresh random volume serial, 32 KiB clusters, fewer when a small partition
-#      needs them to stay FAT32), written in place at the partition's offset in the device itself;
-#   4. reads the table and the boot sector back and checks them.
+#   2. writes an MBR with TWO primary partitions, both type 0x0c (FAT32, LBA): partition 1, the recordings, from
+#      4 MiB (the card's usual allocation-unit alignment) for N GiB (--recordings-gib, default 4: ~26 KB/s of text is
+#      ~94 MB an hour); partition 2, the videos, from there up to PERCENT of the card, rounded down to 4 MiB (--use,
+#      25..50, default 50; the default 8 Mbit/s of video is 3.6 GB an hour);
+#   3. formats each FAT32, written in place at the partition's offset in the device itself: partition 1 labelled
+#      METRICS, partition 2 VIDEOS, each with a fresh random volume serial, 32 KiB clusters (fewer when a small
+#      partition needs them to stay FAT32);
+#   4. reads the table and both boot sectors back and checks them.
 # The rest of the card stays unpartitioned and untouched: spare area for the card's controller.
 #
-# One partition, not yet the spec's two (the recordings, then the videos): the firmware mounts the first partition
-# only and keeps its video/ directory there, so a recordings partition of a few GB would fill with video (the
-# default 8 Mbit/s is 3.6 GB an hour) and stop the ring_saver. A card prepared so runs on the spec's one-partition
-# fallback; prepare it again, once its sessions are pulled, when the firmware mounts the second partition.
+# Why two (doc/specs/avionics-port.md "SD and flash file layout"): the firmware mounts partition 1 at /sdcard and
+# partition 2 at /sdcard/videos (components/sd_card), so video and the ring_saver each have a volume of their own --
+# its own lock, which a 64 KB video write held 23 ms on average, and its own FAT, which a power cut mid-video cannot
+# tear for the saved recordings. The firmware finds the partitions by number; the labels are for people. A card with
+# one FAT partition (an M4-era card, or one formatted elsewhere) still runs, with videos/ a plain directory on it.
 #
-# The firmware mounts the first partition and never formats a card (components/sd_card). The volume serial printed
-# at the end is how the board names the card (the session-start record's `card`, the boot log's `sd :: mounted card
-# XXXX-XXXX`): the ring_saver resumes at its saved position only on the card it was saved to, so a card prepared
-# again counts as a new card, and gets everything still in the board's flash.
+# The firmware never formats a card. Partition 1's volume serial, printed at the end, is how the board names the
+# card (the session-start record's `card`, the boot log's `sd :: mounted card XXXX-XXXX`): the ring_saver resumes at
+# its saved position only on the card it was saved to, so a card prepared again counts as a new card, and gets
+# everything still in the board's flash.
 #
 # Refused, before anything is written:
 #   * anything but an explicit device: there is no default;
@@ -35,7 +39,8 @@
 #     in a reader is; a USB, SATA or NVMe disk is not, a USB backup SSD included);
 #   * a card larger than 256 GiB (no card this board uses), or one that holds a mounted filesystem, active swap, or a
 #     mapper/RAID holder on it or on any of its partitions;
-#   * a card too small for a FAT32 partition of 512 MiB at the share asked;
+#   * a card too small for the recordings partition and a videos partition of at least 512 MiB (FAT32's least here)
+#     at the share asked;
 #   * a confirmation that is not the card's size in MiB as the plan's `card:` line shows it: typing it back means
 #     reading the line that says which card it is (size, transport, model), where typing the device's name back
 #     would only repeat a wrong name;
@@ -47,18 +52,21 @@
 # attached to a loop device, and its identity is its file system, inode and size. "Discarding" an image empties it
 # to a sparse file of its size.
 #
-#   --dry-run    every check and the plan, then exit without writing or asking
-#   --use N      the share of the card to partition, 25..50 percent (default 50)
+#   --dry-run            every check and the plan, then exit without writing or asking
+#   --use N              the share of the card to partition, both partitions together, 25..50 percent (default 50)
+#   --recordings-gib N   partition 1's size, the recordings, 1..256 GiB (default 4)
+# Both take plain decimal numbers: a leading zero is refused (the shell's arithmetic would read 010 as octal).
 #
 # Exit codes: 0 done (or a dry run), 1 refused or failed, 2 a usage error. Sourced rather than run (as the test does),
 # it only defines its functions.
 set -euo pipefail
-usage='usage: sd_prepare.sh [--dry-run] [--use PERCENT] <device>'
+usage='usage: sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] <device>'
 sector=512
-align=8192                  # 4 MiB in sectors: the partition's start and its end are multiples of it
+align=8192                  # 4 MiB in sectors: each partition's start and its end are multiples of it
 smallest=$((512 << 20))     # the smallest partition, bytes
 largest=$((256 << 30))      # the largest card, bytes
-label=COLUDO
+recordings_label=METRICS    # partition 1, mounted at /sdcard
+videos_label=VIDEOS         # partition 2, mounted at /sdcard/videos
 sysfs=/sys                  # the kernel's view of the block devices (the test points it at a tree of its own)
 
 misuse() {
@@ -121,6 +129,52 @@ judge_image() {
     identity=$(stat -c 'file %d:%i bytes %s' "$1")
 }
 
+clusters_for() {
+    # the cluster size in sectors for a FAT32 volume of $1 sectors: 32 KiB (what the SD Association formats 8-32 GB
+    # cards with), halved while FAT32's 65525 clusters would not fit (the margin covers the reserved sectors and the
+    # FATs)
+    local cluster=64
+    while [ $(($1 / cluster)) -lt 66000 ] && [ "$cluster" -gt 8 ]; do
+        cluster=$((cluster / 2))
+    done
+    echo "$cluster"
+}
+
+random_serial() {
+    # a fresh random FAT volume serial, eight hex digits
+    if [ -n "${SRANDOM:-}" ]; then
+        printf '%08X' "$SRANDOM"
+    else
+        printf '%04X%04X' "$((RANDOM & 0xFFFF))" "$(((RANDOM << 1 ^ RANDOM) & 0xFFFF))"
+    fi
+}
+
+format_partition() {
+    # FAT32 in place at sector $2 of the card $1, $3 sectors, $4 sectors a cluster, label $5, serial $6: no partition
+    # node and no udev wait, the same on a card and on an image (-I: mkfs.fat would refuse a whole card; --mbr=n:
+    # sector 0 is sfdisk's; -h: the boot sector counts the sectors before the partition). Its output is shown only
+    # when it fails: it notes, every time, that the card holds more blocks than the partition takes
+    local formatted
+    if ! formatted=$(mkfs.fat -F 32 -I --mbr=n --offset "$2" -h "$2" -s "$4" -n "$5" -i "$6" "$1" $(($3 / 2)) 2>&1)
+    then
+        fail "mkfs.fat could not format the $5 partition:
+$formatted"
+    fi
+}
+
+check_boot_sector() {
+    # the FAT32 boot sector at sector $2 of the card $1 names serial $3 and counts $2 hidden sectors; else fails
+    local boot fat_type signature read_serial hidden
+    boot=$(($2 * sector))
+    fat_type=$(od -An -c -j $((boot + 82)) -N 8 "$1" | tr -d ' ')
+    signature=$(od -An -tx1 -j $((boot + 510)) -N 2 "$1" | tr -d ' ')
+    read_serial=$(od -An -tx4 -j $((boot + 67)) -N 4 "$1" | tr -d ' ' | tr 'a-f' 'A-F')
+    hidden=$(od -An -tu4 -j $((boot + 28)) -N 4 "$1" | tr -d ' ')
+    [ "$fat_type" = FAT32 ] && [ "$signature" = 55aa ] || fail "no FAT32 boot sector at sector $2"
+    [ "$read_serial" = "$3" ] || fail "the volume serial at sector $2 read back as $read_serial, not $3"
+    [ "$hidden" = "$2" ] || fail "the boot sector at sector $2 counts $hidden hidden sectors, not $2"
+}
+
 judge() {
     # $1 as the card to prepare, a block device or a card image: sets kind, bytes, description and identity, or
     # refuses
@@ -136,14 +190,20 @@ judge() {
 }
 
 main() {
-    local dry_run=0 use=50 device='' tool total end size cluster serial shown mebibytes answer planned formatted \
-        dump boot fat_type signature read_serial hidden
+    local dry_run=0 use=50 recordings_gib=4 device='' tool total end recordings_size videos_start videos_size \
+        recordings_cluster videos_cluster recordings_serial videos_serial shown videos_shown mebibytes answer planned \
+        dump
     while [ $# -gt 0 ]; do
         case $1 in
             --dry-run) dry_run=1; shift ;;
             --use)
                 [ $# -ge 2 ] || misuse '--use needs a value'
                 use=$2
+                shift 2
+                ;;
+            --recordings-gib)
+                [ $# -ge 2 ] || misuse '--recordings-gib needs a value'
+                recordings_gib=$2
                 shift 2
                 ;;
             --help | -h) echo "$usage"; exit 0 ;;
@@ -156,37 +216,45 @@ main() {
         esac
     done
     [ -n "$device" ] || misuse 'name the card: there is no default device'
-    [[ $use =~ ^[0-9]+$ ]] && [ "$use" -ge 25 ] && [ "$use" -le 50 ] || misuse "--use takes 25..50 percent, not $use"
+    # decimal digits with no leading zero: [ -ge ] reads 010 as ten, but $(( )) reads it as octal eight (and 08 not
+    # at all), so a leading zero would plan other sizes than the ones checked and shown
+    [[ $use =~ ^[1-9][0-9]*$ ]] && [ "$use" -ge 25 ] && [ "$use" -le 50 ] ||
+        misuse "--use takes 25..50 percent, not $use"
+    [[ $recordings_gib =~ ^[1-9][0-9]*$ ]] && [ "$recordings_gib" -ge 1 ] && [ "$recordings_gib" -le 256 ] ||
+        misuse "--recordings-gib takes 1..256 GiB, not $recordings_gib"
     for tool in sfdisk mkfs.fat od; do
         command -v "$tool" >/dev/null || fail "$tool is not installed (util-linux, dosfstools, coreutils)"
     done
     judge "$device"
 
-    # the plan: one partition from 4 MiB up to the share asked, both ends on the 4 MiB grid
+    # the plan: the recordings from 4 MiB for the GiB asked, the videos from there up to the share asked, every end
+    # on the 4 MiB grid (a GiB is a multiple of it)
     total=$((bytes / sector))
     end=$((total * use / 100 / align * align))
-    size=$((end - align))
-    [ $((size * sector)) -ge "$smallest" ] ||
-        fail "$device is too small: $use % of it leaves $((size * sector >> 20)) MiB, FAT32 here needs" \
-            "$((smallest >> 20)) MiB"
-    # 32 KiB clusters (what the SD Association formats 8-32 GB cards with), halved while FAT32's 65525 clusters
-    # would not fit (the margin covers the reserved sectors and the FATs)
-    cluster=64
-    while [ $((size / cluster)) -lt 66000 ] && [ "$cluster" -gt 8 ]; do
-        cluster=$((cluster / 2))
+    recordings_size=$((recordings_gib << 30 >> 9))
+    videos_start=$((align + recordings_size))
+    videos_size=$((end - videos_start))
+    [ $((videos_size * sector)) -ge "$smallest" ] ||
+        fail "$device is too small: $use % of it leaves $((videos_size > 0 ? videos_size * sector >> 20 : 0)) MiB" \
+            "for the videos past $recordings_gib GiB of recordings, FAT32 here needs $((smallest >> 20)) MiB"
+    recordings_cluster=$(clusters_for "$recordings_size")
+    videos_cluster=$(clusters_for "$videos_size")
+    recordings_serial=$(random_serial)
+    videos_serial=$(random_serial)
+    while [ "$videos_serial" = "$recordings_serial" ]; do
+        videos_serial=$(random_serial)
     done
-    if [ -n "${SRANDOM:-}" ]; then
-        serial=$(printf '%08X' "$SRANDOM")
-    else
-        serial=$(printf '%04X%04X' "$((RANDOM & 0xFFFF))" "$(((RANDOM << 1 ^ RANDOM) & 0xFFFF))")
-    fi
-    shown="${serial:0:4}-${serial:4:4}"
+    shown="${recordings_serial:0:4}-${recordings_serial:4:4}"
+    videos_shown="${videos_serial:0:4}-${videos_serial:4:4}"
     mebibytes=$((bytes >> 20))
 
     echo "card:      $device ($description), $mebibytes MiB"
-    echo "plan:      discard all $mebibytes MiB, then an MBR with one FAT32 partition (type 0x0c):"
-    echo "           sectors $align..$((end - 1)), $((size * sector >> 20)) MiB, $use % of the card"
-    echo "           label $label, volume serial $shown, clusters of $((cluster * sector / 1024)) KiB"
+    echo "plan:      discard all $mebibytes MiB, then an MBR with two FAT32 partitions (type 0x0c), $use % of the card:"
+    echo "           1, the recordings: sectors $align..$((videos_start - 1))," \
+        "$((recordings_size * sector >> 20)) MiB, label $recordings_label, volume serial $shown," \
+        "clusters of $((recordings_cluster * sector / 1024)) KiB"
+    echo "           2, the videos: sectors $videos_start..$((end - 1)), $((videos_size * sector >> 20)) MiB," \
+        "label $videos_label, volume serial $videos_shown, clusters of $((videos_cluster * sector / 1024)) KiB"
     echo "untouched: sectors $end..$((total - 1)), $(((total - end) * sector >> 20)) MiB," \
         "spare area for the card's controller"
     echo "EVERYTHING ON $device IS LOST."
@@ -220,19 +288,15 @@ main() {
 
     # 2. the partition table; the signatures sfdisk finds are wiped as well (a discard may leave the old bytes
     #    readable)
-    printf 'label: dos\nunit: sectors\nstart=%d, size=%d, type=c\n' "$align" "$size" |
+    printf 'label: dos\nunit: sectors\nstart=%d, size=%d, type=c\nstart=%d, size=%d, type=c\n' \
+        "$align" "$recordings_size" "$videos_start" "$videos_size" |
         sfdisk --quiet --wipe always --wipe-partitions always "$device" >/dev/null ||
         fail "sfdisk could not write the partition table"
 
-    # 3. FAT32 in place at the partition's offset in the card itself: no partition node and no udev wait, the same on
-    #    a card and on an image (-I: mkfs.fat would refuse a whole card; --mbr=n: sector 0 is sfdisk's; -h: the boot
-    #    sector counts the sectors before the partition). Its output is shown only when it fails: it notes, every
-    #    time, that the card holds more blocks than the partition takes
-    if ! formatted=$(mkfs.fat -F 32 -I --mbr=n --offset "$align" -h "$align" -s "$cluster" -n "$label" -i "$serial" \
-        "$device" $((size / 2)) 2>&1); then
-        fail "mkfs.fat could not format the partition:
-$formatted"
-    fi
+    # 3. each partition FAT32, in place at its offset in the card itself
+    format_partition "$device" "$align" "$recordings_size" "$recordings_cluster" "$recordings_label" \
+        "$recordings_serial"
+    format_partition "$device" "$videos_start" "$videos_size" "$videos_cluster" "$videos_label" "$videos_serial"
     sync
     if [ "$kind" = device ]; then
         blockdev --flushbufs "$device"
@@ -240,21 +304,18 @@ $formatted"
         blockdev --rereadpt "$device" 2>/dev/null || true
     fi
 
-    # 4. read back: one partition where planned, and a FAT32 boot sector there that names the serial
+    # 4. read back: two partitions where planned, in that order, and a FAT32 boot sector at each naming its serial
     dump=$(sfdisk --dump "$device")
-    grep -Eq "start= *$align, size= *$size, type=c$" <<<"$dump" || fail "the partition table did not read back as written:
+    grep -Eq "1 : start= *$align, size= *$recordings_size, type=c$" <<<"$dump" &&
+        grep -Eq "2 : start= *$videos_start, size= *$videos_size, type=c$" <<<"$dump" ||
+        fail "the partition table did not read back as written:
 $dump"
-    [ "$(grep -c 'start=' <<<"$dump")" = 1 ] || fail "the partition table holds more than one partition:
+    [ "$(grep -c 'start=' <<<"$dump")" = 2 ] || fail "the partition table holds more than two partitions:
 $dump"
-    boot=$((align * sector))
-    fat_type=$(od -An -c -j $((boot + 82)) -N 8 "$device" | tr -d ' ')
-    signature=$(od -An -tx1 -j $((boot + 510)) -N 2 "$device" | tr -d ' ')
-    read_serial=$(od -An -tx4 -j $((boot + 67)) -N 4 "$device" | tr -d ' ' | tr 'a-f' 'A-F')
-    hidden=$(od -An -tu4 -j $((boot + 28)) -N 4 "$device" | tr -d ' ')
-    [ "$fat_type" = FAT32 ] && [ "$signature" = 55aa ] || fail "no FAT32 boot sector at sector $align"
-    [ "$read_serial" = "$serial" ] || fail "the volume serial read back as $read_serial, not $serial"
-    [ "$hidden" = "$align" ] || fail "the boot sector counts $hidden hidden sectors, not $align"
-    echo "done:      $device holds FAT32 $label, volume serial $shown (the board names the card by it)"
+    check_boot_sector "$device" "$align" "$recordings_serial"
+    check_boot_sector "$device" "$videos_start" "$videos_serial"
+    echo "done:      $device holds FAT32 $recordings_label, volume serial $shown (the board names the card by it)," \
+        "and FAT32 $videos_label, volume serial $videos_shown"
 }
 
 # run as a command; sourced, only the functions above are defined

@@ -30,10 +30,16 @@ fn main() {
     std::thread::sleep(Duration::from_millis(300));
     die("start");
     let start = micros();
-    // SAFETY: mounts once; the path is a valid C string.
-    let mounted = unsafe { sys::sd_card_mount(c"/sdcard".as_ptr()) };
+    // the videos partition too, as the flight firmware mounts it (firmware::sd), though this bench writes only to
+    // partition 1: the mount's cost is the firmware's
+    let videos = std::ffi::CString::new(firmware::sd::videos_mount()).expect("no NUL in a path");
+    // SAFETY: mounts once; both paths are valid C strings.
+    let mounted = unsafe { sys::sd_card_mount(c"/sdcard".as_ptr(), videos.as_ptr()) };
     report("mount", "result", mounted as f32, "esp_err");
     report("mount", "time", (micros() - start) as f32 / 1000.0, "ms");
+    // SAFETY: a plain read of the mount's outcome (sd_card_layout_t: 1 one partition, 2 two, 3 videos not mounted)
+    let layout = unsafe { sys::sd_card_layout() };
+    report("mount", "layout", layout as f32, "sd_card_layout_t");
     if mounted != sys::ESP_OK {
         println!("sd;done");
         idle();

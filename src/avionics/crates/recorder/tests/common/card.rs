@@ -1,12 +1,13 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! A memory SD card for the ring_saver's tests: the recordings directory as [`recorder::Fs`] sees it, with its power
-//! cut on demand. It keeps FatFs's promise and no more: an append lands at the file's end, an `fsync` makes the
-//! file's bytes durable, and at a cut the bytes written since the last `fsync` survive as [`Keep`] says (FatFs
-//! updates a file's size only when it syncs, so in practice none of them do). After a cut every call fails, as on
-//! a dead board, until [`Card::power_on`]; a card that never comes back is a dead SD. Short of a cut, one call can
-//! fail with the card still powered ([`Card::fail_after`]), and a file can be locked against appends, as FatFs's
-//! lock table refuses a write-open while an HTTP pull reads the file ([`Card::lock`]).
+//! A memory SD card for the ring_saver's tests: the card from its root as [`recorder::Fs`] sees it, laid out as
+//! [`recorder::layout`] says (a session's files under `<session>/recordings/`, the global index `sessions.csv` at the
+//! root), with its power cut on demand. It keeps FatFs's promise and no more: an append lands at the file's end, an
+//! `fsync` makes the file's bytes durable, and at a cut the bytes written since the last `fsync` survive as [`Keep`]
+//! says (FatFs updates a file's size only when it syncs, so in practice none of them do). After a cut every call
+//! fails, as on a dead board, until [`Card::power_on`]; a card that never comes back is a dead SD. Short of a cut, one
+//! call can fail with the card still powered ([`Card::fail_after`]), and a file can be locked against appends, as
+//! FatFs's lock table refuses a write-open while an HTTP pull reads the file ([`Card::lock`]).
 //!
 //! Each handle is a clone sharing one card, so the test keeps one while the saver owns another. Beside it, the
 //! readings of a card file the saver tests share: its lines, which verify, the tools' duplicate filter, its headers.
@@ -15,6 +16,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::rc::Rc;
+
+use recorder::layout;
 
 /// What a cut leaves of the bytes written since a file's last `fsync`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,6 +134,11 @@ impl Card {
     /// Whether the power is off.
     pub fn dead(&self) -> bool {
         self.0.borrow().dead
+    }
+
+    /// Every directory made on the card, each parent included.
+    pub fn directories(&self) -> BTreeSet<String> {
+        self.0.borrow().directories.clone()
     }
 
     /// Every file and the bytes it holds now, by path.
@@ -269,10 +277,21 @@ impl recorder::Fs for Card {
     }
 }
 
-/// The routing a card file's lines carry: its name, or None for recorder.log.
+/// The card path of the file `name` in `session`'s recordings directory, as the saver names it.
+pub fn recorded(session: &str, name: &str) -> String {
+    let mut path = String::new();
+    layout::file_path(&mut path, session, layout::RECORDINGS, name);
+    path
+}
+
+/// The routing a card file's lines carry: its name, `session.csv` for the global index (its lines are a session.csv's),
+/// or None for recorder.log.
 pub fn routing_of(path: &str) -> Option<&str> {
-    let name = path.rsplit('/').next().unwrap();
-    (name != "recorder.log").then_some(name)
+    match path.rsplit('/').next().unwrap() {
+        "recorder.log" => None,
+        layout::GLOBAL_INDEX => Some(recorder_wire::SESSION_INDEX),
+        name => Some(name),
+    }
 }
 
 /// The lines of `bytes`, each with its `\n`, and a last one without when it has none.

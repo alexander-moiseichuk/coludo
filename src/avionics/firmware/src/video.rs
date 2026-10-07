@@ -2,9 +2,14 @@
 //!
 //! The flight camera (components/coludo_video): OV5647 -> ISP -> H.264 hardware encoder -> raw Annex-B on the
 //! microSD, every frame stamped with the boot id and its uptime in an SEI NAL. Files go to
-//! `/sdcard/video/<session>/<start uptime ms>.h264`.
+//! `/sdcard/videos/<session>/<start uptime ms>.h264`, the directory crates/recorder's layout names for the session's
+//! videos: on a two-partition card the videos partition (mounted there), on a one-partition card a plain directory
+//! beside the session directories. A card whose videos partition is not mounted (it would not mount, or the table
+//! is unsound) records no video at all, rather than fill the recordings partition the ring_saver needs
+//! (sd::Layout::VideosFailed).
 
 use esp_idf_svc::sys;
+use recorder::layout;
 
 use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach, Word};
 use crate::{i2c, sd};
@@ -87,9 +92,17 @@ fn configure(
 }
 
 /// Start recording; returns the file's path.
+///
+/// Errors: the card's videos partition is not mounted (no video then, see the module notes), the directory would not
+/// be made, or the recorder would not start.
 pub fn start(session: &str, boot_id: u32, settings: &Settings) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        sd::layout() != Some(sd::Layout::VideosFailed),
+        "the card's videos partition is not mounted: no video, so the recordings partition stays the ring_saver's"
+    );
+    // SAFETY: a plain read of the monotonic timer.
     let uptime = unsafe { sys::esp_timer_get_time() } / 1000;
-    let directory = format!("{}/video/{session}", sd::MOUNT);
+    let directory = format!("{}/{}", sd::MOUNT, layout::directory(session, layout::VIDEOS));
     std::fs::create_dir_all(&directory)?;
     let path = format!("{directory}/{uptime}.h264");
     let c_path = std::ffi::CString::new(path.clone())?;
@@ -103,7 +116,8 @@ pub fn start(session: &str, boot_id: u32, settings: &Settings) -> anyhow::Result
 pub fn stop() -> anyhow::Result<()> {
     // SAFETY: stops the running recorder (an error when none runs).
     sys::esp!(unsafe { sys::coludo_video_stop() })?;
-    sd::measure_free();
+    let volumes = sd::measure_free();
+    log::info!("sd :: after the recording: {}", sd::describe(&volumes));
     Ok(())
 }
 
@@ -162,7 +176,7 @@ pub fn register_commands(session: String, boot_id: u32) {
         Command {
             owner: "camera",
             words: "video start",
-            about: "record to /sdcard/video/<session>/<start uptime ms>.h264, every frame stamped (tools/video_sei.py)",
+            about: "record to /sdcard/videos/<session>/<start uptime ms>.h264, each frame stamped (tools/video_sei.py)",
             gate: Gate::Setting,
             reach: Reach::Everywhere,
             parameters: START_PARAMETERS,

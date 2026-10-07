@@ -91,7 +91,7 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `src/avionics/sitl/` | Host binary: `control` + `sequencer` behind a UDP `sim_link` endpoint. |
 | `src/control/contract/{cases,transports,normalize}.py`, `tools/cc_contract.py`, `src/control/test/test_contract.py` | The contract runner (`BOARD=fake|taster|<id>`). |
 | `tools/board_pull.sh`, `tools/ring_split.py` | Pull a session over HTTP; turn a ring image or a `/ring` capture into session directories (`ring_split.py` exists, `7aa92a7`, and is re-pointed at the binary blocks in M3). |
-| `tools/sd_prepare.sh` | The operator's card preparation: discard the card, FAT32 on 25–50 % of it, the rest untouched (§3.10). |
+| `tools/sd_prepare.sh` | The operator's card preparation: discard the card, two FAT32 partitions (the recordings, then the videos) on 25–50 % of it, the rest untouched (§3.10). |
 | `tools/hitl_host.py`, `doc/specs/sim-link.md` | HITL with the physics on the host (`sim_model.py` stays the one implementation). |
 | `tools/provision.sh` | Writes a board's `cfg` NVS partition (board config, launch config, Wi-Fi creds) over USB with esptool, after `flash.sh`, once the board's partition table proves the `cfg` row; the image lives only in a temporary directory and is never committed (§7, Q12). |
 
@@ -369,8 +369,8 @@ to get a record.
 - `files.rs` answers `503` on a locked file. Through `std::fs` and the VFS that arrives as errno EACCES (os
   error 13), not `FR_LOCKED`. Without the lock table, an HTTP read during a saver batch simply succeeds with
   the size recorded before the batch.
-- `tools/sd_prepare.sh`, the operator's card preparation (§3.10). The firmware mounts the first partition and
-  never formats.
+- `tools/sd_prepare.sh`, the operator's card preparation (§3.10). The firmware never formats. (M4 itself mounted
+  the first partition only; the two-partition mount closed it, below.)
 - `tools/board_pull.sh <host> [session] [outdir]` verifies file count and byte sizes and flags 0-byte streams.
 
 **Proof**
@@ -405,6 +405,30 @@ to get a record.
 - Open:
   - true power pulls (the hub's per-port cut is data-only: its switching is ganged);
   - one boot whose Wi-Fi associated but got no IP for minutes, not reproduced since.
+
+**Closing M4: the decided layout (§3.10, session first on two partitions), built 2026-10-06, host-proven:**
+- `crates/recorder` `layout`: the one place that maps (session, kind) to a path. The saver routes through it:
+  `<session>/recordings/<session>_<file>`, `<session>/recordings/{session.csv,recorder.log}`, and the global index
+  `sessions.csv` at the card's root; the firmware roots the saver at `/sdcard`. The camera writes
+  `videos/<session>/`. A `recorder.session` label `videos`, `recordings` or `video` (any case) falls back to the boot
+  id, with a warning, and an earlier boot's block under such a label is filed under `_<label>`.
+- `components/sd_card`: one card init, its own disk I/O under one card lock, the table judged by the board
+  (`partition_table.c`: two sound FAT partitions, else one volume; an unsound pair mounts partition 1 alone with no
+  video; an unreadable sector 0 mounts nothing), partition 1 at `/sdcard` and partition 2 at `/sdcard/videos`,
+  `max_files` 32 + 8, `CONFIG_VFS_MAX_COUNT` 12; the boot log names the mode, both serials and both volumes' sizes
+  (read by FatFs drive: `vfs_fat` cannot find `/sdcard/videos` by its path), `sd_free_mb` the recordings volume's.
+- `files.rs` lists `videos` in `/sd/`; `board_pull.sh` pulls `/sd/<session>/recordings/` and
+  `/sd/videos/<session>/` and still reads an M4 card (a session in both places is refused); `sd_prepare.sh` writes
+  `METRICS` + `VIDEOS` (plain decimal sizes: a leading zero is refused).
+- Host: the crate tests (the cut at every step, the dead card and the tools' verdict on the new paths, the global
+  index checked against each session's own, an earlier boot's reserved label under its escape), `src/control` tests
+  (`board_pull` on both layouts, `sd_prepare` on images only: both partitions fsck-clean, sizes, labels, serials),
+  and `test_sd_partition_table.py`: the board's own `partition_table.c`, built with the host's `cc`, over images of
+  each card shape (an `sd_prepare.sh` card, two FAT16 partitions, a superfloppy, one partition, a non-FAT partition
+  2, no table; overlapping partitions, one past the card, a file system past its partition, unreadable sectors).
+- On the board, open: the A/B above (taster one partition, 7F two), and one boot each on a two-partition card, a
+  one-partition card and an M4 card, reading the boot log's mode line and both volumes' sizes, `health`'s
+  `sd_free_mb`, `video start` with the saver running, and a `board_pull.sh` of each.
 
 **Operator gains.** `tools/board_pull.sh taster` drops a session into the same tool chain as before
 (`assemble_capture`, `flight_svg`, `flight_report`, `flight_kpi`, `recorder_flight`). The flash empties itself
@@ -784,14 +808,14 @@ is the critical path; the SD copy comes second.
 ```
 producers (any core)                          core 0, prio 7          core 0, prio 4
  control / i2c0 / i2c1 / gnss / supervisor      ┌─────────────┐ chunks  ┌────────────┐ text + CRC
- / executor  ── binary records ──► PSRAM SPSC ─►│ ring_writer │───────► │ ring_saver │───────────► /sdcard/recordings/
+ / executor  ── binary records ──► PSRAM SPSC ─►│ ring_writer │───────► │ ring_saver │───────────► /sdcard/<session>/recordings/
  log bridge  ── (one ring per thread)           │ (programs)  │ 24 MiB  │  (reads)   │
                                                 └──┬──────────┘ `log`   └─────┬──────┘
                                        CC tees ◄───┘            ring ▲        │ saver_position
                                                                      │  ┌─────▼───────┐
                                                                erase └──┤ ring_eraser │ core 0, prio 3
                                                                         └─────────────┘
-video: encoder (prio 10) → 2 MB PSRAM ring → SD writer (prio 6) → /sdcard/video/<session>/   (independent)
+video: encoder (prio 10) → 2 MB PSRAM ring → SD writer (prio 6) → /sdcard/videos/<session>/   (independent)
 ```
 
 Three tasks share the `log` partition, each in one role:
@@ -1102,10 +1126,12 @@ long as the board is powered.
   list, a LOG `<uptime_us> <desc> :: <msg>` (§3.11). Wrap it with its routing, `<session>_<file>` (the bare
   `session.csv` for the index): `{OPEN};<payload>;<CLOSE>\n` (`recorder-wire.md:25-50`; `{%08x};%s;<%08x>`,
   `tools/recorder_wire.py:75`). These are the bytes recorderd wrote.
-- Route it as recorderd did (`recorderd.cpp:153-182`):
-  - a stream line to `<session dir>/<session>_<file>`;
-  - `session.csv` to **both** `<session dir>/session.csv` and the global `/sdcard/recordings/session.csv`;
-  - a LOG line to `<session dir>/recorder.log`.
+- Route it as recorderd did (`recorderd.cpp:153-182`), into the session's recordings directory
+  (`<session>/recordings`, §3.10):
+  - a stream line to `<session>/recordings/<session>_<file>`;
+  - `session.csv` to **both** `<session>/recordings/session.csv` and the global index `/sdcard/sessions.csv`
+    (its lines keep the routing `session.csv`; only the file's name differs);
+  - a LOG line to `<session>/recordings/recorder.log`.
 - A file name must match `[A-Za-z0-9._-]{3,64}` (no `/`); a record whose name does not goes to recorder.log.
 - Every loss is logged into recorder.log as a full log line, `<uptime> ring :: block <sequence>: torn chunk at
   <offset>, k records lost` (a torn chunk is a loss only with no whole chunk behind it in its block and no later
@@ -1125,12 +1151,13 @@ Before its first append to a file after boot, the saver ends a torn last line wi
 line of its own (counted as damage by the tools) and never merges with a re-saved line.
 
 **Handles:** the saver opens and closes files per batch, which is acceptable with per-session directories.
-`max_files` goes to 40 for video, HTTP reads and the saver together, with `CONFIG_FATFS_FS_LOCK` at least as
-large (M4). Nothing on the link or health path touches FatFs.
+`max_files` is 32 on the recordings volume (the saver and HTTP reads) and 8 on the videos volume (the video writer
+and HTTP reads), 40 on a one-partition card's only volume; `CONFIG_FATFS_FS_LOCK` (one table for every volume) is
+40, their sum, and `sd_card.c` refuses to build below it. Nothing on the link or health path touches FatFs.
 
 ### 3.10 SD and flash file layout
 
-**Session first, on two partitions (operator, 2026-10-06; built after M4).** Each session keeps its own
+**Session first, on two partitions (operator, 2026-10-06; built to close M4).** Each session keeps its own
 directory, on both partitions: FAT does not like many files in one directory, and a damaged directory then costs
 one session, not the whole collection.
 
@@ -1156,19 +1183,60 @@ Partition 2, the videos (mounted at /sdcard/videos):
   - videos go to `/sdcard/videos/<session>`;
   - any later kind goes to `/sdcard/<session>/<kind>`.
   The ring_saver asks it per block, with the session from the block header, because it also files earlier boots'
-  blocks. The camera asks it with this boot's session. A `recorder.session` label may not be `videos`.
+  blocks. The camera asks it with this boot's session. It is `crates/recorder` `layout` (`directory`, `file_path`,
+  `GLOBAL_INDEX`), pure and host-tested.
+- **A `recorder.session` label may not be `videos`, `recordings` or `video`**, in any case (FAT folds case): the
+  names the card's root holds for something else (`layout` `RESERVED`). With `videos` the session's recordings would
+  land in the videos directory, on a two-partition card the videos partition; `recordings` and `video` are an M4
+  card's root directories, which the tools still read (a session `recordings` would be one directory in both
+  layouts). The firmware's session prefix takes such a label as none and falls back to the boot id, and the boot log
+  says the label was ignored (`layout` `is_reserved`). That checks only the running boot; the saver also files
+  earlier boots' blocks by their header label, and the M4 firmware allowed these names. So `layout` itself files a
+  reserved session under `_<label>` (`_videos/recordings/`): no session this firmware names begins with `_`, and
+  nothing of a session lands on the videos partition. `tools/board_pull.sh` refuses the three names as a session and
+  points to `_<label>`, which it pulls like any other.
 - **Why videos on their own partition.** The lock that matters is per volume: one VFS lock and FatFs sync object
   per mounted FAT, held across a whole `write`/`fsync`. A 64 KB video write held it 23 ms on average, 143 ms at
   most. On their own volume, video and the ring_saver no longer serialise on it, and each has its own FAT, so a power
   cut mid-video (the impact) cannot tear a FAT sector that holds the chains of saved recordings. The SDMMC host
   mutex still serialises single SD transactions on both, and the card's controller is shared: the two streams still
   meet, but only per transaction.
-- **How the board mounts them.** The card is initialised once and registered as one FatFs physical drive.
-  `VolToPart` maps logical drive 0 to partition 1 and drive 1 to partition 2 (`FF_MULTI_PARTITION` is on;
-  `FATFS_VOLUME_COUNT` is 2). IDF's VFS takes the longest matching prefix, so `/sdcard/videos` (14 characters,
-  within `ESP_VFS_PATH_MAX`) shadows partition 1. A card with one partition still works, with `videos/` as a plain
-  directory on it beside the session directories. That is worse: one volume lock and one FAT for both. But it
-  works.
+- **How the board mounts them** (`components/sd_card`). The card is initialised once (host, slot 0, card, as
+  `esp_vfs_fat_sdmmc_mount` does inside) and registered as one FatFs physical drive, through a disk I/O layer of
+  our own: `diskio_sdmmc.c`'s calls, each under one card lock (a FreeRTOS mutex). FatFs's per-volume locks do not
+  serialise two volumes, and both share the card and the persistent bounce buffer (§4.7). The board judges the
+  table itself before anything mounts (`partition_table.c`, plain C, host-tested by
+  `src/control/test/test_sd_partition_table.py` against `sd_prepare.sh` and `mkfs.fat` images). Two volumes need
+  sector 0 to be an MBR (not a FAT boot sector, as FatFs's `check_fs` judges) whose partitions 1 and 2 both have a
+  FAT type (`0x01 0x04 0x06 0x0b 0x0c 0x0e`), lie apart and within the card, and each hold a file system whose boot
+  sector's size fits the partition. FatFs checks none of that: it takes a volume's size from its boot sector, so two
+  volumes over shared sectors would each allocate clusters the other owns. Then `VolToPart` maps logical drive 0 to
+  partition 1 and drive 1 to partition 2 (`FF_MULTI_PARTITION` is on; `FATFS_VOLUME_COUNT` is 2). IDF's VFS takes
+  the longest matching prefix, so `/sdcard/videos` (14 characters, within `ESP_VFS_PATH_MAX`) shadows partition 1.
+  - Anything else (a superfloppy, no table, one FAT partition, a partition 2 that is not FAT, an M4-era card) mounts
+    one volume at `/sdcard` wherever FatFs finds it, and `videos/` is a plain directory on it beside the session
+    directories. That is worse: one volume lock and one FAT for both. But it works.
+  - Two FAT partitions that overlap, pass the card's end, hold a file system larger than the partition (an M4-era
+    card whose partition 1 was shrunk in the table and given a partition 2 without being formatted again), or whose
+    boot sector will not read: partition 1 is mounted alone and there is no video that boot. A partition 2 with a FAT
+    type that does not mount ends the same way. In both, `video start` refuses: on partition 1 video would fill the
+    recordings volume and stop the ring_saver.
+  - A sector 0 that will not read in three tries mounts nothing: the card counts as missing that boot. Taking it for
+    a card without a table would mount partition 1 of a two-partition card as the card's one volume, and let video
+    fill it.
+  - The boot log says which (`sd :: mounted card XXXX-XXXX, two partitions (videos XXXX-XXXX): recordings … MB,
+    … MB free; videos … MB, … MB free`; `sd_card` logs the table's verdict and why). `health`'s `sd_free_mb` is the
+    recordings volume's alone, the one the ring_saver needs: a sum would show gigabytes of videos space while the
+    recordings had stopped. The videos figure is in the boot log and after each `video stop`. The card's name is
+    partition 1's volume serial.
+  - IDF's `vfs_fat` keeps a base path cut to 13 characters (v5.5.5 `esp_vfs_fat_register_cfg`: `strlcpy` into
+    `base_path[ESP_VFS_PATH_MAX]` with `sizeof - 1`) and looks volumes up by it, while the VFS registers the whole
+    path. File I/O on `/sdcard/videos` works; `esp_vfs_fat_info` and `esp_vfs_fat_unregister_path` never find it.
+    So the free space is read by the FatFs drive (`sd_card_space`), and a videos volume that fails to mount is
+    unregistered by both names (the VFS entry by the whole path first, then `vfs_fat`'s context by the cut one).
+  - The VFS table (`CONFIG_VFS_MAX_COUNT`) goes from 8 to 12: `/dev/uart`, `/dev/secondary`, `/dev/null`,
+    `/dev/console`, lwIP's sockets, `/sdcard`, and esp_video's `/dev/video0` and `/dev/video20` at `video start`
+    filled the 8; `/sdcard/videos` would have left `video start` without an entry.
 - **A/B on the bench (operator, 2026-10-06):** the taster keeps a one-partition card and 7F a two-partition one
   (MBR, two primary FAT32 partitions labelled `metrics` and `videos`). The cards are the same vendor and batch. Both
   layouts stay supported, so the same load script can be run on both and compared:
@@ -1176,12 +1244,29 @@ Partition 2, the videos (mounted at /sdcard/videos):
   - the ring_saver: batch time, `behind_ms`, card errors;
   - any `allocate_dma_buf` failure.
   The firmware finds the partitions by number; the labels are for people.
+  - **First run (2026-10-07, one run each, so not conclusive).** The load: video + `ring load` at the flight rate +
+    four 20 MB pulls.
+
+    | | taster, one partition | 7F, two partitions |
+    |---|---|---|
+    | missed frames | 1.9 % | 0.5 % |
+    | SD write max | 167 ms | 406 ms |
+    | SD busy | 48.6 % | 59.4 % |
+    | saver behind at the end | 29 ms | 2.7 s |
+
+    No failure on either. These are two different physical cards, and the card-level lock serialises every command
+    on both volumes, so two partitions separate only the FAT-level locking. Swapping the cards between the boards
+    would separate card from layout. Repeat runs pending.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
-  partition 1.
+  partition 1. A session is `GET /sd/<session>/recordings/`, its videos `GET /sd/videos/<session>/`.
 - **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and
-  `<session>/videos/`. `recorder_flight.py`, `assemble_capture.py` and `ring_split.py` take a session's
-  `recordings/` directory; it holds the session's `recorder.log` and `session.csv` beside the streams. They keep
-  reading Luckfox dumps (`/userdata/recordings`) as before.
+  `<session>/videos/`. It still reads a card the M4 firmware wrote (`recordings/<session>/`, `video/<session>/`)
+  when the session is not in the layout's place. A session in both places is refused: the boot running when an M4
+  card's board is reflashed keeps its bulk in the old place and gets only its unsaved tail in the new one, and either
+  alone would pass for the whole session. Pull such a session by hand (or pull the card's sessions before the
+  update). `recorder_flight.py`, `assemble_capture.py` and `ring_split.py` take a session's `recordings/` directory;
+  it holds the session's `recorder.log` and `session.csv` beside the streams. They keep reading Luckfox dumps
+  (`/userdata/recordings`) as before.
 
 Per-session directories avoid FatFs's linear `f_open` scan, and the FAT32 limit of 65 536 entries per
 directory that a flat layout reaches after about 1 400 boots.
@@ -1190,8 +1275,14 @@ File names are long (FatFs LFN, already on in `sdkconfig.defaults`), because the
 routing. 32 GB cards are the safe size. A 64 GB card can be one FAT32 volume (`mkfs.vfat -F 32`); no split is
 needed.
 
-**Card preparation** (the operator's option): `tools/sd_prepare.sh` discards the whole card. It then writes partition 1 (FAT32, the recordings: a few GB, since ~26 KB/s of text is ~94 MB an hour) and partition 2 (FAT32, the videos: up to the 25–50 % of the card in use). It leaves the rest untouched, as spare area for the card's controller. The firmware mounts both and never formats a card.
-Until the firmware mounts partition 2, M4's `sd_prepare.sh` writes partition 1 alone, over the whole share in use: that firmware keeps `video/` on partition 1, and video at the default 8 Mbit/s (3.6 GB an hour) would fill a recordings partition of a few GB and stop the ring_saver. Such a card runs on the one-partition fallback above; once the two-partition mount lands, it is prepared again after its sessions are pulled.
+**Card preparation** (the operator's option): `tools/sd_prepare.sh` discards the whole card. It then writes an MBR
+with two primary FAT32 partitions: partition 1, label `METRICS`, the recordings (`--recordings-gib`, default 4 GiB,
+since ~26 KB/s of text is ~94 MB an hour), and partition 2, label `VIDEOS`, the videos, from there up to the 25–50 %
+of the card in use (`--use`). Each gets a fresh volume serial. It leaves the rest untouched, as spare area for the
+card's controller. A card with no room for 512 MiB of videos past the recordings is refused (an 8 GB card at the
+defaults: `--recordings-gib 1` fits it). The firmware mounts both and never formats a card. A card M4's
+`sd_prepare.sh` wrote (one partition over the whole share) runs on the one-partition fallback; prepare it again,
+after its sessions are pulled, for the two-partition layout.
 
 **Flash partitions** (`partitions.csv`, decided 2026-10-06):
 
@@ -1249,7 +1340,9 @@ The saver prints records by these rules, and so does the `cc` executor for the t
   - Replies are `ok {"lines":[…],"dropped":n}` and `ok {"samples":["@<session>_<file>@<row>",…],"dropped":n}`,
     without the CRC wrapper. A full tee (256 KiB of records) prints as about 600 KB of text, about 0.9 MB in
     base64 with JSON quoting: under the hub's 2 MiB line limit.
-- **`GET /sd/recordings/…`** exists (`files.rs`). The listing format is `<name>;<bytes>`.
+- **`GET /sd/…`** exists (`files.rs`): `/sd/<session>/recordings/…`, `/sd/videos/<session>/…`, `/sd/sessions.csv`.
+  The listing format is `<name>;<bytes>`; the root's listing names `videos` when it is the videos partition's mount
+  point.
 - **`GET /ring[?boot=N]`** streams every valid block decoded to wire lines (`[@<routing>@]{OPEN};…;<CLOSE>`,
   the saver's text with its routing) in `block_sequence` order: a byte-exact wire capture.
 - **`GET /ring/image`** streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
@@ -1463,13 +1556,18 @@ What holds it together:
   - the stress run (video + saver + downloads) repeats after each milestone;
   - with ~11 KB at the worst point, M5 must not take internal DMA memory without giving some back. The candidates:
     fewer capture buffers, smaller esp_hosted queues, task stacks of non-flash tasks in PSRAM.
-- **For the two-partition layout:** a second volume on the same card shares the bounce buffer, so the card's driver
-  calls need a lock of their own first.
+- **For the two-partition layout:** a second volume on the same card shares the bounce buffer, so every card call
+  of `components/sd_card`'s own disk I/O layer holds one card lock (a static FreeRTOS mutex, ~80 B of internal RAM).
+  The second volume adds a FatFs volume mutex and a VFS entry (~0.3 KB internal); its `FATFS` object and file
+  handles are in PSRAM (`CONFIG_FATFS_ALLOC_PREFER_EXTRAM`).
 - **Where the 768 KB go** (taster, after init, Wi-Fi joined):
   - 128 KB is the L2 cache (`CACHE_L2_CACHE_128KB`);
   - ~124 KB is static: 92 KB `.iram0.text`, 18 KB `.dram0.data`, 13.5 KB `.dram0.bss`;
   - 513 KB is heap, plus 38 KB from LP RAM and SPM, so 551 KB of heap in all;
   - ~95 KB of that heap is free, of which ~55 KB is DMA-capable (mostly the reserve).
+- **2026-10-07, after the two-partition mount:** under video + saver + Wi-Fi pulls, the lowest DMA free was 1.6 KB
+  on the taster and 2.3 KB on 7F, with no failure. The margin is gone: the optimization below is required before M5,
+  not optional.
 - **Planned before M5 (operator, 2026-10-06): internal RAM optimization.** The first lever is the 92 KB of code in
   internal RAM. With XIP from PSRAM, flash operations no longer disable the cache, so much of what IDF places there
   for cache-disabled windows may move out: FreeRTOS, heap, ring buffer, esp_timer, lwIP and driver ISR paths.
@@ -1695,7 +1793,7 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 
 The operator's decisions on the earlier questions, one line each:
 - **Q1. SD layout:** one directory per session with long file names (the names carry the telemetry routing);
-  video at `/sdcard/video/<session>/<start uptime ms>.h264` (§3.10).
+  video at `/sdcard/videos/<session>/<start uptime ms>.h264`, on a partition of its own (§3.10).
 - **Q2. Changes in flight:** `update`, `set-config`, `reset-config`, `calibrate <device>`, `probe`, `detect`,
   `bustune` and `reboot` run only in SETTING; reads, `stage` and `disarm` stay open; no reboot at DONE. A
   deliberate divergence from plan B (§6).
