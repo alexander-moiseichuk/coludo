@@ -767,6 +767,10 @@ for these parts.
     pushed, and its vibration still cannot deploy.
   - **Backstop:** a contact held open for a long run (about 100 ms, far beyond any wobble or blip) counts whatever the
     IMU says, so a dead or confused IMU can never hide a real separation.
+  - **Kept simple (operator):** the nominal separation is the ejection charge, about 4 s after thrust end. No coast
+    window: the interrupt reads the pin's level with a us stamp and pushes it as an event; the control thread drains
+    the events every tick, records each, and decides by one rule -- the last event is 0 and no event came for the hold
+    (one `debounce_ms`, ~1 ms) -- gated as above.
 - The `StageCell` single writer is the control thread. Hold/resume/arm/disarm arrive as mailbox requests.
 - `sequencer.csv`.
 - **Arm and verify:**
