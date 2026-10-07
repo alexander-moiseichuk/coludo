@@ -803,8 +803,8 @@ bus family so the attitude backup does not share a failure domain with the BNO05
 ### What it does NOT fix
 
 `icp10111` and `airspeed_sdp810` still share a bus, so the ICP's general call still reaches the pitot.
-The pitot is not in the ICP's peer-rearm list (that is `baro_bmp280` and `power_ina226`), but it
-**recovers itself**: after 5 consecutive failed reads its run loop re-issues stop + start-continuous
+Since plan B's patch (76c138c) the ICP re-arms every device registered on its bus after the call; the
+pitot also **recovers itself**: after 5 consecutive failed reads its run loop re-issues stop + start-continuous
 (`sdp810._restart()`), so a general call normally costs a short gap in airspeed, not the rest of the
 flight. The layout moves that exposure; it does not remove it.
 

@@ -447,8 +447,9 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   is rare, so there is no per-device fast path.
 - **Plan B patch** (the one sanctioned `src/glider` change, §7.2 Q9): the same membership-based re-init in
   `drivers/icp10111.py`, so 7C's SEN0697 (BMI323, BMM350, BMP581) is re-armed after the ICP's general call.
-  It is tested on a board, or with plan B's own test pattern, and committed on its own; the golden fixtures are
-  regenerated with it (their meta pins the `src/glider` tree).
+  DONE: commit 76c138c, tag `micropython_plan_B_2`; every golden fixture is generated from that tree. Owed: one run of
+  plan B's patched test (`test_icp10111.py`) on a MicroPython board when one is free (7C, after its post-crash
+  validation); it does not block M5.
 - **SPI2** on 48/47/46, mode 3, one handle per CS. Discard-N on first use.
 - **`crates/layout`** with `resolve`. `health.layout` becomes real. `detect` and `bustune` work through
   bus-owner mailboxes.
@@ -460,6 +461,50 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   (`config.py:643-661`, `save()` hashes the saved snapshot). That split is plan B behaviour, not a documented
   plan B decision: `main.bringup()` runs `layout.resolve(cfg)` in place (`main.py:91-102`) and whoami hashes
   that mutated config (`cc_link.py:48`, `cc_client.py:398`). Keeping it is the port's decision (§7.2, Q4).
+
+**Design decisions (2026-10-07, from plan B's code and IDF v5.5.5; the staged plan is in the M5 commits):**
+- **Threads.** The `i2c0` and `i2c1` owners (core 1, priorities 18 and 17, internal stacks) create their buses,
+  so each bus's interrupt runs on core 1, and lend the port to main. Main does the layout scan and the serial setup
+  in config order (plan B's `Controller.setup`, nothing else running), then hands each port back with its members
+  (§4.5 step 9). Port 0 is created exactly once, by its owner (the camera's SCCB shares it); `buses::i2c::port0()`
+  only reads the published handle. Port 1 exists only when `buses.i2c.1` is defined.
+- **Bus settings, as plan B's MicroPython:** internal pull-ups on, a glitch filter of 7, 50 ms transfer timeouts,
+  synchronous driver (async refuses `i2c_master_probe`). One device handle per address, at the port's post-layout
+  `freq` (the schema has no per-device key); the camera keeps esp_video's own 400 kHz handle.
+- **Wedge:** plan B's counter, 4 consecutive failures across the port, repeating every 4; any success clears it.
+  It counts wire failures (`ESP_ERR_INVALID_STATE`: a NAK, an SCL timeout, lost arbitration), the general call's NAK
+  included. It does not count a bus-lock timeout (the camera can hold the lock up to 500 ms), caller errors, probes
+  or scans. The cure is `i2c_master_bus_reset` (FSM reset, 9 SCL pulses); the handles are re-added only when the
+  live speed differs from the configured one (after a bustune). Plan B's log line.
+- **General call:** after any general call on a port, every member of that port that came up is re-armed
+  (`Device::rearm`, never `setup`: that would re-zero the ICP and reload the SDP810 tare), by name, the sender
+  excluded; each walk is an oops record (`cause=i2c-general-call`, §4.8). The camera (0x36) and the ES8311 (0x18)
+  are no registry members.
+- **SPI2:** a thin `spi_master` wrapper, DMA off, `intr_flags` 0, polling, one full-duplex chip-select frame of at
+  most 64 B, `isr_cpu_id` core 1, one handle per chip select, 16 framed reads discarded on first use. Its owner is
+  M6's control thread; in M5 the SPI parts are set up on main and held.
+- **The registry (`crates/controller`, plan B's controller.py rules; the firmware's `controller.rs`):**
+  `directory()` (enabled, named entries; parts layout disabled are absent), Up/Failed/Unfitted/Crashed, retries
+  200 ms apart with diagnose on the last, the alternatives pass with its four rules (XSHUT included), Crashed only
+  for errors that escape the per-part glue (M6+). Entries with no M5 driver: native ones (recorder, cc, wifi,
+  health, ov5647) are Up; known plan B implementations not ported yet fail `no driver/activity -- not ported yet`;
+  anything else fails plan B's `no driver/activity`.
+- **The databoard topology** is built from the Up entries' `provides` (a Parameter only for a quantity with an Up
+  provider), frozen with `Box::leak`. Sample types: `f32`, `[f32; 3]` (accel, rate, mag, attitude), `[i32; 2]`
+  (position in 1e-7 degrees).
+- **`config_id` after layout:** whoami, the provenance line, session.csv, the session-start record and the panic tags
+  carry the post-layout id; `set-config` keeps returning the pre-layout id (Q4); the provenance line also names
+  `saved_config <pre-layout id>`. So the ring_writer starts after layout (§4.5). `get-config board`/`running`
+  answer the post-layout document, as plan B does (`saved` stays pre-layout): CC's bustune sweep restores the
+  frequency it reads there.
+- **Device probes vs bus probe:** `I2cPort::probe` is an ACK check; `Part::probe` is plan B's device probe. The ICP
+  and SDP810 probes, which waited for plan B's run loop, do one direct conversion or read on the owner.
+- **Forced proofs:** GCL `i2c touch` (repeated reads: the wedge counter) and `i2c general-call` (SETTING-only,
+  confirmed), since plan B has no command that sends a general call (Q20: the console API replaces board scripts).
+- **Open (operator):** plan B's `bustune` counts every config entry on the bus, disabled ones included, as down, so
+  the CC sweep never finds a ceiling; port it faithfully, or skip entries that are not enabled? And if the OV5647
+  honours a general call (measured in M5), what an ICP general call on port 0 (v0.1 boards only) should do to the
+  camera.
 
 **Proof**
 - Golden `layout.json`: the `_TMS7C`, `_TASTER` (derived, not recorded) and `_LEGACY` scans give the
@@ -1558,12 +1603,13 @@ Bus owners run their tables on the same notify:
 1. NVS and the boot count (exists). Latch the reset reason. If the clock reads before 2000, set it to
    2000-01-01 + uptime.
 2. Config load from `cfg` → `BootSource`.
-3. **Storage first:** SD mount (exists), recorder registry and rings, the ring_writer thread (the bring-up scan
-   runs in it, writes the session-start record, then starts the ring_saver and the ring_eraser, §3.6), `log`
-   bridge, provenance line `boot: board <id> | firmware <v> | config <id> <source> | reset_cause <n> |
-   boot <id> | session <s>`.
+3. **Storage first:** recorder registry and rings (every line from here is queued in PSRAM), the `log` bridge, the
+   panic log, the SD mount and the camera's encoder reservation.
 4. Buses created on core 1 by their owner threads, which are spawned parked. `layout.resolve` by scan
-   (100 kHz probes). Cache the post-layout `config_id`.
+   (100 kHz probes). Cache the post-layout `config_id`. Then the ring_writer thread (the bring-up scan runs in it,
+   writes the session-start record with the post-layout id, then starts the ring_saver and the ring_eraser, §3.6),
+   and the provenance line `boot: board <id> | firmware <v> | config <id> <source> | reset_cause <n> | boot <id> |
+   session <s> | saved_config <pre-layout id>`.
 5. Mission (launch.config, `max_range_m` from the `field` component).
 6. Device setup in config order (sensors, then components), with retries and diagnose. Register channels from
    `provides`. Then the alternatives pass.
@@ -2020,8 +2066,8 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 - **`config_id` floats:** the CPython f64-repr semantics are used. Identical for every committed file (all
   floats have ≤ 7 significant digits). Plan B's announced id for the same file is cross-checked once on 7C.
 - **Mission `sites`** are kept on `set-config launch`. Plan B silently dropped them (`mission.py` `persisted()`).
-- **ICP general-call re-arm** re-initializes every device registered on the bus, by membership, not by the
-  stale name list (`icp10111.py:297`). Plan B gets the same patch, its one sanctioned change (M5, §7.2 Q9).
+- **ICP general-call re-arm** re-initializes every device registered on the bus, by membership. Plan B got the
+  same patch, its one sanctioned change (commit 76c138c, M5, §7.2 Q9).
 - **INA226 `rearm()`** also restores ALERT_LIM and MASK.
 - **VL53 poll mode** checks data-ready, so a repeated range is never republished as fresh.
 
@@ -2043,7 +2089,7 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 | R3 | FatFs is not journaled. A power cut during FAT updates (saver or video) can damage the FAT itself, not just a file tail. | The ring keeps every block until the saver has fsynced it, and the saver re-saves from its position after a cut (duplicates, §3.8). `GET /ring` + `ring_split.py` recovery. Host fsck on bad cards. |
 | R4 | The first Rust boot carries nothing from MicroPython's VFS (board.config, launch.config, `*.creds`). TMS-7F is sealed and Wi-Fi only. | `tools/provision.sh` writes the `cfg` partition (config, launch, creds) over USB with esptool, after `flash.sh` and **before** the seal. Never flash a sealed board without it. |
 | R5 | esp_hosted 2.7.0 tasks run at priority 23, unpinned (plain `xTaskCreate`); the streaming-mode length assert is still open. | lwIP's TCP/IP task is pinned to core 0 already (M1). M1b pins esp_hosted by wrapping `g_hosted_osi_funcs._h_thread_create`, the hook `components/hosted_no_reboot` uses for `_h_restart_host`. From M7 the radio is actually off from BOOSTING through LANDING in Rust (a deliberate divergence, §6; plan B keeps the pad link up). |
-| R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Rust re-initializes every device registered on the bus after a general call (M5). Plan B gets the same patch (M5, §7.2 Q9). |
+| R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Rust re-initializes every device registered on the bus after a general call (M5). Plan B is patched the same way (commit 76c138c, §7.2 Q9). |
 | R7 | `gettimeofday` surviving SW, panic and TWDT resets on the P4 is unverified, and step 1's age check (plan B's gate) depends on it. | Measured in M8. Q19's step 2 drops the age check, which closes it. |
 | R8 | base64 strictness differs: CPython is lenient, Rust is strict. A bad token could answer differently from the fake. | Rust answers `err badargs` (strict). The contract runner records the fake's deviation as known. |
 | R9 | Detector drift vs the host sim: `virtual_flight.py` grades the Python detectors once the board runs Rust. | `commons.json`, `sequencer_trace.json`, `control_trace_*.json` are the only guards. `generate.py --check` in CI. |
