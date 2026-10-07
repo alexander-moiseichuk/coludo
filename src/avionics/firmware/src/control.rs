@@ -190,7 +190,7 @@ unsafe extern "C" fn separation_edge(_: *mut core::ffi::c_void) {
 }
 
 /// Arms a both-edge interrupt on the separation pin (already an input with its pull-down) that flags
-/// [`SEPARATION_EDGE`]; on this thread, so the GPIO interrupt service runs on core 1.
+/// [`SEPARATION_EDGE`], through the service [`install_gpio_service`] installed.
 fn arm_edges(gpio: u8) -> Result<(), sys::EspError> {
     // SAFETY: the pin bring-up configured; the handler is a static function.
     unsafe {
@@ -198,10 +198,6 @@ fn arm_edges(gpio: u8) -> Result<(), sys::EspError> {
             i32::from(gpio),
             sys::gpio_int_type_t_GPIO_INTR_ANYEDGE
         ))?;
-        match sys::gpio_install_isr_service(0) {
-            sys::ESP_OK | sys::ESP_ERR_INVALID_STATE => {}
-            code => sys::esp!(code)?,
-        }
         sys::esp!(sys::gpio_isr_handler_add(
             i32::from(gpio),
             Some(separation_edge),
@@ -420,8 +416,8 @@ unsafe extern "C" fn interrupt_edge(_: *mut core::ffi::c_void) {
     INTERRUPT_EDGES.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Arms a rising-edge interrupt on GPIO `gpio` that counts into [`INTERRUPT_EDGES`]; called on the control thread, so
-/// the GPIO interrupt service, installed here first, runs on core 1. The internal pull-down holds a broken wire at 0,
+/// Arms a rising-edge interrupt on GPIO `gpio` that counts into [`INTERRUPT_EDGES`], through the service
+/// [`install_gpio_service`] installed. The internal pull-down holds a broken wire at 0,
 /// where plan B's `Pin(gpio, Pin.IN)` left it floating.
 fn arm_interrupt(gpio: u8) -> Result<(), sys::EspError> {
     let config = sys::gpio_config_t {
@@ -435,10 +431,6 @@ fn arm_interrupt(gpio: u8) -> Result<(), sys::EspError> {
     // SAFETY: plain GPIO configuration of the pin the board config gives INT1; the handler is a static function.
     unsafe {
         sys::esp!(sys::gpio_config(&config))?;
-        match sys::gpio_install_isr_service(0) {
-            sys::ESP_OK | sys::ESP_ERR_INVALID_STATE => {}
-            code => sys::esp!(code)?,
-        }
         sys::esp!(sys::gpio_isr_handler_add(
             i32::from(gpio),
             Some(interrupt_edge),
@@ -446,6 +438,17 @@ fn arm_interrupt(gpio: u8) -> Result<(), sys::EspError> {
         ))?;
     }
     Ok(())
+}
+
+/// Installs the GPIO interrupt service, once, before any GPIO interrupt is armed: on this thread, so every GPIO
+/// interrupt it dispatches runs on core 1.
+fn install_gpio_service() -> Result<(), sys::EspError> {
+    // SAFETY: no GPIO interrupt is armed yet; ESP_INTR_FLAG 0, a level-1 interrupt allocated on this core.
+    match unsafe { sys::gpio_install_isr_service(0) } {
+        // installed already, by a component before this thread: its interrupts land where it installed them
+        sys::ESP_OK | sys::ESP_ERR_INVALID_STATE => Ok(()),
+        code => sys::esp!(code),
+    }
 }
 
 /// The tasks the alarm notifies: the control thread, then each running I2C owner. Leaked: the timer runs for the
@@ -524,6 +527,9 @@ fn run(
     let period_us = (TIMER_RESOLUTION_HZ / schedule_hz.max(1)) as i64;
     // this thread's own producer ring: its rows and log lines never contend with another thread's
     let _attachment = crate::recorder::get().and_then(|recorder| recorder.attach(Producer::Control as usize).ok());
+    if let Err(error) = install_gpio_service() {
+        log::warn!("control :: no GPIO interrupt service ({error}): INT1 and the separation pin go unarmed");
+    }
     let mut spi = spi.into_iter();
     let mut imu = spi.next().map(|member| {
         if let Some(gpio) = member.interrupt

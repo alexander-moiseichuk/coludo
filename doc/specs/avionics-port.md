@@ -677,6 +677,11 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   failures; 20 MHz answered untried with the clock unchanged; 0 Hz refused; refused outside SETTING. The CC's own
   sweep (`bustune taster spi 1`): 5, 8, 10 MHz pass, 16 MHz fails on the IMU; ceiling 10 MHz, chosen 8, the bus put
   back at 5.
+- Stale reads null, on the taster: the ICP's temperature window narrowed to 50 ms (its cycle is 120-130 ms) by a
+  saved config and a reboot, 20 `inspect baro_icp10111` 0.3 s apart read `temperature_c` null 13 times (60 %
+  expected) and `pressure_pa` never, `healthy` true throughout; the config saved back gave 8090b3ddeea5 again.
+- The GPIO interrupt service is installed once, by the control thread before either interrupt is armed (the boot
+  log's `already installed` error is gone); `interrupts` shows GPIO_INT0 and TG0_T0 on CPU 1.
 - TMS-7F, one hour of FHD@25 colour bars and the flight-rate ring load (the stage 6 build, six 10-minute segments):
   90,036 frames, 11 missed, 0 ring loss, tick lateness at most 86 us, 0 over budget, 0 overruns, 0 IMU failures, the
   internal low-water flat at 61.4 KB (one 0.75 KB step in the fifth segment).
