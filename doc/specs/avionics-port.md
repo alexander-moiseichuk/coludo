@@ -1465,6 +1465,16 @@ What holds it together:
     fewer capture buffers, smaller esp_hosted queues, task stacks of non-flash tasks in PSRAM.
 - **For the two-partition layout:** a second volume on the same card shares the bounce buffer, so the card's driver
   calls need a lock of their own first.
+- **Where the 768 KB go** (taster, after init, Wi-Fi joined):
+  - 128 KB is the L2 cache (`CACHE_L2_CACHE_128KB`);
+  - ~124 KB is static: 92 KB `.iram0.text`, 18 KB `.dram0.data`, 13.5 KB `.dram0.bss`;
+  - 513 KB is heap, plus 38 KB from LP RAM and SPM, so 551 KB of heap in all;
+  - ~95 KB of that heap is free, of which ~55 KB is DMA-capable (mostly the reserve).
+- **Planned before M5 (operator, 2026-10-06): internal RAM optimization.** The first lever is the 92 KB of code in
+  internal RAM. With XIP from PSRAM, flash operations no longer disable the cache, so much of what IDF places there
+  for cache-disabled windows may move out: FreeRTOS, heap, ring buffer, esp_timer, lwIP and driver ISR paths.
+  Measure each move with `heap` and against `pace`. Then stacks of tasks that never touch flash in PSRAM, and fewer
+  capture buffers.
 - `heap tasks` exists only in an investigation build with `CONFIG_HEAP_TASK_TRACKING`. Its heap walk holds the
   allocator's lock long enough for core 1's interrupt watchdog to fire, so treat it as a one-off and never ship it.
 
