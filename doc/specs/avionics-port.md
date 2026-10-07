@@ -545,9 +545,11 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   0x15 there. Each appeared only in the first scan after the bus was created; rescans never repeated them, and a
   read of 7F's 0x15 NAKs. 7F's i2c:0 also answers 0x0c on every scan. It reads 0x00 at registers 0x00..0x02, so it
   is no AKM magnetometer, and the SEN0697 carries nothing there (BMI323, BMM350 and BMP581 only, per DFRobot's wiki
-  and schematic). The likeliest source is a lens-motor (VCM) driver on 7F's Arducam module: it arrived with the
-  camera, and 0x0c is the VCM address. The test is a scan with the CSI ribbon unplugged. None of these addresses is
-  a layout vote or the anchor.
+  and schematic). It is on 7F's Arducam module: with the CSI ribbon unplugged, the boot scan and `detect` lose 0x0c
+  together with 0x36. Most likely a lens-motor (VCM) driver, 0x0c being the VCM address, although the module is sold
+  as fixed-focus. None of these addresses is a layout vote or the anchor. The same test showed that the camera's
+  entry comes up "up" with no camera fitted: the bring-up runs the camera natively and never asks the sensor (open,
+  with the video work).
 - The bring-up, on the taster and on TMS-7F (2026-10-07):
   - every fitted part comes up in config order: the LSM6DSO32 (SPI2, CS 50), the ICP-10111, BMI323, BMM350, BMP581,
     SDP810, VL53L1X and INA226. Bring-up takes 1056 ms on the taster and 761 ms on 7F;
