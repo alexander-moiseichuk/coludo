@@ -1754,8 +1754,8 @@ R5).
 
 1. `ulTaskNotifyTake(clear)`: a count above 1 increments `overruns`. `now_us = esp_timer_get_time()`;
    `dt = now - last`, clamped to nominal if ≤ 0 or > 0.5 s (`flight.py:265-266`).
-2. **IMU:** read 12 B from the LSM6DSO32 (+6 B from the ADXL375 on v0.1). Push `accel` and `rate`. Write the IMU
-   telemetry row if `due`.
+2. **IMU:** one 16 B burst from the LSM6DSO32's STATUS_REG (+6 B from the ADXL375 on v0.1). Push `accel` on XLDA
+   and `rate` on GDA, only a new conversion; write the IMU telemetry row on either, if `due`.
 3. **Separation:** take the edge stamps, sample GPIO33, read the clock, and step the debounce. The rules: armed,
    one quiet read >= debounce_ms (default 10) after the last edge; polled, >= 3 agreeing reads spanning it. A
    confirmed separation in BOOSTING sets the stage to GLIDING and writes `separation.csv` as
