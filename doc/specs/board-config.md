@@ -255,6 +255,18 @@ identical behaviour every time.
 - **`components`** — the declarative hardware list. Each entry has a `name`, a `driver`, a
   `bus` reference, an optional `addr`, an `enabled` flag, and a `provides` map. JSON has no
   hex literals, so addresses are decimal (`0x28` → `40`); `config_default.py` may use hex.
+  - **The camera (Rust firmware, `src/avionics`):** a component whose `driver` is `"ov5647"` declares
+    the flight camera on the CSI connector, e.g. `{"name": "camera", "driver": "ov5647", "enabled": true,
+    "clock_hz": 27000000}`. **`clock_hz`** is the module's oscillator: modules differ (the taster's
+    24 MHz, 7F's Arducam 27 MHz), and a wrong one stretches every frame rate by the ratio. A whole
+    number of Hz written as a float (`27e6`) counts. A missing or unusable one (not a whole 6–27 MHz) is
+    taken as the stock 25 MHz, with a boot warning that shows the value. No camera entry, or a disabled
+    one, means no video, and the encoder's internal RAM stays unreserved; with a card mounted, the boot
+    warns about it. The SCCB is the board's i2c:0 by wiring, so the entry names no bus.
+  - Plan B had no camera of its own (the Luckfox recorded video), so older files, which have none, stay
+    valid. The reverse does not hold: **plan B refuses to arm with the entry**, because its registry has
+    no `ov5647` implementation and counts the camera as a failed device. Keep the entry out of configs
+    for MicroPython boards.
 - **`recorder`** — PSRAM ring sizes (`tlm_capacity`, `log_capacity`, `cell_size`), the stats
   cadence (`stats_ms`), the global telemetry rate **`telemetry_ms`**, and the optional **`session`**.
   > **`telemetry_ms` is the GLOBAL decimation every stream inherits**; a stream declaring its own

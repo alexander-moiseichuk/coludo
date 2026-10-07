@@ -19,9 +19,45 @@ use crate::{i2c, sd};
 /// mirrored modes) gives the colour bars exactly: white, yellow, cyan, green, magenta, red, blue, black.
 pub const OV5647_BAYER: i8 = 3;
 
-/// The taster's OV5647 module runs on a 24 MHz oscillator: every frame rate came out 24/25 of the request in the
-/// SEI frame stamps (the stock tables assume 25 MHz). Check each module (the Arducam B012V1HEP4 when it arrives).
-pub const OV5647_CLOCK_HZ: u32 = 24_000_000;
+/// The oscillator esp_cam_sensor's OV5647 tables assume (the Raspberry-Pi reference module's), used when the board
+/// config's camera gives no usable `clock_hz`. Modules differ: the taster's runs at 24 MHz and 7F's Arducam at 27
+/// MHz, and a wrong clock stretches every frame rate by its ratio (measured from the SEI frame stamps,
+/// tools/video_sei.py), so each board's config declares its own (board_config::Camera).
+pub const STOCK_CLOCK_HZ: u32 = 25_000_000;
+
+/// The board's camera as the board config declares it (board_config::camera), resolved for the driver: its
+/// oscillator, the stock one when the config gives none (logged).
+#[derive(Clone, Copy, Debug)]
+pub struct Camera {
+    /// The module's oscillator in Hz.
+    pub clock_hz: u32,
+}
+
+impl Camera {
+    /// The camera the config declares, or None: no camera, no video (and no encoder reservation).
+    pub fn from_config(document: &serde_json::Value) -> Option<Self> {
+        let declared = board_config::camera(document)?;
+        let stock = STOCK_CLOCK_HZ / 1_000_000;
+        let clock_hz = match declared.clock {
+            board_config::CameraClock::Hertz(hertz) => hertz,
+            board_config::CameraClock::Missing => {
+                log::warn!(
+                    "video :: the camera entry gives no clock_hz: assuming the stock {stock} MHz, so frame rates may \
+                     be off by the module's ratio"
+                );
+                STOCK_CLOCK_HZ
+            }
+            board_config::CameraClock::Unusable(written) => {
+                log::warn!(
+                    "video :: the camera's clock_hz {written} is not a whole number of Hz in 6-27 MHz: assuming the \
+                     stock {stock} MHz, so frame rates may be off by the module's ratio"
+                );
+                STOCK_CLOCK_HZ
+            }
+        };
+        Some(Self { clock_hz })
+    }
+}
 
 /// What to record.
 pub struct Settings {
@@ -55,7 +91,8 @@ pub const FLIGHT: Settings = Settings {
 /// Reserves the encoder for the flight setting at boot, while the internal heap is still whole (coludo_video.h,
 /// coludo_video_reserve): call it on the main task (core 0, where the encode task runs) before the ring threads start.
 pub fn reserve() -> anyhow::Result<()> {
-    let config = configure(&FLIGHT, 0, std::ptr::null_mut(), std::ptr::null());
+    // the oscillator is the camera half's (0, the stock one): the encoder half never reads it
+    let config = configure(&FLIGHT, 0, 0, std::ptr::null_mut(), std::ptr::null());
     // SAFETY: the config outlives the call; only its encoder fields are read.
     sys::esp!(unsafe { sys::coludo_video_reserve(&config) })?;
     Ok(())
@@ -64,6 +101,7 @@ pub fn reserve() -> anyhow::Result<()> {
 /// The recorder's configuration for these settings (the C side copies what it keeps).
 fn configure(
     settings: &Settings,
+    clock_hz: u32,
     boot_id: u32,
     i2c_bus: sys::i2c_master_bus_handle_t,
     path: *const std::ffi::c_char,
@@ -86,7 +124,7 @@ fn configure(
         path,
         test_pattern: settings.test_pattern as u8,
         bayer: settings.bayer,
-        sensor_clock_hz: OV5647_CLOCK_HZ,
+        sensor_clock_hz: clock_hz,
         exposure_target: settings.exposure_target,
     }
 }
@@ -95,7 +133,7 @@ fn configure(
 ///
 /// Errors: the card's videos partition is not mounted (no video then, see the module notes), the directory would not
 /// be made, or the recorder would not start.
-pub fn start(session: &str, boot_id: u32, settings: &Settings) -> anyhow::Result<String> {
+pub fn start(session: &str, boot_id: u32, camera: Camera, settings: &Settings) -> anyhow::Result<String> {
     anyhow::ensure!(
         sd::layout() != Some(sd::Layout::VideosFailed),
         "the card's videos partition is not mounted: no video, so the recordings partition stays the ring_saver's"
@@ -106,7 +144,7 @@ pub fn start(session: &str, boot_id: u32, settings: &Settings) -> anyhow::Result
     std::fs::create_dir_all(&directory)?;
     let path = format!("{directory}/{uptime}.h264");
     let c_path = std::ffi::CString::new(path.clone())?;
-    let config = configure(settings, boot_id, i2c::port0()?, c_path.as_ptr());
+    let config = configure(settings, camera.clock_hz, boot_id, i2c::port0()?, c_path.as_ptr());
     // SAFETY: the config and the path outlive the call (the recorder copies what it keeps).
     sys::esp!(unsafe { sys::coludo_video_start(&config) })?;
     Ok(path)
@@ -169,9 +207,10 @@ const START_PARAMETERS: &[Parameter] = &[
     },
 ];
 
-/// The camera's console commands (the Glider Command Language, crate::gcl), registered when the card mounts:
-/// recording needs it. `session` and `boot_id` name and stamp the files this boot writes.
-pub fn register_commands(session: String, boot_id: u32) {
+/// The camera's console commands (the Glider Command Language, crate::gcl), registered when the board config declares
+/// a camera and the card mounts: recording needs both. `session` and `boot_id` name and stamp the files this boot
+/// writes.
+pub fn register_commands(session: String, boot_id: u32, camera: Camera) {
     gcl::register(vec![
         Command {
             owner: "camera",
@@ -194,7 +233,7 @@ pub fn register_commands(session: String, boot_id: u32) {
                     bayer: arguments.integer("bayer") as i8,
                     exposure_target: arguments.integer("ae") as u8,
                 };
-                match start(&session, boot_id, &settings) {
+                match start(&session, boot_id, camera, &settings) {
                     Ok(path) => cc_protocol::build("ok", &["video", &path], &[]),
                     Err(error) => cc_protocol::build("err", &["video", &error.to_string()], &[]),
                 }

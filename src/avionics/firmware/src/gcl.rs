@@ -12,8 +12,8 @@
 //! ```
 //!
 //! **Components own their commands.** A component registers its commands when it activates (the SD card when it
-//! mounts: `sdtest`, `video ...`; the diagnostics at boot: `load`, `pace`; a driver when its part answers) and
-//! withdraws them when it goes. Linking or removing a component therefore needs no edit anywhere else and no
+//! mounts: `sdtest`; the camera when the config declares one and the card mounts: `video ...`; the diagnostics at
+//! boot: `load`, `pace`; a driver when its part answers) and withdraws them when it goes. Linking or removing a component therefore needs no edit anywhere else and no
 //! feature switch: `help` lists exactly what this board runs right now.
 //!
 //! **One declaration per command:** its words, what it does, its named parameters (kind, range, default, help) and

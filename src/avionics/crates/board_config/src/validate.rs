@@ -545,6 +545,20 @@ mod tests {
     }
 
     #[test]
+    fn the_camera_entry_is_a_valid_device() {
+        // board-config.md's example: no bus, and `clock_hz` is none of the numeric control fields
+        let errors = errors_after(|document| {
+            document["components"]
+                .as_array_mut()
+                .expect("a components list")
+                .push(json!(
+                    {"name": "camera", "driver": "ov5647", "enabled": true, "clock_hz": 27_000_000}
+                ));
+        });
+        assert_eq!(errors, Vec::<String>::new());
+    }
+
+    #[test]
     fn a_non_object_is_one_message() {
         for document in [json!(null), json!([]), json!("board"), json!(5), json!(true)] {
             assert_eq!(validate(&document), ["config is not an object"], "{document}");

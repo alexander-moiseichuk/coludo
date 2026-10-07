@@ -44,7 +44,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub use validate::validate;
-pub use view::{Hub, Network, Wifi, board_id, max_range_m, mcu, wifi};
+pub use view::{Camera, CameraClock, Hub, Network, Wifi, board_id, camera, max_range_m, mcu, wifi};
 pub use writer::write;
 
 /// How many hex digits of the sha256 a config_id keeps.

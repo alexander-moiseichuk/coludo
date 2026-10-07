@@ -522,6 +522,8 @@ for these parts.
     (§6).
   - `probe` returns the two-map reply.
   - `not-flight-capable` is removed from `degraded`.
+- **The camera entry** (an `ov5647` component, board-config.md) is a known implementation in the Rust registry.
+  `arm` and `verify` must not count it as a failed device, which is what plan B does with it.
 - **Ring gate:** `arm` and `verify` also require the eraser to hold its reserve: at least ~1 % of the ring erased
   ahead of the writer (§3.7). No card is a `no-sd` warning, not a refusal: newest wins keeps the flight's
   blocks over the pad's.
@@ -550,7 +552,10 @@ for these parts.
     - The taster's module (a Raspberry-Pi-style OV5647 board) is bench-only; it proves the pipeline. The flight
       camera is the Arducam OV5647 (B012V1HEP4, ~3 g). Same chip, so the code and the colour matrix carry over.
       Re-check per module:
-      - its oscillator: `OV5647_CLOCK_HZ` (the taster's is 24 MHz), measured from the SEI fps (`video_sei.py`);
+      - its oscillator: the board config's camera entry, `clock_hz` (board-config.md; the taster's 24 MHz,
+        7F's Arducam 27 MHz), measured from the SEI fps (`video_sei.py`). Done 2026-10-07: colour bars at
+        25 fps gave 25.010 fps on the taster and 25.004 on 7F, 0 missed frames. A board with no camera entry
+        records no video and keeps the encoder's ~138 KB of internal RAM;
       - `bars`, to confirm the Bayer order;
       - a daylight clip: `ae`, the trim's converged gains, the focus and the IR filter;
       - the mounting rotation.
@@ -1589,6 +1594,14 @@ What holds it together:
 - **2026-10-07, after the two-partition mount:** under video + saver + Wi-Fi pulls, the lowest DMA free was 1.6 KB
   on the taster and 2.3 KB on 7F, with no failure. The margin is gone: the optimization below is required before M5,
   not optional.
+- **Open, untraced panic (taster, 2026-10-07).** 25 min after the swapped-card A/B stress (lowest DMA free 1280 B),
+  the taster saved a 7 KB `set-config board` that had arrived over Wi-Fi, logged it, and panicked before its reply
+  went out (`reset_cause panic`). No console was attached, so the backtrace is lost. Four repeats were clean: three
+  that re-created the key after `reset-config`, and one overwrite. Suspect: esp_hosted's DMA allocation assert on
+  the burst. The stress runs after the optimization below will show whether it recurs. A flash coredump partition in
+  the free 0x720000..0x800000 would keep the next backtrace.
+- **A board without a camera** (no `ov5647` entry in its config) reserves no encoder, so its ~138 KB block stays in
+  the heap.
 - **Planned before M5 (operator, 2026-10-06): internal RAM optimization.** The first lever is the 92 KB of code in
   internal RAM. With XIP from PSRAM, flash operations no longer disable the cache, so much of what IDF places there
   for cache-disabled windows may move out: FreeRTOS, heap, ring buffer, esp_timer, lwIP and driver ISR paths.

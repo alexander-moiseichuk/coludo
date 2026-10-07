@@ -66,8 +66,21 @@ fn main() -> anyhow::Result<()> {
         log::warn!("sd :: no usable microSD -- running without it");
     }
     // the camera's encoder before anything else takes internal RAM: its reference buffer is one ~138 KB internal
-    // block, which the ring threads' stacks and buffers would split (no card, no recording, no reservation)
-    if sd_mounted && let Err(error) = firmware::video::reserve() {
+    // block, which the ring threads' stacks and buffers would split. No camera in the board config or no card: no
+    // recording, so no reservation, and the block stays the heap's
+    let camera = firmware::video::Camera::from_config(&loaded.document);
+    match camera {
+        Some(camera) => log::info!("video :: camera ov5647, oscillator {} Hz", camera.clock_hz),
+        // loud with a card: a config made from a template without the entry would fly without video
+        None if sd_mounted => {
+            log::warn!("video :: no camera in the board config (an 'ov5647' component): no video this boot")
+        }
+        None => log::info!("video :: no camera in the board config: no video"),
+    }
+    if sd_mounted
+        && camera.is_some()
+        && let Err(error) = firmware::video::reserve()
+    {
         log::warn!("video :: encoder not reserved, `video start` will try again: {error}");
     }
     // the ring_writer scans the `log` partition in its own thread, then starts the ring_eraser and, with a card, the
@@ -110,7 +123,9 @@ fn main() -> anyhow::Result<()> {
     link::register_commands();
     if sd_mounted {
         firmware::sd::register_commands();
-        firmware::video::register_commands(board.session.clone(), board.boot_id.unwrap_or(0) as u32);
+        if let Some(camera) = camera {
+            firmware::video::register_commands(board.session.clone(), board.boot_id.unwrap_or(0) as u32, camera);
+        }
     }
     let executor = commands::Executor::start(commands::Context {
         board: board.clone(),

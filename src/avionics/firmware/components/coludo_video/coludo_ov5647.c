@@ -9,8 +9,9 @@
  * clock-lane gate | bus idle | line sync, then 0x0100 = 1. Everything else is the stock driver.
  *
  * Needs CONFIG_CAMERA_OV5647_AUTO_DETECT_MIPI_INTERFACE_SENSOR=n, so this is the only OV5647 detect entry.
- * Assumes the module's own 25 MHz oscillator (Raspberry-Pi OV5647 modules): the stock tables' PLL math is
- * 25 MHz (1080p 30.0 fps, 960p 45.0 fps; a 24 MHz part runs 4 % slower).
+ * The stock tables' PLL math assumes a 25 MHz oscillator (Raspberry-Pi OV5647 modules: 1080p 30.0 fps, 960p
+ * 45.0 fps). Modules differ (the taster's 24 MHz runs them 4 % slow, 7F's Arducam 27 MHz 8 % fast), so the board
+ * config declares each one's (coludo_ov5647_set_clock) and VTS is set from it for the requested rate.
  */
 #include <string.h>
 
@@ -65,8 +66,8 @@ static uint32_t _native_vts;
 static const esp_cam_sensor_format_t *_vts_format;
 /** AEC target the next stream-on programs; 0 keeps the stock tables'. */
 static uint8_t _exposure_target;
-/** The module's oscillator. The stock tables' native rates assume 25 MHz; a 24 MHz module (the taster's, found
- * from the SEI frame stamps: every rate came out 24/25 of the request) runs them 4 % slow. */
+/** The module's oscillator. The stock tables' native rates assume 25 MHz; another clock scales them (the taster's
+ * 24 MHz module, found from the SEI frame stamps: every rate came out 24/25 of the request). */
 static uint32_t _clock_hz = 25000000;
 
 void coludo_ov5647_set_clock(uint32_t hz)

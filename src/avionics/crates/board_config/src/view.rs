@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The typed, read-only view of a config document: only what the firmware consumes so far (M2): the board
-//! id and MCU, the Wi-Fi networks and the CC hub, and the field's range limit. Each reader follows the plan B
+//! The typed, read-only view of a config document: only what the firmware consumes so far: the board id and
+//! MCU, the Wi-Fi networks and the CC hub, the field's range limit (M2), and the camera. Each reader follows the plan B
 //! code that reads the same keys, and is meant for a document [`crate::validate`] accepts (what load()
 //! returns); for anything else it answers the nearest safe value, as each one says.
 //!
@@ -264,9 +264,76 @@ pub fn max_range_m(document: &Value) -> Option<f32> {
         .map(|metres| metres as f32)
 }
 
+/// The OV5647 camera's implementation name in a device entry (`driver`, or else `activity`).
+const CAMERA_DRIVER: &str = "ov5647";
+
+/// The oscillator range the OV5647 accepts on XVCLK, in Hz (datasheet: 6-27 MHz). A value outside it is a
+/// typo (27 for 27 MHz) or another part.
+const CAMERA_CLOCK_RANGE_HZ: std::ops::RangeInclusive<f64> = 6_000_000.0..=27_000_000.0;
+
+/// The flight camera on the board's CSI connector: an OV5647. Its SCCB is the board's i2c:0, fixed by the
+/// wiring, so the entry names no bus.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Camera {
+    /// The module's oscillator (`clock_hz`), which sets the true frame rate: modules differ (24, 25 and 27 MHz
+    /// seen).
+    pub clock: CameraClock,
+}
+
+/// What the camera entry says about its oscillator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CameraClock {
+    /// A whole number of Hz in the OV5647's 6-27 MHz: an integer, or a float equal to one (`27e6`), the typed
+    /// view's rule for integer knobs.
+    Hertz(u32),
+    /// No `clock_hz` (absent or null).
+    Missing,
+    /// A `clock_hz` that is no such number, as written (a text, a fraction, 27 meaning MHz), for the firmware's
+    /// warning to show.
+    Unusable(String),
+}
+
+/// The board's camera: the first sensor or component whose implementation is 'ov5647', its `driver` or else its
+/// `activity` (plan B's `config.device(cfg, driver=...)` order and match), when it is enabled (`enabled` absent
+/// reads as enabled).
+///
+/// None when the config declares no camera, or a disabled one: the board then records no video and leaves the
+/// encoder's internal RAM unreserved. Plan B never had a camera of its own (the Luckfox recorded video), so this
+/// entry is a schema addition: validate() checks it as any device, and older files, which have none, stay valid.
+/// Plan B itself has no 'ov5647' implementation: it counts the entry as a failed device and refuses to arm.
+pub fn camera(document: &Value) -> Option<Camera> {
+    let device = ["sensors", "components"]
+        .into_iter()
+        .filter_map(|section| document.get(section).and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_object)
+        .find(|device| {
+            // `driver or activity`: the driver when it is truthy, else the activity (validate's `runs`)
+            let runs = device
+                .get("driver")
+                .filter(|driver| truthy(driver))
+                .or(device.get("activity"));
+            runs.and_then(Value::as_str) == Some(CAMERA_DRIVER)
+        })?;
+    if !device.get("enabled").is_none_or(truthy) {
+        return None;
+    }
+    let whole = |hertz: f64| (hertz.fract() == 0.0 && CAMERA_CLOCK_RANGE_HZ.contains(&hertz)).then_some(hertz as u32);
+    let clock = match device.get("clock_hz") {
+        None | Some(Value::Null) => CameraClock::Missing,
+        Some(value) => match value.as_f64().and_then(whole) {
+            Some(hertz) => CameraClock::Hertz(hertz),
+            None => CameraClock::Unusable(value.to_string()),
+        },
+    };
+    Some(Camera { clock })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, Hub, Network, board_id, max_range_m, mcu, wifi};
+    use super::{
+        Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, Hub, Network, board_id, camera, max_range_m, mcu, wifi,
+    };
     use serde_json::{Value, json};
 
     /// A network as the view lists it.
@@ -474,5 +541,110 @@ mod tests {
         let both = json!({"sensors": [{"name": "field", "max_range_m": 80}],
                           "components": [{"name": "field", "max_range_m": 200}]});
         assert_eq!(max_range_m(&both), Some(80.0));
+    }
+
+    /// A camera with this oscillator.
+    fn clocked(hertz: u32) -> Option<Camera> {
+        Some(Camera {
+            clock: CameraClock::Hertz(hertz),
+        })
+    }
+
+    /// A camera whose entry gives no usable oscillator.
+    fn unclocked(clock: CameraClock) -> Option<Camera> {
+        Some(Camera { clock })
+    }
+
+    /// The clock reading of a camera entry with this `clock_hz`.
+    fn with_clock(clock: Value) -> Option<Camera> {
+        camera(&json!({"components": [{"name": "camera", "driver": "ov5647", "clock_hz": clock}]}))
+    }
+
+    /// An unusable clock, as written.
+    fn unusable(written: &str) -> Option<Camera> {
+        unclocked(CameraClock::Unusable(written.to_string()))
+    }
+
+    #[test]
+    fn the_camera_is_the_ov5647_device_with_its_clock() {
+        let components = |camera: Value| json!({"components": [{"name": "flight", "activity": "flight"}, camera]});
+        assert_eq!(with_clock(json!(27_000_000)), clocked(27_000_000));
+        assert_eq!(with_clock(json!(24_000_000)), clocked(24_000_000));
+        // found by its implementation, whatever its name: the driver, or else the activity (plan B's device())
+        assert_eq!(
+            camera(&components(
+                json!({"name": "nose", "driver": "ov5647", "clock_hz": 25_000_000})
+            )),
+            clocked(25_000_000)
+        );
+        assert_eq!(
+            camera(&components(
+                json!({"name": "nose", "activity": "ov5647", "clock_hz": 25_000_000})
+            )),
+            clocked(25_000_000)
+        );
+        assert_eq!(
+            camera(&components(
+                json!({"name": "nose", "driver": "", "activity": "ov5647", "clock_hz": 25_000_000})
+            )),
+            clocked(25_000_000)
+        );
+        // a truthy driver wins over the activity
+        assert_eq!(
+            camera(&components(
+                json!({"name": "nose", "driver": "sg90", "activity": "ov5647"})
+            )),
+            None
+        );
+        // no camera: none declared, another driver, an empty config
+        assert_eq!(camera(&components(json!({"name": "camera", "driver": "sg90"}))), None);
+        assert_eq!(camera(&json!({})), None);
+    }
+
+    #[test]
+    fn a_disabled_camera_is_no_camera() {
+        let entry = |enabled: Value| json!({"components": [{"name": "camera", "driver": "ov5647", "enabled": enabled, "clock_hz": 27_000_000}]});
+        assert_eq!(camera(&entry(json!(false))), None);
+        assert_eq!(camera(&entry(json!(null))), None);
+        assert_eq!(camera(&entry(json!(true))), clocked(27_000_000));
+        // absent reads as enabled
+        assert_eq!(with_clock(json!(27_000_000)), clocked(27_000_000));
+    }
+
+    #[test]
+    fn a_whole_float_is_a_clock_and_anything_else_is_kept_as_written() {
+        // a float equal to a whole number of Hz, as a script's 27e6 writes it
+        assert_eq!(with_clock(json!(27_000_000.0)), clocked(27_000_000));
+        let parsed: Value = serde_json::from_str("27e6").expect("a JSON number");
+        assert_eq!(with_clock(parsed), clocked(27_000_000));
+        // the range's ends are in, a Hz past either is out (27 meaning MHz too)
+        assert_eq!(with_clock(json!(6_000_000)), clocked(6_000_000));
+        assert_eq!(with_clock(json!(27_000_000)), clocked(27_000_000));
+        assert_eq!(with_clock(json!(27)), unusable("27"));
+        assert_eq!(with_clock(json!(5_999_999)), unusable("5999999"));
+        assert_eq!(with_clock(json!(27_000_001)), unusable("27000001"));
+        // not a whole number of Hz, or not a number at all
+        assert_eq!(with_clock(json!(24_000_000.5)), unusable("24000000.5"));
+        assert_eq!(with_clock(json!(-24_000_000)), unusable("-24000000"));
+        assert_eq!(with_clock(json!("27000000")), unusable("\"27000000\""));
+        assert_eq!(with_clock(json!(true)), unusable("true"));
+        // absent or null is missing
+        assert_eq!(with_clock(json!(null)), unclocked(CameraClock::Missing));
+        assert_eq!(
+            camera(&json!({"components": [{"name": "camera", "driver": "ov5647"}]})),
+            unclocked(CameraClock::Missing)
+        );
+    }
+
+    #[test]
+    fn the_first_camera_wins_sensors_first() {
+        let both = json!({"sensors": [{"name": "camera", "driver": "ov5647", "clock_hz": 24_000_000}],
+                          "components": [{"name": "nose", "driver": "ov5647", "clock_hz": 27_000_000}]});
+        assert_eq!(camera(&both), clocked(24_000_000));
+        // a disabled first one is the board's answer, as plan B's device() returns the first match
+        let disabled_first = json!({"components": [
+            {"name": "camera", "driver": "ov5647", "enabled": false, "clock_hz": 24_000_000},
+            {"name": "nose", "driver": "ov5647", "clock_hz": 27_000_000}]});
+        assert_eq!(camera(&disabled_first), None);
     }
 }
