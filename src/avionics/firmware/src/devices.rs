@@ -38,8 +38,7 @@ pub struct Member {
     pub part: Part,
 }
 
-/// The LSM6DSO32 on SPI2 once it came up: held for M6's control thread, SPI2's owner.
-#[expect(dead_code, reason = "M6's control thread takes the SPI parts over")]
+/// The LSM6DSO32 on SPI2 once it came up: the control thread, SPI2's owner, takes it (crate::control).
 pub struct SpiMember {
     /// The entry's name.
     pub name: &'static str,
@@ -47,6 +46,8 @@ pub struct SpiMember {
     pub handle: SpiHandle,
     /// The driver.
     pub part: Lsm6dso32<OverSpi>,
+    /// Its INT1 data-ready GPIO, when the config wires one (`int_pin`).
+    pub interrupt: Option<u8>,
 }
 
 /// The quantities scalars are (D14 of the M5 plan): one f32 each.
@@ -90,6 +91,14 @@ pub struct Topology {
 }
 
 impl Topology {
+    /// The vector quantity `quantity` (accel, rate, mag, attitude), when a provider of it came up.
+    pub fn vector(&self, quantity: &str) -> Option<&Parameter<[f32; 3]>> {
+        self.vectors
+            .iter()
+            .find(|parameter| parameter.name() == quantity)
+            .map(|parameter| &**parameter)
+    }
+
     /// The topology of the entries that came up, in setup order, with one log line per quantity: its sources in rank
     /// order with their priorities, and its shared window. M6 adds the readers.
     fn build(entries: &[Entry<'static>], table: &Table) -> Topology {
@@ -406,7 +415,8 @@ fn set_up_spi(
             .ok(),
         _ => None,
     };
-    let interrupt_wired = board_config::pin(document, entry, "int_pin").is_some();
+    let interrupt = board_config::pin(document, entry, "int_pin");
+    let interrupt_wired = interrupt.is_some();
     let mut came_up = None;
     let outcome = controller::set_up(
         entry.name,
@@ -440,6 +450,7 @@ fn set_up_spi(
             name: entry.name,
             handle,
             part,
+            interrupt,
         });
     }
     outcome

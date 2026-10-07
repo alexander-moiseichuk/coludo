@@ -99,11 +99,18 @@ pub enum Producer {
     /// The ring_eraser: the log line of every block newest wins erases unsaved, which must not lose a race for the
     /// shared `misc` ring.
     Eraser = 2,
+    /// The control thread: the IMU, the separation switch, and from M7 the stage machine and the flight law.
+    Control = 3,
+    /// Port 0's owner: its parts' rows and log lines.
+    I2c0 = 4,
+    /// Port 1's owner.
+    I2c1 = 5,
 }
 
-/// Each producer ring's PSRAM in bytes, by [`Producer`] index: the spec's sizes for the supervisor (256 KiB) and the
-/// executor (128 KiB), and 16 KiB for the eraser's loss lines (~100 B each, at most a few a second).
-const PRODUCER_BYTES: [usize; 3] = [256 << 10, 128 << 10, 16 << 10];
+/// Each producer ring's PSRAM in bytes, by [`Producer`] index: the spec's sizes for the supervisor (256 KiB), the
+/// executor (128 KiB), the control thread (1 MiB), i2c0 (1 MiB) and i2c1 (512 KiB), and 16 KiB for the eraser's loss
+/// lines (~100 B each, at most a few a second).
+const PRODUCER_BYTES: [usize; 6] = [256 << 10, 128 << 10, 16 << 10, 1 << 20, 1 << 20, 512 << 10];
 
 /// The `misc` ring the unregistered threads share (the link, the console, httpd, IDF's log hook), in bytes.
 const MISC_BYTES: usize = 256 << 10;
@@ -206,6 +213,8 @@ struct Recording {
     recorder: &'static Recorder,
     /// The supervisor's health.csv stream.
     health: StreamId,
+    /// Each recorded device's stream, by entry name (crate::sensors::stream).
+    devices: Vec<(String, StreamId)>,
     /// This boot's NVS count; None when uncounted (block headers then carry 0).
     boot_id: Option<u32>,
     /// This boot's file prefix, which every block header carries.
@@ -272,6 +281,16 @@ pub fn health_stream() -> Option<StreamId> {
     RECORDING.get().map(|recording| recording.health)
 }
 
+/// The stream of device `name` (crate::sensors::stream); None without a recorder, or for a device that writes none.
+pub fn device_stream(name: &str) -> Option<StreamId> {
+    let recording = RECORDING.get()?;
+    recording
+        .devices
+        .iter()
+        .find(|(device, _)| device == name)
+        .map(|(_, stream)| *stream)
+}
+
 /// The flash ring; None until the writer's bring-up scan has run (or when it found no `log` partition).
 pub fn ring() -> Option<&'static RingView> {
     RING.get()
@@ -323,6 +342,18 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str) -> anyhow::Re
     let health = registry
         .add(supervisor::HEALTH_FILE, &supervisor::HEALTH_FIELDS, 0, false)
         .map_err(|error| anyhow::anyhow!("{}: {error:?}", supervisor::HEALTH_FILE))?;
+    // the devices' streams, from the saved config's entries (layout moves no name): a part that fails never writes
+    // its header, so a stream registered for it costs nothing
+    let mut devices = Vec::new();
+    for entry in board_config::directory(document) {
+        let Some(stream) = crate::sensors::stream(&entry) else {
+            continue;
+        };
+        match registry.add(&stream.file, stream.fields, stream.decimate_us, false) {
+            Ok(id) => devices.push((entry.name.to_string(), id)),
+            Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", stream.file),
+        }
+    }
     let buffers = Buffers {
         producers: PRODUCER_BYTES
             .iter()
@@ -353,6 +384,7 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str) -> anyhow::Re
     let recording = Recording {
         recorder: Box::leak(Box::new(recorder)),
         health,
+        devices,
         boot_id,
         session,
     };

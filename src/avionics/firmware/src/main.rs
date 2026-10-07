@@ -175,9 +175,9 @@ fn main() -> anyhow::Result<()> {
     let loaded: &'static board_config::Loaded = Box::leak(Box::new(loaded));
     let devices::Devices {
         table,
-        topology: _topology,
+        topology,
         mut members,
-        spi: _spi,
+        spi,
         spi_bus: _spi_bus,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     for (parked, port) in lent {
@@ -187,7 +187,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     // the flight tick on core 1, which wakes the owners too (§4.2, §4.3)
-    if let Err(error) = control::start(board_config::schedule_hz(&loaded.document)) {
+    if let Err(error) = control::start(board_config::schedule_hz(&loaded.document), spi, topology) {
         log::error!("control :: the control thread did not start: {error}");
     }
     if let Err(error) = supervisor::start(board.clone()) {

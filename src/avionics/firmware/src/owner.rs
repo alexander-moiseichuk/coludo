@@ -192,6 +192,9 @@ fn own(
     let Ok((mut port, mut members)) = resumed.recv() else {
         return;
     };
+    // the owner's own producer ring: its parts' rows and log lines never contend with another thread's
+    let ring = [crate::recorder::Producer::I2c0, crate::recorder::Producer::I2c1][usize::from(id)];
+    let _attachment = crate::recorder::get().and_then(|recorder| recorder.attach(ring as usize).ok());
     let mut delay = Delay::new_default();
     loop {
         // a control tick (crate::control) or a request ([`ask`]) wakes the owner; the work is due by time, so a
