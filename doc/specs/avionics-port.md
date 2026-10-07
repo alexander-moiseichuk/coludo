@@ -760,6 +760,13 @@ for these parts.
   gate opens, the separation counts then, its moment the recorded first departure. Plan B accepted a held separation
   anywhere in BOOSTING (§6). Every edge stays recorded in us (`separation_edges.csv`), so a flight shows the blast and
   the boost's vibration.
+  - **Early separation (operator):** a destabilized stack can lose the glider early, for aerodynamic reasons, while the
+    booster still burns. Thrust end is therefore the GLIDER's own: its IMU's axial specific force, which drops from
+    +several g to drag deceleration the moment the glider stops being pushed -- by burnout, or by an early separation.
+    So an early separation opens the gate itself and counts at once; a stack that holds together keeps the glider
+    pushed, and its vibration still cannot deploy.
+  - **Backstop:** a contact held open for a long run (about 100 ms, far beyond any wobble or blip) counts whatever the
+    IMU says, so a dead or confused IMU can never hide a real separation.
 - The `StageCell` single writer is the control thread. Hold/resume/arm/disarm arrive as mailbox requests.
 - `sequencer.csv`.
 - **Arm and verify:**
