@@ -1298,7 +1298,16 @@ Partition 2, the videos (mounted at /sdcard/videos):
 
     No failure, no freeze and no card error on either. Raw `sdtest`: AB58 stalled 486–590 ms again (3 of 6 runs),
     267D at most 169 ms. Over three runs, both ways round, the long writes follow the card; neither layout has shown
-    an error or a freeze. Missed frames vary from 0.5 to 1.9 % with no pattern by layout.
+    an error or a freeze.
+  - **Missed frames do follow the card (operator, 2026-10-07):** AB58, the two-partition card, missed 0.5 / 0.7 /
+    0.5 % over the three runs; 267D, the one-partition card, 1.9 / 0.6 / 1.8 %.
+    - `missed` is a gap in the camera's capture sequence: the encode loop on core 0 came late and the receiver had no
+      free buffer. `dropped` (the SD ring full) was 0 in every run on both cards. So the long card stalls never cost
+      a frame (the 2 MB ring absorbs them), and the card's effect on `missed` has no SD-side mechanism yet.
+    - Card, layout and scene (two cameras, two views) are still confounded.
+    - The operator's next step: discard both cards and make their file systems again (`tools/sd_prepare.sh`
+      discards first), the same layout on both or swapped, then repeat the A/B. AB58 may also have been doing its
+      first-use housekeeping.
   - **Why two volumes cannot overlap on the card (operator's question: *nix has an elevator under the FS locks).**
     Two levels of locking sit under the two FatFs volume locks:
     - `components/sd_card`'s disk I/O layer takes one card mutex around every driver call from either volume;
