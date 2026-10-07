@@ -6,7 +6,8 @@
 //! [`load`] the stored text and persists [`write()`]'s.
 //!
 //! * [`canon`] and [`config_id`]: the identity CC announces, sha256 over Python's repr of the document.
-//! * [`validate`]: config.validate, the same messages in the same order.
+//! * [`validate`]: config.validate, the same messages in the same order, plus one rule of the port's own: a
+//!   device's `debounce_ms` is at most [`LONGEST_DEBOUNCE_MS`].
 //! * [`load`]: which document a boot runs, and the source text whoami reports.
 //! * [`write()`]: the canonical pretty text (`json.dumps(indent=1, sort_keys=True)` plus a newline).
 //! * A typed view of the few keys the firmware reads so far: [`board_id`], [`mcu`], [`wifi`],
@@ -44,7 +45,7 @@ mod writer;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-pub use validate::validate;
+pub use validate::{LONGEST_DEBOUNCE_MS, validate};
 pub use view::{
     Camera, CameraClock, Entry, Hub, I2cSpecification, Network, Provide, Section, SpiSpecification, Wifi, board_id,
     camera, directory, entries, i2c_bus, max_range_m, mcu, pin, provides, schedule_hz, setup_retries, spi_bus, wifi,

@@ -81,9 +81,10 @@ import sys
 import recorder_wire
 
 """
-The firmware's Telemetry declarations (src/glider), used when a stream's own header row was lost to UART
-corruption -- which is the usual case: the header goes out once, at the start of a session. A hand-kept
-copy: src/control/test/test_tools.py checks the GNSS pair against gnss.py's own declarations.
+The firmware's Telemetry declarations (src/glider; the Rust port's where it appended columns, _APPENDED),
+used when a stream's own header row was lost to UART corruption -- which is the usual case: the header goes
+out once, at the start of a session. A hand-kept copy: src/control/test/test_tools.py checks the GNSS pair
+against gnss.py's own declarations.
 """
 _FIELDS: dict = {
     'imu_lsm6dso32': ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
@@ -101,10 +102,17 @@ _FIELDS: dict = {
     'servo_eleron_right': ('angle', 'pulse_us', 'done'),
     'servo_yaw': ('angle', 'pulse_us', 'done'),
     'checkpoint': ('stage', 'altitude', 'speed', 'airspeed', 'ticks_ms'),
-    'separation': ('event', 'stage'),
+    'separation': ('event', 'stage', 'moment', 'duration'),
     'sequencer': ('stage', 'reason'),
     'sequencer_events': ('stage', 'reason'),
 }
+"""
+The columns a later firmware appended to a stream, the tail of its _FIELDS entry: the Rust port's separation
+`moment`, the uptime (us) the pads first parted, and `duration`, the us from it to the sustained open (the pads'
+wobble; src/avionics controller streams.rs). A row of the older firmware (plan B) stops short of all of them; with
+the header lost it is kept with those cells empty (_cells).
+"""
+_APPENDED: dict = {'separation': ('moment', 'duration')}
 _BOOST_G: float = 3.0
 _BOOST_HOLD_S: float = 0.3
 _BOOST_SAMPLES: int = 10       # ... over at least this many real samples, never one corrupted row
@@ -633,6 +641,30 @@ def _clean(token: str, field: str) -> str:
         return ''
 
 
+def _cells(stream: str, header: tuple | None, tokens: list) -> list | None:
+    """
+    A row's recorded cells under the columns flight/ names: its file's header's, else _FIELDS'.
+
+    Args:
+        stream - the stream's name: a key of _FIELDS when the header was lost.
+        header - the file's own columns after the uptime, None when its header row was lost.
+        tokens - the row's cells after the uptime.
+
+    Returns:
+        The tokens when there is one per column. With the header lost, also a row that stops short of exactly
+        the columns a later firmware appended (_APPENDED), an older firmware's row, padded with an empty cell for
+        each; a file that kept its header names its own firmware's columns, so it gets no such allowance. None
+        for any other count: a cut or a splice.
+    """
+    fields = header or _FIELDS[stream]
+    if len(tokens) == len(fields):
+        return tokens
+    appended = () if header else _APPENDED.get(stream, ())
+    if appended and len(tokens) == len(fields) - len(appended):
+        return tokens + [''] * len(appended)
+    return None
+
+
 def _numbers(line: str, count: int) -> list | None:
     """The fields after the uptime as floats (None where not numeric), or None if the count is wrong."""
     parts = line.split(';')[1:]
@@ -937,11 +969,11 @@ def main() -> None:
                 writer = csv.writer(handle, delimiter=';', lineterminator='\n')  # ';' like the device
                 writer.writerow(('t_s',) + tuple(fields) + ('uptime_us',))
                 for uptime, line in kept:
-                    tokens = _payload(line).split(';')[1:]
-                    if len(tokens) != len(fields):
+                    cells = _cells(stream, header, _payload(line).split(';')[1:])
+                    if cells is None:
                         continue
                     writer.writerow(['%.6f' % ((uptime - zero) / 1e6)] +
-                                    [_clean(token, field) for token, field in zip(tokens, fields)] + [uptime])
+                                    [_clean(cell, field) for cell, field in zip(cells, fields)] + [uptime])
                     named += 1
         print('  %-18s %6d original rows, %6d named, last at %+.3f s%s' % (
             stream, len(kept), named, (kept[-1][0] - zero) / 1e6, '' if fields else '  (no field names known)'))

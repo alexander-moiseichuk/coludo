@@ -254,8 +254,9 @@ so it must run on both.
   `zlib.crc32(NAME)` because NVS keys stop at 15 characters. Run it after `src/avionics/firmware/flash.sh` and
   **before the airframe is sealed**: the first Rust boot carries nothing over from MicroPython's VFS, so a sealed
   Wi-Fi-only board without it has no network to join. It refuses a board config plan B's `config.validate`
-  rejects, a board or launch file the board's serde_json cannot read (NaN, a number past the f64 range, a lone
-  surrogate escape: the board would boot its default config), a launch file that is not a JSON object, a missing,
+  rejects or the board's own validate rejects beyond it (a device's `debounce_ms` not an int from 0 to 1000 ms), a
+  board or launch file the board's serde_json cannot read (NaN, a number past the f64 range, a lone surrogate
+  escape: the board would boot its default config), a launch file that is not a JSON object, a missing,
   empty or over-64-byte password and two SSIDs whose keys collide, and it reads the board's partition table
   first: a board with no NVS `cfg` there (still on MicroPython, whose filesystem fills the flash past its app) is
   never written. The write REPLACES everything on `cfg` (a config or launch.config saved over CC since, a password

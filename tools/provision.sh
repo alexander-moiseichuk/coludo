@@ -17,9 +17,10 @@
 #                   zlib.crc32(NAME as UTF-8), because an NVS key is at most 15 characters and an SSID up to 32 bytes
 #
 # Refused before anything is built: a board config plan B's own config.validate rejects (run on CPython through
-# src/avionics/golden/shims.py), a board or launch file the Rust board's serde_json cannot read (NaN, a number past
-# the f64 range, a lone surrogate escape: it would boot the default config), a launch file that is not a JSON
-# object, a missing or empty creds file, and two SSIDs whose keys collide. The image is built by ESP-IDF's
+# src/avionics/golden/shims.py) or the Rust board's validate rejects beyond it (a device's debounce_ms outside
+# 0..=1000 ms), a board or launch file the Rust board's serde_json cannot read (NaN, a number past the f64 range, a
+# lone surrogate escape), all of which would boot the default config, a launch file that is not a JSON object, a
+# missing or empty creds file, and two SSIDs whose keys collide. The image is built by ESP-IDF's
 # nvs_partition_gen.py, read back with IDF's own NVS parser and compared with what was asked before anything is
 # flashed.
 #
@@ -109,7 +110,8 @@ trap 'rm -rf "$work"' EXIT
 
 python3 - "$root/src/avionics/golden" "$board" "$launch" <<'EOF'
 """
-Plan B's verdict on the board config, and the launch file's shape: the files must be what the Rust board can boot.
+Plan B's verdict on the board config, the Rust board's rule beyond it, and the launch file's shape: the files must be
+what the Rust board can boot.
 
 This step runs alone in its interpreter: shims.install() is process-wide (MicroPython's clock and modules), so
 nothing else shares it. Each file is read as the Rust board reads its blob: UTF-8 text, strict JSON as serde_json
@@ -131,6 +133,36 @@ import shims  # noqa: E402 -- the golden directory joins the path just above
 
 shims.install()
 import config  # noqa: E402 -- plan B: importable once the shims are installed
+
+
+"""
+The longest debounce_ms the Rust board's validate takes (crates/board_config validate.rs LONGEST_DEBOUNCE_MS), its one
+rule beyond plan B's: the board refuses a stored config that breaks it and runs its default config instead.
+"""
+_LONGEST_DEBOUNCE_MS: int = 1000
+
+
+def _debounce_errors(board: dict) -> list:
+    """
+    The Rust board's validate messages on the devices' debounce_ms, worded as it words them.
+
+    Args:
+        board - a board config plan B's validate passed: its sensors and components are lists of named objects.
+
+    Returns:
+        A message per device whose debounce_ms is not an int (a bool is none) from 0 to _LONGEST_DEBOUNCE_MS; [] for
+        none.
+    """
+    errors = []
+    for section in ('sensors', 'components'):
+        for device in board.get(section) or []:
+            if 'debounce_ms' not in device:
+                continue
+            debounce = device['debounce_ms']
+            if isinstance(debounce, bool) or not isinstance(debounce, int) or not 0 <= debounce <= _LONGEST_DEBOUNCE_MS:
+                errors.append("%s '%s'.debounce_ms must be an int from 0 to %d ms (got %r)"
+                              % (section, device['name'], _LONGEST_DEBOUNCE_MS, debounce))
+    return errors
 
 
 def _reject_constant(name: str) -> None:
@@ -211,6 +243,10 @@ except Exception as error:  # plan B's load() reads a raising validate as an inv
     errors = ['validation raised %r' % error]
 if errors:
     raise SystemExit('provision.sh: %s: plan B config.validate refuses it:\n  %s' % (board_path, '\n  '.join(errors)))
+errors = _debounce_errors(board)
+if errors:
+    raise SystemExit("provision.sh: %s: the Rust board's validate refuses it:\n  %s"
+                     % (board_path, '\n  '.join(errors)))
 if launch_path and not isinstance(_document(launch_path), dict):
     raise SystemExit('provision.sh: %s: a launch.config must be a JSON object' % launch_path)
 print('board config %s: valid, board.id %s, config_id %s' % (board_path, board['board']['id'], config.config_id(board)))

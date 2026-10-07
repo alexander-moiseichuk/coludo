@@ -4,6 +4,12 @@
 //! the same order. It checks FILE INTEGRITY only (structure, types, pin uniqueness, bus references, reserved
 //! pins, the watchdog floor), never hardware health, which the running board reports.
 //!
+//! One rule is the port's own, so a document breaking it is the one place the messages differ from plan B's: a
+//! device's `debounce_ms` is an int of at most [`LONGEST_DEBOUNCE_MS`] (`Validation::debounce`). The drivers read
+//! their config blocks infallibly, with plan B's default for a missing or malformed key, so a value that is
+//! well-formed but absurd is refused here, where the operator sees why: at `set-config`, and at boot, where load()
+//! then runs the defaults.
+//!
 //! As in plan B, one pass threads three accumulators through a helper per section ([`Validation`]): the
 //! messages, the GPIO owners (uniqueness and reserved pins) and the buses the `buses` section defines (which
 //! devices then address).
@@ -31,6 +37,15 @@ const RESERVED_PINS: [(&str, &[u64]); 1] = [("esp32p4", &[6, 14, 15, 16, 17, 18,
 /// boot-loops (3000 still did, 4000 was stable), and with servos enabled every boot re-centres every fin
 /// (config.py `_WDT_FLOOR_MS`).
 const WATCHDOG_FLOOR_MS: i64 = 4000;
+
+/// The longest `debounce_ms` a device may ask for, in milliseconds: a port rule, plan B checks none.
+///
+/// A debounced latch moves no sooner than its debounce after the line settles, and the separation switch's latch is
+/// the BOOSTING -> GLIDING trigger: a debounce past a second makes GLIDING come a second or more late, with the
+/// glider already off the booster. The driver's default is 10 ms (plan B's config_default still writes 20); the
+/// operator's physics (2 cm pads parting at 3 m/s, about 7 ms of wobble) need nothing near this bound, which only
+/// refuses a typo or a unit mistake (seconds for ms).
+pub const LONGEST_DEBOUNCE_MS: u64 = 1000;
 
 /// The bus spec keys that name a GPIO, in the order plan B claims them.
 const BUS_PIN_KEYS: [&str; 7] = ["sda", "scl", "tx", "rx", "sck", "mosi", "miso"];
@@ -400,6 +415,7 @@ impl Validation {
             }
             self.rate_band(device, &label);
             self.numeric(device, &label);
+            self.debounce(device, &label);
             self.bus(device, &label);
             if device
                 .get("addr")
@@ -408,6 +424,25 @@ impl Validation {
                 self.error(format!("{label}.addr must be an int or null"));
             }
             self.provides(device.get("provides"), &label);
+        }
+    }
+
+    /// A device's `debounce_ms`, when it has one: an int of 0..=[`LONGEST_DEBOUNCE_MS`] (the port's own rule). Any
+    /// device's, by the key: the debounce behind it is the drivers' one generic debounce (the separation switch's
+    /// today). Plan B took any value, and its settle raised on a float, text or null.
+    fn debounce(&mut self, device: &Map<String, Value>, label: &str) {
+        let Some(debounce) = device.get("debounce_ms") else {
+            return;
+        };
+        let sane = is_integer(debounce)
+            && debounce
+                .as_u64()
+                .is_some_and(|debounce| debounce <= LONGEST_DEBOUNCE_MS);
+        if !sane {
+            self.error(format!(
+                "{label}.debounce_ms must be an int from 0 to {LONGEST_DEBOUNCE_MS} ms (got {})",
+                representation(debounce)
+            ));
         }
     }
 
@@ -662,6 +697,66 @@ mod tests {
             document["sensors"][0]["activity"] = json!("baro");
         });
         assert_eq!(errors, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_debounce_up_to_the_bound_is_valid() {
+        // the shipped 20, the edges of the range, and the key on any device, sensor or component
+        for debounce in [json!(20), json!(0), json!(1000)] {
+            let errors = errors_after(|document| {
+                document["components"]
+                    .as_array_mut()
+                    .expect("a components list")
+                    .push(json!({"name": "separation", "driver": "separation", "debounce_ms": debounce.clone()}));
+                document["sensors"][0]["debounce_ms"] = debounce.clone();
+            });
+            assert_eq!(errors, Vec::<String>::new(), "{debounce}");
+        }
+        assert_eq!(super::LONGEST_DEBOUNCE_MS, 1000);
+    }
+
+    #[test]
+    fn a_debounce_past_the_bound_or_not_an_int_is_refused() {
+        // NEGATIVE: one past the bound, a seconds-for-ms slip, a negative, and every non-int (a bool is no int here,
+        // as in plan B's _is_int), each named on its device as Python would print it
+        for (debounce, got) in [
+            (json!(1001), "1001"),
+            (json!(20_000), "20000"),
+            (json!(-1), "-1"),
+            (json!(20.0), "20.0"),
+            (json!("20"), "'20'"),
+            (json!(true), "True"),
+            (Value::Null, "None"),
+            (json!(u64::MAX), "18446744073709551615"),
+        ] {
+            let errors = errors_after(|document| {
+                document["components"]
+                    .as_array_mut()
+                    .expect("a components list")
+                    .push(json!({"name": "separation", "driver": "separation", "debounce_ms": debounce.clone()}));
+            });
+            assert_eq!(
+                errors,
+                [format!(
+                    "components 'separation'.debounce_ms must be an int from 0 to 1000 ms (got {got})"
+                )],
+                "{debounce}"
+            );
+        }
+        // after the numeric fields, before the bus, as the device's own messages go
+        let errors = errors_after(|document| {
+            document["sensors"][0]["debounce_ms"] = json!(5000);
+            document["sensors"][0]["period_ms"] = json!("10");
+            document["sensors"][0]["id"] = json!(9);
+        });
+        assert_eq!(
+            errors,
+            [
+                "sensors 'baro'.period_ms must be a number (got '10')",
+                "sensors 'baro'.debounce_ms must be an int from 0 to 1000 ms (got 5000)",
+                "sensors 'baro' addresses bus i2c:9 which is not defined",
+            ]
+        );
     }
 
     #[test]

@@ -14,6 +14,10 @@
 //!    is honoured, and anything else reads as 0, the global window.
 //!  * Plan B passes `separation.csv` no window, so the global decimates it, while its note says "durable, every
 //!    event". Here the stream is durable and never decimated.
+//!  * separation.csv gains two columns, `moment` and `duration`: when the pads first parted (or, for a re-nest,
+//!    closed), on the uptime column's own clock, microseconds, and how long they wobbled before the level held for
+//!    good, microseconds. A row's `uptime` stays the verdict's read, so the debounce's latency is in the data. A reader
+//!    takes plan B's two-column rows as they are (tools/recorder_flight.py).
 
 use board_config::Entry;
 use serde_json::Value;
@@ -25,8 +29,11 @@ pub const IMU_FIELDS: [&str; 7] = ["ax", "ay", "az", "gx", "gy", "gz", "irq_runs
 /// The ICP-10111's columns (plan B drivers/icp10111.py:124): m AMSL, degrees C, Pa, m above the ground.
 pub const BAROMETER_FIELDS: [&str; 4] = ["altitude", "temperature", "pressure", "elevation"];
 
-/// The separation switch's columns (plan B drivers/separation.py:57): the event and the stage after it.
-pub const SEPARATION_FIELDS: [&str; 2] = ["event", "stage"];
+/// The separation switch's columns: plan B's event and the stage after it (drivers/separation.py:57), then the port's
+/// `moment`, the uptime (µs) the pin first left its old level in the episode the event concludes (drivers::separation
+/// `Event::moment_us`: for a separation, the separation moment), and `duration`, the µs from it to the sustained new
+/// level (`Event::duration_us`: the pads' wobble, 0 for a clean single edge).
+pub const SEPARATION_FIELDS: [&str; 4] = ["event", "stage", "moment", "duration"];
 
 /// The separation switch's file, whatever its entry's name (plan B drivers/separation.py:57).
 const SEPARATION_FILE: &str = "separation.csv";
@@ -183,7 +190,14 @@ mod tests {
     fn the_columns_are_plan_b_s() {
         assert_eq!(IMU_FIELDS.join(";"), "ax;ay;az;gx;gy;gz;irq_runs");
         assert_eq!(BAROMETER_FIELDS.join(";"), "altitude;temperature;pressure;elevation");
-        assert_eq!(SEPARATION_FIELDS.join(";"), "event;stage");
+    }
+
+    #[test]
+    fn separation_appends_the_moment_and_the_duration_to_plan_b_s_columns() {
+        // plan B's two columns first and unchanged, so a reader by position or by name still finds them; the moment
+        // and the duration trail them
+        assert_eq!(SEPARATION_FIELDS.join(";"), "event;stage;moment;duration");
+        assert_eq!(SEPARATION_FIELDS[..2], ["event", "stage"]);
     }
 
     #[test]

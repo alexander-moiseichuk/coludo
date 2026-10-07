@@ -601,8 +601,10 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - **ICP-10111** on whichever bus owner `layout.resolve()` assigns: i2c:1 on v1.x (taster, 7F), i2c:0 on v0.1
   (7C, next to the SEN0697). A two-phase measurement, the general call, and the **re-init of every device on
   that bus** (M5; §7, R6).
-- **Separation:** GPIO33 with pull-down. The ISR only wakes the control thread, which runs the 3-reads / 20 ms
-  debounce.
+- **Separation:** GPIO33 with pull-down. A both-edge ISR stamps the first and the last edge since the tick took
+  them (esp_timer us, u32). The control thread steps drivers::debounce with one read per tick and those stamps.
+  Armed, a quiet read a debounce after the last edge decides, 10-20 ms at the default 10 ms debounce on the 10 ms
+  tick. Polled (the arm failed), three agreeing reads spanning the debounce.
 - Streams `imu_lsm6dso32.csv`, `baro_icp10111.csv` and `separation.csv`.
 - `inspect`, `update{rezero,ground}`, `probe`, `diagnose` and `calibrate` through owner mailboxes.
 - `health.calibration` becomes real. `degraded` gains `needs-calibration`.
@@ -638,9 +640,18 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - **The ICP-10111 cycle is 120-130 ms** (about 8 Hz) on the 100 Hz tick: the collect lands on the tick after its
   12 ms conversion, and the next issue a period after the collect, as plan B's sleep-after-read (about 112 ms).
   Both are inside the quantities' 200 ms window.
-- **Separation** is stepped once a tick (10 ms), so a verdict comes 20-30 ms after the level settles; its stream is
-  durable (the stage transition's record). The GPIO interrupt service is installed from the control thread, which
-  latches every GPIO interrupt on core 1.
+- **Separation (operator, 2026-10-07).** The pads are 2 cm long and part at about 3 m/s, so up to about 7 ms of
+  lost/restored contact may come before the line holds open. The driver is a thin latch over a generic two-level
+  debounce (drivers::debounce, in the drivers' pattern: `Settings::from_config` infallible, `new(&settings)`), on the
+  caller's microsecond clock. With the interrupt armed the hold is timed from the edge stamps: a quiet read a debounce
+  after the last edge decides; the default debounce is 10 ms ("10 ms or less"), above the wobble's gaps (a shorter one
+  could split one separation into several rows). A polled pin keeps plan B's three agreeing reads. Every event
+  records its **moment** (the first 1->0 of the run that ended at 0 for good, in uptime us) and its **duration**
+  (from that first 1->0 to the start of the sustained 0, in us: the pads' wobble, 0 for a clean edge), in
+  `separation.csv` (`event;stage;moment;duration`, durable) and in its log line. The board's config validator refuses
+  a `debounce_ms` outside 0..=1000 (tools/provision.sh too). Plan B's built-in default document still writes 20: a
+  board that falls back to it debounces 20 ms; real boards carry 10 in their saved configs. The GPIO interrupt service
+  is installed once by the control thread, which latches every GPIO interrupt on core 1.
 - **The CC surface.** Every device that came up is an inspectable object (plan B's `Task.inspect`), its own keys read
   off the databoard: the IMU's `rate_dps` is in deg/s (D18; plan B's held centideg/s ints under that name). In M6 only the ICP-10111 has a calibration (it asks for its
   ground until it holds one, and setup captures it); the SDP810's tare and the BMM350's hard iron join `calibrate` and
@@ -704,8 +715,9 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   stayed SETTING (separation acts only in BOOSTING). The log's timestamps sit a constant 940 ms after the rows'
   uptimes: `esp_log_timestamp`'s base, not latency. The sub-20 ms blip that must not count is proved on the
   host, against plan B's debounce: every case ends with plan B's latch and stage (a 7 ms blip and a 40 ms open at a
-  50 ms debounce both rejected). Which ticks report a verdict on the way still differs (open, with the debounce's
-  level rule).
+  50 ms debounce both rejected). The edge-timed hold re-pins that comparison (golden_separation.rs): never a
+  separation or a GLIDING plan B did not make, a deploy earlier only within one of plan B's 5 ms reads, and one
+  documented exception, plan B's own 0 ms debounce that never settles there.
 
 **Carried into M7 (from the M6 review):**
 - The control thread's mailbox answers through std mpsc, which takes a mutex and a condvar on core 1 when the
@@ -1728,9 +1740,11 @@ R5).
    `dt = now - last`, clamped to nominal if ≤ 0 or > 0.5 s (`flight.py:265-266`).
 2. **IMU:** read 12 B from the LSM6DSO32 (+6 B from the ADXL375 on v0.1). Push `accel` and `rate`. Write the IMU
    telemetry row if `due`.
-3. **Separation:** sample GPIO33 and step the debounce (≥ 3 agreeing reads spanning ≥ 20 ms). A confirmed
-   separation in BOOSTING sets the stage to GLIDING and writes `separation.csv` (`stage` after the
-   transition).
+3. **Separation:** take the edge stamps, sample GPIO33, read the clock, and step the debounce. The rules: armed,
+   one quiet read >= debounce_ms (default 10) after the last edge; polled, >= 3 agreeing reads spanning it. A
+   confirmed separation in BOOSTING sets the stage to GLIDING and writes `separation.csv` as
+   `event;stage;moment;duration`: the stage after the transition, the first 1->0 in uptime us, and the wobble to the
+   sustained level in us.
 4. **Mailbox:** pop at most 2 requests (Arm, Disarm, Hold, Resume, SetTrim, SetAngle, ProbeSweep step) and fill
    their reply slots.
 5. **Every 2nd tick:** the attitude filter (50 Hz; the 5-cycle blind window kept) publishes `attitude` at p1.

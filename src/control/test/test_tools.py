@@ -1008,14 +1008,54 @@ def test_recorder_flight_error_matrix():
     imu_kept = [line.split(';')[-1] for line in _read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))[1:]]
     lost = {'1100000', '1110000', '1120000', '1130000', '1140000', '1800000'}
     assert imu_kept == [row.split(';')[0] for row in imu if row.split(';')[0] not in lost], len(imu_kept)
-    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [
-        't_s;event;stage;uptime_us', '0.100000;deployed;gliding;1600000']  # a stream no good row named
+    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [  # a stream no good row named, header lost
+        't_s;event;stage;moment;duration;uptime_us',
+        '0.100000;deployed;gliding;;;1600000']  # plan B's row: no moment, no duration
     # the raw bytes survive: a non-ASCII payload in recorder/ and flight/, a damaged byte in board.log
     with open(os.path.join(out, 'recorder', 'sequencer.csv'), 'rb') as handle:
         assert handle.read() == (_body('1500000;boosting;zündung', sequencer_routing) + '\n').encode('utf-8')
     assert _read(os.path.join(out, 'flight', 'sequencer.csv'))[1].startswith('0.000000;boosting;zündung;')
     with open(os.path.join(out, 'recorder', 'board.log'), 'rb') as handle:
         assert damaged in handle.read()
+
+
+def test_recorder_flight_reads_separation_with_and_without_the_port_s_columns():
+    """
+    The Rust port appended `moment` and `duration` to separation.csv (the uptime the pads first parted, and the us
+    they wobbled before the open held); plan B's rows have two cells. With the header lost -- the usual case --
+    recorder_flight names both: a Rust row in full, a plan B row with both cells empty. A file that kept its header
+    is read by it alone, so a row cut short there is damage, not plan B; a row short of one appended column only is
+    neither firmware's, a stream nothing was appended to gets no allowance, nor does any other count.
+    """
+    rust, plan_b = ['separated', 'gliding', '1570000', '3217'], ['deployed', 'gliding']
+    rust_header = ('event', 'stage', 'moment', 'duration')
+    assert recorder_flight._cells('separation', None, rust) == rust
+    assert recorder_flight._cells('separation', None, plan_b) == plan_b + ['', '']
+    assert recorder_flight._cells('separation', ('event', 'stage'), plan_b) == plan_b
+    assert recorder_flight._cells('separation', rust_header, rust) == rust
+    # NEGATIVE: a Rust file's row cut short, the moment without the duration (no firmware wrote it), one cell, five
+    # cells, and a stream with nothing appended
+    assert recorder_flight._cells('separation', rust_header, plan_b) is None
+    assert recorder_flight._cells('separation', rust_header, rust[:3]) is None
+    assert recorder_flight._cells('separation', None, rust[:3]) is None
+    assert recorder_flight._cells('separation', None, ['separated']) is None
+    assert recorder_flight._cells('separation', None, rust + ['1']) is None
+    assert recorder_flight._cells('sequencer', None, ['gliding']) is None
+
+    # end to end: a Rust session whose separation.csv lost its header names its row's moment and duration
+    session, imu_routing, routing = '000123', '000123_imu_lsm6dso32.csv', '000123_separation.csv'
+    status = recorder_wire.wrap("900000 recorder :: {'session': '000123', 'lines': 9}").rstrip('\n')
+    recordings = _folder()
+    _write_dump(recordings, {
+        imu_routing: [_body('uptime;ax;ay;az;gx;gy;gz;irq_runs', imu_routing)]
+        + [_body(row, imu_routing) for row in _imu_rows()],
+        routing: [_body('1600000;separated;gliding;1570000;3217', routing)],
+        'recorder.log': [status],
+    })
+    printed, out = _cut(recordings, session)
+    assert re.search(r'separation\s+1 original rows,\s+1 named', printed), printed
+    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [
+        't_s;event;stage;moment;duration;uptime_us', '0.100000;separated;gliding;1570000;3217;1600000']
 
 
 def test_recorder_flight_places_salvage_across_a_wrap():
@@ -1609,6 +1649,7 @@ test_recorder_flight_salvages_a_wrapped_dump()
 test_recorder_flight_reads_an_unwrapped_dump_as_before()
 test_assemble_capture_keeps_a_wrapped_capture_strict()
 test_recorder_flight_error_matrix()
+test_recorder_flight_reads_separation_with_and_without_the_port_s_columns()
 test_recorder_flight_places_salvage_across_a_wrap()
 test_a_label_never_takes_another_sessions_files()
 test_flight_pull_takes_a_session_not_a_junk_name()
@@ -1624,7 +1665,8 @@ print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, tou
       'spliced-capture detection, sim-capture refusal, provider/consumer closure, '
       'the GNSS field lists as gnss.py declares them, '
       'recorder_flight on wrapped + unwrapped dumps, assemble_capture strictness, the recorder_flight error '
-      'matrix (every unproven line counted), salvage across a ticks wrap (a sparse stream too), label-prefix '
+      'matrix (every unproven line counted), separation.csv with and without its moment and duration, '
+      'salvage across a ticks wrap (a sparse stream too), label-prefix '
       'collisions and junk tails, flight_pull session pick (byte-safe, never a label), every boot of the session '
       'index, the flight\'s UTC across a wrap, the log timeline of this boot only, a log line found in a stream, '
       'nothing timed by a wrap its file missed, a damaged byte through every reader (and the report, names too)')

@@ -445,6 +445,7 @@ dependencies = [
 name = "drivers"
 version = "0.1.0"
 dependencies = [
+ "board_config",
  "control",
  "embedded-hal 1.0.0",
  "golden",

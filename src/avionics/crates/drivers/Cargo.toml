@@ -9,9 +9,10 @@ authors.workspace = true
 [dependencies]
 control.workspace = true  # commons: altitude_m, the one barometric altitude every baro driver publishes; mixer: the Fin trait the servos implement
 embedded-hal.workspace = true  # the I2c bus, the DelayNs waits and the XSHUT OutputPin the drivers are written over
-sequencer.workspace = true  # separation: the flight Stage it advances and the wrapping-clock helpers it times with
+sequencer.workspace = true  # separation: the flight Stage it advances
 serde_json.workspace = true  # each driver reads its own config block and answers `update` like plan B
 
 [dev-dependencies]
+board_config.workspace = true  # debounce: the longest debounce_ms the config validator takes, tested at the bound
 golden.workspace = true
 serde_json.workspace = true

@@ -2,161 +2,83 @@
 //!
 //! The stage-separation switch (src/glider/drivers/separation.py): two adhesive copper pads, one on the glider and
 //! one on the booster, that route 3V3 to a pin while nested (HIGH) and open on separation (LOW, held there by the
-//! pin's internal pull-down). A confirmed separation in BOOSTING drives the documented BOOSTING -> GLIDING
+//! pin's internal pull-down). A latch over the generic [`crate::debounce`]: the debounce settles the pin, this module
+//! says what a held level means. A confirmed separation in BOOSTING drives the documented BOOSTING -> GLIDING
 //! transition (the booster ejects the glider at apogee); anywhere else it is recorded and moves nothing, so a ground
-//! test in SETTING keeps go/no-go correct.
+//! test in SETTING keeps go/no-go correct. A re-nest is recorded and never reverses a stage.
 //!
-//! THE DEBOUNCE ([`Debounce`]) is the hard-won part. Plan B once read the pin ONCE, debounce_ms after the first edge,
-//! and committed on that sample: a ~7 ms open blip that happened to span the sample instant was a separation, which
-//! in boost forced BOOSTING -> GLIDING, a transition that cannot be undone (reproduced on the board). Now a verdict
-//! needs at least [`MINIMUM_SAMPLES`] agreeing reads spanning `debounce_ms`, the window restarts on every change of
-//! level, and a line still chattering after [`SETTLE_WINDOWS`] windows is no verdict at all -- another settle takes
-//! it up once it quietens. A real separation leaves the pads open for good, so this costs a few tens of
-//! milliseconds; a vibration blip can no longer win.
+//! Why the debounce: plan B once read the pin ONCE, debounce_ms after the first edge, and committed on that sample:
+//! a ~7 ms open blip that happened to span the sample instant was a separation, which in boost forced BOOSTING ->
+//! GLIDING, a transition that cannot be undone (reproduced on the board). Through the debounce the pads must hold open
+//! for the debounce after their last edge, as the interrupt's stamps prove (polled, three reads spanning it), so a
+//! vibration blip can no longer win; a real separation leaves the pads open for good.
 //!
-//! Rust runs it on the control tick (avionics-port.md §4.3): plan B's IRQ woke a coroutine that re-read the pin
-//! every 5 ms; here the GPIO ISR only flags the edge, and the control thread steps the debounce with one pin read
-//! per tick. [`Debounce::step`] is one read. At a 10 ms tick a read no longer sees what plan B's 5 ms reads saw, so
-//! two rules are the port's own (D15):
-//!  * THE LEVEL RULE ([`Separation::step`]): a level that disagrees with the latch starts a settle with no edge
-//!    needed. Plan B started one only on its flag, so a change between setup and arming the interrupt, or under an
-//!    arm that failed, was never seen;
-//!  * THE RESTART RULE ([`Debounce::step`]): an edge flagged since the previous read restarts the run under way on
-//!    this read, because the level did not hold between the reads even when both read it. Without it, chatter of
-//!    a few ms between 10 ms reads reads as a held level: toggles of 0.5-2 ms false-deployed 23-81 % of runs with
-//!    plan B's rule on the tick, none with this one. An edge seen during a settle no longer starts the next
-//!    settle, as plan B's ThreadSafeFlag did; the level rule starts it when the line has anything left to settle.
+//! THE PHYSICS, as the operator measures it: the pads are 2 cm long and part at about 3 m/s, so they slide apart over
+//! about 7 ms, and contact may be lost and restored while they do: within those 7 ms at worst, most likely over less
+//! of the travel. THE SEPARATION MOMENT ([`Event::moment_us`]) is the first 1 -> 0 of the episode that ended 0 for
+//! good: each bounce restarts the debounce's run, but the debounce keeps the departure across the restarts
+//! (crate::debounce, THE DEPARTURE), so the moment is the wobble's first edge -- with no interrupt, the first read that
+//! saw LOW -- and not the read that confirmed it. A return to nested that held the debounce ends an episode (a boost
+//! blip), so the separation after it is dated by its own first edge, whatever the tick's phase. THE DURATION
+//! ([`Event::duration_us`]) is the wobble, from the moment to the sustained 0: its last edge, so 0 for a clean single
+//! edge. On a polled pin it runs to the first read of the final run of LOW reads, so it is a multiple of the tick, and
+//! a wobble shorter than the tick reads 0. For a re-nest both describe the closing bounce, by the same rule.
 //!
-//! THE EDGE CONTRACT: `edge` is true only when an armed interrupt flagged a change since the previous read. A
-//! polled pin (no interrupt, an arm that failed) passes false on every read: the level rule alone settles it, and
-//! chatter between its reads is invisible to it. An edge forced on every read restarts every run, so no settle
-//! ever concludes but on its deadline, as Unsettled: the switch would never separate.
+//! THE DEBOUNCE is 10 ms by default ([`DEFAULT_DEBOUNCE_MS`]: the operator's "10 ms or less"; plan B's was 20). It
+//! must outlast the longest contact gap inside the wobble: a gap that holds the debounce ends the episode there, so
+//! the moment moves to a later departure, and where a quiet read falls inside it (a faster tick: schedule_hz goes up
+//! to 1 kHz) it splits one separation into separated / nested / separated rows (the stage never reverses either way).
+//! The wobble is 7 ms at most, so 10 ms keeps it one event dated by its first edge. On the default 100 Hz tick every
+//! debounce up to 10 ms decides on the same read (a quiet read comes a whole tick after the last edge), so less would
+//! buy no latency there and would still move the moment. Every shipped document still writes plan B's 20 --
+//! config_default, which a board also boots when no stored config passes validate, and the 20261003 launch records --
+//! so a board debounces 10 ms once its config says 10 or drops the key.
 //!
-//! THE LATENCY, at the default 20 ms debounce on the 10 ms tick (the one place this crate states it): a held open
-//! is separated 20-30 ms after it opened, with or without the interrupt; after a bounce, 20-30 ms after the last
-//! edge, up to 50 ms when the bounce ran the settle out to its deadline (the deadline's read concludes nothing,
-//! the next starts a settle on the level rule).
+//! THE LATENCY, at the default 10 ms debounce on the 10 ms control tick (the one place this crate states it): with the
+//! interrupt, a separation is decided 10-20 ms after the wobble's last edge, the first quiet read at least 10 ms after
+//! it, a chatter's deadline or not (a deadline carries the run under way into the next settle); polled, 20 ms after
+//! the first read of the final run of LOW reads, which comes up to a tick after the pads opened for good. An edge
+//! that lands between the tick taking its edges and reading the level costs a tick: that read sees the level with no
+//! edge, the next sees the edge, and only the one after is quiet. separation.csv shows it: a row's `uptime` is the
+//! verdict's read, its `moment` the departure, its `duration` the wobble.
 //!
-//! A debounce whose settle window cannot hold [`MINIMUM_SAMPLES`] tick reads cannot settle reliably, so
-//! [`Settings::for_tick`] refuses it. Fed plan B's own reads (golden separation.json), the port records plan B's
-//! separation.csv events on the same reads in 36 of its 42 scenarios. In the other six, on that fixture's reads, it
-//! records an event at most one tick later, or drops a change plan B read through a bounce together with the
-//! change that undid it: never earlier, never a GLIDING plan B did not make.
+//! THE EDGE CONTRACT ([`Separation::step`], crate::debounce): each read passes [`Edges::Seen`] with the first and the
+//! last edge the both-edge interrupt stamped since the previous read, [`Edges::Quiet`] when it stamped none, and
+//! [`Edges::Polled`] on every read when the interrupt is not armed. The level rule needs no edge: a change between setup
+//! and arming the interrupt, or under an arm that failed, is settled all the same.
+//!
+//! Fed plan B's own reads (golden separation.json, each edge flag stamped at its read), the port records plan B's
+//! separation.csv events on the same reads in 34 of its 42 scenarios. In seven others, on that fixture's reads, it
+//! records an event at most one plan B read earlier (a debounce of at most one of plan B's 5 ms reads: only then is
+//! the edge's next read a debounce after it, where plan B waits for a third read) or one tick later, or drops a change
+//! plan B read through a bounce together with the change that undid it: never a separation, nor a GLIDING, plan B did
+//! not make. The eighth is plan B's 0 ms debounce, whose own arithmetic never settled a held open: the port separates
+//! it on its first quiet read.
+//!
+//! `debounce_ms` is read as every driver reads its block ([`Settings::from_config`], the default for a missing or
+//! malformed value) and converted to the debounce's µs once, by [`Separation::new`]; how long a debounce is sane is
+//! board_config's validate to refuse (`LONGEST_DEBOUNCE_MS`, 1000 ms), so every config a board runs has passed it.
 //!
 //! The transition is the control thread's own write to the StageCell, not the stage machine's: separation is the
-//! PRIMARY BOOSTING -> GLIDING trigger and separation.csv (event + stage, durable) its authoritative record; the
-//! sequencer's burnout timeout is only the fallback, recorded in sequencer.csv. A post-flight tool reading the
-//! BOOSTING -> GLIDING reason consults separation.csv first.
+//! PRIMARY BOOSTING -> GLIDING trigger and separation.csv (event, stage, moment, duration; durable) its authoritative
+//! record; the sequencer's burnout timeout is only the fallback, recorded in sequencer.csv. A post-flight tool reading
+//! the BOOSTING -> GLIDING reason consults separation.csv first.
 //!
-//! Not here (firmware glue): the GPIO, its pull-down and both-edge interrupt, the telemetry push and the log line.
+//! Not here (firmware glue): the GPIO, its pull-down and both-edge interrupt, the edges' stamps, the telemetry push
+//! (the moment rebuilt on the uptime column's clock, the duration in µs) and the log line.
 
 use sequencer::Stage;
-use sequencer::commons::{elapsed_ms, reached};
 use serde_json::Value;
 
-/// The default debounce, ms: how long the level must hold (`debounce_ms`).
-pub const DEFAULT_DEBOUNCE_MS: u32 = 20;
+use crate::debounce::{Debounce, Edges, Verdict};
 
-/// Agreeing reads a verdict needs, however long the window: one read is never enough.
-pub const MINIMUM_SAMPLES: u32 = 3;
+/// The default debounce, ms: how long the level must hold after its last edge (`debounce_ms`), for a block without
+/// the key -- every shipped document still writes plan B's 20. The operator's "10 ms or less", outlasting the pads'
+/// wobble of 7 ms at most (see the module notes, THE DEBOUNCE).
+pub const DEFAULT_DEBOUNCE_MS: u32 = 10;
 
-/// A line still chattering after this many debounce windows is not a verdict.
-pub const SETTLE_WINDOWS: u32 = 10;
-
-/// What a settle concluded (plan B's `_settle` return: True, False, None).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Verdict {
-    /// The pads held open: separated.
-    Separated,
-    /// The pads held closed: nested.
-    Nested,
-    /// The line never held still for a window before the settle's deadline.
-    Unsettled,
-}
-
-/// One settle under way.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Settle {
-    /// The level the reads agree on so far (true = HIGH = nested).
-    candidate: bool,
-    /// When the candidate level was first read in this run.
-    since_ms: u32,
-    /// How many consecutive reads agree on the candidate.
-    agreeing: u32,
-    /// When the settle gives up: debounce_ms x [`SETTLE_WINDOWS`] after it began.
-    deadline_ms: u32,
-}
-
-/// The separation debounce: one pin read per step, an edge restarting the run under way (see the module notes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Debounce {
-    /// How long the level must hold, ms.
-    debounce_ms: u32,
-    /// The settle under way, None while the line is idle.
-    settle: Option<Settle>,
-}
-
-impl Debounce {
-    /// An idle debounce: nothing happens until an edge is flagged or a read disagrees with the latch.
-    pub fn new(debounce_ms: u32) -> Debounce {
-        Debounce {
-            debounce_ms,
-            settle: None,
-        }
-    }
-
-    /// Whether a settle is under way.
-    pub fn settling(&self) -> bool {
-        self.settle.is_some()
-    }
-
-    /// Take one pin read: `high` is the level at `now_ms`, `edge` says an armed interrupt flagged an edge since the
-    /// previous read (false on every read of a polled pin: the edge contract, see the module notes), and
-    /// `disagrees` that the level is not the latch's (the level rule, [`Separation::step`]). Returns the verdict on
-    /// the read that concludes a settle, else None.
-    ///
-    /// Idle, an edge or a disagreeing level starts a settle on this read, its first agreeing read; an idle read
-    /// with neither does nothing. Under way, `disagrees` plays no part: a read of the other level, or one with an
-    /// edge since the previous read (the restart rule: the level did not hold between the reads), restarts the run
-    /// on it; an agreeing read counts; [`MINIMUM_SAMPLES`] agreeing reads spanning `debounce_ms` conclude it, and so
-    /// does the deadline, without a verdict. An edge seen during a settle starts nothing after it.
-    pub fn step(&mut self, now_ms: u32, high: bool, edge: bool, disagrees: bool) -> Option<Verdict> {
-        let Some(mut settle) = self.settle else {
-            if edge || disagrees {
-                self.settle = Some(Settle {
-                    candidate: high,
-                    since_ms: now_ms,
-                    agreeing: 1,
-                    deadline_ms: now_ms.wrapping_add(self.debounce_ms.saturating_mul(SETTLE_WINDOWS)),
-                });
-            }
-            return None;
-        };
-        if edge || high != settle.candidate {
-            settle = Settle {
-                candidate: high,
-                since_ms: now_ms,
-                agreeing: 1,
-                deadline_ms: settle.deadline_ms,
-            };
-        } else {
-            settle.agreeing += 1;
-        }
-        let verdict = if settle.agreeing >= MINIMUM_SAMPLES && reached(now_ms, settle.since_ms, self.debounce_ms) {
-            Some(if settle.candidate {
-                Verdict::Nested
-            } else {
-                Verdict::Separated
-            })
-        } else if elapsed_ms(now_ms, settle.deadline_ms) >= 0 {
-            Some(Verdict::Unsettled)
-        } else {
-            None
-        };
-        self.settle = if verdict.is_some() { None } else { Some(settle) };
-        verdict
-    }
-}
+/// Microseconds in a millisecond: `debounce_ms` to the debounce's clock.
+const MICROSECONDS_PER_MILLISECOND: u32 = 1000;
 
 /// A confirmed change of the latch, as separation.csv records it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,6 +89,13 @@ pub struct Event {
     pub stage: Stage,
     /// Whether the event advanced BOOSTING -> GLIDING; the caller writes the StageCell when it did.
     pub advanced: bool,
+    /// When the pin first left the latch's old level in the episode this event concludes, µs on the steps' clock:
+    /// for a separation the separation moment, for a re-nest when the pads first closed (see the module notes). At or
+    /// before the read that recorded the event.
+    pub moment_us: u32,
+    /// How long the pin wobbled before it held the new level, µs: from [`Event::moment_us`] to the last edge, 0 for a
+    /// clean single edge; on a polled pin, to the first read of the final run, a multiple of the tick.
+    pub duration_us: u32,
 }
 
 impl Event {
@@ -175,7 +104,9 @@ impl Event {
         if self.separated { "separated" } else { "nested" }
     }
 
-    /// The separation.csv row: (`event`, `stage`).
+    /// The separation.csv row's text cells, plan B's two columns: (`event`, `stage`). The `moment` and `duration`
+    /// columns after them are the caller's: [`Event::moment_us`] on the uptime column's clock, which the caller knows,
+    /// and [`Event::duration_us`].
     pub fn row(&self) -> [&'static str; 2] {
         [self.name(), self.stage.name()]
     }
@@ -189,8 +120,8 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Read a config block; a missing or non-integer `debounce_ms` takes plan B's default. It checks no bound:
-    /// bring-up takes [`Settings::for_tick`], which reads through this.
+    /// Read a config block: `debounce_ms`, [`DEFAULT_DEBOUNCE_MS`] when it is missing or not a whole number of ms that
+    /// fits a u32 (negative, fractional, text). It bounds nothing: board_config's validate refuses an absurd one.
     pub fn from_config(config: &Value) -> Settings {
         Settings {
             debounce_ms: config
@@ -199,35 +130,6 @@ impl Settings {
                 .and_then(|debounce| u32::try_from(debounce).ok())
                 .unwrap_or(DEFAULT_DEBOUNCE_MS),
         }
-    }
-
-    /// Read a config block ([`Settings::from_config`]) for a switch read once every `tick_ms`, refusing a debounce
-    /// that cannot settle on that tick.
-    ///
-    /// Refused, as `debounce_ms <n> cannot settle on the <t> ms tick`, when the settle window (`debounce_ms` x
-    /// [`SETTLE_WINDOWS`]) cannot hold [`MINIMUM_SAMPLES`] reads a nominal tick apart: such a debounce cannot settle
-    /// reliably. At the 10 ms tick that refuses 0 and 1 and takes 2 or more. The floor is conservative: a settle
-    /// concludes once its second read comes before the deadline, so jitter that brings two reads closer (1 settles
-    /// on reads at 1, 10 and 20 ms), or a longer tick (3 on exact 20 ms ticks), settles some refused values -- by
-    /// luck, not by design. Plan B took any value: 0 never settled there either, and 1 settled on its 5 ms reads. A
-    /// tick under 1 ms counts as 1 ms, the clock's resolution, so 0 is refused on every tick.
-    ///
-    /// Refused too, as `debounce_ms <n> is too long for the ms clock`, when the window passes `i32::MAX` ms, the
-    /// wrapping clock's half range: the deadline can then read as passed on the settle's second read, and no settle
-    /// would ever conclude (plan B's `ticks_add` raised there).
-    pub fn for_tick(config: &Value, tick_ms: u32) -> Result<Settings, String> {
-        let settings = Settings::from_config(config);
-        let debounce_ms = settings.debounce_ms;
-        let window_ms = u64::from(debounce_ms) * u64::from(SETTLE_WINDOWS);
-        if window_ms > i32::MAX as u64 {
-            return Err(format!("debounce_ms {debounce_ms} is too long for the ms clock"));
-        }
-        if window_ms < u64::from(MINIMUM_SAMPLES - 1) * u64::from(tick_ms.max(1)) {
-            return Err(format!(
-                "debounce_ms {debounce_ms} cannot settle on the {tick_ms} ms tick"
-            ));
-        }
-        Ok(settings)
     }
 }
 
@@ -241,11 +143,13 @@ pub struct Separation {
 }
 
 impl Separation {
-    /// A switch whose pin read `high` at setup: LOW (pads open) starts it separated.
+    /// A switch whose pin read `high` at setup: LOW (pads open) starts it separated. Its debounce is
+    /// `settings.debounce_ms` in µs; past the µs clock's range (4 294 967 ms, which the validator's bound keeps out of
+    /// every config a board runs) it saturates, a debounce that never concludes.
     pub fn new(settings: &Settings, high: bool) -> Separation {
         Separation {
             separated: !high,
-            debounce: Debounce::new(settings.debounce_ms),
+            debounce: Debounce::new(settings.debounce_ms.saturating_mul(MICROSECONDS_PER_MILLISECOND)),
         }
     }
 
@@ -260,29 +164,27 @@ impl Separation {
         self.debounce.settling()
     }
 
-    /// One tick's pin read (see [`Debounce::step`]): `high` is the level at `now_ms`, `edge` says an armed interrupt
-    /// flagged an edge since the previous read, and a held level is applied in `stage`.
+    /// One tick's pin read through the debounce: `high` is the level at `now_us`, `edges` what the interrupt stamped
+    /// since the previous read ([`Edges::Polled`] on every read of a pin without one: the edge contract), and a held
+    /// level is applied in `stage`. The latch stands for HIGH while nested.
     ///
-    /// The edge contract: a caller with no interrupt (a polled pin, an arm that failed) passes `edge` false on every
-    /// read, never true: the level rule below covers it, while an edge forced on every read restarts every run and
-    /// the switch never separates.
-    ///
-    /// The level rule: a level that disagrees with the latch starts a settle with no edge needed, so a change
-    /// between setup and arming the interrupt, or under an arm that failed, is settled all the same. A level equal
-    /// to the latch, with no edge, starts nothing.
-    pub fn step(&mut self, now_ms: u32, high: bool, edge: bool, stage: Stage) -> Option<Event> {
-        // HIGH is nested: the level disagrees when it reads as the latch's opposite
-        let disagrees = high == self.separated;
-        match self.debounce.step(now_ms, high, edge, disagrees)? {
-            Verdict::Separated => self.apply(true, stage),
-            Verdict::Nested => self.apply(false, stage),
+    /// Returns the event when a settle concludes at the level the latch does not hold; None on every other read, a
+    /// settle that ends Unsettled or at the latch's own level included.
+    pub fn step(&mut self, now_us: u32, high: bool, edges: Edges, stage: Stage) -> Option<Event> {
+        match self.debounce.step(now_us, high, edges, !self.separated)? {
+            Verdict::Held {
+                level,
+                departed_us,
+                settled_us,
+            } => self.apply(!level, stage, departed_us, settled_us.wrapping_sub(departed_us)),
             Verdict::Unsettled => None,
         }
     }
 
     /// Act on a confirmed level (separation._apply): None when it is the latch's level already; else the latch
-    /// moves, and a separation in BOOSTING advances to GLIDING. A re-nest is recorded but never reverses a stage.
-    pub fn apply(&mut self, separated: bool, stage: Stage) -> Option<Event> {
+    /// moves, dated `moment_us` after a wobble of `duration_us`, and a separation in BOOSTING advances to GLIDING. A
+    /// re-nest is recorded but never reverses a stage.
+    fn apply(&mut self, separated: bool, stage: Stage, moment_us: u32, duration_us: u32) -> Option<Event> {
         if separated == self.separated {
             return None;
         }
@@ -292,6 +194,8 @@ impl Separation {
             separated,
             stage: if advanced { Stage::Gliding } else { stage },
             advanced,
+            moment_us,
+            duration_us,
         })
     }
 }

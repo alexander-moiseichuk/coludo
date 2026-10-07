@@ -15,13 +15,14 @@ output.
 
 The positives beyond the round trip: a password read as plan B reads it on MicroPython (a lone '\r' and a no-break
 space stay), JSON that serde_json takes at its edges (a surrogate pair, a 301-digit integer, 1e300), and the notes
-following plan B's network rule. The negatives: a board config plan B's config.validate refuses, a board or launch
-file serde_json refuses (NaN, 1e400, a 401-digit integer, a lone surrogate) or that is not JSON or not UTF-8, a
-launch file that is not a JSON object, a creds file missing, empty, not UTF-8 or past 64 bytes, an SSID empty, past
-32 bytes, holding '/' or given twice, two SSIDs whose CRC-32 keys collide, a board whose partition table has no NVS
-cfg where partitions.csv puts it (a MicroPython board's filesystem lies there), esptool failing (it exits 2, never a
-usage error), no ESP-IDF, and usage errors. Needs ESP-IDF (IDF_PATH, default ~/.espressif/esp-idf/v5.5.5) and its
-Python environment, as the script does.
+following plan B's network rule, and a debounce_ms at either end of the Rust board's range. The negatives: a board
+config plan B's config.validate refuses, one the Rust board's validate refuses beyond it (a sensor's or a component's
+debounce_ms outside its range, or not an int), a board or launch file serde_json refuses (NaN, 1e400, a 401-digit
+integer, a lone surrogate) or that is not JSON or not UTF-8, a launch file that is not a JSON object, a creds file
+missing, empty, not UTF-8 or past 64 bytes, an SSID empty, past 32 bytes, holding '/' or given twice, two SSIDs
+whose CRC-32 keys collide, a board whose partition table has no NVS cfg where partitions.csv puts it (a MicroPython
+board's filesystem lies there), esptool failing (it exits 2, never a usage error), no ESP-IDF, and usage errors.
+Needs ESP-IDF (IDF_PATH, default ~/.espressif/esp-idf/v5.5.5) and its Python environment, as the script does.
 """
 
 import base64
@@ -454,6 +455,54 @@ def test_refusals() -> None:
     assert result.stdout == '' and _esptool_calls() == [], result.stdout
 
 
+def _debounced(name: str, section: str, debounce: object) -> str:
+    """
+    A copy of the board file with one device debouncing `debounce` ms.
+
+    Args:
+        name - the scratch file name.
+        section - 'components' for the separation switch, 'sensors' for the first sensor.
+        debounce - that device's debounce_ms.
+
+    Returns:
+        The copy's path.
+    """
+    with open(BOARD) as handle:
+        devices = json.load(handle)[section]
+    device = next(device for device in devices if section == 'sensors' or device['name'] == 'separation')
+    device['debounce_ms'] = debounce
+    return _variant(name, {section: devices})
+
+
+def test_debounce_bound() -> None:
+    """
+    The Rust board's validate refuses a debounce_ms outside 0 to 1000 ms, or one that is not an int, on any sensor or
+    component, where plan B's takes any value; such a stored config would boot the board's default config, so
+    provision.sh refuses it as the board would, in the board's words. At either end of the range, the file is valid.
+    """
+    for name, debounce in (('bound.config', 1000), ('zero.config', 0)):
+        result = _run('--dry-run', _debounced(name, 'components', debounce))
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.startswith('board config %s: valid, board.id TMS-7F' % _path(name)), result.stdout
+    table = _table('rust', None)  # a board that WOULD take the write
+    separation, sensor = "components 'separation'", "sensors 'accel_adxl375'"
+    for name, section, debounce, label, got in (
+            ('past.config', 'components', 1001, separation, '1001'),
+            ('seconds.config', 'components', 20000, separation, '20000'),
+            ('negative.config', 'components', -1, separation, '-1'),
+            ('float.config', 'components', 20.0, separation, '20.0'),
+            ('bool.config', 'components', True, separation, 'True'),
+            ('text.config', 'components', '20', separation, "'20'"),
+            ('null.config', 'components', None, separation, 'None'),
+            ('sensor.config', 'sensors', 5000, sensor, '5000')):
+        result = _run(_debounced(name, section, debounce), table=table)
+        assert result.returncode == 1, (name, result.returncode, result.stdout, result.stderr)
+        reason = ("%s: the Rust board's validate refuses it:\n  %s.debounce_ms must be an int from 0 to 1000 ms "
+                  '(got %s)\n' % (_path(name), label, got))
+        assert reason in result.stderr, (name, result.stderr)
+        assert 'cfg image verified' not in result.stdout and _esptool_calls() == [], name
+
+
 def test_no_password_printed() -> None:
     """No run, the refusals included, printed any part of a password or a creds file."""
     assert len(_OUTPUTS) >= 37, len(_OUTPUTS)  # the check must have seen every run
@@ -469,6 +518,7 @@ test_flash_round_trip()
 test_board_without_cfg_refused()
 test_esptool_failure()
 test_refusals()
+test_debounce_bound()
 test_no_password_printed()
 print('ok: provision.sh -- the cfg image reads back whole through IDF (keys, blobs, passwords), writes only cfg on a '
       'board whose table has it, and refuses invalid input without leaking a password or its work directory')

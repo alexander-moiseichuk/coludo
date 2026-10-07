@@ -19,13 +19,17 @@
 //!  * [`commons`] -- the Sensirion CRC-8 and the wire-level id diagnosis (src/glider commons.py);
 //!  * [`mock`] -- the scripted bus, delay and pin the host tests drive the drivers with;
 //!  * [`axes`] -- the optional per-sensor `axes` key: a part mounted other than per its marks (new, avionics-port.md
-//!    §7.2 Q7).
+//!    §7.2 Q7);
+//!  * [`debounce`] -- a two-level input read once per tick on a µs clock, with the edges its interrupt stamped or
+//!    polled, debounced for the latch it stands behind: the separation switch's pads, and any other contact (a
+//!    remove-before-flight pin, a breakwire).
 //!
 //! The parts, each named after its plan B module:
 //!  * [`sdp810`] -- the pitot: dynamic pressure and airspeed;
 //!  * [`ina226`] -- the power monitor: bus voltage, current and power;
 //!  * [`vl53l1x`] and [`vl53l4cx`] -- the two laser rangers that share one socket at 0x29;
-//!  * [`separation`] -- the stage-separation switch and its debounce;
+//!  * [`separation`] -- the stage-separation switch: its latch over [`debounce`], the separation moment and the
+//!    pads' wobble;
 //!  * [`lsm6dso32`] -- the primary IMU on SPI: accel and gyro `rate`, its write-then-verify bring-up;
 //!  * [`bmi323`] -- the SEN0697's IMU on I2C: the same `accel` and `rate`, behind the LSM6DSO32;
 //!  * [`icp10111`] -- the primary barometer: the TDK polynomial, the two-phase measurement, the general call;
@@ -38,6 +42,7 @@ pub mod bmi323;
 pub mod bmm350;
 pub mod bmp581;
 pub mod commons;
+pub mod debounce;
 pub mod device;
 pub mod icp10111;
 pub mod ina226;
