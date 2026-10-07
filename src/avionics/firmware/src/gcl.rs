@@ -206,13 +206,23 @@ pub fn handle(line: &str, origin: Origin, refusal: Option<&str>) -> Option<Strin
     if name == "help" || name == "?" {
         return Some(help(&registry, &message.args));
     }
-    // the longest match: `video start` before a bare `video`
+    // the longest match, whatever the registration order: `panic log` before a bare `panic`
     let sub = message.args.first().map(String::as_str);
-    let found = registry.iter().find_map(|command| match command.words.split_once(' ') {
-        Some((word, rest)) if word == name && Some(rest) == sub => Some((command, 1)),
-        None if command.words == name => Some((command, 0)),
-        _ => None,
-    });
+    let found = registry
+        .iter()
+        .find(|command| {
+            command
+                .words
+                .split_once(' ')
+                .is_some_and(|(word, rest)| word == name && Some(rest) == sub)
+        })
+        .map(|command| (command, 1))
+        .or_else(|| {
+            registry
+                .iter()
+                .find(|command| command.words == name)
+                .map(|command| (command, 0))
+        });
     let Some((command, consumed)) = found else {
         // a known command word with a wrong or missing subcommand: say which ones exist
         let subcommands = subcommands(&registry, name);
