@@ -7,8 +7,9 @@
 //!   late each tick wakes;
 //! - `heap [stacks|tasks]` -- where the RAM is: internal, DMA-capable, RTC, SPM and PSRAM heaps; each task's stack
 //!   (where it lives, how much of it was never touched); and (in an investigation build) each task's heap share.
-//! Run them while the camera records to price video against the flight loop. Both are SETTING-only: `pace` runs a
-//! priority-20 loop on the flight core, and neither belongs anywhere near a flight.
+//!
+//! Run them while the camera records to price video against the flight loop. `load` and `pace` are SETTING-only:
+//! `pace` runs a priority-20 loop on the flight core, and neither belongs anywhere near a flight.
 //!
 //! (The `flashwrite` load generator is gone: it wrote raw patterns into the `log` partition, which is the live
 //! telemetry ring now. src/bin/flash.rs keeps that measurement.)
@@ -37,7 +38,7 @@ fn task_states() -> (Vec<sys::TaskStatus_t>, u64) {
     let count = unsafe { sys::uxTaskGetSystemState(status.as_mut_ptr(), capacity as u32, &mut total) } as usize;
     // SAFETY: `count` entries were written.
     unsafe { status.set_len(count) };
-    (status, total as u64)
+    (status, total)
 }
 
 /// A task's name.
@@ -55,8 +56,8 @@ fn snapshot() -> (Vec<Sample>, u64) {
         .iter()
         .map(|task| Sample {
             name: task_name(task),
-            core: task.xCoreID as i32,
-            runtime: task.ulRunTimeCounter as u64,
+            core: task.xCoreID,
+            runtime: task.ulRunTimeCounter,
         })
         .collect();
     (samples, total)
@@ -251,7 +252,7 @@ pub fn load(seconds: u64) -> String {
     let busy = |idle_time: u64| 100.0 - idle_time as f32 * 100.0 / elapsed as f32;
     let (core0, core1) = (busy(idle("IDLE0")), busy(idle("IDLE1")));
     deltas.retain(|(name, _, _)| !name.starts_with("IDLE"));
-    deltas.sort_by(|left, right| right.2.cmp(&left.2));
+    deltas.sort_by_key(|(_, _, delta)| std::cmp::Reverse(*delta));
     let top: Vec<String> = deltas
         .iter()
         .take(6)
