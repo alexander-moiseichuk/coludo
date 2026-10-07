@@ -692,7 +692,9 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   pulls run together (0 in every stress before M5). Each alone, or either with the POST flood, misses none; together
   the encoder's longest frame doubles (94 ms against 43-45). Both load the card (the saver writes the ring onto it,
   the pulls read it), and M6's IMU rows (100 a second) add to the saver's writes. Ground-only: no pull runs while a
-  flight records, and the hour-long soak of the flight-rate load missed 11 in 90,036. To be traced.
+  flight records, and the hour-long soak of the flight-rate load missed 11 in 90,036. Accepted (operator,
+  2026-10-07): video holds when it delivers at least 20 frames a second, so at 25-27 fps up to 5-7 frames a second
+  may go missing; the worst stress run delivered about 24.7 fps (26 missed in about 87 s).
 - TMS-7F, one hour of FHD@25 colour bars and the flight-rate ring load (the stage 6 build, six 10-minute segments):
   90,036 frames, 11 missed, 0 ring loss, tick lateness at most 86 us, 0 over budget, 0 overruns, 0 IMU failures, the
   internal low-water flat at 61.4 KB (one 0.75 KB step in the fifth segment).
