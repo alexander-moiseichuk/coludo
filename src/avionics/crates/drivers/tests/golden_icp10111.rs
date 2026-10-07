@@ -5,10 +5,11 @@
 //!
 //! THE POLYNOMIAL, decision Q8 (avionics-port.md): the port's f32 is checked twice against plan B, within 0.05 Pa of
 //! CPython's f64 and EXACTLY equal to plan B's expression evaluated in single precision, as MicroPython computes it on
-//! the P4. Both hold, so the polynomial stays f32 and no f64 is needed. Then the frame CRCs and conversion, plan B's
-//! setup transcripts (its one divergence: the port reports every general call), and the run loop's TIMELINE: plan
-//! B's run() on a virtual clock, against the port's two-phase poll ticked every millisecond, transaction for
-//! transaction at the same millisecond, with the same readings and the same peer re-arms.
+//! the P4. Both hold, so the polynomial stays f32 and no f64 is needed. Then the frame CRCs and conversion (and the
+//! probe, one direct conversion, replaying plan B's _measure transcripts), plan B's setup transcripts (its one
+//! divergence: the port reports every general call), and the run loop's TIMELINE: plan B's run() on a virtual clock,
+//! against the port's two-phase poll ticked every millisecond, transaction for transaction at the same millisecond,
+//! with the same readings and the same peer re-arms.
 //!
 //! A reading is checked member by member (the sections' `fields`): pressure within the polynomial's 0.05 Pa,
 //! temperature EXACTLY (an exact scaling in both precisions) and altitude within 5 mm (3.2 mm measured), so a
@@ -16,7 +17,7 @@
 
 mod transcript;
 
-use drivers::device::Device;
+use drivers::device::{Device, Fault};
 use drivers::icp10111::{self, Icp10111, Otp, Poll, Reading};
 use drivers::mock::MockBus;
 use golden::Compare;
@@ -148,6 +149,39 @@ fn the_frame_is_checked_and_converted_as_plan_b() {
             None => json!({"refused": "icp10111 CRC"}),
         }
     });
+}
+
+#[test]
+fn the_probe_makes_plan_b_s_measure_transactions() {
+    // the probe is one direct conversion (avionics-port.md M5 design decisions, 'Device probes vs bus probe'), so
+    // plan B's _measure transcripts are its own: after plan B's clean-boot setup (which reads the live OTP), each
+    // measure case is replayed through the probe -- the command, the 12 ms wait, the frame -- and owes that case's
+    // reading or its CRC refusal
+    let setup = part("setup");
+    let clean_boot = &setup["cases"][0];
+    assert_eq!(clean_boot["name"], "a_clean_boot");
+    let boot = replay(&clean_boot["input"]["script"]);
+    let mut barometer = Icp10111::new(ADDRESS, PERIOD_MS);
+    barometer
+        .setup(&mut boot.clone(), &mut boot.delay())
+        .expect("plan B's clean boot");
+    boot.done();
+    assert_eq!(
+        barometer.otp(),
+        Some([211, 371, 553, 3833]),
+        "the OTP the measure section converts with"
+    );
+    let count = check_cases(&part("measure"), "probe", |input| {
+        let mock = replay(&input["script"]);
+        let outcome = barometer.probe(&mut mock.clone(), &mut mock.delay());
+        mock.done();
+        match outcome {
+            Ok(collected) => reading(&collected),
+            Err(Fault::Checksum) => json!({"refused": "icp10111 CRC"}),
+            Err(fault) => panic!("a scripted measure case failed on the wire: {fault}"),
+        }
+    });
+    assert!(count > 10, "{count} cases");
 }
 
 #[test]

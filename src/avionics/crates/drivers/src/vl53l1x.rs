@@ -358,7 +358,8 @@ impl<Shutdown: OutputPin> Vl53<Shutdown> {
         })
     }
 
-    /// Read the model id; [`Fault::Identity`] when it is not this silicon's (the probe, and setup's id gate).
+    /// Read the model id; [`Fault::Identity`] when it is not this silicon's (the check behind [`Vl53::probe`], and
+    /// setup's id gate).
     ///
     /// The full 16 bits for both silicons. The L1X probe once checked one byte against 0xEB -- the L4CX's id, copied
     /// from that driver -- so a healthy L1X failed its own probe and `verify`/`arm` refused every board carrying
@@ -374,6 +375,21 @@ impl<Shutdown: OutputPin> Vl53<Shutdown> {
                 read,
             })
         }
+    }
+
+    /// The on-demand self-test (vl53l1x.probe, vl53l4cx.probe): the model id reads back as this silicon's, all 16
+    /// bits in one register read; answers that id, for the owner's 'probe: model id ok' line.
+    ///
+    /// Only the id: the range is legitimately empty with no target in range, so plan B never checked it
+    /// (vl53l1x.py:281-307, vl53l4cx.py:277-301). One transaction, so it never splits the run loop's
+    /// status-distance-clear sequence. The L4CX's full word is a deliberate divergence (see [`Vl53::identify`]):
+    /// plan B's vl53l4cx.probe reads the high byte 0xEB alone (vl53l4cx.py:292-293), and drivers_vl53.json owes the
+    /// port's 16-bit read instead. Its log text follows from that read: the L4CX's ok and FAILED lines print the
+    /// full word (0xebaa) where plan B's printed the byte ('probe: model id ok 0x%02x' and 'VL53L4CX id 0x%02x !=
+    /// 0xEB at i2c:%s 0x%02x', vl53l4cx.py:294-296), as the L1X's always did (0x%04x, vl53l1x.py:300-302).
+    pub fn probe<Bus: I2c>(&self, bus: &mut Bus) -> Result<u16, Fault<Bus::Error>> {
+        self.identify(bus)?;
+        Ok(self.silicon.model_id)
     }
 
     /// Classify a failed setup at the wire level (vl53l1x.diagnose through i2cbus): read the model id's high byte

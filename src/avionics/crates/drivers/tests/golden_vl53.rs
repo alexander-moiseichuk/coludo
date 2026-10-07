@@ -109,12 +109,18 @@ fn the_probe_checks_the_whole_model_id() {
         let name = case["name"].as_str().unwrap();
         let (script, owed) = owed(case, "ok");
         let mock = replay(script);
-        let ranger = Vl53::<MockPin>::new(silicon(&case["input"]), &Settings::from_config(&json!({})), None);
-        let outcome = ranger.identify(&mut mock.clone());
+        let expected = silicon(&case["input"]);
+        let ranger = Vl53::<MockPin>::new(expected, &Settings::from_config(&json!({})), None);
+        let outcome = ranger.probe(&mut mock.clone());
         mock.done();
         compare
             .check(name, &owed, &json!({"ok": outcome.is_ok()}))
             .unwrap_or_else(|failure| panic!("{failure}"));
+        // a passing probe answers this silicon's whole id, the one the owner's ok line prints (0xebaa for the L4CX,
+        // where plan B's printed the high byte 0xeb: a consequence of the 16-bit read)
+        if let Ok(model_id) = outcome {
+            assert_eq!(model_id, expected.model_id, "{name}");
+        }
     }
 }
 

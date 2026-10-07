@@ -44,9 +44,10 @@
 //! `measured`) -- a larger change than f32 makes, and toward the part's true reading.
 //!
 //! Not ported: plan B's conversation guard and sample cache (`_read`, `claim`): the owner thread is the only caller.
-//! Not here (firmware glue): the channel push, the telemetry stream, the probe's freshness wait (plan B's probe
-//! issues no I2C and checks that the run loop produced a FRESH pressure), the freshness of the altitude a re-zero
-//! takes, the log lines and the inspect JSON.
+//! For the same reason the probe ([`Icp10111::probe`]) is one direct conversion, where plan B's issued no I2C and
+//! waited for the run loop's FRESH pressure (avionics-port.md M5 design decisions, 'Device probes vs bus probe').
+//! Not here (firmware glue): the channel push, the telemetry stream, the freshness of the altitude a re-zero takes,
+//! the log lines and the inspect JSON.
 
 use control::commons::altitude_m;
 use embedded_hal::delay::DelayNs;
@@ -410,11 +411,7 @@ impl Icp10111 {
         delay: &mut dyn DelayNs,
     ) -> Result<f32, Fault<Bus::Error>> {
         let otp = self.otp.ok_or(Fault::Configuration)?;
-        if matches!(self.phase, Phase::Converting { .. }) {
-            delay.delay_ms(MEASURE_MS);
-            let _ = self.collect(bus, &otp);
-            self.phase = Phase::Idle { next: 0 };
-        }
+        self.drain_conversion(bus, delay, &otp);
         let mut total = 0.0;
         for _ in 0..GROUND_SAMPLES {
             total += self.measure(bus, delay, &otp)?.altitude;
@@ -422,6 +419,44 @@ impl Icp10111 {
         let ground = total / GROUND_SAMPLES as f32;
         self.ground = Some(ground);
         Ok(ground)
+    }
+
+    /// The on-demand self-test (icp10111.probe, adapted per avionics-port.md M5 design decisions,
+    /// 'Device probes vs bus probe'): one blocking conversion -- the command, the [`MEASURE_MS`] wait, the CRC-checked
+    /// frame (icp10111._measure) -- converted with the part's OTP. [`Fault::Configuration`] before setup has read the
+    /// OTP, and nothing is sent.
+    ///
+    /// Plan B's probe issued no I2C: it waited for the run loop to push a FRESH pressure, because a direct
+    /// conversion raced the loop's own on the shared bus (icp10111.py:398-426). The owner thread is the only caller
+    /// and cannot race itself, so the port converts directly. The probe's own conversion never moves the run loop's
+    /// failure count, as plan B's never touched the part: a failed self-test is the operator's verdict, not a strike
+    /// toward the general call, and a good one does not rearm a run of failures.
+    ///
+    /// Plan B's run loop always counted its own outcome; the port's can lose one to a probe. A conversion the run
+    /// loop has in flight is waited out, read and dropped UNCOUNTED, as [`Icp10111::capture_ground`] does: a NAK or
+    /// a CRC reject there is a strike that never lands (the general call waits for the next failing pass, a
+    /// conversion or two later), and a good frame is a rearm that never lands (a run it would have broken can
+    /// complete on the next failure). The run loop then issues afresh. A probe during the recovery leaves its
+    /// schedule alone: in the period before the general call it finds the part as the failures left it, in the
+    /// [`RESET_RETRY_MS`] after it a part still resetting may NAK and fail the probe, and the general call and
+    /// [`Poll::Rearm`] come on time either way.
+    pub fn probe<Bus: I2c>(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs) -> Result<Reading, Fault<Bus::Error>> {
+        let otp = self.otp.ok_or(Fault::Configuration)?;
+        self.drain_conversion(bus, delay, &otp);
+        self.measure(bus, delay, &otp)
+    }
+
+    /// Wait out and drop a conversion the run loop has in flight, so a blocking conversion does not start in the
+    /// middle of it: a second measure command into a conversion NAKs (plan B measured a 20.8 % failure rate when a
+    /// diagnostic polled alongside the run loop). Its outcome is not counted, good or bad: a strike completing a run
+    /// would start the recovery here, with no clock to schedule it by and no [`Poll`] to report it through. The run
+    /// loop issues afresh on its next poll.
+    fn drain_conversion<Bus: I2c>(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs, otp: &Otp) {
+        if matches!(self.phase, Phase::Converting { .. }) {
+            delay.delay_ms(MEASURE_MS);
+            let _ = self.collect(bus, otp);
+            self.phase = Phase::Idle { next: 0 };
+        }
     }
 
     /// One step of the run loop at `now_us` (the owner's clock): at most one transfer, never a wait.
