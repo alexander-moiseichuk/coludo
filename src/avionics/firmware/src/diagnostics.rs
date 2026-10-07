@@ -5,8 +5,8 @@
 //! - `pace seconds=10 source=gptimer` -- a 1 kHz loop on core 1 (priority 20, the flight thread's place) woken by a
 //!   gptimer interrupt allocated on core 1 (the flight design) or by an esp_timer (its task lives on core 0), and how
 //!   late each tick wakes;
-//! - `heap [tasks]` -- where the RAM is: internal, DMA-capable and PSRAM heaps, and (in an investigation build) each
-//!   task's share.
+//! - `heap [stacks|tasks]` -- where the RAM is: internal, DMA-capable, RTC, SPM and PSRAM heaps; each task's stack
+//!   (where it lives, how much of it was never touched); and (in an investigation build) each task's heap share.
 //! Run them while the camera records to price video against the flight loop. Both are SETTING-only: `pace` runs a
 //! priority-20 loop on the flight core, and neither belongs anywhere near a flight.
 //!
@@ -27,8 +27,8 @@ struct Sample {
     runtime: u64,
 }
 
-/// Every task's accumulated run time (µs) and the total.
-fn snapshot() -> (Vec<Sample>, u64) {
+/// The scheduler's state of every task, and the total run time (µs).
+fn task_states() -> (Vec<sys::TaskStatus_t>, u64) {
     // SAFETY: sizes the array from the scheduler's own count (+ slack for tasks created meanwhile).
     let capacity = unsafe { sys::uxTaskGetNumberOfTasks() } as usize + 8;
     let mut status: Vec<sys::TaskStatus_t> = Vec::with_capacity(capacity);
@@ -37,18 +37,29 @@ fn snapshot() -> (Vec<Sample>, u64) {
     let count = unsafe { sys::uxTaskGetSystemState(status.as_mut_ptr(), capacity as u32, &mut total) } as usize;
     // SAFETY: `count` entries were written.
     unsafe { status.set_len(count) };
+    (status, total as u64)
+}
+
+/// A task's name.
+fn task_name(task: &sys::TaskStatus_t) -> String {
+    // SAFETY: the scheduler's task name is a NUL-terminated string.
+    unsafe { std::ffi::CStr::from_ptr(task.pcTaskName) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Every task's accumulated run time (µs) and the total.
+fn snapshot() -> (Vec<Sample>, u64) {
+    let (status, total) = task_states();
     let samples = status
         .iter()
         .map(|task| Sample {
-            // SAFETY: the scheduler's task name is a NUL-terminated string.
-            name: unsafe { std::ffi::CStr::from_ptr(task.pcTaskName) }
-                .to_string_lossy()
-                .into_owned(),
+            name: task_name(task),
             core: task.xCoreID as i32,
             runtime: task.ulRunTimeCounter as u64,
         })
         .collect();
-    (samples, total as u64)
+    (samples, total)
 }
 
 /// One heap class's figures for `heap`: free bytes, the largest free block, and the lowest free since boot.
@@ -68,9 +79,14 @@ fn heap_class(caps: u32) -> [String; 3] {
 /// and the SD driver bounces every transfer whose buffer is not DMA-ready through internal DMA memory. So: free bytes,
 /// the largest free block (what one allocation can get) and the lowest free since boot, for internal RAM, its
 /// DMA-capable part, and PSRAM.
+///
+/// The RTC (LP SRAM) and SPM heaps are internal but not DMA-capable, and IDF hands them to plain requests last, so
+/// they show what a cold, non-DMA object could still use.
 pub fn heap() -> String {
     let internal = heap_class(sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_8BIT);
     let dma = heap_class(sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_DMA);
+    let rtc = heap_class(sys::MALLOC_CAP_RTCRAM);
+    let spm = heap_class(sys::MALLOC_CAP_SPM);
     let psram = heap_class(sys::MALLOC_CAP_SPIRAM);
     cc_protocol::build(
         "ok",
@@ -82,11 +98,65 @@ pub fn heap() -> String {
             ("dma_free", &dma[0]),
             ("dma_largest", &dma[1]),
             ("dma_min", &dma[2]),
+            ("rtc_free", &rtc[0]),
+            ("rtc_largest", &rtc[1]),
+            ("spm_free", &spm[0]),
+            ("spm_largest", &spm[1]),
             ("psram_free", &psram[0]),
             ("psram_largest", &psram[1]),
             ("psram_min", &psram[2]),
         ],
     )
+}
+
+/// Where a task's stack lives, by its lowest address: `i` the internal L2 memory (DMA-capable), `p` PSRAM, `r` the RTC
+/// (LP) SRAM, `s` the SPM, `?` anywhere else.
+fn stack_region(base: usize) -> char {
+    let within = |low: u32, high: u32| (low as usize..high as usize).contains(&base);
+    if within(sys::SOC_DRAM_LOW, sys::SOC_DRAM_HIGH) {
+        'i'
+    } else if within(sys::SOC_EXTRAM_LOW, sys::SOC_EXTRAM_HIGH) {
+        'p'
+    } else if within(sys::SOC_RTC_DRAM_LOW, sys::SOC_RTC_DRAM_HIGH) {
+        'r'
+    } else if within(sys::SOC_SPM_LOW, sys::SOC_SPM_HIGH) {
+        's'
+    } else {
+        '?'
+    }
+}
+
+/// `heap stacks`: each task's stack as `<task>=<never-used bytes>/<region>:<core>` (region as [`stack_region`]; core
+/// `any` when unpinned), internal stacks first, then by name: the protocol's plain characters, so a value reads as is.
+/// The never-used figure is FreeRTOS's high-water mark: the least free the stack has had since the task started, in
+/// bytes.
+pub fn heap_stacks() -> String {
+    let (status, _) = task_states();
+    let mut rows: Vec<(char, String, u32, String)> = status
+        .iter()
+        .map(|task| {
+            let core = match task.xCoreID {
+                core @ (0 | 1) => core.to_string(),
+                _ => "any".to_string(), // tskNO_AFFINITY
+            };
+            (
+                stack_region(task.pxStackBase as usize),
+                task_name(task).replace(' ', "_"),
+                task.usStackHighWaterMark,
+                core,
+            )
+        })
+        .collect();
+    rows.sort_by(|left, right| (left.0 != 'i', &left.1).cmp(&(right.0 != 'i', &right.1)));
+    let values: Vec<(String, String)> = rows
+        .iter()
+        .map(|(region, name, free, core)| (name.clone(), format!("{free}/{region}:{core}")))
+        .collect();
+    let named: Vec<(&str, &str)> = values
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    cc_protocol::build("ok", &["heap", "stacks"], &named)
 }
 
 /// `heap tasks`: each task's current heap use, internal and PSRAM, as `<task>=<internal>/<psram>` bytes, the largest
@@ -113,13 +183,7 @@ pub fn heap_tasks() -> String {
     // SAFETY: the totals array has MAXIMUM_TASKS slots and `count` says how many the call filled.
     unsafe { sys::heap_caps_get_per_task_info(&mut parameters) };
     // the live tasks' handles and names, to name the totals without touching a deleted task's handle
-    // SAFETY: as in snapshot(): the array is sized from the scheduler's count plus slack, and the call fills at most it.
-    let capacity = unsafe { sys::uxTaskGetNumberOfTasks() } as usize + 8;
-    let mut status: Vec<sys::TaskStatus_t> = Vec::with_capacity(capacity);
-    let mut total = 0;
-    let live = unsafe { sys::uxTaskGetSystemState(status.as_mut_ptr(), capacity as u32, &mut total) } as usize;
-    // SAFETY: `live` entries were written.
-    unsafe { status.set_len(live) };
+    let (status, _) = task_states();
     let name_of = |handle: sys::TaskHandle_t| -> String {
         if handle.is_null() {
             return "boot".to_string();
@@ -127,12 +191,7 @@ pub fn heap_tasks() -> String {
         status
             .iter()
             .find(|task| task.xHandle == handle)
-            // SAFETY: a live task's name is a NUL-terminated string.
-            .map(|task| {
-                unsafe { std::ffi::CStr::from_ptr(task.pcTaskName) }
-                    .to_string_lossy()
-                    .into_owned()
-            })
+            .map(task_name)
             .unwrap_or_else(|| "gone".to_string())
     };
     let mut rows: Vec<(String, usize, usize)> = totals[..count.min(MAXIMUM_TASKS)]
@@ -373,15 +432,32 @@ pub fn register_commands() {
         Command {
             owner: "diagnostics",
             words: "heap",
-            about: "where the RAM is: free, largest block and lowest-ever free of internal, DMA-capable and PSRAM heaps",
+            about: "where the RAM is: free, largest block and lowest-ever free of internal, DMA-capable, RTC, SPM and \
+                    PSRAM heaps",
             gate: Gate::Open,
             reach: Reach::Everywhere,
             parameters: &[],
-            bare_words: &[firmware::gcl::Word {
-                name: "tasks",
-                about: "each task's internal/PSRAM heap use (an investigation build with CONFIG_HEAP_TASK_TRACKING only)",
-            }],
-            run: Box::new(|arguments| if arguments.word("tasks") { heap_tasks() } else { heap() }),
+            bare_words: &[
+                firmware::gcl::Word {
+                    name: "stacks",
+                    about: "each task's stack: never-used bytes / where it lives (i internal, p PSRAM, r RTC, s SPM) : \
+                            core",
+                },
+                firmware::gcl::Word {
+                    name: "tasks",
+                    about: "each task's internal/PSRAM heap use (an investigation build with CONFIG_HEAP_TASK_TRACKING \
+                            only)",
+                },
+            ],
+            run: Box::new(|arguments| {
+                if arguments.word("stacks") {
+                    heap_stacks()
+                } else if arguments.word("tasks") {
+                    heap_tasks()
+                } else {
+                    heap()
+                }
+            }),
         },
         Command {
             owner: "diagnostics",
