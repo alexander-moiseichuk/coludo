@@ -178,17 +178,25 @@ fn main() -> anyhow::Result<()> {
         topology,
         mut members,
         spi,
-        spi_bus: _spi_bus,
+        spi_bus,
         separation,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     for (parked, port) in lent {
         let id = port.id();
-        if let Err(error) = owner::start(parked, port, std::mem::take(&mut members[usize::from(id)]), topology) {
+        let parts = std::mem::take(&mut members[usize::from(id)]);
+        if let Err(error) = owner::start(parked, port, parts, topology, table) {
             log::error!("i2c:{id} :: {error}");
         }
     }
     // the flight tick on core 1, which wakes the owners too (§4.2, §4.3)
-    if let Err(error) = control::start(board_config::schedule_hz(&loaded.document), spi, separation, topology) {
+    if let Err(error) = control::start(
+        board_config::schedule_hz(&loaded.document),
+        spi_bus,
+        spi,
+        separation,
+        topology,
+        table,
+    ) {
         log::error!("control :: the control thread did not start: {error}");
     }
     if let Err(error) = supervisor::start(board.clone()) {

@@ -13,10 +13,6 @@ use serde_json::json;
 
 use super::{Code, Context, Fault, Reply};
 
-/// What a bustune of the SPI bus answers.
-const SPI_BUSTUNE: &str = "is not ported: SPI2 runs at the config's baud (its owner, the control thread, has no \
-                            retune)";
-
 /// The I2C parts probed on both ports' owners, the one named or every one, in port order (plan B's
 /// `Inspector.probe_all` over the device tasks), and why an owner did not answer, under its port's name.
 fn probe_parts(name: Option<&str>) -> (Vec<crate::owner::Verdict>, Vec<(&'static str, String)>) {
@@ -253,7 +249,7 @@ pub fn bustune(message: &Message, context: &mut Context) -> Reply {
         return super::ok_json(&json!({"error": format!("bus {kind}:{id} not defined")}));
     }
     if kind == "spi" {
-        return Err(Fault::new(Code::Unsupported, format!("spi bustune {SPI_BUSTUNE}")));
+        return bustune_spi(context, id, freq);
     }
     let port: u8 = id
         .parse()
@@ -283,4 +279,31 @@ pub fn bustune(message: &Message, context: &mut Context) -> Reply {
         .collect();
     let all_ok = !devices.is_empty() && devices.values().all(|verdict| verdict == "ok");
     super::ok_json(&json!({"kind": kind, "id": id, "freq": freq, "devices": devices, "all_ok": all_ok}))
+}
+
+/// `bustune spi 1 <freq>` (D21): the IMU's SPI handle run at `freq` on the control thread, SPI2's owner, and probed
+/// there; plan B's answer shape. SPI2's only device is the IMU, so its verdict is the rung's. A clock above the
+/// LSM6DSO32's 10 MHz is the IMU failing the rung, untried; a clock the driver refuses leaves the handle at the
+/// configured one.
+fn bustune_spi(context: &Context, id: &str, freq: i64) -> Reply {
+    let clock_hz = u32::try_from(freq)
+        .ok()
+        .filter(|clock_hz| *clock_hz > 0)
+        .ok_or_else(|| Fault::new(Code::Internal, format!("{freq} Hz is no clock")))?;
+    let Some(answer) = crate::control::bustune_spi(clock_hz) else {
+        return super::ok_json(&json!({"kind": "spi", "id": id, "freq": freq, "devices": {}, "all_ok": false}));
+    };
+    let rung = answer.map_err(|error| Fault::new(Code::Internal, error))?;
+    if rung.running_hz != clock_hz {
+        log::warn!(
+            "bustune :: spi:{id} runs at {} Hz, not the {clock_hz} Hz asked",
+            rung.running_hz
+        );
+    }
+    let line = rung.verdict.map_or_else(
+        || "ok".to_string(),
+        |why| context.devices.probed(rung.name, Some(&why)).unwrap_or(why),
+    );
+    let all_ok = line == "ok";
+    super::ok_json(&json!({"kind": "spi", "id": id, "freq": freq, "devices": {rung.name: line}, "all_ok": all_ok}))
 }

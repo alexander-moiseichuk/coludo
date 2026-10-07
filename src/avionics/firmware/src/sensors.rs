@@ -13,6 +13,7 @@
 use std::mem::ManuallyDrop;
 
 use board_config::Entry;
+use controller::DeviceEntry;
 use databoard::Writer;
 use drivers::axes::Axes;
 use drivers::bmi323::Bmi323;
@@ -117,11 +118,20 @@ pub enum Run {
 }
 
 impl Run {
-    /// The run `part` needs on its owner's tick, its writers claimed from `topology` for source `name`; None for a
-    /// part with nothing to run yet.
-    pub fn new(name: &'static str, part: &Part, topology: &'static Topology) -> Option<Run> {
+    /// The run `part` needs on its owner's tick, its writers claimed from `topology` for source `name`, writing the
+    /// health of its table `entry`; None for a part with nothing to run yet.
+    pub fn new(
+        name: &'static str,
+        part: &Part,
+        topology: &'static Topology,
+        entry: Option<&'static DeviceEntry<'static>>,
+    ) -> Option<Run> {
         match part {
-            Part::Icp10111(_) => Some(Run::Barometer(Barometer::new(name, topology))),
+            Part::Icp10111(_) => Some(Run::Barometer(Barometer::new(name, topology, entry))),
+            Part::Lsm6dso32(_) => {
+                log::info!("{name} :: no read loop on I2C (SPI only)");
+                None
+            }
             _ => None,
         }
     }
@@ -145,6 +155,8 @@ pub struct Barometer {
     elevation: Option<Writer<'static, f32>>,
     /// Its stream, with a recorder.
     telemetry: Option<Telemetry<'static>>,
+    /// Its table entry, whose `healthy` the run writes (plan B's `Task._healthy`).
+    entry: Option<&'static DeviceEntry<'static>>,
     /// A read failed and none succeeded since: one log line per run (plan B's `note`).
     failing: bool,
     /// A row was refused and none written since: one log line per run.
@@ -152,8 +164,8 @@ pub struct Barometer {
 }
 
 impl Barometer {
-    /// The outputs of source `name`.
-    fn new(name: &'static str, topology: &'static Topology) -> Barometer {
+    /// The outputs of source `name`, writing the health of `entry`.
+    fn new(name: &'static str, topology: &'static Topology, entry: Option<&'static DeviceEntry<'static>>) -> Barometer {
         let writer = |quantity: &str| topology.scalar(quantity).and_then(|parameter| parameter.writer(name));
         Barometer {
             altitude: writer("altitude"),
@@ -163,8 +175,16 @@ impl Barometer {
             telemetry: crate::recorder::get()
                 .zip(crate::recorder::device_stream(name))
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            entry,
             failing: false,
             overflowing: false,
+        }
+    }
+
+    /// Records the latest read's outcome in the table entry.
+    fn set_healthy(&self, healthy: bool) {
+        if let Some(entry) = self.entry {
+            entry.set_healthy(healthy);
         }
     }
 
@@ -172,6 +192,7 @@ impl Barometer {
     /// the ground, and the row.
     fn publish(&mut self, name: &str, elevation: Option<f32>, reading: &Reading, now_us: u64) {
         self.failing = false;
+        self.set_healthy(true);
         for (writer, value) in [
             (&mut self.altitude, Some(reading.altitude)),
             (&mut self.temperature, Some(reading.temperature)),
@@ -204,60 +225,6 @@ impl Barometer {
             }
         }
     }
-}
-
-/// A device's telemetry stream: its file, its columns after `uptime`, and its decimation window in microseconds
-/// (positive its own, 0 the global `recorder.telemetry_ms`, negative none).
-pub struct Stream {
-    /// The file, without the session prefix.
-    pub file: String,
-    /// The columns after `uptime`.
-    pub fields: &'static [&'static str],
-    /// The decimation window, microseconds.
-    pub decimate_us: i32,
-    /// Whether each row wakes the ring_writer at once (separation.csv: the stage transition's record).
-    pub durable: bool,
-}
-
-/// The LSM6DSO32's columns (plan B lsm6dso32.py:124-126): accel in g, the gyro as raw centidegrees a second, and the
-/// INT1 edges the tick saw.
-pub const IMU_FIELDS: [&str; 7] = ["ax", "ay", "az", "gx", "gy", "gz", "irq_runs"];
-
-/// The ICP-10111's columns (plan B icp10111.py:123-125): m AMSL, degrees C, Pa, m above the ground.
-pub const BAROMETER_FIELDS: [&str; 4] = ["altitude", "temperature", "pressure", "elevation"];
-
-/// The separation switch's columns (plan B separation.py:57): the event and the stage after it.
-pub const SEPARATION_FIELDS: [&str; 2] = ["event", "stage"];
-
-/// The stream `entry` writes, when its part is one the port records (M6: the LSM6DSO32, the ICP-10111, the
-/// separation switch). The file is `<name>.csv`, except the fixed `separation.csv`; the window is the entry's
-/// `telemetry_ms` (0 or absent: the global), as plan B's Telemetry took it, and the separation stream's always the
-/// global (plan B passes no window for it).
-pub fn stream(entry: &Entry) -> Option<Stream> {
-    let window = || {
-        entry
-            .fields
-            .get("telemetry_ms")
-            .and_then(Value::as_i64)
-            .map_or(0, |milliseconds| {
-                milliseconds
-                    .saturating_mul(1000)
-                    .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
-            })
-    };
-    let (file, fields, decimate_us, durable): (String, &'static [&'static str], i32, bool) = match entry.implementation
-    {
-        "lsm6dso32" => (format!("{}.csv", entry.name), &IMU_FIELDS, window(), false),
-        "icp10111" => (format!("{}.csv", entry.name), &BAROMETER_FIELDS, window(), false),
-        "separation" => ("separation.csv".to_string(), &SEPARATION_FIELDS, 0, true),
-        _ => return None,
-    };
-    Some(Stream {
-        file,
-        fields,
-        decimate_us,
-        durable,
-    })
 }
 
 /// A VL53 ranger's XSHUT line, when the config wires one (v0.1; layout nulls it on v1.x), driven for the rest of the
@@ -488,6 +455,7 @@ impl Part {
                     None
                 }
                 Poll::Failed { fault, .. } => {
+                    outputs.set_healthy(false);
                     if !outputs.failing {
                         log::warn!("icp10111 :: read {fault}");
                         outputs.failing = true;

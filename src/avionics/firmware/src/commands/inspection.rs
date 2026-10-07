@@ -4,7 +4,7 @@
 //! inspector.Inspector). The registry: the controller (the flight state), the mission, the recorder (with the flash
 //! ring and the ring_saver) when it opened, and every device that came up (plan B registers each task as it comes
 //! up), whose snapshot is plan B's `Task.inspect` -- name, ok, healthy -- and, for the parts the port drives so far,
-//! their own keys read off the databoard (the IMU, the barometer, the separation switch).
+//! their own keys read off the databoard (the IMU, the barometer, the separation switch), null once stale.
 
 use std::collections::BTreeMap;
 
@@ -47,7 +47,7 @@ struct Snapshot<'a> {
     name: &'a str,
     /// It came up and its loop has not crashed (plan B's `ok`).
     ok: bool,
-    /// Its latest reading succeeded (plan B's `healthy`).
+    /// Its latest read succeeded (plan B's `healthy`), as its producer recorded it in the table.
     healthy: bool,
     /// The driver's own keys.
     #[serde(flatten)]
@@ -79,64 +79,49 @@ enum Own {
 }
 
 /// A device's snapshot (plan B `Task.inspect` and its drivers' own keys): None for a name that is no device that
-/// came up.
+/// came up. `healthy` is the table's, which the part's producer writes from each read (plan B's `Task._healthy`); each
+/// own value is the part's latest while it is inside its quantity's window, else null (§6: a stale value reads null).
 fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
     let entry = context.devices.find(name).filter(|entry| entry.active())?;
     let ok = matches!(entry.status(), controller::Status::Up);
     let topology = context.topology;
     // SAFETY: a plain read of the monotonic timer.
     let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() } as u64;
-    let latest = |quantity: &str| {
-        topology
-            .scalar(quantity)
-            .and_then(|parameter| parameter.channel(name)?.latest())
+    let scalar = |quantity: &str| {
+        let parameter = topology.scalar(quantity)?;
+        parameter.channel(name)?.recent(parameter.window_us(), now_us)
     };
     let vector = |quantity: &str| {
-        topology
-            .vector(quantity)
-            .and_then(|parameter| parameter.channel(name)?.latest())
+        let parameter = topology.vector(quantity)?;
+        parameter.channel(name)?.recent(parameter.window_us(), now_us)
     };
-    let (healthy, own) = match entry.implementation {
+    let own = match entry.implementation {
         "lsm6dso32" if crate::control::imu().is_some_and(|(imu, ..)| imu == name) => {
-            let (_, interrupt, interrupt_silent, healthy) = crate::control::imu()?;
-            let own = Own::Imu {
+            let (_, interrupt, interrupt_silent) = crate::control::imu()?;
+            Own::Imu {
                 interrupt,
                 interrupt_silent,
                 accel_g: vector("accel"),
                 rate_dps: vector("rate"),
-            };
-            (healthy, own)
+            }
         }
-        "icp10111" => {
-            // healthy while its pressure is fresher than three of its periods (plan B: its last read succeeded)
-            let period_ms = board_config::directory(&context.config.document)
-                .into_iter()
-                .find(|configured| configured.name == name)
-                .and_then(|configured| configured.fields.get("period_ms").and_then(Value::as_u64))
-                .map_or(u64::from(drivers::icp10111::DEFAULT_PERIOD_MS), |period| period.max(1));
-            let window_us = (period_ms * 3 * 1000).min(u64::from(u32::MAX)) as u32;
-            let healthy = topology.scalar("pressure").is_some_and(|parameter| {
-                parameter
-                    .channel(name)
-                    .is_some_and(|channel| channel.fresh(now_us, window_us))
-            });
-            let own = Own::Barometer {
-                altitude_m: latest("altitude"),
-                temperature_c: latest("temperature"),
-                pressure_pa: latest("pressure"),
-                elevation_m: latest("elevation"),
-            };
-            (healthy, own)
-        }
-        "separation" => (
-            true,
-            Own::Separation {
-                separated: crate::control::separated(),
-            },
-        ),
-        _ => (ok, Own::None {}),
+        "icp10111" => Own::Barometer {
+            altitude_m: scalar("altitude"),
+            temperature_c: scalar("temperature"),
+            pressure_pa: scalar("pressure"),
+            elevation_m: scalar("elevation"),
+        },
+        "separation" => Own::Separation {
+            separated: crate::control::separated(),
+        },
+        _ => Own::None {},
     };
-    Some(Snapshot { name, ok, healthy, own })
+    Some(Snapshot {
+        name,
+        ok,
+        healthy: entry.healthy(),
+        own,
+    })
 }
 
 /// `inspect <object>`: its property snapshot.

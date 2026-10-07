@@ -10,8 +10,11 @@
 //! the crystal). The figures are atomics the console reads (`control`), never a lock on this thread's path.
 //!
 //! The tick's work (§4.3), as the milestones bring it: the primary IMU, the LSM6DSO32 on SPI2 (M6) -- its INT1 edges
-//! counted by a core-1 GPIO interrupt (`irq_runs`, plan B's evidence of a live line), one 12-byte burst read, `accel`
-//! and `rate` pushed, its row written on this thread's own producer ring; the separation switch (M6) -- a both-edge
+//! counted by a core-1 GPIO interrupt (`irq_runs`, plan B's evidence of a live line), one 16-byte burst from its status
+//! register, and only a new conversion published: `accel` on XLDA, `rate` on GDA, the row on either, written on this
+//! thread's own producer ring; [`STALE_LIMIT`] reads in a row with neither make the part unhealthy, with one line (a
+//! part slower than the tick reads stale now and then: that is its ODR, not a fault); the separation switch (M6) --
+//! a both-edge
 //! GPIO interrupt flags a change, each tick steps the debounce with one pin read, and a confirmed separation in
 //! BOOSTING moves the stage to GLIDING, recorded in the durable separation.csv.
 
@@ -20,12 +23,13 @@ use std::sync::OnceLock;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::time::Duration;
 
+use controller::{DeviceEntry, Table};
 use databoard::Writer;
-use drivers::lsm6dso32::{Lsm6dso32, OverSpi};
+use drivers::lsm6dso32::{Lsm6dso32, OverSpi, STALE_LIMIT};
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
-use firmware::buses::spi::SpiHandle;
+use firmware::buses::spi::{SpiBus, SpiHandle};
 use firmware::gcl::{self, Command, Gate, Reach};
 use recorder::{Cell, Telemetry};
 
@@ -64,6 +68,8 @@ static INTERRUPT_EDGES: AtomicU32 = AtomicU32::new(0);
 static IMU_READS: AtomicU32 = AtomicU32::new(0);
 /// IMU reads that failed.
 static IMU_FAILURES: AtomicU32 = AtomicU32::new(0);
+/// IMU reads that found no new conversion: about 1 - ODR/100 of the ticks on a part slower than the tick.
+static IMU_STALE: AtomicU32 = AtomicU32::new(0);
 /// The latest tick's `irq_runs`.
 static IRQ_RUNS_LAST: AtomicU32 = AtomicU32::new(0);
 /// Whether INT1 is silent (the driver's verdict: three wakes in a row with no edge).
@@ -72,12 +78,26 @@ static INTERRUPT_SILENT: AtomicBool = AtomicBool::new(false);
 static IMU_NAME: OnceLock<&'static str> = OnceLock::new();
 /// Whether the IMU's INT1 is wired (its `int_pin` names a GPIO).
 static INTERRUPT_WIRED: AtomicBool = AtomicBool::new(false);
-/// Whether the IMU's latest read succeeded (plan B's `healthy`).
-static IMU_HEALTHY: AtomicBool = AtomicBool::new(false);
 
-/// What the control thread is asked between its ticks' work (§4.3, step 4): a probe of the IMU, its answer going back
-/// through the sender (None healthy, else why).
-static MAILBOX: OnceLock<SyncSender<SyncSender<Option<String>>>> = OnceLock::new();
+/// What the control thread is asked between its tick's work (§4.3, step 4), each answer going back through its sender.
+enum Request {
+    /// Probe the IMU: None healthy, else why.
+    ProbeImu(SyncSender<Option<String>>),
+    /// Run the IMU's SPI handle at `clock_hz` and probe it (a bustune rung): the verdict and the clock it runs at.
+    BustuneSpi {
+        clock_hz: u32,
+        reply: SyncSender<(Option<String>, u32)>,
+    },
+}
+
+/// The control thread's mailbox, once it runs.
+static MAILBOX: OnceLock<SyncSender<Request>> = OnceLock::new();
+
+/// The fastest SPI clock a rung may ask for: the LSM6DSO32's SPI maximum, 10 MHz.
+const MAXIMUM_SPI_HZ: u32 = 10_000_000;
+
+/// The clock the IMU's SPI handle runs at, Hz (0 without one).
+static SPI_CLOCK_HZ: AtomicU32 = AtomicU32::new(0);
 
 /// How many requests a tick serves at most (§4.3: two).
 const REQUESTS_PER_TICK: usize = 2;
@@ -109,8 +129,6 @@ pub fn switch_level() -> Option<(&'static str, bool)> {
 struct Switch {
     /// Its GPIO.
     gpio: u8,
-    /// No edge interrupt: every tick reads the pin through the debounce (a polled switch).
-    polled: bool,
     /// The debounced latch.
     part: drivers::separation::Separation,
     /// separation.csv, with a recorder.
@@ -120,24 +138,18 @@ struct Switch {
 impl Switch {
     /// The switch of `member`, its edge interrupt armed on this thread (core 1).
     fn new(member: SeparationMember) -> Switch {
-        let polled = match arm_edges(member.gpio) {
-            Ok(()) => false,
-            Err(error) => {
-                log::warn!(
-                    "separation :: GPIO{} edge interrupt not armed ({error}): the pin is polled every tick",
-                    member.gpio
-                );
-                true
-            }
-        };
-        // one settle against the live level: the pads may have opened between bring-up's read and the arming, with
-        // no edge left to tell (a settle at the latch's own level changes nothing)
-        SEPARATION_EDGE.store(true, Ordering::Relaxed);
+        if let Err(error) = arm_edges(member.gpio) {
+            log::warn!(
+                "separation :: GPIO{} edge interrupt not armed ({error}): the pin is polled every tick, and chatter \
+                 between two reads goes unseen",
+                member.gpio
+            );
+        }
+        // the level rule settles a change between bring-up's read and the arming: no edge is needed for it
         SEPARATED.store(member.part.separated(), Ordering::Relaxed);
         let _ = SWITCH.set((member.name, member.gpio));
         Switch {
             gpio: member.gpio,
-            polled,
             part: member.part,
             telemetry: crate::recorder::get()
                 .zip(crate::recorder::device_stream(member.name))
@@ -149,7 +161,9 @@ impl Switch {
     /// separation._apply): the stage advances, the row is written, the event is logged.
     fn tick(&mut self, now_us: u64) {
         let now_ms = (now_us / 1000) as u32;
-        let edge = SEPARATION_EDGE.swap(false, Ordering::Relaxed) || self.polled;
+        // an edge only from the armed interrupt: a polled pin settles by the level rule, and an edge forced on every
+        // read would restart every run, so the switch would never separate
+        let edge = SEPARATION_EDGE.swap(false, Ordering::Relaxed);
         // SAFETY: a plain read of the input bring-up configured.
         let high = unsafe { sys::gpio_get_level(i32::from(self.gpio)) } != 0;
         let Some(event) = self.part.step(now_ms, high, edge, STATUS.stage()) else {
@@ -202,10 +216,17 @@ fn arm_edges(gpio: u8) -> Result<(), sys::EspError> {
 struct Imu {
     /// The entry's name: the databoard source and the stream's.
     name: &'static str,
-    /// Its chip select on SPI2.
-    handle: SpiHandle,
+    /// Its handle on SPI2; None only when a bustune rung's re-add and the fall-back to the configured clock both
+    /// failed.
+    handle: Option<SpiHandle>,
+    /// Its chip select.
+    chip_select: u8,
     /// The driver.
     part: Lsm6dso32<OverSpi>,
+    /// Its table entry, whose `healthy` this thread writes (plan B's `Task._healthy`).
+    entry: Option<&'static DeviceEntry<'static>>,
+    /// Reads in a row with no new conversion.
+    stale_run: u32,
     /// The `accel` channel's writer, when the quantity is on the databoard.
     accel: Option<Writer<'static, [f32; 3]>>,
     /// The `rate` channel's writer.
@@ -223,8 +244,8 @@ struct Imu {
 }
 
 impl Imu {
-    /// The IMU of `member`, its writers claimed from `topology` and its stream opened.
-    fn new(member: SpiMember, topology: &'static Topology) -> Imu {
+    /// The IMU of `member`, its writers claimed from `topology`, its entry found in `table`, its stream opened.
+    fn new(member: SpiMember, topology: &'static Topology, table: &'static Table<'static>) -> Imu {
         let writer = |quantity: &str| {
             topology
                 .vector(quantity)
@@ -238,8 +259,11 @@ impl Imu {
             accel: writer("accel"),
             rate: writer("rate"),
             telemetry,
-            handle: member.handle,
+            chip_select: member.handle.chip_select(),
+            handle: Some(member.handle),
             part: member.part,
+            entry: table.find(member.name),
+            stale_run: 0,
             failing: false,
             overflowing: false,
             period_us: u64::from(member.period_ms) * 1000,
@@ -252,7 +276,10 @@ impl Imu {
     fn probe(&mut self) -> Option<String> {
         let step = "who_am_i + sample";
         log::info!("{} :: probe: {step} ...", self.name);
-        match self.part.probe(&mut self.handle) {
+        let Some(handle) = self.handle.as_mut() else {
+            return Some("no SPI handle (a bustune rung lost it)".to_string());
+        };
+        match self.part.probe(handle) {
             Ok(sample) => {
                 let [x, y, z] = sample.accel_g();
                 let [roll, pitch, yaw] = sample.rate_degrees_per_second();
@@ -271,26 +298,69 @@ impl Imu {
         }
     }
 
+    /// A bustune rung (plan B's spibus retune, D21): the handle dropped first (a second device on the chip select
+    /// would take the pin over), re-added at `clock_hz` (the first-use discard runs again), then probed. A clock the
+    /// driver refuses falls back to the bus's configured one; when that fails too, the IMU has no handle and is
+    /// unhealthy. Returns the verdict (None healthy, else why) and the clock the handle runs at (0: none).
+    fn retune(&mut self, bus: &SpiBus, clock_hz: u32) -> (Option<String>, u32) {
+        self.handle = None;
+        match bus.handle_at(self.chip_select, clock_hz) {
+            Ok(handle) => {
+                self.handle = Some(handle);
+                SPI_CLOCK_HZ.store(clock_hz, Ordering::Relaxed);
+                (self.probe(), clock_hz)
+            }
+            Err(error) => {
+                let configured = bus.clock_hz();
+                log::warn!(
+                    "{} :: SPI at {clock_hz} Hz refused ({error}): back to {configured} Hz",
+                    self.name
+                );
+                match bus.handle_at(self.chip_select, configured) {
+                    Ok(handle) => {
+                        self.handle = Some(handle);
+                        SPI_CLOCK_HZ.store(configured, Ordering::Relaxed);
+                        (Some(format!("{clock_hz} Hz refused: {error}")), configured)
+                    }
+                    Err(fallback) => {
+                        log::error!("{} :: no SPI handle at {configured} Hz either ({fallback})", self.name);
+                        self.set_healthy(false);
+                        SPI_CLOCK_HZ.store(0, Ordering::Relaxed);
+                        (Some(format!("no SPI handle: {fallback}")), 0)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Records the latest read's outcome in the table entry: true when that changed it.
+    fn set_healthy(&self, healthy: bool) -> bool {
+        self.entry.is_some_and(|entry| entry.set_healthy(healthy))
+    }
+
     /// One tick: when its period is due (within half a tick, `slack_us`), take the INT1 edges since the last read,
-    /// read a sample, push it and write its row. A tick faster than the period skips reads; edges accumulate.
+    /// read the status burst, and publish what is new (see the module notes). A tick faster than the period skips
+    /// reads; edges accumulate.
     fn tick(&mut self, now_us: u64, slack_us: u64) {
         if now_us + slack_us < self.next_due_us {
             return;
         }
         // the next read a period on, or a period from now when the reads fell behind
         self.next_due_us = (self.next_due_us + self.period_us).max(now_us + self.period_us - slack_us);
-        let period_ms = self.period_us / 1000;
         let runs = INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
         IRQ_RUNS_LAST.store(runs, Ordering::Relaxed);
         if self.part.wake(runs) {
-            log::warn!("lsm6dso32 :: INT1 silent -- sampling on the {period_ms} ms fallback");
+            log::warn!("lsm6dso32 :: INT1 silent -- sampling on the tick, the line unproven");
         }
         INTERRUPT_SILENT.store(self.part.interrupt_silent(), Ordering::Relaxed);
-        let sample = match self.part.read(&mut self.handle) {
-            Ok(sample) => sample,
+        let Some(handle) = self.handle.as_mut() else {
+            return;
+        };
+        let (fresh, sample) = match self.part.read_fresh(handle) {
+            Ok(read) => read,
             Err(fault) => {
                 IMU_FAILURES.fetch_add(1, Ordering::Relaxed);
-                IMU_HEALTHY.store(false, Ordering::Relaxed);
+                self.set_healthy(false);
                 if !self.failing {
                     log::warn!("lsm6dso32 :: read {fault}");
                     self.failing = true;
@@ -300,12 +370,21 @@ impl Imu {
         };
         self.failing = false;
         IMU_READS.fetch_add(1, Ordering::Relaxed);
-        IMU_HEALTHY.store(true, Ordering::Relaxed);
+        if !fresh.accel && !fresh.rate {
+            IMU_STALE.fetch_add(1, Ordering::Relaxed);
+            self.stale_run = self.stale_run.saturating_add(1);
+            if self.stale_run >= STALE_LIMIT && self.set_healthy(false) {
+                log::warn!("lsm6dso32 :: no new conversion -- stale");
+            }
+            return;
+        }
+        self.stale_run = 0;
+        self.set_healthy(true);
         let accel = sample.accel_g();
-        if let Some(writer) = &mut self.accel {
+        if let (true, Some(writer)) = (fresh.accel, &mut self.accel) {
             writer.push(accel, now_us);
         }
-        if let Some(writer) = &mut self.rate {
+        if let (true, Some(writer)) = (fresh.rate, &mut self.rate) {
             writer.push(sample.rate_degrees_per_second(), now_us);
         }
         let Some(telemetry) = &mut self.telemetry else {
@@ -342,13 +421,14 @@ unsafe extern "C" fn interrupt_edge(_: *mut core::ffi::c_void) {
 }
 
 /// Arms a rising-edge interrupt on GPIO `gpio` that counts into [`INTERRUPT_EDGES`]; called on the control thread, so
-/// the GPIO interrupt service, installed here first, runs on core 1. No pull: plan B's `Pin(gpio, Pin.IN)`.
+/// the GPIO interrupt service, installed here first, runs on core 1. The internal pull-down holds a broken wire at 0,
+/// where plan B's `Pin(gpio, Pin.IN)` left it floating.
 fn arm_interrupt(gpio: u8) -> Result<(), sys::EspError> {
     let config = sys::gpio_config_t {
         pin_bit_mask: 1u64 << gpio,
         mode: sys::gpio_mode_t_GPIO_MODE_INPUT,
         pull_up_en: sys::gpio_pullup_t_GPIO_PULLUP_DISABLE,
-        pull_down_en: sys::gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        pull_down_en: sys::gpio_pulldown_t_GPIO_PULLDOWN_ENABLE,
         intr_type: sys::gpio_int_type_t_GPIO_INTR_POSEDGE,
         ..Default::default()
     };
@@ -403,15 +483,18 @@ unsafe extern "C" fn alarm(
 }
 
 /// Starts the control thread (core 1, priority 20) ticking at `schedule_hz`, waking the I2C owners that run on each
-/// tick too, with the SPI parts that came up (`spi`: the primary IMU) and the databoard's `topology`. Call it after
-/// the owners started (their task handles are taken here).
+/// tick too, with the SPI parts that came up (`spi`: the primary IMU), the databoard's `topology` and the device
+/// `table` whose entries' health the tick writes. Call it after the owners started (their task handles are taken
+/// here).
 ///
 /// Errors: the thread would not spawn.
 pub fn start(
     schedule_hz: u32,
+    spi_bus: Option<SpiBus>,
     spi: Vec<SpiMember>,
     separation: Option<SeparationMember>,
     topology: &'static Topology,
+    table: &'static Table<'static>,
 ) -> anyhow::Result<()> {
     ThreadSpawnConfiguration {
         name: Some(c"control"),
@@ -423,14 +506,21 @@ pub fn start(
     .set()?;
     let spawned = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || run(schedule_hz, spi, separation, topology));
+        .spawn(move || run(schedule_hz, spi_bus, spi, separation, topology, table));
     ThreadSpawnConfiguration::default().set()?;
     spawned?;
     Ok(())
 }
 
 /// The control thread: the IMU, the timer, then the tick forever.
-fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMember>, topology: &'static Topology) {
+fn run(
+    schedule_hz: u32,
+    spi_bus: Option<SpiBus>,
+    spi: Vec<SpiMember>,
+    separation: Option<SeparationMember>,
+    topology: &'static Topology,
+    table: &'static Table<'static>,
+) {
     let period_us = (TIMER_RESOLUTION_HZ / schedule_hz.max(1)) as i64;
     // this thread's own producer ring: its rows and log lines never contend with another thread's
     let _attachment = crate::recorder::get().and_then(|recorder| recorder.attach(Producer::Control as usize).ok());
@@ -445,6 +535,7 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMembe
             );
         }
         INTERRUPT_WIRED.store(member.interrupt.is_some(), Ordering::Relaxed);
+        SPI_CLOCK_HZ.store(spi_bus.as_ref().map_or(0, SpiBus::clock_hz), Ordering::Relaxed);
         let _ = IMU_NAME.set(member.name);
         if u64::from(member.period_ms) * 1000 < period_us as u64 {
             log::warn!(
@@ -454,7 +545,7 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMembe
                 period_us / 1000
             );
         }
-        Imu::new(member, topology)
+        Imu::new(member, topology, table)
     });
     let (mailbox, requests) = sync_channel(REQUESTS_PER_TICK);
     let _ = MAILBOX.set(mailbox);
@@ -508,21 +599,70 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMembe
         if let Some(switch) = &mut switch {
             switch.tick(now_us as u64);
         }
-        serve(&requests, imu.as_mut());
+        serve(&requests, imu.as_mut(), spi_bus.as_ref());
     }
 }
 
-/// Serves at most [`REQUESTS_PER_TICK`] requests waiting in the mailbox: each a probe of the IMU.
-fn serve(requests: &Receiver<SyncSender<Option<String>>>, mut imu: Option<&mut Imu>) {
+/// Serves at most [`REQUESTS_PER_TICK`] requests waiting in the mailbox.
+fn serve(requests: &Receiver<Request>, mut imu: Option<&mut Imu>, bus: Option<&SpiBus>) {
     for _ in 0..REQUESTS_PER_TICK {
         match requests.try_recv() {
-            Ok(reply) => {
+            Ok(Request::ProbeImu(reply)) => {
                 let verdict = imu.as_deref_mut().and_then(Imu::probe);
                 let _ = reply.send(verdict);
+            }
+            Ok(Request::BustuneSpi { clock_hz, reply }) => {
+                let answer = match (imu.as_deref_mut(), bus) {
+                    (Some(imu), Some(bus)) => imu.retune(bus, clock_hz),
+                    _ => (Some("no SPI IMU".to_string()), 0),
+                };
+                let _ = reply.send(answer);
             }
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => return,
         }
     }
+}
+
+/// A `bustune spi` rung's outcome: the IMU's name, its verdict at the asked clock (None healthy, else why), and the
+/// clock its handle runs at afterwards (the configured one when the driver refused the asked one, 0 when neither came
+/// back).
+pub struct SpiRung {
+    pub name: &'static str,
+    pub verdict: Option<String>,
+    pub running_hz: u32,
+}
+
+/// A `bustune spi` rung on the control thread (SPI2's owner); None when the thread drives no IMU. A clock above
+/// [`MAXIMUM_SPI_HZ`] is the IMU failing the rung, answered here and never sent: the handle is not touched, and the
+/// CC's ladder (5, 8, 10, 16, 20 MHz) still finds the part's ceiling.
+///
+/// Errors: the control thread is busy or did not answer in time.
+pub fn bustune_spi(clock_hz: u32) -> Option<Result<SpiRung, String>> {
+    let name = *IMU_NAME.get()?;
+    if clock_hz > MAXIMUM_SPI_HZ {
+        return Some(Ok(SpiRung {
+            name,
+            verdict: Some(format!(
+                "{clock_hz} Hz is above the part's {MAXIMUM_SPI_HZ} Hz SPI maximum, not tried"
+            )),
+            running_hz: SPI_CLOCK_HZ.load(Ordering::Relaxed),
+        }));
+    }
+    let mailbox = MAILBOX.get()?;
+    let (reply, answer) = sync_channel(1);
+    if mailbox.try_send(Request::BustuneSpi { clock_hz, reply }).is_err() {
+        return Some(Err("the control thread is busy".to_string()));
+    }
+    Some(
+        answer
+            .recv_timeout(PROBE_DEADLINE)
+            .map(|(verdict, running_hz)| SpiRung {
+                name,
+                verdict,
+                running_hz,
+            })
+            .map_err(|_| "the control thread did not answer".to_string()),
+    )
 }
 
 /// The IMU's probe on the control thread (CC `probe`): its name and verdict (None healthy, else why); None when the
@@ -533,7 +673,7 @@ pub fn probe_imu() -> Option<Result<(&'static str, Option<String>), String>> {
     let name = *IMU_NAME.get()?;
     let mailbox = MAILBOX.get()?;
     let (reply, answer) = sync_channel(1);
-    if mailbox.try_send(reply).is_err() {
+    if mailbox.try_send(Request::ProbeImu(reply)).is_err() {
         return Some(Err("the control thread is busy".to_string()));
     }
     Some(
@@ -544,14 +684,13 @@ pub fn probe_imu() -> Option<Result<(&'static str, Option<String>), String>> {
     )
 }
 
-/// What `inspect` shows of the IMU the control thread drives (plan B lsm6dso32.py:300-308, beyond the channels):
-/// its name, whether INT1 is wired, whether INT1 is silent, whether its latest read succeeded. None without one.
-pub fn imu() -> Option<(&'static str, bool, bool, bool)> {
+/// What `inspect` shows of the IMU the control thread drives (plan B lsm6dso32.py:300-308, beyond the channels and
+/// the table's `healthy`): its name, whether INT1 is wired, whether INT1 is silent. None without one.
+pub fn imu() -> Option<(&'static str, bool, bool)> {
     Some((
         *IMU_NAME.get()?,
         INTERRUPT_WIRED.load(Ordering::Relaxed),
         INTERRUPT_SILENT.load(Ordering::Relaxed),
-        IMU_HEALTHY.load(Ordering::Relaxed),
     ))
 }
 
@@ -594,8 +733,8 @@ pub fn register_commands() {
         owner: "control",
         words: "control",
         about: "the control tick: its rate, ticks, overruns (ticks the thread missed) and lateness (the latest, the \
-                largest, and how many ticks passed the 200 us budget); the IMU's reads, failures, INT1 edges at the \
-                latest tick and whether INT1 is silent; the separation latch; flight-core log lines the console queue \
+                largest, and how many ticks passed the 200 us budget); the IMU's reads, failures, reads with no new \
+                conversion, INT1 edges at the latest tick and whether INT1 is silent; the IMU's SPI clock; the separation latch; flight-core log lines the console queue \
                 dropped",
         gate: Gate::Open,
         reach: Reach::Everywhere,
@@ -617,10 +756,12 @@ pub fn register_commands() {
                     ),
                     ("imu_reads", &IMU_READS.load(Ordering::Relaxed).to_string()),
                     ("imu_failures", &IMU_FAILURES.load(Ordering::Relaxed).to_string()),
+                    ("imu_stale", &IMU_STALE.load(Ordering::Relaxed).to_string()),
                     ("irq_runs_last", &IRQ_RUNS_LAST.load(Ordering::Relaxed).to_string()),
                     ("int1_silent", &INTERRUPT_SILENT.load(Ordering::Relaxed).to_string()),
                     ("separated", &SEPARATED.load(Ordering::Relaxed).to_string()),
                     ("console_dropped", &crate::logging::console_dropped().to_string()),
+                    ("spi_clock_hz", &SPI_CLOCK_HZ.load(Ordering::Relaxed).to_string()),
                 ],
             )
         }),

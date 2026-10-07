@@ -71,8 +71,6 @@ pub enum Code {
     Unsafe,
     /// A device refused a property change.
     Refused,
-    /// Not on this board (yet).
-    Unsupported,
     /// The handler itself failed.
     Internal,
 }
@@ -86,7 +84,6 @@ impl Code {
             Code::Invalid => "invalid",
             Code::Unsafe => "unsafe",
             Code::Refused => "refused",
-            Code::Unsupported => "unsupported",
             Code::Internal => "internal",
         }
     }

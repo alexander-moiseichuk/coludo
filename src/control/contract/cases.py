@@ -635,6 +635,14 @@ def _succeeded(reply: _Reply, context: dict) -> str | None:
         cc.parse(reply.request).command, answer, target)
 
 
+def _rung_passed(reply: _Reply, context: dict) -> str | None:
+    """A rung at the configured clock passes: the IMU answers 'ok' and all_ok is true."""
+    devices, all_ok = reply.payload['devices'], reply.payload['all_ok']
+    if devices.get(_device(context, 'lsm6dso32')) != 'ok' or all_ok is not True:
+        return 'the configured clock failed: devices %s, all_ok %r' % (devices, all_ok)
+    return None
+
+
 """Not-yet answers: legitimate for a board that has not grown the feature."""
 
 
@@ -822,6 +830,21 @@ def _probe_devices(context: dict) -> list:
     return [cc.build('probe', [name]) for name in names]
 
 
+def _imu_bus_at_its_clock(context: dict) -> str:
+    """
+    `bustune spi <id> <baud>`: the IMU's SPI bus run at its configured clock, a rung that changes nothing.
+
+    Raises:
+        Blocked - no IMU came up on an SPI bus with a configured clock.
+    """
+    imu = _device(context, 'lsm6dso32')
+    entry = next(entry for entry in context['running'].get('sensors', []) if entry.get('name') == imu)
+    spec = context['running']['buses'].get('spi', {}).get(str(entry.get('id')), {})
+    if entry.get('bus') != 'spi' or not isinstance(spec.get('baud'), int):
+        raise Blocked('%s is not on an SPI bus with a configured baud' % imu)
+    return cc.build('bustune', ['spi', str(entry['id']), str(spec['baud'])])
+
+
 def _remember(key: str) -> typing.Callable:
     """A remember hook storing the passing answer's payload as context[key]."""
 
@@ -885,6 +908,7 @@ _IMU: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'interrupt': 'bool
 _BAROMETER: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'altitude_m': 'number|null',
                     'temperature_c': 'number|null', 'pressure_pa': 'number|null', 'elevation_m': 'number|null'}
 _SEPARATION: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'separated': 'bool'}
+_BUSTUNE: dict = {'kind': 'str', 'id': 'str', 'freq': 'int', 'devices': 'object', 'all_ok': 'bool'}
 _M6_DRIVERS: tuple = ('lsm6dso32', 'icp10111', 'separation')
 
 
@@ -1080,6 +1104,9 @@ _DIAGNOSTICS: tuple = (
          note='read-only, but the spec counts it active: it re-scans both I2C buses'),
     Case('diagnostics', 'bustune_without_arguments', 'bustune', (_bad_arguments('bustune <kind> <id> <freq>'),),
          allow=('active',), milestone=5),
+    Case('diagnostics', 'bustune_imu_at_its_clock', _imu_bus_at_its_clock, (('ok', _BUSTUNE),), (_rung_passed,),
+         allow=('active',), milestone=6,
+         note='the CC ladder\'s restore rung; plan B on CPython has no SPI (machine.SPI is a stub there)'),
 )
 
 _OTA: tuple = (

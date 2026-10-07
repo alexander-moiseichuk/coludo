@@ -213,7 +213,7 @@ struct Recording {
     recorder: &'static Recorder,
     /// The supervisor's health.csv stream.
     health: StreamId,
-    /// Each recorded device's stream, by entry name (crate::sensors::stream).
+    /// Each recorded device's stream, by entry name (controller::stream).
     devices: Vec<(String, StreamId)>,
     /// This boot's NVS count; None when uncounted (block headers then carry 0).
     boot_id: Option<u32>,
@@ -281,7 +281,7 @@ pub fn health_stream() -> Option<StreamId> {
     RECORDING.get().map(|recording| recording.health)
 }
 
-/// The stream of device `name` (crate::sensors::stream); None without a recorder, or for a device that writes none.
+/// The stream of device `name` (controller::stream); None without a recorder, or for a device that writes none.
 pub fn device_stream(name: &str) -> Option<StreamId> {
     let recording = RECORDING.get()?;
     recording
@@ -347,7 +347,7 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str) -> anyhow::Re
     // its header, so a stream registered for it costs nothing
     let mut devices = Vec::new();
     for entry in board_config::entries(document) {
-        let Some(stream) = crate::sensors::stream(&entry) else {
+        let Some(stream) = controller::stream(&entry) else {
             continue;
         };
         match registry.add(&stream.file, stream.fields, stream.decimate_us, stream.durable) {

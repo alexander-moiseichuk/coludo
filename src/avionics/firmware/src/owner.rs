@@ -17,6 +17,7 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
+use controller::Table;
 use embedded_hal::i2c::I2c;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::delay::Delay;
@@ -186,8 +187,8 @@ pub fn spawn(id: u8, sda: u8, scl: u8, clock_hz: u32) -> anyhow::Result<(Parked,
     Ok((Parked { resume, mailbox, id }, port))
 }
 
-/// Hands the port back to its owner with the parts that came up on it (crate::devices), and the owner serves its
-/// mailbox from then on.
+/// Hands the port back to its owner with the parts that came up on it (crate::devices), each run with its `table`
+/// entry, whose health the run writes; the owner serves its mailbox from then on.
 ///
 /// Errors: the owner is gone.
 pub fn start(
@@ -195,11 +196,12 @@ pub fn start(
     port: I2cPort,
     mut members: Vec<Member>,
     topology: &'static Topology,
+    table: &'static Table<'static>,
 ) -> anyhow::Result<()> {
     // by name, the order plan B's Inspector walks them for probes and re-arms
     members.sort_by(|left, right| left.name.cmp(right.name));
     for member in &mut members {
-        member.run = Run::new(member.name, &member.part, topology);
+        member.run = Run::new(member.name, &member.part, topology, table.find(member.name));
         note_calibration(member);
     }
     parked

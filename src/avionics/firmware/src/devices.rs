@@ -559,7 +559,16 @@ fn set_up_spi(
         |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
         |line| log::info!("{line}"),
     );
-    if let (Some(part), Some(handle)) = (came_up, handle) {
+    if let (Some(part), Some(mut handle)) = (came_up, handle) {
+        // the part's own ODR: one slower than the tick reads stale now and then, one faster skips conversions
+        match part.frequency_fine(&mut handle) {
+            Ok(fine) => log::info!(
+                "{} :: ODR {:.2} Hz (INTERNAL_FREQ_FINE {fine})",
+                entry.name,
+                drivers::lsm6dso32::odr_hz(fine)
+            ),
+            Err(fault) => log::warn!("{} :: ODR unknown: INTERNAL_FREQ_FINE {fault}", entry.name),
+        }
         let period_ms = entry
             .fields
             .get("period_ms")

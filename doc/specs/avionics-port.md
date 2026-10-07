@@ -517,8 +517,8 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - **bustune (operator, 2026-10-07):** the verdicts are the parts that came up on that bus, probed after the retune.
   Plan B counts every config entry on the bus as down, disabled ones included (and, in the port, the parts whose
   drivers are not ported yet), so its sweep never found a ceiling on a bus with one. A wedge cure in the middle of a
-  rung restores the configured speed and is logged as a warning (plan B did the same silently). `bustune spi` waits
-  for SPI2's owner, M6's control thread (`err unsupported`).
+  rung restores the configured speed and is logged as a warning (plan B did the same silently). `bustune spi` runs
+  on SPI2's owner, the control thread (M6).
 - **Who honours the general call** (measured 2026-10-07 on the taster, `i2c general-call rearm=no`, then a probe):
   the SDP810 (it NAKs until re-armed) and the INA226 (CALIB cleared: 0 mA and 0 mW while the die id still reads).
   The BMI323, the BMM350, the ICP-10111 and the VL53L1X carry on unchanged. The BMP581 reads the same 101032 Pa before
@@ -622,9 +622,19 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - **The owners wake on the tick or on a request** (`ask` notifies) and do their work by time, so an extra wake
   costs a clock read; they serve at most two requests a wake and clear their notification count on each take.
 - **The IMU is read on every tick**, not on its INT1 edge (plan B sampled on its period too). A core-1 GPIO
-  interrupt only counts edges; `irq_runs` is the tick's count. The data-ready is level-high, so edges coalesce
-  against the 104 Hz ODR: rows read 1, about 1 % read 0, none read 2. The driver's silent verdict (three empty
-  ticks in a row) logs plan B's line once.
+  interrupt only counts edges; `irq_runs` is the tick's count. INT1 is an input with the internal pull-down, so a
+  broken wire reads 0 rather than floating. The driver's silent verdict (three empty ticks in a row) logs one line.
+- **Only a new conversion is published.** Each read is one 16-byte burst from STATUS_REG: `accel` is pushed on
+  XLDA, `rate` on GDA, the row written on either. A part's ODR is its own (INTERNAL_FREQ_FINE, logged at bring-up):
+  one slower than the 100 Hz tick reads stale now and then (the taster's 98.86 Hz: 1.2 % of reads), one faster skips
+  a conversion now and then. Three stale reads in a row make the part unhealthy, with one line; an impossible status
+  (a reserved bit set, a dead SPI part's 0xFF) is never fresh. Plan B pushed every read.
+- **Health is the producer's.** Each part's table entry carries its runtime health, written by the thread that reads
+  it (the control thread for the IMU, the owner for the barometer) on a change only; `inspect` reads it. Each own
+  value in `inspect` is the part's latest while it is inside its quantity's window, else null.
+- **The wire rule.** A failure the port says is not the wire's (`ErrorKind::Other`: the bus lock timed out, a driver
+  error) is reported but neither strikes the ICP nor resets its run, and a general call the port refused counts as
+  none, in the driver and in the port's own figures.
 - **The ICP-10111 cycle is 120-130 ms** (about 8 Hz) on the 100 Hz tick: the collect lands on the tick after its
   12 ms conversion, and the next issue a period after the collect, as plan B's sleep-after-read (about 112 ms).
   Both are inside the quantities' 200 ms window.
@@ -632,10 +642,18 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   durable (the stage transition's record). The GPIO interrupt service is installed from the control thread, which
   latches every GPIO interrupt on core 1.
 - **The CC surface.** Every device that came up is an inspectable object (plan B's `Task.inspect`), its own keys read
-  off the databoard: the IMU's `rate_dps` is in deg/s (D18; plan B's held centideg/s ints under that name), and the
-  barometer is `healthy` while its pressure is fresh. In M6 only the ICP-10111 has a calibration (it asks for its
+  off the databoard: the IMU's `rate_dps` is in deg/s (D18; plan B's held centideg/s ints under that name). In M6 only the ICP-10111 has a calibration (it asks for its
   ground until it holds one, and setup captures it); the SDP810's tare and the BMM350's hard iron join `calibrate` and
-  `health.calibration` with their restores (M9, M10). `bustune spi` is not ported.
+  `health.calibration` with their restores (M9, M10).
+- **`bustune spi 1 <hz>` runs on the control thread**, SPI2's owner, in plan B's answer shape; SPI2's only device is
+  the IMU, so its verdict is the rung's. The rung drops the IMU's handle and adds one at the new clock (the first-use
+  discard runs again), then probes. The order matters: a second handle on the same CS would take the pin's routing,
+  and removing the first one then resets that GPIO under it. A clock the driver refuses re-adds the handle at the
+  configured clock; if that is refused too, the IMU is unhealthy and logged. A clock above the LSM6DSO32's 10 MHz is
+  never tried: it is answered as the IMU failing the rung (`all_ok` false, the handle untouched), because the CC's
+  ladder runs 5, 8, 10, 16, 20 MHz and stops on any answer that is not `ok`. `control` shows `spi_clock_hz`. The
+  rung's clock is never saved (the CC sweep restores the configured clock and applies a choice by set-config), and
+  arming does not restore it (M7).
 - **The flight core never prints in place** (found by the timing proof, below): a console write blocks once the
   UART's transmit buffer fills, and an IMU probe's two log lines made the control tick 4.5 ms late. Lines logged on
   core 1 go into a bounded queue (non-blocking send, dropped and counted when full) that a core-0 printer drains;
@@ -652,7 +670,16 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   0.036 deg/s, inside plan B's measure_noise spread (0.03-0.095 deg/s, its only recorded noise number).
 - The ICP at rest: pressure sd 1.55 Pa (datasheet 1.6 Pa RMS); `update {"rezero": true}` -> `[ground]`, a text
   ground refused, `ground 42.5` -> elevation 0.37 m; `calibrate baro_icp10111` -> null with plan B's ground line.
-- `cc_contract --milestone M6 --allow-active`: 0 violations (inspect 28 cases).
+- `cc_contract --milestone M6 --allow-active --allow-stage` (with the M6 cases: the parts' inspect shapes, the
+  barometer's ground round trip, calibrate, probe of each part, the IMU's bus at its own clock, calibrate refused
+  while held): 0 violations, inspect 34, diagnostics 15, control 14.
+- `bustune spi` on the taster: 1, 8, then 5 MHz all `all_ok`, `spi_clock_hz` following, reads uninterrupted, 0
+  failures; 20 MHz answered untried with the clock unchanged; 0 Hz refused; refused outside SETTING. The CC's own
+  sweep (`bustune taster spi 1`): 5, 8, 10 MHz pass, 16 MHz fails on the IMU; ceiling 10 MHz, chosen 8, the bus put
+  back at 5.
+- TMS-7F, one hour of FHD@25 colour bars and the flight-rate ring load (the stage 6 build, six 10-minute segments):
+  90,036 frames, 11 missed, 0 ring loss, tick lateness at most 86 us, 0 over budget, 0 overruns, 0 IMU failures, the
+  internal low-water flat at 61.4 KB (one 0.75 KB step in the fifth segment).
 - The separation switch's live edge (the operator's hands on the taster, SETTING): the pads opened, then closed
   5.73 s later. `separated` and then `nested` were logged and the latch followed (`control`). Session 000409's
   `separation.csv` holds both rows, `345852929;separated;setting` and `351582929;nested;setting`, and the stage

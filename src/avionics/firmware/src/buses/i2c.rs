@@ -112,9 +112,9 @@ pub struct I2cPort {
     failures: u32,
     /// Wedges cured since boot.
     wedges: u32,
-    /// General calls sent since boot.
+    /// General calls that reached the wire since boot (answered or NAKed; one the port refused never counts).
     general_calls: u32,
-    /// A general call went out since [`I2cPort::take_general_call`] last asked.
+    /// A general call reached the wire since [`I2cPort::take_general_call`] last asked.
     general_called: bool,
 }
 
@@ -426,7 +426,13 @@ impl embedded_hal::i2c::I2c for I2cPort {
             _ => return unsupported,
         };
         let result = outcome(code);
-        if general_call {
+        // a general call counts once it reached the wire, answered or not: one the port refused (bus busy, a driver
+        // error) reset nothing, as the drivers' wire rule reads it
+        let on_the_wire = result
+            .as_ref()
+            .err()
+            .is_none_or(|error| embedded_hal::i2c::Error::kind(error) != ErrorKind::Other);
+        if general_call && on_the_wire {
             self.general_calls += 1;
             self.general_called = true;
         }

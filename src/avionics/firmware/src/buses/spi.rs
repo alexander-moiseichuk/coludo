@@ -106,14 +106,29 @@ impl SpiBus {
         Ok(SpiBus { specification })
     }
 
-    /// A device handle for chip select `chip_select`, at the bus's mode and clock, full duplex, one queued
-    /// transaction (polling never queues).
+    /// A device handle for chip select `chip_select`, at the bus's mode and its configured clock (see
+    /// [`SpiBus::handle_at`]).
     ///
     /// Errors: the driver refused (all six hardware chip selects taken, a bad pin).
     pub fn handle(&self, chip_select: u8) -> anyhow::Result<SpiHandle> {
+        self.handle_at(chip_select, self.specification.clock_hz)
+    }
+
+    /// The bus's configured clock, Hz (`buses.spi.1.baud`).
+    pub fn clock_hz(&self) -> u32 {
+        self.specification.clock_hz
+    }
+
+    /// A device handle for chip select `chip_select` at `clock_hz` (a bustune rung), at the bus's mode, full duplex,
+    /// one queued transaction (polling never queues). A chip select holds one handle at a time: drop the old one
+    /// first -- a second device on the pin takes it over, and removing the first then resets the pin under the second
+    /// (spi_common.c:763-791).
+    ///
+    /// Errors: the driver refused (all six hardware chip selects taken, a bad pin, a clock it cannot divide to).
+    pub fn handle_at(&self, chip_select: u8, clock_hz: u32) -> anyhow::Result<SpiHandle> {
         let config = sys::spi_device_interface_config_t {
             mode: self.specification.mode,
-            clock_speed_hz: self.specification.clock_hz as i32,
+            clock_speed_hz: clock_hz.min(i32::MAX as u32) as i32,
             spics_io_num: chip_select as i32,
             queue_size: 1,
             ..Default::default()
@@ -159,6 +174,11 @@ pub struct SpiHandle {
 unsafe impl Send for SpiHandle {}
 
 impl SpiHandle {
+    /// The chip-select pin.
+    pub fn chip_select(&self) -> u8 {
+        self.chip_select
+    }
+
     /// One full-duplex frame of `transmit.len()` bytes, received into `receive`. The memory past `transmit` up to
     /// the next [`WORD_BYTES`] boundary is read too (never sent): the callers' buffers extend that far.
     fn frame(&mut self, transmit: &[u8], receive: &mut [u8]) -> Result<(), SpiError> {

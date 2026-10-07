@@ -44,7 +44,7 @@ _EPOCH_2020: int = 1577836800  # Unix seconds at 2020-01-01: any real host clock
 # the cases plan B on CPython cannot run: no tee, no hub, and no device set up (the M6 parts' cases)
 _BOARD_ONLY: set = {'log_tee_trigger', 'hub', 'inspect_imu', 'inspect_barometer', 'inspect_separation',
                     'update_barometer_ground', 'update_barometer_text_ground', 'update_barometer_rezero',
-                    'calibrate_barometer', 'calibrate_imu', 'probe_devices'}
+                    'calibrate_barometer', 'calibrate_imu', 'probe_devices', 'bustune_imu_at_its_clock'}
 _PROBE_LAUNCH: str = cc.build('set-config', ['launch', json.dumps({'launch_id': 'contract-probe'})])
 
 
@@ -111,6 +111,8 @@ def _fitted_answers() -> dict:
         'probe imu_lsm6dso32': ok({'imu_lsm6dso32': None}),
         'probe baro_icp10111': ok({'baro_icp10111': None}),
         'probe separation': ok({'separation': None}),
+        'bustune spi 1 5000000': ok({'kind': 'spi', 'id': '1', 'freq': 5000000, 'devices': {'imu_lsm6dso32': 'ok'},
+                                     'all_ok': True}),
     }
 
 
@@ -466,6 +468,9 @@ def test_the_m6_parts_are_held_to_plan_b_shapes() -> None:
          {'calibrate_barometer'}, 'expected {\'baro_icp10111\': null}'),
         (broken('probe separation', {'separation': 'separation -- pin 33 reads nothing'}),
          {'probe_devices[probe separation]'}, 'expected {\'separation\': null}'),
+        (broken('bustune spi 1 5000000', {'kind': 'spi', 'id': '1', 'freq': 5000000,
+                                          'devices': {'imu_lsm6dso32': 'lsm6dso32 -- no WHO_AM_I'}, 'all_ok': False}),
+         {'bustune_imu_at_its_clock'}, 'the configured clock failed'),
     )
     for answers, names, reason in scenarios:
         results = cases.run(_Fitted(answers), tiers, allowed, None)
