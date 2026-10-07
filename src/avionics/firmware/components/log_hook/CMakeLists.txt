@@ -5,4 +5,4 @@
 # because only C can va_copy, and a va_list can be consumed only once.
 idf_component_register(SRCS "log_hook.c"
                        INCLUDE_DIRS "include"
-                       REQUIRES log)
+                       REQUIRES log panic_capture)

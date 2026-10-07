@@ -1286,6 +1286,31 @@ Partition 2, the videos (mounted at /sdcard/videos):
   - **Re-run after several days of use (operator).** AB58 had just been put into service; 267D had been powered
     much longer. A fresh card may still be doing its first-use housekeeping, so repeat the A/B and the raw `sdtest`
     once both cards have run for days.
+  - **Third run (2026-10-07, after the internal RAM work and the panic log; same load, real scene):**
+
+    | | taster, AB58, two partitions | 7F, 267D, one partition |
+    |---|---|---|
+    | missed frames | 0.5 % (20 of 4091) | 1.8 % (63 of 3451) |
+    | SD write max | 408 ms | 201 ms |
+    | SD busy | 59.9 % | 47.4 % |
+    | saver behind at the end | 91 ms | 290 ms |
+    | 20 MB downloads under video and saver | 30–37 s | 25–35 s |
+
+    No failure, no freeze and no card error on either. Raw `sdtest`: AB58 stalled 486–590 ms again (3 of 6 runs),
+    267D at most 169 ms. Over three runs, both ways round, the long writes follow the card; neither layout has shown
+    an error or a freeze. Missed frames vary from 0.5 to 1.9 % with no pattern by layout.
+  - **Why two volumes cannot overlap on the card (operator's question: *nix has an elevator under the FS locks).**
+    Two levels of locking sit under the two FatFs volume locks:
+    - `components/sd_card`'s disk I/O layer takes one card mutex around every driver call from either volume;
+    - the SDMMC host's own mutex serialises every transaction across the card (slot 0) and the C6 (slot 1).
+
+    There is no elevator: requests go in priority order (the mutex inherits priority), never merged or reordered.
+  - **Downloads were slower than in the first two runs** (16–23 s then). Stage 2 of §4.7 (esp_hosted's buffers in
+    PSRAM, lwIP's receive copy) costs ~10–20 % idle (2.6–3.0 MB/s against 3.3) and about a third under video. The
+    lever is raising esp_hosted's queues and the TCP send buffer again (§4.7), now that esp_hosted's pool is no longer
+    internal. Also seen once on the taster in this run: `H_SDIO_DRV: task still writing Rx data to queue!`. esp_hosted
+    drops a whole received chunk when its copy task has not finished the last one (`sdio_drv.c:1084`), and the copy
+    is now PSRAM to PSRAM beside the encoder. TCP retransmits it; an RPC frame to the C6 has no retransmit.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
   partition 1. A session is `GET /sd/<session>/recordings/`, its videos `GET /sd/videos/<session>/`.
 - **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and
@@ -1323,13 +1348,14 @@ after its sessions are pulled, for the two-partition layout.
 | `ota_0` | app | 0x20000 | 0x300000 | 3 MB app slot (the image is 1.6 MB today) |
 | `ota_1` | app | 0x320000 | 0x300000 | 3 MB app slot, for OTA (M15) |
 | `cfg` | nvs | 0x620000 | 0x100000 | 1 MB: blobs `board` and `launch`, the `creds` namespace, the session-start record, the ring positions |
+| `panic` | data | 0x720000 | 0x20000 | 128 KB: the panic log, 16 records of 8 KB (§4.8; added 2026-10-07) |
 | `log` | data | 0x800000 | 0x1800000 | unchanged: the 24 MiB ring |
 
 - `flash.sh` writes the app to `ota_0` and erases `otadata`, so the bootloader boots `ota_0`. OTA itself comes
   later, over CC (M15).
 - `tools/provision.sh` reads the `cfg` row from `partitions.csv`, so it follows the move. A board flashed with the
   old table (the taster) is re-provisioned once.
-- 0x720000–0x800000 stays free.
+- 0x740000–0x800000 stays free.
 
 ### 3.11 Row, log and index text (byte rules)
 
@@ -1594,7 +1620,8 @@ What holds it together:
   - 128 KB is the L2 cache (`CACHE_L2_CACHE_128KB`);
   - ~124 KB is static: 92 KB `.iram0.text`, 18 KB `.dram0.data`, 13.5 KB `.dram0.bss`;
   - 513 KB is heap, plus 38 KB from LP RAM (RTC, 31.9 KB) and SPM (7.7 KB), so 551 KB of heap in all. The RTC and
-    SPM heaps are internal but not DMA-capable, and they sit idle (`heap`'s `rtc_free`/`spm_free`);
+    SPM heaps are internal but not DMA-capable, and they sit idle (`heap`'s `rtc_free`/`spm_free`). Since §4.8 the
+    panic log's capture record and log tail take ~12 KB of the RTC RAM (`RTC_NOINIT_ATTR`, out of that heap);
   - ~95 KB of that heap was free.
 
 **The optimization (2026-10-07, before M5).** An investigation of IDF v5.5.5 under XIP from PSRAM (five readers, then
@@ -1687,11 +1714,85 @@ untraced: no console was attached.
 cache-off window can meet a running camera: today's only window is at boot. Before OTA can run with the camera on,
 pin that function in IRAM with a linker fragment, or stop the camera around OTA.
 
-**A flash core dump** (a partition in the free 0x720000..0x800000) would keep the next untraced backtrace. It also
-rules out ever moving the SPI1 flash driver out of IRAM (~8.3 KB): the dump runs that driver with the cache
-suspended. That is the operator's call (partition table).
 - `heap tasks` exists only in an investigation build with `CONFIG_HEAP_TASK_TRACKING`. Its heap walk holds the
   allocator's lock long enough for core 1's interrupt watchdog to fire, so treat it as a one-off and never ship it.
+
+**The next untraced backtrace** is kept by the panic log (§4.8, operator 2026-10-07), not by IDF's flash core dump:
+nothing is written to flash from the panic handler, so moving the SPI1 flash driver out of IRAM (~8.3 KB) stays
+possible.
+
+### 4.8 Panic log
+
+The operator's design (2026-10-07), after Linux's mtdoops (which Richard Purdie wrote at the operator's request):
+the board's last panics as tagged text records, round-robin over several flash pages, readable as text. A panic may
+be fatal or not.
+
+- **Storage:** the `panic` partition (128 KB at 0x720000): 16 slots of 8 KB (two erase sectors), each one record, a
+  header line in its first 512 bytes (text tags cut to 64 characters, so it always fits) and up to 7680 bytes of text:
+  ```text
+  COLUDO-PANIC 1 seq=6 fatal=1 cause=panic boot=364 session=000364 uptime_ms=11221 firmware=avionics-0.1.0 config=3aa09342698a recorded=365 length=4246 intact=1
+  Rust panic in task cc: panicked at firmware/src/main.rs:219:18:
+  deliberate panic from a console command
+  abort() was called at PC 0x480ccb33 on core 0
+  Core  0 register dump: ...
+  Stack memory: ...
+  ```
+  `seq` counts records over the partition's life, so the next record goes into the slot after the newest one,
+  erasing the oldest. The text is written first and the header last: a power cut leaves no header, so a torn record
+  is an empty slot. `crates/panics` holds the format, the scan and the append, tested on the host over `MemoryFlash`
+  with power cuts at every step.
+- **Fatal** (`fatal=1`: the board reset). `components/panic_capture` captures, the way Linux's ramoops does:
+  - Two link-time wraps, so IDF is not patched. `esp_panic_handler` marks that a panic began.
+    `uart_hal_write_txfifo` then tees every character the panic handler prints to the console UART into a record in
+    RTC (LP) RAM (`RTC_NOINIT_ATTR`, ~10 KB), which survives the reset. Both cores may enter the handler at once;
+    what does not fit is counted and makes the record not `intact`.
+  - The log before it, as mtdoops keeps the kernel log's tail: every log line (IDF's through components/log_hook, the
+    firmware's through logging.rs) also goes into a 2 KB ring in RTC RAM, and when a panic begins the ring is copied
+    into the record. The record's text is the panic's, then `--- the log before it, oldest first ---` and those
+    lines.
+  - Not captured: what the ROM's printf prints outside the handler (`ESP_ERROR_CHECK`'s code and place before its
+    abort, a heap-corruption report, the brownout line). Its abort is captured, and the log tail shows what led to
+    it.
+  - A Rust panic hook writes the message, its place and the task name first: Rust panics abort here
+    (`panic_abort`), so each one becomes an IDF abort.
+  - The record carries a running CRC (`intact`) and two magic words, so a power-on's random RAM is never taken for
+    one.
+  - The next boot, on main right after the recorder opens, writes it into the panic log with the OS up, then clears
+    it; a write that fails keeps it for the boot after. Nothing is written to flash from the panic handler: with XIP
+    from PSRAM, IDF's no-OS flash path would suspend the cache the code runs through.
+  - The cause is that boot's reset reason (`panic`, `interrupt-watchdog`, `task-watchdog`, `cpu-lockup`); a capture
+    met after another reset (a brownout, the reset pin, before the record was written) is a `panic`. A boot reset
+    after writing a record but before clearing its capture finds it the newest record already, and does not write it
+    twice.
+  - A reset in `panic`, `interrupt-watchdog`, `task-watchdog`, `watchdog`, `brownout`, `power-glitch` or
+    `cpu-lockup` is recorded even with nothing captured, as a header alone (`length=0`, `intact=0`). A power-on,
+    `reboot` or the reset pin leaves no record, unless a capture was still waiting.
+  - That boot logs the record's first 16 lines (`panic :: ...`), so the session's `recorder.log` and CC's log stream
+    carry it.
+- **Not fatal** (`fatal=0`, an oops: the board noticed something broken and went on). `panics_logger::oops(cause,
+  text)` never waits: the record goes through a queue of 8 to the `panic_log` thread (core 0, priority 2, PSRAM
+  stack), which writes it. A full queue drops it, counted. The first producer: the C6 link parked by
+  `hosted_no_reboot` (`cause=c6-link-parked`). Later milestones add theirs, such as a bus re-initialised after a
+  general-call reset (M5).
+- **Read-out:**
+  - `panic log` (console and CC) lists the records, `seq<N>=<fatal|oops>:<cause>:<boot>:<bytes>`, and counts
+    dropped oopses;
+  - `GET /panic` on the file server serves the records as text, newest first (`?seq=N` for one; an empty body when
+    there are none, 404 for a seq no slot holds, 503 when the log is not open). Its reads go through internal
+    buffers, never into PSRAM (the file server's own memory);
+  - `tools/panic_decode.py <board|file>` decodes MEPC, RA and the stack's code words against the firmware ELF with
+    addr2line.
+- **Test command:** `panic kind=rust|fault|abort|oops confirm` (SETTING). The first three reboot through a Rust
+  panic, a store to address 0 and C's `abort()`; `oops` records a non-fatal one.
+- **Proof (taster, 2026-10-07):**
+  - each fatal kind was recorded by the next boot with 4.1–4.2 KB of text, `intact=1`, tagged with the boot that
+    crashed;
+  - a Rust panic names its task (`cc`) and source line;
+  - the fault decodes to `main.rs:207`, the store itself;
+  - 19 records went round-robin into 16 slots, the 3 oldest overwritten and `seq` going on;
+  - a `reboot` added nothing;
+  - oopses were written live with 0 dropped;
+  - the boot's lines are in the next session's `recorder.log` on the card.
 
 ## 5. Golden vectors and the contract runner
 
@@ -1919,7 +2020,8 @@ The operator's decisions on the earlier questions, one line each:
 - **Q4. `config_id` before vs after layout:** keep plan B's split, which is plan B behaviour: `set-config`
   returns the pre-layout id, `whoami` announces the post-layout one, and the boot log line names both (M5).
 - **Q5. Partitions and OTA:** `otadata` plus `ota_0` and `ota_1` of 3 MB each now, a 1 MB `cfg` at 0x620000,
-  `nvs` and `log` unchanged (§3.10). OTA itself comes later, over CC (M15).
+  `nvs` and `log` unchanged (§3.10). OTA itself comes later, over CC (M15). The 128 KB `panic` partition at 0x720000
+  followed on 2026-10-07 (§4.8).
 - **Q6. Watchdog timeout:** keep 5000 ms in board files (Python `validate` rejects < 4000) until Rust measures
   its own floor.
 - **Q7. IMU axes:** the IMUs are mounted per their marks (x forward, y left, z up); an optional per-sensor `axes`

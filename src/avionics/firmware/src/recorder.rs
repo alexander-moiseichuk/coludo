@@ -414,7 +414,7 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
     let hints = store.as_ref().map_or_else(Hints::default, RecorderStore::hints);
     // the card the previous boot's record names: its saver hint is that card's (read before this boot's record)
     let previous_card = store.as_ref().and_then(RecorderStore::previous_card);
-    let Some(partition) = Partition::find() else {
+    let Some(partition) = Partition::by_label(c"log") else {
         log::error!("ring :: no `log` partition in the partition table: nothing reaches flash this boot");
         park();
     };
@@ -912,8 +912,9 @@ fn pair(position: Position) -> [u32; 2] {
     [position.block_sequence, position.offset]
 }
 
-/// The `log` partition (partitions.csv: 24 MiB at 0x800000), found by its label, as the ring's [`Flash`]. Each ring
-/// task holds its own copy; esp_flash serialises the calls, NVS's on the same chip among them.
+/// A data partition found by its label, as a [`Flash`]: the `log` partition (partitions.csv: 24 MiB at 0x800000), the
+/// ring's, and the `panic` partition, the panic log's. Each ring task holds its own copy; esp_flash serialises the
+/// calls, NVS's on the same chip among them.
 #[derive(Clone, Copy)]
 pub struct Partition(*const sys::esp_partition_t);
 
@@ -924,14 +925,15 @@ unsafe impl Send for Partition {}
 unsafe impl Sync for Partition {}
 
 impl Partition {
-    /// The `log` partition; None when the partition table has none.
-    fn find() -> Option<Partition> {
+    /// The data partition labelled `label` (`log`, the ring; `panic`, crate::panics_logger); None when the table has
+    /// none.
+    pub fn by_label(label: &CStr) -> Option<Partition> {
         // SAFETY: a lookup in the static partition table with a valid C string.
         let partition = unsafe {
             sys::esp_partition_find_first(
                 sys::esp_partition_type_t_ESP_PARTITION_TYPE_DATA,
                 sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_ANY,
-                c"log".as_ptr(),
+                label.as_ptr(),
             )
         };
         (!partition.is_null()).then_some(Partition(partition))

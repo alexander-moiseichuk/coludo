@@ -16,6 +16,7 @@ mod diagnostics;
 mod files;
 mod link;
 mod logging;
+mod panics_logger;
 mod recorder;
 mod status;
 mod supervisor;
@@ -51,6 +52,8 @@ fn main() -> anyhow::Result<()> {
     for error in &loaded.errors {
         log::warn!("config :: {error}");
     }
+    // the last boot's panic into the panic log, before anything here can panic again; then this boot's capture
+    panics_logger::start(boot_id.unwrap_or(0) as u32, &session, &config_id);
     let thermometer = Thermometer::new(peripherals.temp_sensor)
         .inspect_err(|error| log::warn!("thermometer :: {error}"))
         .ok();
@@ -118,6 +121,10 @@ fn main() -> anyhow::Result<()> {
     // exactly what this board runs (firmware::gcl)
     firmware::gcl::set_cc_names(commands::names());
     register_system_commands();
+    if let Err(error) = panics_logger::start_oops() {
+        log::error!("panic :: the oops thread did not start, oopses are dropped: {error}");
+    }
+    panics_logger::register_commands();
     diagnostics::register_commands();
     credentials.register_commands();
     link::register_commands();
@@ -174,17 +181,42 @@ fn log_card(card: recorder::Card, layout: firmware::sd::Layout) {
     }
 }
 
-/// The system's own console command (the Glider Command Language): `panic confirm`, which proves a panic reboots the
-/// board (and warm-starts it, once that is ported).
+/// The kinds of a deliberate panic (`panic kind=... confirm`).
+const PANIC_KINDS: &[&str] = &["rust", "fault", "abort", "oops"];
+
+/// The system's own console command (the Glider Command Language): `panic kind=... confirm`, which proves a panic
+/// reboots the board (and warm-starts it, once that is ported) and lands in the panic log (crate::panics_logger).
 fn register_system_commands() {
     firmware::gcl::register(vec![firmware::gcl::Command {
         owner: "system",
         words: "panic",
-        about: "panic on purpose: proves a panic reboots the board (and warm-starts it once that is ported)",
+        about: "panic on purpose and see it in `panic log`: rust (a Rust panic), fault (a store to address 0), abort \
+                (C's abort()) reboot the board; oops records a non-fatal panic and goes on",
         gate: firmware::gcl::Gate::Setting,
         reach: firmware::gcl::Reach::Everywhere,
-        parameters: &[],
+        parameters: &[firmware::gcl::Parameter {
+            name: "kind",
+            kind: firmware::gcl::Kind::Choice(PANIC_KINDS),
+            default: Some("rust"),
+            about: "rust, fault, abort (each reboots) or oops (does not)",
+        }],
         bare_words: &[firmware::gcl::CONFIRM],
-        run: Box::new(|_| panic!("deliberate panic from a console command")),
+        run: Box::new(|arguments| match arguments.text("kind") {
+            "fault" => {
+                // SAFETY: deliberately not: a store to address 0 is the access fault this kind exists to raise.
+                unsafe { core::arch::asm!("sw zero, 0(zero)") };
+                unreachable!("a store to address 0 faults")
+            }
+            // SAFETY: C's abort() never returns; it is the point of this kind.
+            "abort" => unsafe { esp_idf_svc::sys::abort() },
+            "oops" => {
+                panics_logger::oops(
+                    "test-oops",
+                    "a deliberate oops from a console command: nothing is broken",
+                );
+                cc_protocol::build("ok", &["panic", "oops"], &[])
+            }
+            _ => panic!("deliberate panic from a console command"),
+        }),
     }]);
 }

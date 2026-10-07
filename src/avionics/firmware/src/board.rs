@@ -127,6 +127,12 @@ pub fn reset_reason() -> &'static str {
         sys::esp_reset_reason_t_ESP_RST_BROWNOUT => "brownout",
         sys::esp_reset_reason_t_ESP_RST_EXT => "external",
         sys::esp_reset_reason_t_ESP_RST_DEEPSLEEP => "deep-sleep",
+        sys::esp_reset_reason_t_ESP_RST_SDIO => "sdio",
+        sys::esp_reset_reason_t_ESP_RST_USB => "usb",
+        sys::esp_reset_reason_t_ESP_RST_JTAG => "jtag",
+        sys::esp_reset_reason_t_ESP_RST_EFUSE => "efuse",
+        sys::esp_reset_reason_t_ESP_RST_PWR_GLITCH => "power-glitch",
+        sys::esp_reset_reason_t_ESP_RST_CPU_LOCKUP => "cpu-lockup",
         _ => "unknown",
     }
 }

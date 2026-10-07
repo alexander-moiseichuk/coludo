@@ -74,6 +74,11 @@ pub fn run(
             // boot (a reboot restores it; on the ground the operator runs `reboot` on the console)
             if !parked {
                 log::error!("link :: the C6 link is parked -- Wi-Fi is off until the next boot");
+                crate::panics_logger::oops(
+                    "c6-link-parked",
+                    "esp_hosted asked for a host restart (an SDIO command to the C6 failed); hosted_no_reboot parked \
+                     the transport instead. Wi-Fi is off until the next boot; the flight goes on.",
+                );
                 parked = true;
             }
             continue;

@@ -42,9 +42,6 @@ impl log::Log for Logger {
         if !log::Log::enabled(&CONSOLE, record.metadata()) {
             return;
         }
-        let Some(recorder) = crate::recorder::get() else {
-            return;
-        };
         let mut line = Line::default();
         let text = match record.args().as_str() {
             Some(text) => text,
@@ -52,6 +49,18 @@ impl log::Log for Logger {
                 let _ = write!(line, "{}", record.args()); // a full line cuts the text: Line never fails
                 line.0.as_str()
             }
+        };
+        // the panic log keeps the newest lines before a panic (components/panic_capture), shaped as IDF's and on its
+        // clock, so the two kinds of line interleave in order
+        let mut tail = Line::default();
+        let level = record.level().as_str().as_bytes()[0] as char;
+        // SAFETY: a plain read of IDF's log clock.
+        let timestamp = unsafe { sys::esp_log_timestamp() };
+        let _ = write!(tail, "{level} ({timestamp}) {}: {text}", record.target());
+        // SAFETY: the line's bytes, valid for the call; panic_capture copies them.
+        unsafe { sys::panic_capture_log(tail.0.as_ptr().cast(), tail.0.len()) };
+        let Some(recorder) = crate::recorder::get() else {
+            return;
         };
         match text.split_once(" :: ") {
             Some((descriptor, message)) => recorder.log(descriptor, message),

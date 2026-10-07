@@ -281,6 +281,10 @@ so it must run on both.
   goes on only when the card's size in MiB (the plan's `card:` line) is typed back, and checks again after that
   answer that the device is still the card it planned for. A plain file is taken as a card image (how its test runs,
   with no root and no device).
+- **`tools/panic_decode.py <board|URL|file> [--elf ELF]`** decodes a Rust board's panic log (`GET /panic`, the
+  `panic` partition: doc/specs/avionics-port.md §4.8). It prints each record's header, then MEPC, RA and the stack's
+  code words as source lines, through IDF's `riscv32-esp-elf-addr2line`, against the release ELF by default; give
+  `--elf` for another build (the header's `firmware=` says which). On the board itself: `panic log` lists the records.
 - **`tools/board_pull.sh <host>[:port] [session] [outdir]`** pulls a session off a Rust board's card over Wi-Fi
   (the file server on port 8000, no proxy): `/sd/<session>/recordings/` into `<outdir>/recordings/` and
   `/sd/videos/<session>/` into `<outdir>/videos/` (default `/tmp/flights/<session>`; the default session is the

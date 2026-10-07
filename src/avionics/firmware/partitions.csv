@@ -13,8 +13,11 @@ otadata,  data, ota,     0x10000,  0x2000
 ota_0,    app,  ota_0,   0x20000,  0x300000
 ota_1,    app,  ota_1,   0x320000, 0x300000
 # the board's own settings, an NVS of its own (1 MB): board.config, launch.config, the Wi-Fi passwords, the
-# session-start record and the ring positions -- never crowding the shared nvs above. 0x720000..0x800000 is free.
+# session-start record and the ring positions -- never crowding the shared nvs above
 cfg,      data, nvs,     0x620000, 0x100000
+# the panic log (crates/panics): the last 16 panics, fatal or not, as tagged text records of 8 KB, round-robin,
+# as Linux's mtdoops keeps oopses. 0x740000..0x800000 is free
+panic,    data, undefined, 0x720000, 0x20000
 # the telemetry ring (the storage tier's top-priority store), found by label: 24 MB, to the end of the 32 MB part
 # (the code runs from PSRAM, so the flash only holds the app); above 16 MB it is reached with 4-byte addressing
 log,      data, undefined, 0x800000, 0x1800000

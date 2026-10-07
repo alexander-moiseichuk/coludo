@@ -145,7 +145,7 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
                 .write_all(b"the ring is not up: the bring-up scan has not finished, or found no log partition\n")?;
             return Ok(());
         };
-        let Ok(boot) = boot_filter(request.uri()) else {
+        let Ok(boot) = filter(request.uri(), "boot") else {
             request
                 .into_status_response(400)?
                 .write_all(b"/ring takes only boot=<id>\n")?;
@@ -153,6 +153,29 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
         };
         let mut response = request.into_response(200, None, &[("Content-Type", "text/plain")])?;
         decode_ring(view, recorder, boot, &mut |text| Ok(response.write_all(text)?))
+    })?;
+    // the panic log (crate::panics_logger): every record as text, newest first, or only seq=N's
+    server.fn_handler::<anyhow::Error, _>("/panic", Method::Get, |request| {
+        let Ok(seq) = filter(request.uri(), "seq") else {
+            request
+                .into_status_response(400)?
+                .write_all(b"/panic takes only seq=<record>\n")?;
+            return Ok(());
+        };
+        match crate::panics_logger::texts(seq) {
+            // a record asked for by its seq that no slot holds
+            Some(text) if text.is_empty() && seq.is_some() => request
+                .into_status_response(404)?
+                .write_all(b"no such record in the panic log\n")?,
+            // every record (none: an empty body), or the one asked for
+            Some(text) => request
+                .into_response(200, None, &[("Content-Type", "text/plain")])?
+                .write_all(&text)?,
+            None => request
+                .into_status_response(503)?
+                .write_all(b"the panic log is not open (see the boot log)\n")?,
+        }
+        Ok(())
     })?;
     server.fn_handler::<anyhow::Error, _>("/ring/image", Method::Get, |request| {
         let Some(view) = crate::recorder::ring() else {
@@ -223,17 +246,20 @@ fn answer_busy(request: Request<&mut EspHttpConnection<'_>>) -> anyhow::Result<(
     Ok(())
 }
 
-/// The `boot=N` of a `/ring` URI: None when there is no query. Errors: the query names anything else, or N is not
-/// a boot id.
-fn boot_filter(uri: &str) -> Result<Option<u32>, ()> {
+/// The `<key>=N` of a URI's query (`/ring?boot=N`, `/panic?seq=N`): None when there is no query. Errors: the query
+/// names anything else, or N is not a number.
+fn filter(uri: &str, key: &str) -> Result<Option<u32>, ()> {
     let Some((_, query)) = uri.split_once('?') else {
         return Ok(None);
     };
     if query.is_empty() {
         return Ok(None);
     }
-    let boot = query.strip_prefix("boot=").ok_or(())?;
-    boot.parse().map(Some).map_err(|_| ())
+    let value = query
+        .strip_prefix(key)
+        .and_then(|rest| rest.strip_prefix('='))
+        .ok_or(())?;
+    value.parse().map(Some).map_err(|_| ())
 }
 
 /// Decode the ring's blocks into wire lines, oldest first, handing the text to `send` about [`CHUNK`] at a time.

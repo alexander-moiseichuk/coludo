@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 #include "esp_log.h"
+#include "panic_capture.h"
 
 /* The longest line the recorder keeps; a longer one is cut. IDF's lines are tag + one sentence, well under it. */
 #define LINE_BYTES 256
@@ -39,7 +40,10 @@ static int hook(const char *format, va_list arguments)
             int length = vsnprintf(line, sizeof line, format, copy);
             va_end(copy);
             if (length > 0) {
-                sink(line, length < (int)sizeof line ? (size_t)length : sizeof line - 1);
+                size_t kept = length < (int)sizeof line ? (size_t)length : sizeof line - 1;
+                sink(line, kept);
+                /* the panic log keeps the newest lines before a panic */
+                panic_capture_log(line, kept);
             }
             atomic_flag_clear_explicit(&busy, memory_order_release);
         } else {

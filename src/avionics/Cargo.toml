@@ -26,6 +26,7 @@ mission = { path = "crates/mission" }
 board_config = { path = "crates/board_config" }
 recorder_wire = { path = "crates/recorder_wire" }
 flash_ring = { path = "crates/flash_ring" }
+panics = { path = "crates/panics" }
 recorder = { path = "crates/recorder" }
 warmstart = { path = "crates/warmstart" }
 gnss = { path = "crates/gnss" }
