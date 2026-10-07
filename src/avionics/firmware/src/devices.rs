@@ -36,6 +36,8 @@ pub struct Member {
     pub name: &'static str,
     /// The driver.
     pub part: Part,
+    /// What it runs on the owner's tick, from the owner's start (crate::owner).
+    pub run: Option<sensors::Run>,
 }
 
 /// The LSM6DSO32 on SPI2 once it came up: the control thread, SPI2's owner, takes it (crate::control).
@@ -91,6 +93,14 @@ pub struct Topology {
 }
 
 impl Topology {
+    /// The scalar quantity `quantity` (altitude, pressure, ...), when a provider of it came up.
+    pub fn scalar(&self, quantity: &str) -> Option<&Parameter<f32>> {
+        self.scalars
+            .iter()
+            .find(|parameter| parameter.name() == quantity)
+            .map(|parameter| &**parameter)
+    }
+
     /// The vector quantity `quantity` (accel, rate, mag, attitude), when a provider of it came up.
     pub fn vector(&self, quantity: &str) -> Option<&Parameter<[f32; 3]>> {
         self.vectors
@@ -368,7 +378,11 @@ fn set_up_i2c(
         owner::record(id, entry.name, calls, &rearmed);
     }
     if let (Some(part), Some(id)) = (came_up, port_id) {
-        members[usize::from(id)].push(Member { name: entry.name, part });
+        members[usize::from(id)].push(Member {
+            name: entry.name,
+            part,
+            run: None,
+        });
     }
     outcome
 }

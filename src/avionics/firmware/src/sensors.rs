@@ -13,12 +13,13 @@
 use std::mem::ManuallyDrop;
 
 use board_config::Entry;
+use databoard::Writer;
 use drivers::axes::Axes;
 use drivers::bmi323::Bmi323;
 use drivers::bmm350::Bmm350;
 use drivers::bmp581::Bmp581;
 use drivers::device::Device;
-use drivers::icp10111::Icp10111;
+use drivers::icp10111::{Icp10111, Poll, Reading};
 use drivers::ina226::Ina226;
 use drivers::lsm6dso32::{Lsm6dso32, OverI2c};
 use drivers::sdp810::Sdp810;
@@ -28,7 +29,10 @@ use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::gpio::{AnyOutputPin, GpioError, Output, PinDriver};
 use esp_idf_svc::sys::EspError;
 use firmware::buses::i2c::I2cPort;
+use recorder::{Cell, Telemetry};
 use serde_json::Value;
+
+use crate::devices::Topology;
 
 /// The failure reason of a plan B implementation this port has not reached yet (D13 of the M5 plan): plan B's
 /// `no driver/activity`, with why.
@@ -101,6 +105,102 @@ pub fn default_address(implementation: &str) -> Option<u8> {
         "sdp810" => Some(drivers::sdp810::ADDRESS),
         "vl53l1x" | "vl53l4cx" => Some(drivers::vl53l1x::ADDRESS),
         _ => None,
+    }
+}
+
+/// What a part does on its owner's tick beyond its bus work: where its readings go (M6: the ICP-10111).
+pub enum Run {
+    /// A barometer's channels and stream.
+    Barometer(Barometer),
+}
+
+impl Run {
+    /// The run `part` needs on its owner's tick, its writers claimed from `topology` for source `name`; None for a
+    /// part with nothing to run yet.
+    pub fn new(name: &'static str, part: &Part, topology: &'static Topology) -> Option<Run> {
+        match part {
+            Part::Icp10111(_) => Some(Run::Barometer(Barometer::new(name, topology))),
+            _ => None,
+        }
+    }
+}
+
+/// What a tick asks of the owner beyond the part itself.
+pub enum Event {
+    /// The part's recovery sent a general call and the bus has settled: re-arm the port's other parts.
+    Rearm,
+}
+
+/// A barometer's outputs: its four databoard channels (plan B's push order) and its stream.
+pub struct Barometer {
+    /// The `altitude` writer (m AMSL), when the quantity is on the databoard.
+    altitude: Option<Writer<'static, f32>>,
+    /// The `temperature` writer (degrees C).
+    temperature: Option<Writer<'static, f32>>,
+    /// The `pressure` writer (Pa).
+    pressure: Option<Writer<'static, f32>>,
+    /// The `elevation` writer (m above the ground).
+    elevation: Option<Writer<'static, f32>>,
+    /// Its stream, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// A read failed and none succeeded since: one log line per run (plan B's `note`).
+    failing: bool,
+    /// A row was refused and none written since: one log line per run.
+    overflowing: bool,
+}
+
+impl Barometer {
+    /// The outputs of source `name`.
+    fn new(name: &'static str, topology: &'static Topology) -> Barometer {
+        let writer = |quantity: &str| topology.scalar(quantity).and_then(|parameter| parameter.writer(name));
+        Barometer {
+            altitude: writer("altitude"),
+            temperature: writer("temperature"),
+            pressure: writer("pressure"),
+            elevation: writer("elevation"),
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            failing: false,
+            overflowing: false,
+        }
+    }
+
+    /// Publishes a reading (plan B icp10111.py:346-362): altitude, temperature, pressure, then the elevation above
+    /// the ground, and the row.
+    fn publish(&mut self, name: &str, elevation: Option<f32>, reading: &Reading, now_us: u64) {
+        self.failing = false;
+        for (writer, value) in [
+            (&mut self.altitude, Some(reading.altitude)),
+            (&mut self.temperature, Some(reading.temperature)),
+            (&mut self.pressure, Some(reading.pressure)),
+            (&mut self.elevation, elevation),
+        ] {
+            if let (Some(writer), Some(value)) = (writer, value) {
+                writer.push(value, now_us);
+            }
+        }
+        let Some(telemetry) = &mut self.telemetry else {
+            return;
+        };
+        if !telemetry.due(now_us) {
+            return;
+        }
+        let row = [
+            Cell::F32(reading.altitude),
+            Cell::F32(reading.temperature),
+            Cell::F32(reading.pressure),
+            elevation.map_or(Cell::None, Cell::F32),
+        ];
+        match telemetry.push(now_us, &row) {
+            Ok(()) => self.overflowing = false,
+            Err(overflow) => {
+                if !self.overflowing {
+                    log::warn!("{name} :: telemetry {overflow}");
+                    self.overflowing = true;
+                }
+            }
+        }
     }
 }
 
@@ -367,6 +467,30 @@ impl Part {
                 log::warn!("{name} :: probe FAILED: {message}");
                 Some(message)
             }
+        }
+    }
+
+    /// One owner tick for the part named `name` (M6: the ICP-10111's two-phase measurement, plan B's run loop),
+    /// publishing through `run`. Returns [`Event::Rearm`] when the part's recovery asks the owner to re-arm the port's
+    /// other parts.
+    pub fn tick(&mut self, name: &str, run: &mut Run, port: &mut I2cPort, now_us: u64) -> Option<Event> {
+        match (self, run) {
+            (Part::Icp10111(barometer), Run::Barometer(outputs)) => match barometer.poll(port, now_us) {
+                Poll::Waiting | Poll::Issued | Poll::GeneralCall => None,
+                Poll::Reading(reading) => {
+                    outputs.publish(name, barometer.elevation(&reading), &reading, now_us);
+                    None
+                }
+                Poll::Failed { fault, .. } => {
+                    if !outputs.failing {
+                        log::warn!("icp10111 :: read {fault}");
+                        outputs.failing = true;
+                    }
+                    None
+                }
+                Poll::Rearm => Some(Event::Rearm),
+            },
+            _ => None,
         }
     }
 

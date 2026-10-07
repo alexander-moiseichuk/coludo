@@ -25,7 +25,8 @@ use firmware::buses::i2c::{I2cError, I2cPort, PortFigures};
 use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
 use layout::Addresses;
 
-use crate::devices::Member;
+use crate::devices::{Member, Topology};
+use crate::sensors::{Event, Run};
 
 /// The owners' priorities, by port: the bus owners sit below the control thread (§4.2).
 const PRIORITIES: [u8; 2] = [18, 17];
@@ -154,9 +155,17 @@ pub fn spawn(id: u8, sda: u8, scl: u8, clock_hz: u32) -> anyhow::Result<(Parked,
 /// mailbox from then on.
 ///
 /// Errors: the owner is gone.
-pub fn start(parked: Parked, port: I2cPort, mut members: Vec<Member>) -> anyhow::Result<()> {
+pub fn start(
+    parked: Parked,
+    port: I2cPort,
+    mut members: Vec<Member>,
+    topology: &'static Topology,
+) -> anyhow::Result<()> {
     // by name, the order plan B's Inspector walks them for probes and re-arms
     members.sort_by(|left, right| left.name.cmp(right.name));
+    for member in &mut members {
+        member.run = Run::new(member.name, &member.part, topology);
+    }
     parked
         .resume
         .send((port, members))
@@ -209,6 +218,30 @@ fn own(
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
+        }
+        // SAFETY: a plain read of the monotonic timer.
+        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        run(&mut port, &mut members, &mut delay, now_us);
+    }
+}
+
+/// The parts' run loops on one wake (§4.3): each part with a run, due by time; a part's recovery re-arms the port's
+/// other parts, logged as plan B's icp10111 logs it and recorded once.
+fn run(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, now_us: u64) {
+    for index in 0..members.len() {
+        let member = &mut members[index];
+        let Some(run) = member.run.as_mut() else {
+            continue;
+        };
+        if let Some(Event::Rearm) = member.part.tick(member.name, run, port, now_us) {
+            let name = member.name;
+            let _ = port.take_general_call();
+            let rearmed = rearm(port, members, name, delay);
+            log::warn!(
+                "{name} :: read recovery: general-call reset + peer rearm after {} failures",
+                drivers::icp10111::RECOVER_AFTER
+            );
+            record(port.id(), name, 1, &rearmed);
         }
     }
 }

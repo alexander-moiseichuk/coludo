@@ -182,7 +182,7 @@ fn main() -> anyhow::Result<()> {
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     for (parked, port) in lent {
         let id = port.id();
-        if let Err(error) = owner::start(parked, port, std::mem::take(&mut members[usize::from(id)])) {
+        if let Err(error) = owner::start(parked, port, std::mem::take(&mut members[usize::from(id)]), topology) {
             log::error!("i2c:{id} :: {error}");
         }
     }
