@@ -45,6 +45,8 @@ pub enum Kind {
     I2c,
     /// A part on SPI2: the LSM6DSO32 on its default transport.
     Spi,
+    /// The separation switch: a GPIO the control thread reads.
+    Separation,
     /// Run natively by the firmware, with nothing to set up: up.
     Native,
     /// A plan B implementation not ported yet: failed with [`NOT_PORTED_YET`].
@@ -58,7 +60,7 @@ pub enum Kind {
 const NATIVE: [&str; 5] = ["recorder", "cc", "wifi", "health", "ov5647"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 17] = [
+const NOT_PORTED: [&str; 16] = [
     "adxl375",
     "bno055",
     "bmp280",
@@ -67,7 +69,6 @@ const NOT_PORTED: [&str; 17] = [
     "neo6mv2",
     "gnss_calib",
     "field",
-    "separation",
     "sg90",
     "mg90s",
     "sequencer",
@@ -87,6 +88,7 @@ pub fn classify(entry: &Entry) -> Kind {
             controller::Binding::I2c { .. } => Kind::I2c,
             _ => Kind::Spi,
         },
+        "separation" => Kind::Separation,
         implementation if NATIVE.contains(&implementation) => Kind::Native,
         implementation if NOT_PORTED.contains(&implementation) => Kind::NotPorted,
         _ => Kind::Unknown,
@@ -213,6 +215,8 @@ pub struct Stream {
     pub fields: &'static [&'static str],
     /// The decimation window, microseconds.
     pub decimate_us: i32,
+    /// Whether each row wakes the ring_writer at once (separation.csv: the stage transition's record).
+    pub durable: bool,
 }
 
 /// The LSM6DSO32's columns (plan B lsm6dso32.py:124-126): accel in g, the gyro as raw centidegrees a second, and the
@@ -241,16 +245,18 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
                     .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
             })
     };
-    let (file, fields, decimate_us): (String, &'static [&'static str], i32) = match entry.implementation {
-        "lsm6dso32" => (format!("{}.csv", entry.name), &IMU_FIELDS, window()),
-        "icp10111" => (format!("{}.csv", entry.name), &BAROMETER_FIELDS, window()),
-        "separation" => ("separation.csv".to_string(), &SEPARATION_FIELDS, 0),
+    let (file, fields, decimate_us, durable): (String, &'static [&'static str], i32, bool) = match entry.implementation
+    {
+        "lsm6dso32" => (format!("{}.csv", entry.name), &IMU_FIELDS, window(), false),
+        "icp10111" => (format!("{}.csv", entry.name), &BAROMETER_FIELDS, window(), false),
+        "separation" => ("separation.csv".to_string(), &SEPARATION_FIELDS, 0, true),
         _ => return None,
     };
     Some(Stream {
         file,
         fields,
         decimate_us,
+        durable,
     })
 }
 

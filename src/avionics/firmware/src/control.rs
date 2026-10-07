@@ -11,7 +11,9 @@
 //!
 //! The tick's work (§4.3), as the milestones bring it: the primary IMU, the LSM6DSO32 on SPI2 (M6) -- its INT1 edges
 //! counted by a core-1 GPIO interrupt (`irq_runs`, plan B's evidence of a live line), one 12-byte burst read, `accel`
-//! and `rate` pushed, its row written on this thread's own producer ring.
+//! and `rate` pushed, its row written on this thread's own producer ring; the separation switch (M6) -- a both-edge
+//! GPIO interrupt flags a change, each tick steps the debounce with one pin read, and a confirmed separation in
+//! BOOSTING moves the stage to GLIDING, recorded in the durable separation.csv.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -24,8 +26,9 @@ use firmware::buses::spi::SpiHandle;
 use firmware::gcl::{self, Command, Gate, Reach};
 use recorder::{Cell, Telemetry};
 
-use crate::devices::{SpiMember, Topology};
+use crate::devices::{SeparationMember, SpiMember, Topology};
 use crate::recorder::Producer;
+use crate::status::STATUS;
 
 /// The control thread's priority: above the bus owners (18, 17), below esp_hosted's (§4.2).
 const PRIORITY: u8 = 20;
@@ -62,6 +65,92 @@ static IMU_FAILURES: AtomicU32 = AtomicU32::new(0);
 static IRQ_RUNS_LAST: AtomicU32 = AtomicU32::new(0);
 /// Whether INT1 is silent (the driver's verdict: three wakes in a row with no edge).
 static INTERRUPT_SILENT: AtomicBool = AtomicBool::new(false);
+/// A separation-pin edge since the tick last looked: the GPIO interrupt sets it, the tick takes it.
+static SEPARATION_EDGE: AtomicBool = AtomicBool::new(false);
+/// The separation switch's debounced latch, for the console and (M8) the warm-start gate: true = separated.
+static SEPARATED: AtomicBool = AtomicBool::new(false);
+
+/// The separation switch as the control thread drives it: its pin, its debounce and its stream.
+struct Switch {
+    /// Its GPIO.
+    gpio: u8,
+    /// The debounced latch.
+    part: drivers::separation::Separation,
+    /// separation.csv, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+}
+
+impl Switch {
+    /// The switch of `member`, its edge interrupt armed on this thread (core 1).
+    fn new(member: SeparationMember) -> Switch {
+        if let Err(error) = arm_edges(member.gpio) {
+            log::warn!(
+                "separation :: GPIO{} edge interrupt not armed ({error}): no settle starts",
+                member.gpio
+            );
+        }
+        SEPARATED.store(member.part.separated(), Ordering::Relaxed);
+        Switch {
+            gpio: member.gpio,
+            part: member.part,
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(member.name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+        }
+    }
+
+    /// One tick: one pin read through the debounce; a confirmed change is applied in the current stage (plan B
+    /// separation._apply): the stage advances, the row is written, the event is logged.
+    fn tick(&mut self, now_us: u64) {
+        let now_ms = (now_us / 1000) as u32;
+        let edge = SEPARATION_EDGE.swap(false, Ordering::Relaxed);
+        // SAFETY: a plain read of the input bring-up configured.
+        let high = unsafe { sys::gpio_get_level(i32::from(self.gpio)) } != 0;
+        let Some(event) = self.part.step(now_ms, high, edge, STATUS.stage()) else {
+            return;
+        };
+        if event.advanced {
+            STATUS.set_stage(event.stage);
+        }
+        SEPARATED.store(event.separated, Ordering::Relaxed);
+        if let Some(telemetry) = &mut self.telemetry {
+            let [name, stage] = event.row();
+            // plan B catches an overflow here and goes on: the stage has moved either way
+            if let Err(overflow) = telemetry.push(now_us, &[Cell::Text(name), Cell::Text(stage)]) {
+                log::warn!("separation :: record {overflow}");
+            }
+        }
+        log::info!("separation :: {}", event.name());
+    }
+}
+
+/// A separation-pin edge: flag it. Integer only.
+unsafe extern "C" fn separation_edge(_: *mut core::ffi::c_void) {
+    SEPARATION_EDGE.store(true, Ordering::Relaxed);
+}
+
+/// Arms a both-edge interrupt on the separation pin (already an input with its pull-down) that flags
+/// [`SEPARATION_EDGE`]; on this thread, so the GPIO interrupt service runs on core 1.
+fn arm_edges(gpio: u8) -> Result<(), sys::EspError> {
+    // SAFETY: the pin bring-up configured; the handler is a static function.
+    unsafe {
+        sys::esp!(sys::gpio_set_intr_type(
+            i32::from(gpio),
+            sys::gpio_int_type_t_GPIO_INTR_ANYEDGE
+        ))?;
+        match sys::gpio_install_isr_service(0) {
+            sys::ESP_OK | sys::ESP_ERR_INVALID_STATE => {}
+            code => sys::esp!(code)?,
+        }
+        sys::esp!(sys::gpio_isr_handler_add(
+            i32::from(gpio),
+            Some(separation_edge),
+            core::ptr::null_mut()
+        ))?;
+        sys::esp!(sys::gpio_intr_enable(i32::from(gpio)))?;
+    }
+    Ok(())
+}
 
 /// The primary IMU as the control thread drives it: the part, its bus handle, its databoard writers and its stream.
 struct Imu {
@@ -233,7 +322,12 @@ unsafe extern "C" fn alarm(
 /// the owners started (their task handles are taken here).
 ///
 /// Errors: the thread would not spawn.
-pub fn start(schedule_hz: u32, spi: Vec<SpiMember>, topology: &'static Topology) -> anyhow::Result<()> {
+pub fn start(
+    schedule_hz: u32,
+    spi: Vec<SpiMember>,
+    separation: Option<SeparationMember>,
+    topology: &'static Topology,
+) -> anyhow::Result<()> {
     ThreadSpawnConfiguration {
         name: Some(c"control"),
         stack_size: STACK_SIZE,
@@ -244,14 +338,14 @@ pub fn start(schedule_hz: u32, spi: Vec<SpiMember>, topology: &'static Topology)
     .set()?;
     let spawned = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || run(schedule_hz, spi, topology));
+        .spawn(move || run(schedule_hz, spi, separation, topology));
     ThreadSpawnConfiguration::default().set()?;
     spawned?;
     Ok(())
 }
 
 /// The control thread: the IMU, the timer, then the tick forever.
-fn run(schedule_hz: u32, spi: Vec<SpiMember>, topology: &'static Topology) {
+fn run(schedule_hz: u32, spi: Vec<SpiMember>, separation: Option<SeparationMember>, topology: &'static Topology) {
     let period_us = (TIMER_RESOLUTION_HZ / schedule_hz.max(1)) as i64;
     // this thread's own producer ring: its rows and log lines never contend with another thread's
     let _attachment = crate::recorder::get().and_then(|recorder| recorder.attach(Producer::Control as usize).ok());
@@ -270,6 +364,7 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, topology: &'static Topology) {
     for extra in spi {
         log::warn!("control :: {} not driven: one SPI IMU only", extra.name);
     }
+    let mut switch = separation.map(Switch::new);
     let mut tasks = [core::ptr::null_mut(); 3];
     // SAFETY: a plain read of this task's own handle.
     tasks[0] = unsafe { sys::xTaskGetCurrentTaskHandle() };
@@ -312,6 +407,9 @@ fn run(schedule_hz: u32, spi: Vec<SpiMember>, topology: &'static Topology) {
         }
         if let Some(imu) = &mut imu {
             imu.tick(now_us as u64, (period_us / 1000) as u32);
+        }
+        if let Some(switch) = &mut switch {
+            switch.tick(now_us as u64);
         }
     }
 }
@@ -374,6 +472,7 @@ pub fn register_commands() {
                     ("imu_failures", &IMU_FAILURES.load(Ordering::Relaxed).to_string()),
                     ("irq_runs_last", &IRQ_RUNS_LAST.load(Ordering::Relaxed).to_string()),
                     ("int1_silent", &INTERRUPT_SILENT.load(Ordering::Relaxed).to_string()),
+                    ("separated", &SEPARATED.load(Ordering::Relaxed).to_string()),
                 ],
             )
         }),

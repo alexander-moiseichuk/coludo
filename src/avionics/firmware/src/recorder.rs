@@ -349,7 +349,7 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str) -> anyhow::Re
         let Some(stream) = crate::sensors::stream(&entry) else {
             continue;
         };
-        match registry.add(&stream.file, stream.fields, stream.decimate_us, false) {
+        match registry.add(&stream.file, stream.fields, stream.decimate_us, stream.durable) {
             Ok(id) => devices.push((entry.name.to_string(), id)),
             Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", stream.file),
         }

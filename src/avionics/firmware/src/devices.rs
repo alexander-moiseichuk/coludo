@@ -22,7 +22,9 @@ use board_config::Entry;
 use controller::{Attempt, Binding, Table};
 use databoard::Parameter;
 use drivers::lsm6dso32::{Lsm6dso32, OverSpi};
+use drivers::separation::Separation;
 use esp_idf_svc::hal::delay::Delay;
+use esp_idf_svc::sys;
 use firmware::buses::i2c::I2cPort;
 use firmware::buses::spi::{SpiBus, SpiHandle};
 use serde_json::Value;
@@ -51,6 +53,19 @@ pub struct SpiMember {
     /// Its INT1 data-ready GPIO, when the config wires one (`int_pin`).
     pub interrupt: Option<u8>,
 }
+
+/// The separation switch once it came up: the control thread reads it every tick (crate::control).
+pub struct SeparationMember {
+    /// The entry's name.
+    pub name: &'static str,
+    /// Its GPIO.
+    pub gpio: u8,
+    /// The debounced latch.
+    pub part: Separation,
+}
+
+/// The pin name plan B's separation driver takes when its entry names none (`_pin_gpio('pin', 'separation_switch')`).
+const SEPARATION_PIN: &str = "separation_switch";
 
 /// The quantities scalars are (D14 of the M5 plan): one f32 each.
 const SCALARS: [&str; 12] = [
@@ -211,6 +226,8 @@ pub struct Devices {
     pub spi: Vec<SpiMember>,
     /// SPI2, when an SPI part is enabled: it lives for the program.
     pub spi_bus: Option<SpiBus>,
+    /// The separation switch, when it came up.
+    pub separation: Option<SeparationMember>,
 }
 
 /// Brings every enabled entry of `document` (the post-layout config) up, in config order, on the ports main holds on
@@ -223,6 +240,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut delay = Delay::new_default();
     let mut members: [Vec<Member>; 2] = [Vec::new(), Vec::new()];
     let mut spi = Vec::new();
+    let mut separation = None;
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -261,6 +279,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             ),
             Kind::I2c => set_up_i2c(document, entry, attempts, ports, &mut members, &mut delay),
             Kind::Spi => set_up_spi(document, entry, attempts, spi_bus.as_ref(), &mut spi, &mut delay),
+            Kind::Separation => set_up_separation(document, entry, attempts, &mut separation),
         };
         outcomes.push((controller::candidate(document, entry), outcome));
     }
@@ -276,7 +295,81 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         members,
         spi,
         spi_bus,
+        separation,
     }
+}
+
+/// The separation switch's bring-up (plan B separation.py:49-64): its pin (the entry's `pin`, else the board's
+/// `separation_switch`) an input with the internal pull-down, its level read as the latch's start, with no debounce,
+/// event or row.
+fn set_up_separation(
+    document: &Value,
+    entry: &Entry<'static>,
+    attempts: u32,
+    separation: &mut Option<SeparationMember>,
+) -> Result<(), String> {
+    let gpio = if entry.fields.contains_key("pin") {
+        board_config::pin(document, entry, "pin")
+    } else {
+        document
+            .get("pins")
+            .and_then(|pins| pins.get(SEPARATION_PIN))
+            .and_then(Value::as_u64)
+            .and_then(|gpio| u8::try_from(gpio).ok())
+    };
+    let settings = drivers::separation::Settings::from_config(&Value::Object(entry.fields.clone()));
+    let mut came_up = None;
+    let outcome = controller::set_up(
+        entry.name,
+        entry.implementation,
+        attempts,
+        |_, last| {
+            let Some(gpio) = gpio else {
+                let name = entry
+                    .fields
+                    .get("pin")
+                    .and_then(Value::as_str)
+                    .unwrap_or(SEPARATION_PIN);
+                return Attempt::Failed {
+                    diagnosis: last.then(|| format!("no pin -- '{name}' not defined in config pins")),
+                };
+            };
+            match input_pulled_down(gpio) {
+                Ok(()) => {
+                    // SAFETY: a plain read of the input just configured.
+                    let high = unsafe { sys::gpio_get_level(i32::from(gpio)) } != 0;
+                    came_up = Some(SeparationMember {
+                        name: entry.name,
+                        gpio,
+                        part: Separation::new(&settings, high),
+                    });
+                    Attempt::Up
+                }
+                Err(error) => Attempt::Raised {
+                    error: format!("GPIO{gpio}: {error}"),
+                    diagnosis: None,
+                },
+            }
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    );
+    *separation = came_up;
+    outcome
+}
+
+/// GPIO `gpio` as an input with the internal pull-down (the pads route 3V3 to it while nested).
+fn input_pulled_down(gpio: u8) -> Result<(), sys::EspError> {
+    let config = sys::gpio_config_t {
+        pin_bit_mask: 1u64 << gpio,
+        mode: sys::gpio_mode_t_GPIO_MODE_INPUT,
+        pull_up_en: sys::gpio_pullup_t_GPIO_PULLUP_DISABLE,
+        pull_down_en: sys::gpio_pulldown_t_GPIO_PULLDOWN_ENABLE,
+        intr_type: sys::gpio_int_type_t_GPIO_INTR_DISABLE,
+        ..Default::default()
+    };
+    // SAFETY: plain GPIO configuration of the pin the board config gives the switch.
+    sys::esp!(unsafe { sys::gpio_config(&config) })
 }
 
 /// SPI2 for the SPI parts the port drives, after the chip select of every other SPI part was held high; None when

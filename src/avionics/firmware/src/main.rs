@@ -179,6 +179,7 @@ fn main() -> anyhow::Result<()> {
         mut members,
         spi,
         spi_bus: _spi_bus,
+        separation,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     for (parked, port) in lent {
         let id = port.id();
@@ -187,7 +188,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     // the flight tick on core 1, which wakes the owners too (§4.2, §4.3)
-    if let Err(error) = control::start(board_config::schedule_hz(&loaded.document), spi, topology) {
+    if let Err(error) = control::start(board_config::schedule_hz(&loaded.document), spi, separation, topology) {
         log::error!("control :: the control thread did not start: {error}");
     }
     if let Err(error) = supervisor::start(board.clone()) {
