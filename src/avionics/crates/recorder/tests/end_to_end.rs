@@ -111,7 +111,7 @@ fn recorder(registry: Registry, origin: Instant, wakes: &'static AtomicU32) -> &
         telemetry_ms: 0,
         stats_ms: 100,
     };
-    Box::leak(Box::new(Recorder::new(
+    let recorder: &'static Recorder = Box::leak(Box::new(Recorder::new(
         registry,
         identity(BOOT_ID),
         settings,
@@ -121,7 +121,9 @@ fn recorder(registry: Registry, origin: Instant, wakes: &'static AtomicU32) -> &
         Box::new(move || {
             wakes.fetch_add(1, Ordering::Relaxed);
         }),
-    )))
+    )));
+    recorder.bind_config_id(CONFIG_ID);
+    recorder
 }
 
 /// Push until it is queued: telemetry raises when its ring is full, and this producer waits for the writer.
@@ -327,6 +329,7 @@ fn the_tee_loses_no_row_while_the_executor_drains() {
         Box::new(move || now(origin)),
         Box::new(|| {}),
     )));
+    recorder.bind_config_id(CONFIG_ID);
     let producing = AtomicBool::new(true);
     let (lines, dropped) = std::thread::scope(|scope| {
         let writer_thread = scope.spawn(|| {

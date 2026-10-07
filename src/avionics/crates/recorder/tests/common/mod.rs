@@ -29,6 +29,9 @@ pub const SESSION: &str = "000123";
 /// 2026-10-03T14:21:07Z: a set clock.
 pub const EPOCH: i64 = 1_791_037_267;
 
+/// The config id the tests' session.csv rows carry, bound as the bring-up binds it (after the layout).
+pub const CONFIG_ID: &str = "3f2a91";
+
 /// The uptime the tests start at: a board some seconds after boot.
 pub const START_US: u64 = 10_000_000;
 
@@ -87,7 +90,6 @@ pub fn labelled(boot: u32, label: Session) -> Identity {
         session: label,
         board: "taster".into(),
         firmware: "dev".into(),
-        config_id: "3f2a91".into(),
     }
 }
 
@@ -145,6 +147,7 @@ pub fn recorder_as(
             counting.fetch_add(1, Ordering::Relaxed);
         }),
     );
+    recorder.bind_config_id(CONFIG_ID);
     Parts {
         recorder: Box::leak(Box::new(recorder)),
         clock,

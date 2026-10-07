@@ -278,6 +278,7 @@ fn many_producers_record_and_the_card_reads_back_good_in_the_host_tools() {
             wakes.fetch_add(1, Ordering::Relaxed);
         }),
     )));
+    recorder.bind_config_id(CONFIG_ID);
     let root = scratch("threads");
     let card = root.join("card"); // the card's root, as /sdcard on the board
     let producing = AtomicBool::new(true);

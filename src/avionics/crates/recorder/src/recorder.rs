@@ -25,7 +25,7 @@ use std::cell::Cell as LocalCell;
 use std::marker::PhantomData;
 use std::string::String;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Mutex, TryLockError};
+use std::sync::{Mutex, OnceLock, TryLockError};
 use std::vec::Vec;
 
 use flash_ring::Position;
@@ -74,8 +74,6 @@ pub struct Identity {
     pub board: String,
     /// The firmware version.
     pub firmware: String,
-    /// The config id the firmware announces.
-    pub config_id: String,
 }
 
 /// The recorder's config (`recorder.*`), resolved by bring-up.
@@ -228,6 +226,9 @@ pub struct Recorder {
     registry: Registry,
     /// The boot, for the session.csv rows and the status line.
     identity: Identity,
+    /// The config id the firmware announces, for the session.csv rows: bound once the bring-up knows it (after the
+    /// layout has rewritten the config, which is after the Recorder opened).
+    config_id: OnceLock<String>,
     /// `recorder.telemetry_ms`, fixed for the boot.
     telemetry_ms: u32,
     /// `recorder.stats_ms`, which the operator may change: the writer reads it every step.
@@ -283,6 +284,7 @@ impl Recorder {
             id: NEXT_RECORDER.fetch_add(1, Ordering::Relaxed),
             registry,
             identity,
+            config_id: OnceLock::new(),
             telemetry_ms: settings.telemetry_ms,
             stats_ms: AtomicU32::new(settings.stats_ms),
             clock,
@@ -428,6 +430,13 @@ impl Recorder {
         self.push_row(StreamId::SESSION_INDEX, uptime_us, &session_row.cells(&mut date))
     }
 
+    /// Binds the config id the session.csv rows carry (empty until then), once: the bring-up knows it only after the
+    /// layout has rewritten the config, and the Recorder opened before that so the layout's lines are kept. Returns
+    /// false, keeping the first, when one was bound already.
+    pub fn bind_config_id(&self, config_id: &str) -> bool {
+        self.config_id.set(config_id.into()).is_ok()
+    }
+
     /// A session.csv row of this boot.
     pub(crate) fn session_row<'a>(
         &'a self,
@@ -445,7 +454,7 @@ impl Recorder {
             utc_offset,
             board: &self.identity.board,
             firmware: &self.identity.firmware,
-            config_id: &self.identity.config_id,
+            config_id: self.config_id.get().map_or("", String::as_str),
             source,
             cc_position,
         }
@@ -616,7 +625,6 @@ mod tests {
             session: Session::new("000123").unwrap(),
             board: "taster".into(),
             firmware: "dev".into(),
-            config_id: "3f2a91".into(),
         };
         let settings = Settings {
             telemetry_ms: 0,
@@ -641,6 +649,17 @@ mod tests {
     /// A Recorder of `rings` producer rings of `bytes` each, with only the session index.
     fn recorder(rings: usize, bytes: usize) -> Recorder {
         recorder_with(Registry::new(), rings, bytes, false).0
+    }
+
+    #[test]
+    fn the_config_id_binds_once_and_rows_before_it_carry_none() {
+        let recorder = recorder(1, 256);
+        let config_id = |recorder: &Recorder| recorder.session_row(0, 0, None, "boot", None).config_id.to_string();
+        assert_eq!(config_id(&recorder), "", "the layout has not run yet");
+        assert!(recorder.bind_config_id("92d537918c7c"));
+        assert_eq!(config_id(&recorder), "92d537918c7c");
+        assert!(!recorder.bind_config_id("38052780281d"), "a second bind is ignored");
+        assert_eq!(config_id(&recorder), "92d537918c7c");
     }
 
     #[test]
