@@ -33,6 +33,7 @@ gnss = { path = "crates/gnss" }
 databoard = { path = "crates/databoard" }
 layout = { path = "crates/layout" }
 drivers = { path = "crates/drivers" }
+controller = { path = "crates/controller" }
 # the device traits the drivers are written over (I2c, SpiDevice, DelayNs); esp-idf-hal implements the same 1.0
 embedded-hal = "1"
 serde = { version = "1", features = ["derive"] }
