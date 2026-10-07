@@ -1,7 +1,8 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! Python's value semantics over JSON values, the ones plan B's config.py leans on: `repr()` (the config_id
-//! hash and every `%r` in validate's messages), `%s` formatting, truthiness (`x or y`, `if x`) and `==`.
+//! hash and every `%r` in validate's messages), `%s` formatting, truthiness (`x or y`, `if x`) and `==`; and
+//! `isinstance(x, int)`, the test plan B's readers of pins and counts apply (the typed view's M5 readers).
 //!
 //! A value is what CPython's json.loads makes of a document: an object is a dict, an array a list, a string a
 //! str, an integer an int, any other number a float, and true/false/null are True/False/None. The oracle is
@@ -265,9 +266,18 @@ pub(crate) fn equals_integer(value: &Value, integer: i64) -> bool {
     Numeric::of(value).is_some_and(|number| number.equals(Numeric::Integer(i128::from(integer))))
 }
 
+/// The int `value` is when Python's `isinstance(value, int)` holds: an int, or a bool (0 or 1, a subclass of int).
+/// None for a float, even a whole one, and for any other kind.
+pub(crate) fn integer(value: &Value) -> Option<i128> {
+    match Numeric::of(value)? {
+        Numeric::Integer(integer) => Some(integer),
+        Numeric::Float(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{equals, equals_integer, formatted, representation, truthy};
+    use super::{equals, equals_integer, formatted, integer, representation, truthy};
     use serde_json::{Value, json};
 
     /// Python's repr of a float, through the JSON value.
@@ -427,5 +437,26 @@ mod tests {
         assert!(!equals_integer(&json!(2.5), 2));
         assert!(!equals_integer(&json!("2"), 2));
         assert!(!equals_integer(&json!(null), 0));
+    }
+
+    #[test]
+    fn isinstance_int_takes_ints_and_bools_only() {
+        assert_eq!(integer(&json!(5)), Some(5));
+        assert_eq!(integer(&json!(-7)), Some(-7));
+        assert_eq!(integer(&json!(u64::MAX)), Some(i128::from(u64::MAX)));
+        assert_eq!(integer(&json!(true)), Some(1), "a bool is an int to isinstance");
+        assert_eq!(integer(&json!(false)), Some(0));
+        // a float is never an int, whole or not, and neither is any other kind
+        for refused in [
+            json!(5.0),
+            json!(-0.0),
+            json!(2.5),
+            json!("5"),
+            json!(null),
+            json!([5]),
+            json!({"a": 5}),
+        ] {
+            assert_eq!(integer(&refused), None, "{refused}");
+        }
     }
 }

@@ -10,7 +10,8 @@
 //! * [`load`]: which document a boot runs, and the source text whoami reports.
 //! * [`write()`]: the canonical pretty text (`json.dumps(indent=1, sort_keys=True)` plus a newline).
 //! * A typed view of the few keys the firmware reads so far: [`board_id`], [`mcu`], [`wifi`],
-//!   [`max_range_m`].
+//!   [`max_range_m`], [`camera`]; and for the device bring-up (M5) the buses ([`i2c_bus`], [`spi_bus`]), the
+//!   device [`directory`] with each entry's [`pin`]s and [`provides`], and the [`setup_retries`].
 //! * [`python`]: Python's `==`, `%s` and truthiness over config values, for the ports that read a config as
 //!   plan B does.
 //!
@@ -44,7 +45,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub use validate::validate;
-pub use view::{Camera, CameraClock, Hub, Network, Wifi, board_id, camera, max_range_m, mcu, wifi};
+pub use view::{
+    Camera, CameraClock, Entry, Hub, I2cSpecification, Network, Provide, Section, SpiSpecification, Wifi, board_id,
+    camera, directory, i2c_bus, max_range_m, mcu, pin, provides, setup_retries, spi_bus, wifi,
+};
 pub use writer::write;
 
 /// How many hex digits of the sha256 a config_id keeps.

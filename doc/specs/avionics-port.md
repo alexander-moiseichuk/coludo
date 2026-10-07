@@ -501,6 +501,16 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   and SDP810 probes, which waited for plan B's run loop, do one direct conversion or read on the owner.
 - **Forced proofs:** GCL `i2c touch` (repeated reads: the wedge counter) and `i2c general-call` (SETTING-only,
   confirmed), since plan B has no command that sends a general call (Q20: the console API replaces board scripts).
+- **Config values validate() admits but plan B cannot run**, as board_config's typed view reads them (its doc
+  comments cite plan B's lines):
+  - a `board.setup_retries` that is not an int reads as 1 (plan B's bring-up raises on text, null or a float);
+  - a negative `provides.<quantity>.timeout_ms` reads as the default second. Plan B keeps it, and on a
+    primary-tier source it becomes the quantity's shared window, so no source of that quantity is ever fresh;
+  - a `freq` or `baud` that is not a whole number of Hz reads as the bus default (400 kHz, 5 MHz), and a whole
+    float as its value. validate() never checks them, and MicroPython's `I2C()`/`SPI()` raise on text, null or a
+    float, losing the bus;
+  - an int `addr` outside 0..=0x7f reads as no address, as an absent or null one does (the entry's raw fields
+    still tell the three apart). Plan B keeps it and the driver fails at its first transfer.
 - **Open (operator):** plan B's `bustune` counts every config entry on the bus, disabled ones included, as down, so
   the CC sweep never finds a ceiling; port it faithfully, or skip entries that are not enabled? And if the OV5647
   honours a general call (measured in M5), what an ICP general call on port 0 (v0.1 boards only) should do to the

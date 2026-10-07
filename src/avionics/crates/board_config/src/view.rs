@@ -5,15 +5,20 @@
 //! code that reads the same keys, and is meant for a document [`crate::validate`] accepts (what load()
 //! returns); for anything else it answers the nearest safe value, as each one says.
 //!
+//! For the device bring-up (M5): the I2C and SPI buses ([`i2c_bus`], [`spi_bus`]), plan B's device directory
+//! ([`directory`]), and per entry its pins ([`pin`]) and its databoard sources ([`provides`]), plus the setup
+//! attempts ([`setup_retries`]). They are meant for the post-layout document (crates/layout rewrites it in place
+//! first), as plan B's Controller reads the config layout.resolve has rewritten.
+//!
 //! Where plan B would carry a value of the wrong type into the radio or the socket and fail there (a text
 //! `retry_ms`, a numeric password, a host that is not text), the view reads it as the default or as off; each
-//! such reading is named on its function.
+//! such reading is named on its function. Every reader borrows the document and changes nothing.
 
 use std::fmt;
 
 use serde_json::{Map, Value};
 
-use crate::python::truthy;
+use crate::python::{equals_integer, formatted, integer, truthy};
 
 /// How long a network waits between two attempts to join it when the config does not say, in milliseconds
 /// (drivers/wifi.py `wifi.get('retry_ms', 10000)`).
@@ -250,13 +255,8 @@ fn hub_port(port: Option<&Value>) -> u16 {
 /// Mission's default, as plan B does (`field_cfg.get('max_range_m', 200)`). Also None for a value that is not
 /// a number (null, text, a bool), which plan B would carry into the Mission's range comparisons and fail on.
 pub fn max_range_m(document: &Value) -> Option<f32> {
-    let devices = ["sensors", "components"]
-        .into_iter()
-        .filter_map(|section| document.get(section).and_then(Value::as_array))
-        .flatten();
-    let field = devices
-        .filter_map(Value::as_object)
-        .find(|device| device.get("name").and_then(Value::as_str) == Some("field"))?;
+    let (_, field) =
+        devices(document).find(|(_, device)| device.get("name").and_then(Value::as_str) == Some("field"))?;
     // f64 at the JSON boundary, metres in f32 from here on
     field
         .get("max_range_m")
@@ -302,20 +302,8 @@ pub enum CameraClock {
 /// entry is a schema addition: validate() checks it as any device, and older files, which have none, stay valid.
 /// Plan B itself has no 'ov5647' implementation: it counts the entry as a failed device and refuses to arm.
 pub fn camera(document: &Value) -> Option<Camera> {
-    let device = ["sensors", "components"]
-        .into_iter()
-        .filter_map(|section| document.get(section).and_then(Value::as_array))
-        .flatten()
-        .filter_map(Value::as_object)
-        .find(|device| {
-            // `driver or activity`: the driver when it is truthy, else the activity (validate's `runs`)
-            let runs = device
-                .get("driver")
-                .filter(|driver| truthy(driver))
-                .or(device.get("activity"));
-            runs.and_then(Value::as_str) == Some(CAMERA_DRIVER)
-        })?;
-    if !device.get("enabled").is_none_or(truthy) {
+    let (_, device) = devices(document).find(|(_, device)| implementation(device) == CAMERA_DRIVER)?;
+    if !enabled(device) {
         return None;
     }
     let whole = |hertz: f64| (hertz.fract() == 0.0 && CAMERA_CLOCK_RANGE_HZ.contains(&hertz)).then_some(hertz as u32);
@@ -327,6 +315,320 @@ pub fn camera(document: &Value) -> Option<Camera> {
         },
     };
     Some(Camera { clock })
+}
+
+/// An I2C bus's clock when its spec names none, in Hz (i2cbus.py:94 `spec.get('freq', 400000)`).
+const DEFAULT_I2C_CLOCK_HZ: u32 = 400_000;
+
+/// An SPI bus's clock when its spec names none, in Hz (spibus.py:138 `spec.get('baud', 5_000_000)`).
+const DEFAULT_SPI_CLOCK_HZ: u32 = 5_000_000;
+
+/// An SPI bus's mode when its spec names none: 3, CPOL 1 and CPHA 1, the ADXL375's (spibus.py:137
+/// `spec.get('mode', 3)`, the default validate() checks against too, config.py:194-197).
+const DEFAULT_SPI_MODE: u8 = 3;
+
+/// The setup attempts when the board section does not say (controller.py:368 `get('setup_retries', 1)`).
+const DEFAULT_SETUP_ATTEMPTS: i128 = 1;
+
+/// The highest 7-bit I2C address, the only kind the buses speak.
+const HIGHEST_ADDRESS: u8 = 0x7f;
+
+/// An I2C bus, as plan B's i2cbus.Bus builds it from its spec (i2cbus.py:91-96).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct I2cSpecification {
+    /// The bus id, its key under `buses.i2c`: MicroPython's `I2C(id)`, the ESP-IDF port number.
+    pub id: u8,
+    /// The data line's GPIO (`sda`).
+    pub sda: u8,
+    /// The clock line's GPIO (`scl`).
+    pub scl: u8,
+    /// The bus clock in Hz (`freq`; 400 kHz when absent).
+    pub clock_hz: u32,
+}
+
+/// An SPI bus, as plan B's spibus.Bus builds it from its spec (spibus.py:131-147).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpiSpecification {
+    /// The bus id, its key under `buses.spi`: MicroPython's `SPI(id)`, where id 1 is the ESP32-P4's SPI2.
+    pub id: u8,
+    /// The clock line's GPIO (`sck`).
+    pub sck: u8,
+    /// The controller-out line's GPIO (`mosi`).
+    pub mosi: u8,
+    /// The controller-in line's GPIO (`miso`).
+    pub miso: u8,
+    /// The bus clock in Hz (`baud`; 5 MHz when absent).
+    pub clock_hz: u32,
+    /// The SPI mode, 0..=3: the clock polarity is its high bit and the phase its low bit, as plan B splits it
+    /// (`mode`; 3 when absent).
+    pub mode: u8,
+}
+
+/// The I2C bus `id`, as plan B builds it: `config.bus(cfg, 'i2c', id)` (config.py:681-696) handed to i2cbus.Bus,
+/// which constructs `I2C(id, scl=Pin(spec['scl']), sda=Pin(spec['sda']), freq=spec.get('freq', 400000))`
+/// (i2cbus.py:91-96).
+///
+/// None when the config defines no such bus: `buses.i2c.<id>` absent, null or not an object, which plan B's bind()
+/// reports as no bus, so its devices are not connected. Also None for a spec that lacks `scl` or `sda` (plan B's
+/// constructor raises KeyError, losing the bus and every device on it; validate() refuses it) or that names no GPIO
+/// for one of them: a pin reads as [`pin`] reads a pins-map value, where plan B's `Pin()` raises.
+///
+/// The clock is `freq` when it is a whole number of Hz in 1..=u32::MAX: an int, or a float equal to one (the typed
+/// view's rule for integer knobs). Absent or anything else, 400 kHz: validate() checks no clock, and plan B hands any
+/// other value to MicroPython's constructor, which refuses null, text and a float (losing the bus) and has no
+/// meaningful clock for a bool, zero or a negative.
+pub fn i2c_bus(document: &Value, id: u8) -> Option<I2cSpecification> {
+    let specification = bus(document, "i2c", id)?;
+    Some(I2cSpecification {
+        id,
+        sda: gpio(specification.get("sda")?)?,
+        scl: gpio(specification.get("scl")?)?,
+        clock_hz: clock_hz(specification.get("freq"), DEFAULT_I2C_CLOCK_HZ),
+    })
+}
+
+/// The SPI bus `id`, as plan B builds it: `config.bus(cfg, 'spi', id)` (config.py:681-696) handed to spibus.Bus,
+/// which constructs `SPI(id, baudrate=spec.get('baud', 5_000_000), polarity=mode >> 1, phase=mode & 1, sck=...,
+/// mosi=..., miso=...)` with `mode = spec.get('mode', 3)` (spibus.py:134-139).
+///
+/// None as for [`i2c_bus`]: no such bus, or a spec that lacks `sck`, `mosi` or `miso` or names no GPIO for one.
+/// The clock reads as [`i2c_bus`] reads it, with 5 MHz for the default.
+///
+/// The mode is the one of 0..=3 that `mode` equals under Python's `==`, which are exactly the values validate()
+/// admits (config.py:194-197): an int, a bool (True is mode 1, as plan B's shifts read it) or a whole float (plan B's
+/// `>>` raises on a float, losing the bus; the view reads the mode it names). Absent or anything else, 3.
+pub fn spi_bus(document: &Value, id: u8) -> Option<SpiSpecification> {
+    let specification = bus(document, "spi", id)?;
+    let mode = specification
+        .get("mode")
+        .and_then(|mode| (0..=3).find(|allowed| equals_integer(mode, i64::from(*allowed))))
+        .unwrap_or(DEFAULT_SPI_MODE);
+    Some(SpiSpecification {
+        id,
+        sck: gpio(specification.get("sck")?)?,
+        mosi: gpio(specification.get("mosi")?)?,
+        miso: gpio(specification.get("miso")?)?,
+        clock_hz: clock_hz(specification.get("baud"), DEFAULT_SPI_CLOCK_HZ),
+        mode,
+    })
+}
+
+/// Plan B's `config.bus` (config.py:681-696): the spec under `buses.<kind>.<id>`, looked up by the id's text
+/// (`str(ident)`), since the keys of a JSON object are text. None when a level is missing, or is not an object
+/// (plan B raises on a level that is present but no dict; validate() refuses one).
+fn bus<'d>(document: &'d Value, kind: &str, id: u8) -> Option<&'d Map<String, Value>> {
+    document.get("buses")?.get(kind)?.get(id.to_string())?.as_object()
+}
+
+/// A bus clock (`freq`, `baud`) in Hz (see [`i2c_bus`]): `default` unless it is a whole number in 1..=u32::MAX.
+fn clock_hz(value: Option<&Value>, default: u32) -> u32 {
+    let whole =
+        |hertz: f64| (hertz.fract() == 0.0 && (1.0..=f64::from(u32::MAX)).contains(&hertz)).then_some(hertz as u32);
+    match value {
+        // f64 at the JSON boundary: exact for every integer the range admits
+        Some(Value::Number(number)) => number.as_f64().and_then(whole).unwrap_or(default),
+        _ => default,
+    }
+}
+
+/// A GPIO number as task.py:166 `_pin_gpio` admits one: `isinstance(gpio, int) and gpio >= 0`, Python's int, so a
+/// bool is GPIO 0 or 1 (validate() refuses one) and a float, even a whole one, is none. A number past 255 is none
+/// too: no MCU the config names has that many GPIOs (plan B's `Pin()` raises on it).
+fn gpio(value: &Value) -> Option<u8> {
+    integer(value).and_then(|number| u8::try_from(number).ok())
+}
+
+/// Which device list of the config an entry sits in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    /// `sensors`: the data providers.
+    Sensors,
+    /// `components`: the consumers and actuators.
+    Components,
+}
+
+/// One device entry of the config, as plan B's Controller reads it to bring the device up.
+///
+/// The bus fields are the entry's own, with none of the defaults a driver applies: plan B's i2cbus.bind reads an
+/// absent `id` as 0 and an absent `addr` as the driver's datasheet address (i2cbus.py:297-301), spibus.bind an
+/// absent `id` as 1 (spibus.py:217), and each an absent `bus` as its own kind. An explicit null is not absent there
+/// (bind() then finds no bus, or hands the driver no address and its setup fails), nor is an `addr` this view reads
+/// as None: [`Entry::fields`] tells them apart.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry<'d> {
+    /// The device's name: non-empty text, unique across both lists (validate() refuses a duplicate).
+    pub name: &'d str,
+    /// The list it sits in.
+    pub section: Section,
+    /// What runs it: the `driver` when it is truthy, else the `activity` (controller.py:280 `comp.get('driver') or
+    /// comp.get('activity')`). Empty when that is not text, which names no implementation (validate() refuses it;
+    /// plan B fails it as `no driver/activity`).
+    pub implementation: &'d str,
+    /// The bus kind (`bus`: 'i2c', 'spi' or 'uart'). None when absent, null or not text.
+    pub bus: Option<&'d str>,
+    /// The bus id as text, as plan B compares and looks it up (`str(comp.get('id'))`, controller.py:149 and
+    /// config.py:696): an int 1 and a text '1' are one id, and a float 1.0 is '1.0', which names no bus. None when
+    /// `id` is absent or null.
+    pub bus_id: Option<String>,
+    /// The I2C address (`addr`): an int in 0..=0x7f, Python's int (a bool is 0 or 1, which validate() refuses).
+    /// None when absent or null, and also for any other value: validate() admits any int, and plan B's driver fails
+    /// at its first transfer on one past 0x7f. An SPI entry may carry one too, its fallback for an I2C wiring.
+    pub address: Option<u8>,
+    /// The whole entry, for the keys a driver reads itself.
+    pub fields: &'d Map<String, Value>,
+}
+
+/// Plan B's `Controller.directory()` (controller.py:96-103): every enabled, named device entry, `sensors` first and
+/// then `components`, each in its config order, the order plan B creates and sets the devices up in.
+///
+/// Enabled as plan B reads `device.get('enabled', True)`: absent, or truthy. Named: a non-empty text `name`; plan B
+/// would list a truthy name that is not text too, which validate() refuses. Skipped where plan B raises: an item that
+/// is not an object, and a `sensors` or `components` that is not a list.
+///
+/// A part layout disabled is not here, as in plan B: crates/layout writes `enabled` false into the document this
+/// reads (layout.py:430-453 `_fit`, for the parts layout.py:291-321 `fitted` rules out).
+pub fn directory(document: &Value) -> Vec<Entry<'_>> {
+    devices(document)
+        .filter(|(_, device)| enabled(device))
+        .filter_map(|(section, device)| {
+            let name = device
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())?;
+            let address = device
+                .get("addr")
+                .and_then(integer)
+                .and_then(|number| u8::try_from(number).ok())
+                .filter(|address| *address <= HIGHEST_ADDRESS);
+            Some(Entry {
+                name,
+                section,
+                implementation: implementation(device),
+                bus: device.get("bus").and_then(Value::as_str),
+                bus_id: device.get("id").filter(|id| !id.is_null()).map(formatted),
+                address,
+                fields: device,
+            })
+        })
+        .collect()
+}
+
+/// Plan B's `Task._pin_gpio(field)` (task.py:144-166): the GPIO an entry's `key` names through the board's `pins`
+/// map. The entry gives a pin NAME (`"cs_pin": "lsm6dso32_cs"`), and the map its number.
+///
+/// None, exactly as plan B, when the feature is absent or wired off: the entry has no `key`, the map has no such
+/// name, or the map gives null or a negative number. The number is Python's int, as plan B tests it
+/// (`isinstance(gpio, int) and gpio >= 0`): a bool is GPIO 0 or 1 and a float none, both refused by validate().
+/// Also None where plan B would fail: a `pins` that is not an object, a `key` whose value is not text (the map's
+/// keys are text, so plan B finds nothing for a number and raises on a list) and a GPIO past 255, which no MCU the
+/// config names has.
+///
+/// Plan B's default pin name for an entry that omits `key` (`_pin_gpio('pin', 'separation_switch')`) is not here: no
+/// M5 part uses one.
+pub fn pin(document: &Value, entry: &Entry, key: &str) -> Option<u8> {
+    let name = entry.fields.get(key)?.as_str()?;
+    gpio(document.get("pins")?.as_object()?.get(name)?)
+}
+
+/// One quantity a device feeds the databoard: an entry of its `provides`, as plan B's `Databoard.provide` hands it
+/// to `Parameter.add_source` (databoard.py:457-483, 227).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Provide<'d> {
+    /// The quantity (`altitude`, `accel`, ...): the key in `provides`.
+    pub quantity: &'d str,
+    /// The source's rank, the lowest one the primary (`priority`; 0 when absent).
+    pub priority: i32,
+    /// The source's freshness timeout in milliseconds (`timeout_ms`; 0 when absent, which the databoard reads as its
+    /// default second).
+    pub timeout_ms: u32,
+    /// Whether this provider asks for the quantity's offset reconciliation (`reconcile`, by truthiness; false when
+    /// absent).
+    pub reconcile: bool,
+}
+
+/// The quantities `entry` provides, sorted by quantity: plan B's `provide(name, self.config.get('provides', {}))`
+/// (databoard.py:457-483), each one `add_source(source, spec.get('priority', 0), spec.get('timeout_ms', 0) * 1000,
+/// spec.get('reconcile', False))`. Sorted as controller.py:151-162 `_quantities` lists them; plan B registered them
+/// in the document's order, which orders only one source's own quantities, never two sources of one quantity.
+///
+/// Empty when the entry provides nothing: no `provides`, or one that is null or not an object (validate() admits
+/// null, and plan B's drivers raise on it in setup). A quantity whose spec is not an object is left out (plan B
+/// raises on it; validate() refuses it).
+///
+/// `priority` and `timeout_ms` are Python's int (a bool is 0 or 1); anything else reads as 0, the absent reading
+/// (validate() admits only an int). A priority past i32 saturates, so two such ranks tie (the configs rank 0..=3).
+/// A timeout past u32::MAX saturates.
+///
+/// A negative timeout reads as 0, the default second (validate() admits it). Plan B keeps it (`expire_us or
+/// _DEFAULT_EXPIRE_US`, databoard.py:254), and on a primary-tier source it becomes the quantity's SHARED window
+/// (databoard.py:255-259), under which `fresh()`'s `0 <= elapsed <= window_us` (databoard.py:117) never holds: every
+/// source of the quantity reads stale, not just this one. On a source below the primary tier plan B never consults
+/// it either.
+pub fn provides<'d>(entry: &Entry<'d>) -> Vec<Provide<'d>> {
+    let fields: &'d Map<String, Value> = entry.fields;
+    let Some(provides) = fields.get("provides").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut quantities: Vec<Provide<'d>> = provides
+        .iter()
+        .filter_map(|(quantity, specification)| {
+            let specification = specification.as_object()?;
+            let number = |key: &str| specification.get(key).and_then(integer).unwrap_or(0);
+            Some(Provide {
+                quantity: quantity.as_str(),
+                // held within the target type first, so the casts are exact
+                priority: number("priority").clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32,
+                timeout_ms: number("timeout_ms").clamp(0, i128::from(u32::MAX)) as u32,
+                reconcile: specification.get("reconcile").is_some_and(truthy),
+            })
+        })
+        .collect();
+    // by code point, as Python's sorted() orders str
+    quantities.sort_by(|left, right| left.quantity.cmp(right.quantity));
+    quantities
+}
+
+/// How many times the bring-up tries a device's setup before it calls the device failed: plan B's `max(1,
+/// board.get('setup_retries', 1))` (controller.py:368). Despite the key's name, a count of ATTEMPTS: 1 is one try and
+/// no retry.
+///
+/// Python's int (a bool is 0 or 1, which `max` lifts to 1); 1 when absent, and also for anything else, and for a
+/// `board` that is not an object: plan B's bring-up raises on text (`max(1, '3')`), null, and a float
+/// (`range(1, 3.0 + 1)`). A count past u32::MAX saturates.
+pub fn setup_retries(document: &Value) -> u32 {
+    let attempts = document
+        .get("board")
+        .and_then(|board| board.get("setup_retries"))
+        .and_then(integer)
+        .unwrap_or(DEFAULT_SETUP_ATTEMPTS);
+    // held within u32 first, so the cast is exact
+    attempts.clamp(1, i128::from(u32::MAX)) as u32
+}
+
+/// Every device entry that is an object, with its list: plan B's `config.get('sensors', []) +
+/// config.get('components', [])` (controller.py:96-98), in that order. A `sensors` or `components` that is not a
+/// list holds none here, and an item that is not an object is skipped (plan B raises on either).
+fn devices(document: &Value) -> impl Iterator<Item = (Section, &Map<String, Value>)> {
+    [(Section::Sensors, "sensors"), (Section::Components, "components")]
+        .into_iter()
+        .filter_map(|(section, key)| Some((section, document.get(key)?.as_array()?)))
+        .flat_map(|(section, items)| items.iter().filter_map(move |item| Some((section, item.as_object()?))))
+}
+
+/// Whether an entry is enabled, as plan B's `device.get('enabled', True)` reads it: absent, or truthy.
+fn enabled(device: &Map<String, Value>) -> bool {
+    device.get("enabled").is_none_or(truthy)
+}
+
+/// What runs an entry: `driver or activity`, the driver when it is truthy, else the activity (validate's `runs`);
+/// empty when that is not text.
+fn implementation(device: &Map<String, Value>) -> &str {
+    device
+        .get("driver")
+        .filter(|driver| truthy(driver))
+        .or(device.get("activity"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
