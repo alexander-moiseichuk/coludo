@@ -751,6 +751,13 @@ for these parts.
 **Scope**
 - **`crates/sequencer`** (the stage machine joins the existing `Stage`) in the control thread at 20 Hz:
   launch, apogee and burnout, land, still, and the flight-timeout backstop, all gated by `read().source`.
+- **Separation gated on thrust end (operator, 2026-10-07):** the real separation completes within ~7 ms, so the 10 ms
+  hold is too coarse; what it guarded was a contact blip under thrust. A separation now counts only after the IMU sees
+  thrust end (the booster cannot separate while it pushes), so vibration under thrust can never deploy, and the hold
+  drops to about 1 ms (`debounce_ms`; the decision still lands on the next tick). If the pads are already open when the
+  gate opens, the separation counts then, its moment the recorded first departure. Plan B accepted a held separation
+  anywhere in BOOSTING (§6). Every edge stays recorded in us (`separation_edges.csv`), so a flight shows the blast and
+  the boost's vibration.
 - The `StageCell` single writer is the control thread. Hold/resume/arm/disarm arrive as mailbox requests.
 - `sequencer.csv`.
 - **Arm and verify:**
