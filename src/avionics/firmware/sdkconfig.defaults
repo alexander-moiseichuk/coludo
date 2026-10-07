@@ -97,21 +97,22 @@ CONFIG_ESP_WIFI_REMOTE_ENABLED=y
 CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 # esp_hosted's own debug CLI would register commands next to our console
 CONFIG_ESP_HOSTED_CLI_ENABLED=n
-# SDIO queues 10 (was 20): esp_hosted keeps every frame buffer it ever freed (its mempool never shrinks), so its peak
-# is roughly the queues' depth x 1.6 KB of internal DMA memory -- 37 KB after one download at 20/20, 25 KB at 10/10
+# SDIO queues 20 (esp_hosted's default). They were 10 while esp_hosted's frame pool was internal DMA memory (it never
+# shrinks: ~1.6 KB a queued frame); its buffers come from PSRAM now (components/hosted_no_reboot), so the depth costs
+# no internal RAM, and the shallow queues cost throughput (stage 2 of avionics-port.md §4.7).
 # esp_hosted's DMA buffers come from PSRAM (components/hosted_no_reboot), aligned to the cache line: 64 B, pinned here.
 # The SDMMC host refuses a buffer whose address or length is not a multiple of the line (sdmmc_host.c:1289), and
 # esp-hosted-mcu #219 lost half its TX frames that way with a 128 B L2 line, IDF's default for a 512 KB L2.
 CONFIG_CACHE_L2_CACHE_LINE_64B=y
-CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=10
-CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=10
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=20
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=20
 CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM=16
 CONFIG_WIFI_RMT_DYNAMIC_RX_BUFFER_NUM=64
 # unused while CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y (static TX buffers, see above)
 CONFIG_WIFI_RMT_DYNAMIC_TX_BUFFER_NUM=64
-# 32 KB (was 64): fewer frames in flight, so esp_hosted's frame-buffer pool peaks lower (the internal DMA budget
-# above); a 32 MB pull takes 9.9 s instead of 8.5 s
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+# 64 KB: a send window's worth of frames in flight. It was 32 KB while each in-flight frame held an internal DMA copy in
+# esp_hosted; the copies are in PSRAM now, as are lwIP's pbufs (SPIRAM_TRY_ALLOCATE_WIFI_LWIP)
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65534
 CONFIG_LWIP_TCP_WND_DEFAULT=65534
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=64
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
