@@ -719,6 +719,14 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   separation or a GLIDING plan B did not make, a deploy earlier only within one of plan B's 5 ms reads, and one
   documented exception, plan B's own 0 ms debounce that never settles there.
 
+- The edge-timed separation on the taster (debounce 10 ms; the operator's hands, 2026-10-07, session 000417): 16
+  open/close cycles, clean and wiggled, 32 rows alternating separated/nested, the stage SETTING throughout. The
+  wobble from the first edge to the sustained level: on opening, median 277 us, at most 1,733 us (4 clean single
+  edges); on closing, median 56 us, at most 19,019 us, still one event while no gap reached 10 ms. The decision came
+  10,066-19,667 us after the sustained level began (mean 15,135 us): the hold plus the tick's phase. Two wiggles held a
+  contact gap past 10 ms and so made their own pair (30.7 ms and 125.7 ms after the previous event), as the hold
+  intends.
+
 **Carried into M7 (from the M6 review):**
 - The control thread's mailbox answers through std mpsc, which takes a mutex and a condvar on core 1 when the
   executor waits. That is harmless for the SETTING-only probe, but M7 routes `disarm` and holds through it, and they
