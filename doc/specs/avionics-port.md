@@ -426,9 +426,11 @@ to get a record.
   and `test_sd_partition_table.py`: the board's own `partition_table.c`, built with the host's `cc`, over images of
   each card shape (an `sd_prepare.sh` card, two FAT16 partitions, a superfloppy, one partition, a non-FAT partition
   2, no table; overlapping partitions, one past the card, a file system past its partition, unreadable sectors).
-- On the board, open: the A/B above (taster one partition, 7F two), and one boot each on a two-partition card, a
-  one-partition card and an M4 card, reading the boot log's mode line and both volumes' sizes, `health`'s
-  `sd_free_mb`, `video start` with the saver running, and a `board_pull.sh` of each.
+- On the board (2026-10-07): the A/B above, both ways round; the stalls follow card AB58, not the layout. On each
+  layout, video ran with the saver running, and `board_pull.sh` pulled the session (recordings plus video).
+  `assemble_capture` and `flight_telemetry` read it strictly: 849 and 822 rows plus ~35,000 log lines, all good,
+  0 duplicates. Card 267D, an M4 card carried forward, also gave up an old-layout session (`recordings/000340`,
+  `video/000340`). Its reflash boot, 000347, sits in both layouts, and the pull refused it as designed.
 
 **Operator gains.** `tools/board_pull.sh taster` drops a session into the same tool chain as before
 (`assemble_capture`, `flight_svg`, `flight_report`, `flight_kpi`, `recorder_flight`). The flash empties itself
@@ -1256,7 +1258,26 @@ Partition 2, the videos (mounted at /sdcard/videos):
 
     No failure on either. These are two different physical cards, and the card-level lock serialises every command
     on both volumes, so two partitions separate only the FAT-level locking. Swapping the cards between the boards
-    would separate card from layout. Repeat runs pending.
+    would separate card from layout.
+  - **Cards swapped (2026-10-07, same load).** The taster now has card AB58 (two partitions) and 7F card 267D (one).
+
+    | | taster, AB58, two partitions | 7F, 267D, one partition |
+    |---|---|---|
+    | missed frames | 0.7 % (19 of 2576) | 0.6 % (14 of 2432) |
+    | SD write max | 399 ms | 151 ms |
+    | SD busy | 58.3 % | 47.2 % |
+    | saver behind at the end | 4.5 s (34 blocks) | 39 ms (9 blocks) |
+    | lowest internal DMA free | 1280 B | 1892 B |
+
+    No failure on either; `pace` 0 missed on both. The slow writes and the saver lag moved with card AB58, so the
+    board is ruled out.
+  - **Card, not layout (raw `sdtest`, one writer, no video).** `sdtest` writes one file on partition 1 alone, so no
+    second volume and no lock contention. Card AB58 still stalls 488–587 ms (4 of 8 runs above 480 ms, the rest
+    48–53 ms). Card 267D peaks at 177–212 ms. AB58 is faster flat out on its first run (3.9 MB/s against 3.0) and
+    slower on later ones (2.5–2.6 against 4.1–6.4). So the long stalls are the card's own, most likely its internal
+    garbage collection. They are not a cost of the two-partition layout. A strict proof would re-prepare one card in
+    the other layout (operator, card reader). Either way the flight budget must ride out a ~0.6 s card stall: the
+    saver lags (the flash ring absorbs it) and the video writer drops a few frames.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
   partition 1. A session is `GET /sd/<session>/recordings/`, its videos `GET /sd/videos/<session>/`.
 - **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and
