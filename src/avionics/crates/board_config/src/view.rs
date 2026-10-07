@@ -264,6 +264,30 @@ pub fn max_range_m(document: &Value) -> Option<f32> {
         .map(|metres| metres as f32)
 }
 
+/// The control tick's rate when the config gives none: plan B's flight default (flight.py:75), and the 100 Hz the
+/// IMUs were read at (their `period_ms` 10).
+pub const DEFAULT_SCHEDULE_HZ: u32 = 100;
+
+/// The fastest control tick: FreeRTOS runs at 1 kHz here (sdkconfig CONFIG_FREERTOS_HZ), and the 1 kHz `pace` bench
+/// is the measured ceiling.
+const MAXIMUM_SCHEDULE_HZ: i128 = 1000;
+
+/// The control thread's tick rate, Hz: `schedule_hz` on the first entry whose implementation is the `flight`
+/// activity, enabled or not (plan B's flight.py:75 `config.get('schedule_hz', 100)`).
+///
+/// One clock paces the whole control thread in the port (the IMU, separation, the sequencer; the flight law from
+/// M13), where plan B's timer paced the flight task alone and its `schedule_hz` 0 ran that task on asyncio at
+/// `period_ms`. So 0, a value past 1 kHz, anything that is not Python's int, and an absent flight entry all read as
+/// [`DEFAULT_SCHEDULE_HZ`].
+pub fn schedule_hz(document: &Value) -> u32 {
+    devices(document)
+        .find(|(_, device)| implementation(device) == "flight")
+        .and_then(|(_, flight)| flight.get("schedule_hz"))
+        .and_then(integer)
+        .filter(|hertz| (1..=MAXIMUM_SCHEDULE_HZ).contains(hertz))
+        .map_or(DEFAULT_SCHEDULE_HZ, |hertz| hertz as u32)
+}
+
 /// The OV5647 camera's implementation name in a device entry (`driver`, or else `activity`).
 const CAMERA_DRIVER: &str = "ov5647";
 
@@ -634,7 +658,8 @@ fn implementation(device: &Map<String, Value>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, Hub, Network, board_id, camera, max_range_m, mcu, wifi,
+        Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, DEFAULT_SCHEDULE_HZ, Hub, Network, board_id, camera,
+        max_range_m, mcu, schedule_hz, wifi,
     };
     use serde_json::{Value, json};
 
@@ -948,5 +973,42 @@ mod tests {
             {"name": "camera", "driver": "ov5647", "enabled": false, "clock_hz": 24_000_000},
             {"name": "nose", "driver": "ov5647", "clock_hz": 27_000_000}]});
         assert_eq!(camera(&disabled_first), None);
+    }
+
+    #[test]
+    fn the_tick_rate_is_the_flight_entrys_schedule_hz_or_100() {
+        let flight = |hertz: Value| {
+            json!({"components": [{"name": "flight", "activity": "flight", "enabled": false,
+                                                            "schedule_hz": hertz}]})
+        };
+        // a disabled flight entry still names the rate: the tick runs whatever the flight law does
+        assert_eq!(schedule_hz(&flight(json!(100))), 100);
+        assert_eq!(schedule_hz(&flight(json!(50))), 50);
+        assert_eq!(schedule_hz(&flight(json!(1000))), 1000);
+        // plan B's asyncio 0, past 1 kHz, negative, not an int: the default
+        for odd in [
+            json!(0),
+            json!(1001),
+            json!(-5),
+            json!(100.0),
+            json!("100"),
+            json!(null),
+            json!([100]),
+        ] {
+            assert_eq!(schedule_hz(&flight(odd.clone())), DEFAULT_SCHEDULE_HZ, "{odd}");
+        }
+        // a bool is Python's int: True is 1 Hz
+        assert_eq!(schedule_hz(&flight(json!(true))), 1);
+        // no flight entry, or one with no key
+        assert_eq!(schedule_hz(&json!({})), DEFAULT_SCHEDULE_HZ);
+        assert_eq!(
+            schedule_hz(&json!({"components": [{"name": "flight", "activity": "flight"}]})),
+            DEFAULT_SCHEDULE_HZ
+        );
+        // found by its activity, not its name
+        assert_eq!(
+            schedule_hz(&json!({"components": [{"name": "law", "activity": "flight", "schedule_hz": 200}]})),
+            200
+        );
     }
 }

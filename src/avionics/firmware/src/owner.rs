@@ -12,13 +12,15 @@
 //! stack also keeps the thread's allocations internal (crate::allocator's rule).
 
 use std::sync::OnceLock;
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::time::Duration;
 
 use embedded_hal::i2c::I2c;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
+use esp_idf_svc::sys;
 use firmware::buses::i2c::{I2cError, I2cPort, PortFigures};
 use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
 use layout::Addresses;
@@ -48,6 +50,19 @@ const GENERAL_CALL_SETTLE: Duration = Duration::from_millis(30);
 
 /// Each started owner's mailbox, by port.
 static MAILBOXES: [OnceLock<SyncSender<Envelope>>; 2] = [OnceLock::new(), OnceLock::new()];
+
+/// Each owner's FreeRTOS task, by port, published as the thread starts: the control tick and [`ask`] notify it.
+static TASKS: [AtomicPtr<core::ffi::c_void>; 2] = [
+    AtomicPtr::new(core::ptr::null_mut()),
+    AtomicPtr::new(core::ptr::null_mut()),
+];
+
+/// The longest an owner sleeps with nothing to wake it, in FreeRTOS ticks (milliseconds here: CONFIG_FREERTOS_HZ is
+/// 1000): before the control tick runs, and should a notify be lost.
+const IDLE_WAIT_MS: u32 = 20;
+
+/// How many requests an owner serves on one wake: the rest wait for the next, so a burst never delays a tick's work.
+const REQUESTS_PER_WAKE: usize = 2;
 
 /// What a command asks an owner to do.
 pub enum Request {
@@ -160,6 +175,8 @@ fn own(
     resumed: Receiver<(I2cPort, Vec<Member>)>,
     requests: Receiver<Envelope>,
 ) {
+    // SAFETY: a plain read of this task's own handle; the task lives for the program.
+    TASKS[usize::from(id)].store(unsafe { sys::xTaskGetCurrentTaskHandle() }.cast(), Ordering::Release);
     let port = match I2cPort::create(id, sda, scl, clock_hz) {
         Ok(port) => port,
         Err(error) => {
@@ -176,10 +193,27 @@ fn own(
         return;
     };
     let mut delay = Delay::new_default();
-    for envelope in requests {
-        let answer = serve(&mut port, &mut members, &mut delay, envelope.request);
-        let _ = envelope.reply.send(answer);
+    loop {
+        // a control tick (crate::control) or a request ([`ask`]) wakes the owner; the work is due by time, so a
+        // request's wake costs only the check
+        // SAFETY: this task's own notification value, index 0, cleared on take.
+        unsafe { sys::ulTaskGenericNotifyTake(0, 1, IDLE_WAIT_MS) };
+        for _ in 0..REQUESTS_PER_WAKE {
+            match requests.try_recv() {
+                Ok(envelope) => {
+                    let answer = serve(&mut port, &mut members, &mut delay, envelope.request);
+                    let _ = envelope.reply.send(answer);
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
     }
+}
+
+/// Port `id`'s owner task, once its thread started: the control tick wakes it.
+pub fn task(id: u8) -> Option<sys::TaskHandle_t> {
+    let task = TASKS.get(usize::from(id))?.load(Ordering::Acquire);
+    (!task.is_null()).then_some(task.cast())
 }
 
 /// Probes `members`, in their order.
@@ -327,6 +361,10 @@ pub fn ask(port: u8, request: Request, deadline: Duration) -> Result<Answer, Str
     mailbox
         .try_send(Envelope { request, reply })
         .map_err(|_| format!("i2c port {port}'s owner is busy or gone"))?;
+    if let Some(task) = task(port) {
+        // SAFETY: the owner's task lives for the program; a notify only wakes it early
+        unsafe { sys::xTaskGenericNotify(task, 0, 0, sys::eNotifyAction_eIncrement, core::ptr::null_mut()) };
+    }
     answer
         .recv_timeout(deadline)
         .map_err(|_| format!("i2c port {port}'s owner did not answer in {} s", deadline.as_secs()))
