@@ -682,6 +682,14 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   expected) and `pressure_pa` never, `healthy` true throughout; the config saved back gave 8090b3ddeea5 again.
 - The GPIO interrupt service is installed once, by the control thread before either interrupt is armed (the boot
   log's `already installed` error is gone); `interrupts` shows GPIO_INT0 and TG0_T0 on CPU 1.
+- The internal-RAM stress on TMS-7F (FHD@25 bars, the flight-rate ring load, four parallel 24 MB pulls, a POST
+  flood, 20 set-configs): every pull hash-clean, 20/20 saves, `hosted_internal` 0, no TCP checksum errors. Each phase
+  on its own boot: the control tick's lateness at most 105 us with the pulls and the flood, 7 us across the saves.
+  `pace` (a priority-20 loop on core 1, the flight thread's stand-in before M6) now contends with the real control
+  thread: run beside the pulls it pushed one tick to 651 us. It is left out of the stress from M6 on; the control
+  tick's own figures are the measure. The low-water: 64.4 KB internal, 36.7 KB DMA-capable (81.9 / 54.2 KB before
+  M5), M6's 13.5 KB on top of M5's 9.5 KB. Open: the video misses 21-22 frames while the four pulls run (0 in every
+  stress before M5); ground-only (no pull runs while a flight records), to be traced.
 - TMS-7F, one hour of FHD@25 colour bars and the flight-rate ring load (the stage 6 build, six 10-minute segments):
   90,036 frames, 11 missed, 0 ring loss, tick lateness at most 86 us, 0 over budget, 0 overruns, 0 IMU failures, the
   internal low-water flat at 61.4 KB (one 0.75 KB step in the fifth segment).
