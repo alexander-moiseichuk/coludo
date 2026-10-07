@@ -89,6 +89,8 @@ pub fn heap() -> String {
     let rtc = heap_class(sys::MALLOC_CAP_RTCRAM);
     let spm = heap_class(sys::MALLOC_CAP_SPM);
     let psram = heap_class(sys::MALLOC_CAP_SPIRAM);
+    // SAFETY: a plain read of a counter hosted_no_reboot keeps.
+    let hosted_internal = unsafe { sys::hosted_internal_fallbacks() }.to_string();
     cc_protocol::build(
         "ok",
         &["heap"],
@@ -106,6 +108,8 @@ pub fn heap() -> String {
             ("psram_free", &psram[0]),
             ("psram_largest", &psram[1]),
             ("psram_min", &psram[2]),
+            // esp_hosted buffers that found PSRAM full and took internal DMA memory (components/hosted_no_reboot)
+            ("hosted_internal", &hosted_internal),
         ],
     )
 }

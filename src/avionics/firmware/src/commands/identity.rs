@@ -131,6 +131,10 @@ fn degraded(context: &Context) -> Vec<String> {
         if sys::hosted_link_down() {
             degraded.push("c6-link-parked".into()); // the Wi-Fi link failed; it is gone until the next boot
         }
+        if !sys::hosted_buffers_in_psram() {
+            // Wi-Fi frames take internal DMA memory: an assert when it runs out
+            degraded.push("c6-buffers-internal".into());
+        }
     }
     if !board.sd_mounted {
         degraded.push("no-sd".into()); // video and the flash-ring copy have nowhere to go

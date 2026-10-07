@@ -2,10 +2,11 @@
 # (sdio_drv.c: an unresponsive slave, a TX write failing twice, a register/interrupt read failing). In flight a
 # C6 glitch must not reboot the flight computer, so this replaces that restart hook -- without patching the
 # downloaded component (2.9.4+ has ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE; 2.7.0 is pinned for the C6).
-# It also pins esp_hosted's tasks (plain xTaskCreate, priority 23) to core 0, off the flight core.
+# It also pins esp_hosted's tasks (plain xTaskCreate, priority 23) to core 0, off the flight core, and takes its
+# DMA buffers from PSRAM (internal DMA memory is the P4's scarce kind: esp_hosted asserts when it gets none).
 idf_component_register(SRCS "hosted_no_reboot.c"
                        INCLUDE_DIRS "include"
-                       REQUIRES espressif__esp_hosted freertos log)
+                       REQUIRES espressif__esp_hosted freertos heap log)
 # The OS-function table's layout depends on esp_hosted's transport macros (H_TRANSPORT_IN_USE, H_USE_MEMPOOL),
 # defined in its PRIVATE port config header: without it every transport block compiles in and the field offsets
 # are wrong. Compile against the same header the table's own definition sees.

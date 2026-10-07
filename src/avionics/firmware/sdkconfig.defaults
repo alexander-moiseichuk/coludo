@@ -48,14 +48,15 @@ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
 # - Plain malloc above 4 KB goes to PSRAM, so ordinary buffers (the ring_saver's staging, the decoder's maps) stop
 #   taking DMA-capable RAM (-15.7 KB of DMA memory under saver load at the IDF default 16 KB, -5.2 KB at 4 KB). 4 KB
 #   itself stays internal: esp_flash reads straight into internal RAM only and borrows an internal temp buffer of up
-#   to 16 KB per read otherwise, so the ring's 4 KB block buffers stay where they are. SD writes from PSRAM bounce
-#   through components/sd_card's persistent buffer, with no allocation.
+#   to 16 KB per read otherwise, so the ring's 4 KB block buffers stay where they are (on the PSRAM-stack threads,
+#   whose Rust allocations go to PSRAM, src/allocator.rs, the file server asks for internal ones by name). SD writes
+#   from PSRAM bounce through components/sd_card's persistent buffer, with no allocation.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 # Internal RAM optimization, stage 1 (avionics-port.md §4.7). Every byte of .iram0.text is internal, DMA-capable
 # memory the heap does not get: the RETENT_RAM heap starts right after the statics. With XIP from PSRAM, SPI1 flash
 # operations take a mutex and leave the cache on (spi_flash_os_func_app.c:29), so code kept in IRAM only for
-# cache-off windows can leave. The one runtime cache-off window left is esp_mmu_map (the first partition-table load,
-# on main at boot; OTA's image checks at M15), and no interrupt allocated in IRAM reaches the code moved here.
+# cache-off windows can leave. The one runtime cache-off window left is esp_mmu_map/unmap (the first partition-table
+# load, on main at boot; OTA's image checks at M15), and no interrupt allocated in IRAM reaches the code moved here.
 # - Ring buffers serve only the UART and USB-serial-JTAG drivers, whose interrupts are not IRAM ones (UART_ISR_IN_IRAM
 #   off, and the JTAG driver is never installed): ~5.4 KB.
 CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH=y
@@ -98,6 +99,10 @@ CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 CONFIG_ESP_HOSTED_CLI_ENABLED=n
 # SDIO queues 10 (was 20): esp_hosted keeps every frame buffer it ever freed (its mempool never shrinks), so its peak
 # is roughly the queues' depth x 1.6 KB of internal DMA memory -- 37 KB after one download at 20/20, 25 KB at 10/10
+# esp_hosted's DMA buffers come from PSRAM (components/hosted_no_reboot), aligned to the cache line: 64 B, pinned here.
+# The SDMMC host refuses a buffer whose address or length is not a multiple of the line (sdmmc_host.c:1289), and
+# esp-hosted-mcu #219 lost half its TX frames that way with a 128 B L2 line, IDF's default for a 512 KB L2.
+CONFIG_CACHE_L2_CACHE_LINE_64B=y
 CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=10
 CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=10
 CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM=16
@@ -112,6 +117,11 @@ CONFIG_LWIP_TCP_RECVMBOX_SIZE=64
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
 CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
 CONFIG_LWIP_TCP_SACK_OUT=y
+# lwIP copies each received frame into its own pbuf (lwIP's heap: PSRAM first, SPIRAM_TRY_ALLOCATE_WIFI_LWIP) and
+# frees esp_hosted's copy at once (esp_netif wlanif.c:159). Without it lwIP holds esp_hosted's per-frame copy -- a
+# plain malloc of the payload, internal under 4 KB, ASSERTED when it fails (sdio_drv.c:1139 copy_payload) -- until
+# the receiving socket reads it: 40 refused 1 MB uploads with four pulls took internal free from 132 KB to 4 KB on 7F.
+CONFIG_LWIP_L2_TO_L3_COPY=y
 
 # FatFs on the microSD: long file names (session files like 000135_flight.csv); FatFs defaults to 8.3 only
 CONFIG_FATFS_LFN_HEAP=y
