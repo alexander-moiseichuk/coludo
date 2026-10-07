@@ -1152,6 +1152,13 @@ Partition 2, the videos (mounted at /sdcard/videos):
   within `ESP_VFS_PATH_MAX`) shadows partition 1. A card with one partition still works, with `videos/` as a plain
   directory on it beside the session directories. That is worse: one volume lock and one FAT for both. But it
   works.
+- **A/B on the bench (operator, 2026-10-06):** the taster keeps a one-partition card and 7F a two-partition one
+  (MBR, two primary FAT32 partitions labelled `metrics` and `videos`). The cards are the same vendor and batch. Both
+  layouts stay supported, so the same load script can be run on both and compared:
+  - `video stats`: `write_us_max`, `sd_busy_pct`, missed frames;
+  - the ring_saver: batch time, `behind_ms`, card errors;
+  - any `allocate_dma_buf` failure.
+  The firmware finds the partitions by number; the labels are for people.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
   partition 1.
 - **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and
@@ -1167,6 +1174,7 @@ routing. 32 GB cards are the safe size. A 64 GB card can be one FAT32 volume (`m
 needed.
 
 **Card preparation** (the operator's option): `tools/sd_prepare.sh` discards the whole card. It then writes partition 1 (FAT32, the recordings: a few GB, since ~26 KB/s of text is ~94 MB an hour) and partition 2 (FAT32, the videos: up to the 25–50 % of the card in use). It leaves the rest untouched, as spare area for the card's controller. The firmware mounts both and never formats a card.
+Until the firmware mounts partition 2, M4's `sd_prepare.sh` writes partition 1 alone, over the whole share in use: that firmware keeps `video/` on partition 1, and video at the default 8 Mbit/s (3.6 GB an hour) would fill a recordings partition of a few GB and stop the ring_saver. Such a card runs on the one-partition fallback above; once the two-partition mount lands, it is prepared again after its sessions are pulled.
 
 **Flash partitions** (`partitions.csv`, decided 2026-10-06):
 
