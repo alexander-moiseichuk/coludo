@@ -1,9 +1,11 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The LSM6DSO32's unit tests: the burst decode and scaling, the write-then-verify bring-up over the scripted I2C
-//! bus (the same register window plan B's i2c path uses), the SPI framing over a local scripted `SpiDevice`, and the
-//! INT1 silent verdict. Plan B's own test (test_lsm6dso32.py) covers registration, absence and a live part on the
-//! board; its positive scaling is in the golden fixture drivers_lsm6dso32.json.
+//! bus (the same register window plan B's i2c path uses), the SPI framing over a local scripted `SpiDevice`, the
+//! INT1 silent verdict, the status burst's new-conversion flags (an impossible status, as a dead SPI part's 0xFF,
+//! never fresh) and the part's own ODR. Plan B's own test (test_lsm6dso32.py) covers registration, absence and a
+//! live part on the board; its positive scaling is in the golden fixture drivers_lsm6dso32.json, which
+//! golden_lsm6dso32.rs also replays through the status burst.
 
 use std::collections::VecDeque;
 
@@ -11,8 +13,9 @@ use embedded_hal::spi::{self, ErrorType, Operation, SpiDevice};
 use serde_json::json;
 
 use super::{
-    CONFIGURATION, IDENTITY, IDENTITY_ROUNDS, INTERRUPT_SILENT_LIMIT, Lsm6dso32, OUTX_L_G, OverI2c, OverSpi,
-    PIN_INTERFACE, ROUTE_INTERRUPT, Sample, Transport, WHO_AM_I,
+    CONFIGURATION, FRAME_LENGTH, Fresh, IDENTITY, IDENTITY_ROUNDS, INTERNAL_FREQ_FINE, INTERRUPT_SILENT_LIMIT,
+    Lsm6dso32, OUTX_L_G, OverI2c, OverSpi, PIN_INTERFACE, ROUTE_INTERRUPT, STATUS_FRAME_LENGTH, STATUS_HEADER_LENGTH,
+    STATUS_REG, Sample, Transport, WHO_AM_I, odr_hz,
 };
 use crate::device::{Device, Fault};
 use crate::mock::MockBus;
@@ -336,4 +339,189 @@ fn spi_writes_are_the_register_then_the_value_in_one_frame() {
         written,
         [vec![0x12, 0x44], vec![0x8F], vec![0x10, 0x44], vec![0x11, 0x4C]]
     );
+}
+
+/// The 12 output bytes the status-burst tests read: gyro 1, -1, -32768, then accel 1024, 32767, 0x1234.
+const OUTPUT: [u8; FRAME_LENGTH] = [
+    0x01, 0x00, 0xFF, 0xFF, 0x00, 0x80, // gyro
+    0x00, 0x04, 0xFF, 0x7F, 0x34, 0x12, // accel
+];
+
+/// A status burst: `status`, then a reserved byte and a temperature that are not zero (so a decode that took them
+/// for output would show), then [`OUTPUT`].
+fn status_frame(status: u8) -> [u8; STATUS_FRAME_LENGTH] {
+    let mut frame = [0u8; STATUS_FRAME_LENGTH];
+    frame[..STATUS_HEADER_LENGTH].copy_from_slice(&[status, 0xA5, 0x5A, 0xC3]);
+    frame[STATUS_HEADER_LENGTH..].copy_from_slice(&OUTPUT);
+    frame
+}
+
+#[test]
+fn the_status_burst_is_one_i2c_read_from_status_reg() {
+    // the register 0x1E, a repeated start, then all 16 bytes: the mock refuses any other shape or length
+    let mock = MockBus::new();
+    mock.expect_write_read(ADDRESS, &[STATUS_REG], &status_frame(0x03));
+    let (fresh, sample) = driver(true).read_fresh(&mut mock.clone()).unwrap();
+    mock.done();
+    assert_eq!(
+        fresh,
+        Fresh {
+            accel: true,
+            rate: true
+        }
+    );
+    // the output decodes exactly as the bare 12-byte burst does: the reserved byte and OUT_TEMP are skipped
+    assert_eq!(sample, Sample::decode(&OUTPUT));
+    assert_eq!(sample.gyro, [1, -1, -32768]);
+    assert_eq!(sample.accel, [1024, 32767, 0x1234]);
+}
+
+#[test]
+fn each_flag_speaks_for_its_own_half() {
+    // XLDA (bit 0) is the accel's, GDA (bit 1) the gyro's; TDA (bit 2) belongs to neither
+    let cases = [
+        (0x03, true, true),
+        (0x02, false, true),
+        (0x01, true, false),
+        (0x07, true, true),
+        (0x06, false, true),
+        (0x05, true, false),
+        // NEGATIVE: no new conversion at all, the temperature alone
+        (0x00, false, false),
+        (0x04, false, false),
+        // NEGATIVE: bits 7..3 read 0 on a live part, so a status with one set is a bus nothing drives (0xFF is an
+        // SPI part that lost power, chip-select or MISO), never fresh, whatever XLDA and GDA say
+        (0xFF, false, false),
+        (0x0B, false, false),
+        (0x83, false, false),
+        (0xFC, false, false),
+    ];
+    for (status, accel, rate) in cases {
+        let mock = MockBus::new();
+        mock.expect_write_read(ADDRESS, &[STATUS_REG], &status_frame(status));
+        let (fresh, sample) = driver(true).read_fresh(&mut mock.clone()).unwrap();
+        mock.done();
+        assert_eq!(fresh, Fresh { accel, rate }, "status 0x{status:02x}");
+        // the burst still returns the output registers: the flags, not the bytes, say whether they are new
+        assert_eq!(sample, Sample::decode(&OUTPUT), "status 0x{status:02x}");
+    }
+}
+
+#[test]
+fn every_bit_the_datasheet_fixes_at_zero_makes_the_status_impossible() {
+    // NEGATIVE: each of bits 7..3 alone, over both flags set, turns the burst not fresh
+    for bit in 3..8 {
+        let status = 0x03 | (1u8 << bit);
+        let mock = MockBus::new();
+        mock.expect_write_read(ADDRESS, &[STATUS_REG], &status_frame(status));
+        let (fresh, _) = driver(true).read_fresh(&mut mock.clone()).unwrap();
+        mock.done();
+        assert_eq!(fresh, Fresh::default(), "status 0x{status:02x}");
+    }
+}
+
+#[test]
+fn a_dead_spi_part_is_never_fresh() {
+    // NEGATIVE: SPI has no ACK, so a part that stops driving MISO answers the burst with 16 x 0xFF and no bus
+    // error (id_classify's "idle-high"), and a chip-select that never asserts with 16 x 0x00: neither is a new
+    // conversion, so the firmware's stale run turns the part unhealthy instead of publishing -1 counts forever
+    for byte in [0xFF, 0x00] {
+        let mut bus = ScriptedSpi::default();
+        bus.answers.push_back(vec![byte; STATUS_FRAME_LENGTH]);
+        let (fresh, _) = Lsm6dso32::new(OverSpi, true).read_fresh(&mut bus).unwrap();
+        assert_eq!(fresh, Fresh::default(), "16 x 0x{byte:02x}");
+        assert_eq!(
+            bus.frames,
+            [Frame {
+                written: vec![0x9E],
+                read: STATUS_FRAME_LENGTH
+            }]
+        );
+    }
+}
+
+#[test]
+fn a_failed_status_burst_is_a_bus_fault() {
+    // NEGATIVE: a NAK on the burst is the transport's fault, not a stale sample or a default one
+    let mock = MockBus::new();
+    mock.expect_write_read(ADDRESS, &[STATUS_REG], &status_frame(0x03))
+        .then_fail();
+    let fault = driver(true).read_fresh(&mut mock.clone()).unwrap_err();
+    assert!(matches!(fault, Fault::Bus(_)), "{fault:?}");
+    mock.done();
+}
+
+#[test]
+fn spi_reads_the_status_burst_in_one_frame() {
+    let mut bus = ScriptedSpi::default();
+    bus.answers.push_back(status_frame(0x02).to_vec());
+    let imu = Lsm6dso32::new(OverSpi, true);
+    let (fresh, sample) = imu.read_fresh(&mut bus).unwrap();
+    assert_eq!(
+        fresh,
+        Fresh {
+            accel: false,
+            rate: true
+        }
+    );
+    assert_eq!(sample, Sample::decode(&OUTPUT));
+    // 0x80 | 0x1E = 0x9E, then 16 bytes clocked in, under ONE chip-select: no multi-byte bit (0xDE would address
+    // another register), and no second frame for the output, so the window between the flags and the output is a
+    // few clocked bytes, not a second transfer
+    assert_eq!(
+        bus.frames,
+        [Frame {
+            written: vec![0x9E],
+            read: 16
+        }]
+    );
+}
+
+#[test]
+fn the_frequency_fine_byte_is_twos_complement() {
+    let mock = MockBus::new();
+    for (byte, fine) in [(0x00, 0), (0xDF, -33), (0x7F, 127), (0x80, -128), (0xFF, -1)] {
+        mock.expect_write_read(ADDRESS, &[INTERNAL_FREQ_FINE], &[byte]);
+        assert_eq!(driver(true).frequency_fine(&mut mock.clone()), Ok(fine), "0x{byte:02x}");
+    }
+    mock.done();
+    // over SPI: 0x80 | 0x63 = 0xE3, one byte clocked in
+    let mut bus = ScriptedSpi::default();
+    bus.answers.push_back(vec![0xDF]);
+    assert_eq!(Lsm6dso32::new(OverSpi, true).frequency_fine(&mut bus), Ok(-33));
+    assert_eq!(
+        bus.frames,
+        [Frame {
+            written: vec![0xE3],
+            read: 1
+        }]
+    );
+}
+
+#[test]
+fn a_refused_frequency_fine_is_a_bus_fault() {
+    // NEGATIVE: a NAK is reported, never read as a 0 (which would claim the nominal 104.17 Hz)
+    let mock = MockBus::new();
+    mock.expect_write_read(ADDRESS, &[INTERNAL_FREQ_FINE], &[0x00])
+        .then_fail();
+    let fault = driver(true).frequency_fine(&mut mock.clone()).unwrap_err();
+    assert!(matches!(fault, Fault::Bus(_)), "{fault:?}");
+    mock.done();
+}
+
+#[test]
+fn the_odr_is_the_datasheets_formula() {
+    // (6667 + 0.0015 x fine x 6667) / 64, computed in f64 for the reference
+    let reference = |fine: i8| (6667.0 + 0.0015 * f64::from(fine) * 6667.0) / 64.0;
+    assert_eq!(odr_hz(0), 104.171_875, "6667 / 64 is exact in f32");
+    for fine in [0, -33, 127, -128, 1, -1] {
+        let odr = f64::from(odr_hz(fine));
+        assert!((odr - reference(fine)).abs() < 1e-4, "fine {fine}: {odr} Hz");
+    }
+    // the taster's case, about 99 Hz (slower than the 100 Hz tick), and the top of the range
+    assert!((odr_hz(-33) - 99.015).abs() < 1e-3, "{}", odr_hz(-33));
+    assert!((odr_hz(127) - 124.017).abs() < 1e-3, "{}", odr_hz(127));
+    // NEGATIVE: the sign matters -- a negative trim is a SLOWER part, below the tick, a positive one faster
+    assert!(odr_hz(-1) < odr_hz(0) && odr_hz(0) < odr_hz(1));
+    assert!(odr_hz(-33) < 100.0 && odr_hz(33) > 100.0);
 }

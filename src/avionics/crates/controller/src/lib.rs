@@ -15,7 +15,9 @@
 //!    `verify`'s devices, problems and alternatives, the failure lines `probe` and `arm` print (cc_client.py:292-349,
 //!    513, 807-816), and `inspect controller` (controller.py:630-632);
 //!  * [`binding`] -- plan B's bind() defaults: the bus and address an entry's driver talks over (i2cbus.py:275-301,
-//!    spibus.py:196-219), ported once so no call site compares the raw `bus`, `id` and `addr` fields itself.
+//!    spibus.py:196-219), ported once so no call site compares the raw `bus`, `id` and `addr` fields itself;
+//!  * [`stream`] -- the telemetry stream a recorded device writes: its file, columns, window and durability
+//!    (module `streams`).
 //!
 //! The device directory, its pins and its `provides` come from board_config's typed view, read from the post-layout
 //! document, as plan B's Controller reads the config layout.resolve has rewritten (main.py:97-101).
@@ -38,12 +40,17 @@
 //!  * A device whose loop crashed stays in plan B's `failures` in crash order; [`Table`] lists every reader in
 //!    directory order. Only the key order of a JSON object differs.
 
+mod streams;
+
 use std::fmt;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use board_config::Entry;
 use board_config::python::formatted;
 use serde_json::Value;
+
+pub use streams::{BAROMETER_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, Stream, stream};
 
 /// The pause between two setup attempts of one device, in milliseconds: a flaky breadboard contact settles
 /// (controller.py:418 `asyncio.sleep_ms(200)`).
@@ -439,9 +446,10 @@ pub enum Status<'t> {
 
 /// One directory entry of the board and how its bring-up ended.
 ///
-/// The table is built once at boot and shared read-only (the firmware leaks it); a crash is the one change it sees
-/// afterwards, set at most once, so it needs no lock.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The table is built once at boot and shared read-only (the firmware leaks it). It sees two changes afterwards, and
+/// neither needs a lock: a crash, set at most once, and the part's runtime health, an atomic its producer writes.
+/// That atomic is why an entry is neither `Clone` nor `PartialEq`: it is a live flag, not a value.
+#[derive(Debug)]
 pub struct DeviceEntry<'d> {
     /// The device's name.
     pub name: &'d str,
@@ -453,6 +461,10 @@ pub struct DeviceEntry<'d> {
     state: State,
     /// Why its loop died, once it has (M6+: errors that escape the per-part glue).
     crash: OnceLock<String>,
+    /// Whether the part's latest read succeeded: plan B's `Task._healthy`, the RUNTIME health `note()` tracks, where
+    /// [`DeviceEntry::active`] is setup's. True from Up until a producer says otherwise; false for an entry that never
+    /// came up.
+    healthy: AtomicBool,
 }
 
 impl DeviceEntry<'_> {
@@ -478,6 +490,24 @@ impl DeviceEntry<'_> {
         self.active() && self.crash.set(reason).is_ok()
     }
 
+    /// Whether the part's latest read succeeded (plan B's `inspect()['healthy']`).
+    pub fn healthy(&self) -> bool {
+        self.healthy.load(Ordering::Relaxed)
+    }
+
+    /// Record the outcome of the part's latest read, from its producer (its one writer): true when this changed the
+    /// health, the transition plan B's `note()` logs on. It writes only on a change, so a producer may call it every
+    /// read without dirtying the cache line the readers on the other core share. Relaxed: the flag publishes nothing
+    /// else. An entry that never came up has no reads and stays unhealthy: false, nothing written, as
+    /// [`DeviceEntry::crash`] refuses it too.
+    pub fn set_healthy(&self, healthy: bool) -> bool {
+        if !self.active() || self.healthy.load(Ordering::Relaxed) == healthy {
+            return false;
+        }
+        self.healthy.store(healthy, Ordering::Relaxed);
+        true
+    }
+
     /// The reason the entry is in plan B's `failures` (controller.py:85), and whether it crashed after coming up;
     /// None for an entry that runs or is an alternative.
     fn failure(&self) -> Option<(&str, bool)> {
@@ -491,7 +521,7 @@ impl DeviceEntry<'_> {
 
 /// The board's devices after bring-up: one entry per directory entry, in directory order, and the readers CC
 /// answers from.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Table<'d> {
     /// The entries, in directory order.
     entries: Vec<DeviceEntry<'d>>,
@@ -538,6 +568,7 @@ impl<'d> Table<'d> {
                 name: candidate.name,
                 implementation: candidate.implementation,
                 socket: candidate.socket,
+                healthy: AtomicBool::new(state == State::Up),
                 state,
                 crash: OnceLock::new(),
             })
@@ -1276,6 +1307,46 @@ mod tests {
                 alternatives: vec![("laser_agl", "laser_agl_l1x")],
             }
         );
+    }
+
+    #[test]
+    fn an_up_part_starts_healthy_and_its_producer_flips_it_on_a_change_only() {
+        let document = laser_board();
+        let table = laser_table(&document);
+        let [loser, winner, gnss] = table.entries() else {
+            panic!("three entries")
+        };
+        assert!(winner.healthy(), "an up part starts healthy, as plan B's Task does");
+        assert!(winner.set_healthy(false), "a failed read is a change");
+        assert!(!winner.set_healthy(false), "failing again changes nothing");
+        assert!(!winner.healthy());
+        assert!(winner.set_healthy(true), "the next good read recovers it");
+        assert!(!winner.set_healthy(true));
+        assert!(winner.healthy());
+        // the runtime health is not setup's: an unhealthy part is still up, a task, and no failure
+        winner.set_healthy(false);
+        assert_eq!(winner.status(), Status::Up);
+        assert_eq!(table.tasks(), [("laser_agl_l1x", true)]);
+        assert_eq!(table.failure("laser_agl_l1x"), None);
+        // NEGATIVE: a part that never came up, and an alternative, are not healthy, and no write makes them so
+        assert!(!gnss.healthy());
+        assert!(!loser.healthy());
+        assert!(!gnss.set_healthy(true), "a failed part has no reads to be healthy by");
+        assert!(!loser.set_healthy(true), "nor has an alternative");
+        assert!(!gnss.healthy());
+        assert!(!loser.healthy());
+    }
+
+    #[test]
+    fn a_producer_thread_s_health_reaches_a_reader() {
+        // the firmware's producers write from the bus owners and the control thread, CC reads on the executor: the
+        // table is shared by reference, so it must be Sync (this does not compile otherwise)
+        let document = laser_board();
+        let table = laser_table(&document);
+        std::thread::scope(|scope| {
+            scope.spawn(|| table.find("laser_agl_l1x").map(|entry| entry.set_healthy(false)));
+        });
+        assert_eq!(table.find("laser_agl_l1x").map(|entry| entry.healthy()), Some(false));
     }
 
     #[test]

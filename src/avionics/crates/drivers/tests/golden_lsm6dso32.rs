@@ -4,12 +4,14 @@
 //! golden/build_drivers_lsm6dso32.py builds from src/glider/drivers/lsm6dso32.py on CPython. The burst decode and
 //! its scaling (rel 1e-6 for the f32 conversion, integers exact), then plan B's I2C transcripts replayed through the
 //! mock bus -- the write-then-verify setup, the probe, the diagnosis -- and the run loop's INT1 verdict per wake,
-//! with INT1 wired and without (plan B counts both on this part, and the port keeps it).
+//! with INT1 wired and without (plan B counts both on this part, and the port keeps it). The decode frames are
+//! replayed once more through the port's status burst (plan B has none: it read the 12 bytes alone), prefixed with
+//! a status and the bytes the burst skips, to prove the burst decodes them bit for bit as the bare read does.
 
 mod transcript;
 
 use drivers::device::{Device, Fault};
-use drivers::lsm6dso32::{Lsm6dso32, OverI2c};
+use drivers::lsm6dso32::{Fresh, Lsm6dso32, OverI2c, STATUS_REG};
 use serde_json::{Value, json};
 use transcript::{check_cases, replay, section};
 
@@ -40,6 +42,50 @@ fn the_burst_decodes_and_scales_as_plan_b() {
         let mock = replay(&input["script"]);
         let sample = driver(false).read(&mut mock.clone()).expect("a scripted burst");
         mock.done();
+        json!({"accel_g": floats(sample.accel_g()), "rate_cd_s": sample.rate_centidegrees_per_second(),
+               "rate_dps": floats(sample.rate_degrees_per_second())})
+    });
+    assert!(count > 40, "{count} decode cases");
+}
+
+#[test]
+fn the_status_burst_decodes_plan_b_s_frames_bit_for_bit() {
+    // each frame as the 16-byte burst from STATUS_REG: status 0x03 (XLDA and GDA), the reserved 0x1F and OUT_TEMP
+    // (not zero, so a decode that took them for output would show), then plan B's 12 bytes
+    let count = check_cases(&part("decode"), "decode", |input| {
+        let steps = input["script"].as_array().expect("a transcript");
+        assert_eq!(steps.len(), 1, "a decode case is one burst: {input}");
+        let burst = &steps[0];
+        assert_eq!(
+            burst["write"],
+            json!("22"),
+            "the bare burst starts at OUTX_L_G: {burst}"
+        );
+        let mut status_burst = burst.clone();
+        status_burst["write"] = json!(format!("{STATUS_REG:02x}"));
+        status_burst["read"] = json!(format!(
+            "03a55ac3{}",
+            burst["read"].as_str().expect("the frame's bytes")
+        ));
+        let bare = replay(&input["script"]);
+        let expected = driver(true).read(&mut bare.clone()).expect("a scripted burst");
+        bare.done();
+        let mock = replay(&json!([status_burst]));
+        let (fresh, sample) = driver(true)
+            .read_fresh(&mut mock.clone())
+            .expect("a scripted status burst");
+        mock.done();
+        assert_eq!(
+            fresh,
+            Fresh {
+                accel: true,
+                rate: true
+            }
+        );
+        assert_eq!(
+            sample, expected,
+            "the status burst's sample is the bare burst's, bit for bit: {burst}"
+        );
         json!({"accel_g": floats(sample.accel_g()), "rate_cd_s": sample.rate_centidegrees_per_second(),
                "rate_dps": floats(sample.rate_degrees_per_second())})
     });

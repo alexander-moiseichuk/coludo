@@ -64,8 +64,9 @@ pub enum Step {
 struct Expectation {
     /// What the driver must do.
     step: Step,
-    /// True to answer this step with an error (a NAK on the bus, a refusal on the pin) after checking it matches.
-    fails: bool,
+    /// The error to answer this step with after checking it matches (the bus answers it, the pin refuses on any);
+    /// None to perform the step.
+    failure: Option<MockError>,
 }
 
 /// The script the bus, the delay and the pin share.
@@ -144,14 +145,36 @@ pub struct MockBus {
     script: Rc<RefCell<Script>>,
 }
 
-/// The error the scripted bus answers a failing step with: a NAK on the address, plan B's `OSError(19)`.
+/// The error the scripted bus answers a failing step with, as the embedded-hal kind the driver reads:
+/// [`MockError::NAK`] for a step scripted with [`MockBus::then_fail`], [`MockError::OTHER`] for one scripted with
+/// [`MockBus::then_fail_other`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MockError;
+pub struct MockError {
+    /// What `kind()` answers.
+    kind: ErrorKind,
+}
+
+impl MockError {
+    /// A NAK on the address, plan B's `OSError(19)`: what an absent or reset part answers.
+    pub const NAK: MockError = MockError {
+        kind: ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address),
+    };
+
+    /// A failure the port says is not the wire's: the firmware's `BusBusy` (the `i2c_master` bus lock not had in
+    /// time, because another handle held the bus) or a driver refusal, both [`ErrorKind::Other`] there.
+    pub const OTHER: MockError = MockError { kind: ErrorKind::Other };
+}
+
+/// TRANSITIONAL: [`MockError::NAK`] under the unit struct's old value name, kept only so the four
+/// `Fault::Bus(MockError)` lines of `tests/probe.rs` compile until they read `MockError::NAK`; then this alias and its
+/// lint allow go. New code names the kind.
+#[allow(non_upper_case_globals)]
+pub const MockError: MockError = MockError::NAK;
 
 impl i2c::Error for MockError {
-    /// Always a NAK: what an absent or reset part answers.
+    /// The kind the step was scripted to fail with.
     fn kind(&self) -> ErrorKind {
-        ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)
+        self.kind
     }
 }
 
@@ -166,7 +189,7 @@ impl MockBus {
         self.script
             .borrow_mut()
             .pending
-            .push_back(Expectation { step, fails: false });
+            .push_back(Expectation { step, failure: None });
         self
     }
 
@@ -212,16 +235,30 @@ impl MockBus {
         self.push(step)
     }
 
-    /// Make the last scripted step fail: the bus NAKs it (nothing is read back), the pin refuses it.
+    /// Make the last scripted step fail: the bus NAKs it ([`MockError::NAK`], nothing is read back), the pin refuses
+    /// it.
     ///
     /// Panics when nothing is scripted yet.
     pub fn then_fail(&self) -> &MockBus {
+        self.fail_last(MockError::NAK)
+    }
+
+    /// Make the last scripted step fail as the port, not the wire, fails it: the bus answers [`MockError::OTHER`]
+    /// (nothing is read back), the pin refuses it.
+    ///
+    /// Panics when nothing is scripted yet.
+    pub fn then_fail_other(&self) -> &MockBus {
+        self.fail_last(MockError::OTHER)
+    }
+
+    /// Answer the last scripted step with `error`; panics when nothing is scripted yet.
+    fn fail_last(&self, error: MockError) -> &MockBus {
         self.script
             .borrow_mut()
             .pending
             .back_mut()
-            .expect("mock: then_fail needs a scripted step before it")
-            .fails = true;
+            .expect("mock: a failure needs a scripted step before it")
+            .failure = Some(error);
         self
     }
 
@@ -291,8 +328,8 @@ impl I2c for MockBus {
             ),
         };
         let expected = self.script.borrow_mut().next(&actual);
-        if expected.fails {
-            return Err(MockError);
+        if let Some(error) = expected.failure {
+            return Err(error);
         }
         match (operations, expected.step) {
             ([Operation::Read(buffer)], Step::Read { bytes, .. })
@@ -357,7 +394,7 @@ impl digital::Error for MockPinError {
 impl MockPin {
     /// Check one level against the script.
     fn drive(&mut self, high: bool) -> Result<(), MockPinError> {
-        if self.script.borrow_mut().next(&Step::Pin { high }).fails {
+        if self.script.borrow_mut().next(&Step::Pin { high }).failure.is_some() {
             Err(MockPinError)
         } else {
             Ok(())
@@ -403,10 +440,10 @@ impl OutputPin for NoPin {
 
 #[cfg(test)]
 mod tests {
-    use super::MockBus;
+    use super::{MockBus, MockError};
     use embedded_hal::delay::DelayNs;
     use embedded_hal::digital::OutputPin;
-    use embedded_hal::i2c::I2c;
+    use embedded_hal::i2c::{Error, ErrorKind, I2c, NoAcknowledgeSource};
 
     #[test]
     fn a_script_played_in_order_passes() {
@@ -441,6 +478,44 @@ mod tests {
         assert!(bus.read(0x25, &mut frame).is_err());
         assert_eq!(frame, [0, 0]);
         mock.done();
+    }
+
+    #[test]
+    fn a_failing_step_answers_the_kind_it_was_scripted_with() {
+        // the wire's NAK and the port's refusal are two kinds of one error type, as on the firmware's port
+        let mock = MockBus::new();
+        mock.expect_write(0x63, &[0x48, 0xa3])
+            .then_fail()
+            .expect_read(0x63, &[9; 9])
+            .then_fail_other()
+            .expect_pin(true)
+            .then_fail_other();
+        let mut bus = mock.clone();
+        let nak = bus.write(0x63, &[0x48, 0xa3]).unwrap_err();
+        assert_eq!(nak, MockError::NAK);
+        assert_eq!(nak.kind(), ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address));
+        let mut frame = [0u8; 9];
+        let refusal = bus.read(0x63, &mut frame).unwrap_err();
+        assert_eq!(refusal, MockError::OTHER);
+        assert_eq!(refusal.kind(), ErrorKind::Other);
+        // NEGATIVE: a refusal reads nothing back either, and is no NAK
+        assert_eq!(frame, [0; 9]);
+        assert_ne!(refusal, MockError::NAK);
+        assert!(
+            mock.pin().set_high().is_err(),
+            "the pin refuses a step failed either way"
+        );
+        mock.done();
+    }
+
+    #[test]
+    #[should_panic(expected = "mock: step 0 expected write 0x63 [48a3], got write 0x63 [06]")]
+    fn a_refused_step_is_still_checked_against_the_script() {
+        // NEGATIVE: the refusal answers the scripted transaction only, never whatever the driver sends instead
+        let mock = MockBus::new();
+        mock.expect_write(0x63, &[0x48, 0xa3]).then_fail_other();
+        let mut bus = mock.clone();
+        let _ = bus.write(0x63, &[0x06]);
     }
 
     #[test]

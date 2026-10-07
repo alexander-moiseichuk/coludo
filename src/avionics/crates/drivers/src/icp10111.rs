@@ -12,6 +12,28 @@
 //! slept through the conversion in its own asyncio task; the bus owner thread cannot sleep, so the wait became a
 //! phase with a deadline, and the time arrives as an argument.
 //!
+//! THE CADENCE ON THE TICK. The rule is plan B's: the next measurement is issued a period after the collect. The
+//! owner polls on the 100 Hz control tick, so each phase lands on a wake: the issue at 0, the collect on the first
+//! wake at least [`MEASURE_MS`] later (20 ms), and the next issue a period after that collect. With the default
+//! 100 ms period that deadline falls on a tick boundary (120 ms) and is met only when that wake lands no earlier
+//! after its tick than the collect's did; a wake even 1 us earlier misses it and issues on the next tick (130 ms).
+//! So the board's cycle is 120 or 130 ms, about 8 Hz, never the 10 Hz the period suggests (plan B's own loop,
+//! sleeping a period after its read, ran at ~112 ms). Anchoring the next issue to the previous issue instead would
+//! give 10 Hz, if the detectors fed by the elevation slope ever need a regular cadence.
+//!
+//! THE WIRE RULE: only what the wire says about the part strikes -- a NAK, a lost arbitration, a bus error, a CRC
+//! reject. A bus failure the port reports as [`ErrorKind::Other`] never reached the part: the firmware's `BusBusy`
+//! (the `i2c_master` bus lock not had in time, because another handle on the port held it -- the camera's SCCB on
+//! 7C's i2c:0) or a driver refusal. It is reported ([`Poll::Failed`], never `recovering`), the next issue comes a
+//! period later, and the run of strikes is left exactly as it was, neither counted nor rearmed: counted, a streaming
+//! camera would fire general calls that reset every part on the port for nothing; rearmed, it would hide a wedge in
+//! progress. The recovery's own general call obeys the same rule: one the port refuses reset nothing, so it is
+//! reported the same way and goes again a period later, and [`Poll::GeneralCall`] and [`Poll::Rearm`] wait for the
+//! call that reached the wire (a NAK there is still ignored: nothing may honour it). Reported anyway, they would send
+//! the owner walking the peers for a reset that never happened and spend the run: a part latched at that moment
+//! would never escalate again. Likewise setup tells the owner of a general call only when it reached the wire. Plan B
+//! never met this failure (no camera on its buses).
+//!
 //! THE CRCs: the part appends a CRC-8 to each of its three words, and plan B once read them and threw them away.
 //! That is the expensive kind of silence: a corrupted I2C word does not raise, it yields a plausible altitude. This
 //! part has a documented latch-up habit on this board, which is exactly the state that puts bad bytes on the wire,
@@ -51,7 +73,7 @@
 
 use control::commons::altitude_m;
 use embedded_hal::delay::DelayNs;
-use embedded_hal::i2c::I2c;
+use embedded_hal::i2c::{Error, ErrorKind, I2c};
 use serde_json::Value;
 
 use crate::commons::{id_classify, python_float, sensirion_crc8};
@@ -110,7 +132,8 @@ pub const FRAME_LENGTH: usize = 9;
 /// Readings averaged at setup (and at a calibrate) to fix the ground-zero reference.
 pub const GROUND_SAMPLES: u32 = 8;
 
-/// The default read period, ms: ~10 Hz.
+/// The default read period, ms: the wait from a collect to the next issue, 120 or 130 ms a cycle on the 10 ms tick
+/// (see the module notes).
 pub const DEFAULT_PERIOD_MS: u32 = 100;
 
 /// What the calibration column shows until a ground zero is held (plan B's calibration() text).
@@ -228,16 +251,18 @@ pub enum Poll<BusError> {
     /// A conversion was collected: publish it.
     Reading(Reading),
     /// The command or the collect failed, or the frame failed a CRC (plan B's deduplicated `icp10111 :: read
-    /// <error>` note). `recovering` is true on the one failure that completes a run of [`RECOVER_AFTER`]: the
-    /// recovery has begun, and the general call goes out a period later.
+    /// <error>` note), or the port refused the recovery's general call (kind [`ErrorKind::Other`]; it goes again a
+    /// period later). `recovering` is true on the one failure that completes a run of [`RECOVER_AFTER`]: the
+    /// recovery has begun, and the general call goes out a period later. Never on a bus failure of kind
+    /// [`ErrorKind::Other`], which is no strike (the wire rule, in the module notes).
     Failed {
         /// What failed.
         fault: Fault<BusError>,
         /// Whether this failure started the recovery.
         recovering: bool,
     },
-    /// The recovery's general call went out (a NAK is expected and ignored: nothing may honour it); the bus settles
-    /// for [`RESET_RETRY_MS`] before [`Poll::Rearm`].
+    /// The recovery's general call reached the wire (a NAK is expected and ignored: nothing may honour it); the bus
+    /// settles for [`RESET_RETRY_MS`] before [`Poll::Rearm`].
     GeneralCall,
     /// The bus has settled after the general call: re-arm every OTHER device registered on this port now, by
     /// membership, and log plan B's 'read recovery: general-call reset + peer rearm after 3 failures'.
@@ -257,7 +282,8 @@ enum Phase {
         /// When the command went out.
         issued: u64,
     },
-    /// The recovery waits out a busy conversion until `until`, then sends the general call.
+    /// The recovery waits out a busy conversion until `until`, then sends the general call (again a period later
+    /// while the port refuses it).
     Draining {
         /// When the general call goes out.
         until: u64,
@@ -377,10 +403,13 @@ impl Icp10111 {
     }
 
     /// Send setup's general-call reset; a NAK is ignored (nothing on the bus may honour it -- nothing lost by
-    /// asking), and the owner is told either way ([`Icp10111::take_general_call`]).
+    /// asking), and the owner is told either way ([`Icp10111::take_general_call`]). A call the port refused reset
+    /// nothing, so the owner is not told of it (the wire rule); setup's next touch decides whether another goes.
     fn general_call<Bus: I2c>(&mut self, bus: &mut Bus) {
-        let _ = bus.write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET);
-        self.general_call = true;
+        match bus.write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET) {
+            Err(error) if refused(&error) => {}
+            _ => self.general_call = true,
+        }
     }
 
     /// One blocking conversion: the command, the wait, the frame, the CRCs (icp10111._measure).
@@ -467,12 +496,14 @@ impl Icp10111 {
     /// One step of the run loop at `now_us` (the owner's clock): at most one transfer, never a wait.
     ///
     /// Call it on every owner tick. It keeps plan B's cadence: a measurement is issued, collected at least
-    /// [`MEASURE_MS`] later, and the next is issued a period after the collect (or after a failed issue). Every
-    /// failure -- a NAK on either phase, or a CRC reject -- counts; a good frame rearms the count. The failure that
-    /// completes a run of [`RECOVER_AFTER`] starts the recovery: a period for a busy conversion to drain, the general
-    /// call ([`Poll::GeneralCall`]), [`RESET_RETRY_MS`] to settle, then [`Poll::Rearm`] for the owner's walk, and the
-    /// next measurement a period after that. A good read later rearms the count, and a LATER wedge escalates again;
-    /// a part that stays dead escalates once, not on every failure.
+    /// [`MEASURE_MS`] later, and the next is issued a period after the collect (or after a failed phase): 120 or
+    /// 130 ms a cycle on the 10 ms tick (the module notes). Every wire failure -- a NAK on either phase, or a CRC
+    /// reject -- counts; a good frame rearms the count; a bus failure of kind [`ErrorKind::Other`] does neither (the
+    /// wire rule). The failure that completes a run of [`RECOVER_AFTER`] starts the recovery: a period for a busy
+    /// conversion to drain, the general call ([`Poll::GeneralCall`]; one the port refuses is reported as a failure
+    /// and goes again a period later), [`RESET_RETRY_MS`] to settle, then [`Poll::Rearm`] for the owner's walk, and
+    /// the next measurement a period after that. A good read later rearms the count, and a LATER wedge escalates
+    /// again; a part that stays dead escalates once, not on every failure.
     pub fn poll<Bus: I2c>(&mut self, bus: &mut Bus, now_us: u64) -> Poll<Bus::Error> {
         match self.phase {
             Phase::Idle { next } if now_us >= next => match bus.write(self.address, &MEASURE) {
@@ -498,12 +529,26 @@ impl Icp10111 {
                 }
             }
             Phase::Draining { until } if now_us >= until => {
-                // a NAK is ignored: nothing on the bus may honour it -- nothing lost by asking
-                let _ = bus.write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET);
-                self.phase = Phase::Settling {
-                    until: now_us + u64::from(RESET_RETRY_MS) * MICROSECONDS_PER_MILLISECOND,
-                };
-                Poll::GeneralCall
+                match bus.write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET) {
+                    // the port refused it: nothing reached the wire, so nothing was reset -- again a period later,
+                    // which also spaces out the bus-lock timeouts a busy port costs the owner
+                    Err(error) if refused(&error) => {
+                        self.phase = Phase::Draining {
+                            until: now_us + self.period_us(),
+                        };
+                        Poll::Failed {
+                            fault: Fault::Bus(error),
+                            recovering: false,
+                        }
+                    }
+                    // a NAK is ignored: nothing on the bus may honour it -- nothing lost by asking
+                    _ => {
+                        self.phase = Phase::Settling {
+                            until: now_us + u64::from(RESET_RETRY_MS) * MICROSECONDS_PER_MILLISECOND,
+                        };
+                        Poll::GeneralCall
+                    }
+                }
             }
             Phase::Settling { until } if now_us >= until => {
                 self.phase = Phase::Idle {
@@ -516,9 +561,13 @@ impl Icp10111 {
     }
 
     /// Count a failure at `now_us` and decide what follows: the recovery on the failure that completes the run,
-    /// else the next measurement a period later.
-    fn failed<BusError>(&mut self, fault: Fault<BusError>, now_us: u64) -> Poll<BusError> {
-        let recovering = self.strikes.strike(true, RECOVER_AFTER);
+    /// else the next measurement a period later. A bus failure of kind [`ErrorKind::Other`] never reached the part,
+    /// so it is not counted and leaves the run as it was (the wire rule).
+    fn failed<BusError: Error>(&mut self, fault: Fault<BusError>, now_us: u64) -> Poll<BusError> {
+        let recovering = match &fault {
+            Fault::Bus(error) if refused(error) => false,
+            _ => self.strikes.strike(true, RECOVER_AFTER),
+        };
         self.phase = if recovering {
             Phase::Draining {
                 until: now_us + self.period_us(),
@@ -556,6 +605,12 @@ impl Icp10111 {
         let read = self.identity_word(bus).ok().map(|word| (word & IDENTITY_MASK) as u8);
         id_classify(read, IDENTITY as u8)
     }
+}
+
+/// Whether a bus failure is the port's, not the wire's: [`ErrorKind::Other`], the firmware's `BusBusy` or a driver
+/// refusal, which never reached the part (the wire rule, in the module notes).
+fn refused<BusError: Error>(error: &BusError) -> bool {
+    error.kind() == ErrorKind::Other
 }
 
 /// Python's truthiness of a JSON value, for the `rezero` flag: false, null, 0, "" and empty containers are false.

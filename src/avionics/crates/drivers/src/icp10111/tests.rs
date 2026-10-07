@@ -15,7 +15,7 @@ use super::{
 };
 use crate::commons::sensirion_crc8;
 use crate::device::{Device, Fault};
-use crate::mock::MockBus;
+use crate::mock::{MockBus, MockError};
 
 /// test_icp10111.py's OTP constants, captured from the wired sensor.
 const OTP: Otp = [211, 371, 553, 3833];
@@ -28,6 +28,42 @@ const MILLISECOND: u64 = 1000;
 
 /// The run loop's period in these tests, ms.
 const PERIOD_MS: u64 = 100;
+
+/// The owner's tick on the board, in the run loop's microseconds: the 100 Hz control clock.
+const TICK: u64 = 10 * MILLISECOND;
+
+/// Poll at each wake (microseconds), keeping every event but [`Poll::Waiting`] with its time.
+fn wake(
+    barometer: &mut Icp10111,
+    bus: &mut MockBus,
+    wakes: impl IntoIterator<Item = u64>,
+) -> Vec<(u64, Poll<MockError>)> {
+    wakes
+        .into_iter()
+        .filter_map(|now| match barometer.poll(bus, now) {
+            Poll::Waiting => None,
+            event => Some((now, event)),
+        })
+        .collect()
+}
+
+/// `count` milliseconds in the run loop's microseconds.
+fn milliseconds(count: u64) -> u64 {
+    count * MILLISECOND
+}
+
+/// The owner's wakes on an exact 10 ms grid, from `from` through `until` (microseconds).
+fn ticks(from: u64, until: u64) -> impl Iterator<Item = u64> {
+    (from..=until).step_by(TICK as usize)
+}
+
+/// A phase the bus failed with `error`, as the run loop reports it.
+fn bus_failed(error: MockError, recovering: bool) -> Poll<MockError> {
+    Poll::Failed {
+        fault: Fault::Bus(error),
+        recovering,
+    }
+}
 
 /// A frame with good CRCs for these raw words.
 fn frame(pressure_raw: u32, temperature_raw: u16) -> [u8; 9] {
@@ -295,7 +331,7 @@ fn a_wedged_part_escalates_once_then_recovers_and_a_later_wedge_escalates_again(
     mock.expect_write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET).then_fail();
     let events = tick(&mut barometer, &mut bus, 429 * MILLISECOND);
     let failed = |recovering| Poll::Failed {
-        fault: Fault::Bus(crate::mock::MockError),
+        fault: Fault::Bus(MockError::NAK),
         recovering,
     };
     assert_eq!(
@@ -323,6 +359,236 @@ fn a_wedged_part_escalates_once_then_recovers_and_a_later_wedge_escalates_again(
     assert_eq!(events[4].1, failed(true));
     assert_eq!(events[6].1, Poll::Rearm);
     mock.done();
+}
+
+/// Script `cycles` good measurements: the issue and its frame.
+fn script_cycles(mock: &MockBus, cycles: usize) {
+    for _ in 0..cycles {
+        mock.expect_write(ADDRESS, &MEASURE)
+            .expect_read(ADDRESS, &frame(11_441_968, 27_034));
+    }
+}
+
+#[test]
+fn on_the_exact_tick_grid_the_cycle_is_120_ms() {
+    // the board's cadence: the issue at 0, the collect on the 20 ms wake (the 10 ms one is short of the conversion),
+    // the next issue a period after the collect -- on a tick boundary, which the 120 ms wake meets exactly
+    let (mock, mut barometer) = ready();
+    let mut bus = mock.clone();
+    script_cycles(&mock, 2);
+    mock.expect_write(ADDRESS, &MEASURE);
+    let events = wake(&mut barometer, &mut bus, ticks(0, milliseconds(250)));
+    let times: Vec<u64> = events.iter().map(|(at, _)| *at).collect();
+    assert_eq!(times, [0, 20, 120, 140, 240].map(milliseconds));
+    assert!(events.iter().step_by(2).all(|(_, event)| *event == Poll::Issued));
+    assert!(
+        events
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .all(|(_, event)| matches!(event, Poll::Reading(_)))
+    );
+    mock.done();
+}
+
+#[test]
+fn a_wake_1_us_earlier_than_the_collect_s_slips_the_issue_to_130_ms() {
+    // the collect's wake lands 1 us after its tick and the 120 ms wake exactly on its own: a period after the collect
+    // is 120.001 ms, so that wake waits and the issue slips a whole tick; the next collect on time, 120 ms again
+    let (mock, mut barometer) = ready();
+    let mut bus = mock.clone();
+    script_cycles(&mock, 2);
+    mock.expect_write(ADDRESS, &MEASURE);
+    let late_collect = milliseconds(20);
+    let wakes = ticks(0, milliseconds(250)).map(|now| if now == late_collect { now + 1 } else { now });
+    let events = wake(&mut barometer, &mut bus, wakes);
+    let times: Vec<u64> = events.iter().map(|(at, _)| *at).collect();
+    assert_eq!(times, [0, 20_001, 130_000, 150_000, 250_000]);
+    assert_eq!(events[2].1, Poll::Issued);
+    mock.done();
+}
+
+#[test]
+fn no_collect_before_the_12_ms_conversion() {
+    // NEGATIVE: every wake short of MEASURE_MS after the issue waits, to the microsecond -- a frame read early is the
+    // previous conversion's, or a NAK from a part still converting
+    let (mock, mut barometer) = ready();
+    let mut bus = mock.clone();
+    script_cycles(&mock, 1);
+    assert_eq!(barometer.poll(&mut bus, 0), Poll::Issued);
+    let due = milliseconds(u64::from(MEASURE_MS));
+    for early in [1, TICK, due - 1] {
+        assert_eq!(barometer.poll(&mut bus, early), Poll::Waiting, "{early} us");
+    }
+    assert!(matches!(barometer.poll(&mut bus, due), Poll::Reading(_)));
+    mock.done();
+}
+
+#[test]
+fn a_dead_part_escalates_once() {
+    // NEGATIVE: three NAKs start the recovery (the general call a period later, the re-arm 30 ms after it); a part
+    // that never answers again then fails every period with no second general call
+    let (mock, mut barometer) = ready();
+    let mut bus = mock.clone();
+    for _ in 0..3 {
+        mock.expect_write(ADDRESS, &MEASURE).then_fail();
+    }
+    mock.expect_write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET).then_fail();
+    for _ in 0..10 {
+        mock.expect_write(ADDRESS, &MEASURE).then_fail();
+    }
+    let events = wake(&mut barometer, &mut bus, ticks(0, milliseconds(1_330)));
+    let mut expected = vec![
+        (milliseconds(0), bus_failed(MockError::NAK, false)),
+        (milliseconds(100), bus_failed(MockError::NAK, false)),
+        (milliseconds(200), bus_failed(MockError::NAK, true)),
+        (milliseconds(300), Poll::GeneralCall),
+        (milliseconds(330), Poll::Rearm),
+    ];
+    expected.extend((0..10).map(|cycle| (milliseconds(430 + 100 * cycle), bus_failed(MockError::NAK, false))));
+    assert_eq!(events, expected);
+    assert_eq!(barometer.strikes.count(), 13, "still counting, never firing again");
+    mock.done();
+}
+
+#[test]
+fn failures_the_port_refuses_start_no_recovery_and_leave_the_run_as_it_was() {
+    // NEGATIVE: two NAKs, then three refusals of kind Other -- on an issue, on a collect, on an issue -- each
+    // reported, each followed by the next issue a period later, none counted: counted, the first would complete the
+    // run. Nor do they clear it: the NAK after them completes the run of three
+    let (mock, mut barometer) = ready();
+    let mut bus = mock.clone();
+    mock.expect_write(ADDRESS, &MEASURE)
+        .then_fail()
+        .expect_write(ADDRESS, &MEASURE)
+        .then_fail()
+        .expect_write(ADDRESS, &MEASURE)
+        .then_fail_other()
+        .expect_write(ADDRESS, &MEASURE)
+        .expect_read(ADDRESS, &frame(11_441_968, 27_034))
+        .then_fail_other()
+        .expect_write(ADDRESS, &MEASURE)
+        .then_fail_other();
+    let events = wake(&mut barometer, &mut bus, ticks(0, milliseconds(510)));
+    assert_eq!(
+        events,
+        [
+            (milliseconds(0), bus_failed(MockError::NAK, false)),
+            (milliseconds(100), bus_failed(MockError::NAK, false)),
+            (milliseconds(200), bus_failed(MockError::OTHER, false)),
+            (milliseconds(300), Poll::Issued),
+            (milliseconds(320), bus_failed(MockError::OTHER, false)),
+            (milliseconds(420), bus_failed(MockError::OTHER, false)),
+        ]
+    );
+    assert_eq!(barometer.strikes.count(), 2, "the run of NAKs, untouched");
+    mock.expect_write(ADDRESS, &MEASURE)
+        .then_fail()
+        .expect_write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET);
+    let events = wake(&mut barometer, &mut bus, ticks(milliseconds(520), milliseconds(650)));
+    assert_eq!(
+        events,
+        [
+            (milliseconds(520), bus_failed(MockError::NAK, true)),
+            (milliseconds(620), Poll::GeneralCall),
+            (milliseconds(650), Poll::Rearm),
+        ]
+    );
+    mock.done();
+}
+
+#[test]
+fn a_nak_a_refusal_and_two_naks_recover_at_the_third_nak() {
+    // NEGATIVE: the refusal between the NAKs neither completes the run (it would at the second NAK) nor restarts it
+    // (it would need a fourth)
+    let (mock, mut barometer) = ready();
+    let mut bus = mock.clone();
+    mock.expect_write(ADDRESS, &MEASURE)
+        .then_fail()
+        .expect_write(ADDRESS, &MEASURE)
+        .then_fail_other()
+        .expect_write(ADDRESS, &MEASURE)
+        .then_fail()
+        .expect_write(ADDRESS, &MEASURE)
+        .then_fail()
+        .expect_write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET)
+        .then_fail();
+    let events = wake(&mut barometer, &mut bus, ticks(0, milliseconds(520)));
+    assert_eq!(
+        events,
+        [
+            (milliseconds(0), bus_failed(MockError::NAK, false)),
+            (milliseconds(100), bus_failed(MockError::OTHER, false)),
+            (milliseconds(200), bus_failed(MockError::NAK, false)),
+            (milliseconds(300), bus_failed(MockError::NAK, true)),
+            (milliseconds(400), Poll::GeneralCall),
+            (milliseconds(430), Poll::Rearm),
+        ]
+    );
+    mock.done();
+}
+
+#[test]
+fn a_general_call_the_port_refuses_goes_again_and_only_the_one_on_the_wire_rearms() {
+    // NEGATIVE: three NAKs start the recovery, but the port refuses the general call (the bus lock not had: the
+    // camera's SCCB on 7C's i2c:0). Nothing was reset, so neither GeneralCall nor Rearm is reported -- the owner
+    // would walk the peers for nothing and the run would be spent -- and nothing is issued meanwhile (the mock
+    // panics on an unscripted measure). POSITIVE: the call goes again a period later; that one reaches the wire
+    // (NAKed, as nothing honours it) and the recovery completes 30 ms after it
+    let (mock, mut barometer) = ready();
+    let mut bus = mock.clone();
+    for _ in 0..3 {
+        mock.expect_write(ADDRESS, &MEASURE).then_fail();
+    }
+    mock.expect_write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET)
+        .then_fail_other()
+        .expect_write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET)
+        .then_fail_other()
+        .expect_write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET)
+        .then_fail()
+        .expect_write(ADDRESS, &MEASURE);
+    let events = wake(&mut barometer, &mut bus, ticks(0, milliseconds(630)));
+    assert_eq!(
+        events,
+        [
+            (milliseconds(0), bus_failed(MockError::NAK, false)),
+            (milliseconds(100), bus_failed(MockError::NAK, false)),
+            (milliseconds(200), bus_failed(MockError::NAK, true)),
+            (milliseconds(300), bus_failed(MockError::OTHER, false)),
+            (milliseconds(400), bus_failed(MockError::OTHER, false)),
+            (milliseconds(500), Poll::GeneralCall),
+            (milliseconds(530), Poll::Rearm),
+            (milliseconds(630), Poll::Issued),
+        ]
+    );
+    assert_eq!(
+        barometer.strikes.count(),
+        3,
+        "the refusals neither count nor clear the run"
+    );
+    mock.done();
+}
+
+#[test]
+fn setup_tells_the_owner_of_no_general_call_the_port_refused() {
+    // NEGATIVE: the second touch NAKs, and the general call it fires is refused by the port: nothing was reset, so
+    // the owner has no peer to re-arm when the third touch answers (a_busy_part_is_waited_out_and_a_latched_one_gets_
+    // the_general_call is the positive: the same call NAKed on the wire is told)
+    let mock = MockBus::new();
+    mock.expect_write(ADDRESS, &READ_ID)
+        .then_fail()
+        .expect_delay_ms(RESET_RETRY_MS)
+        .expect_write(ADDRESS, &READ_ID)
+        .then_fail()
+        .expect_write(GENERAL_CALL_ADDRESS, &GENERAL_CALL_RESET)
+        .then_fail_other()
+        .expect_delay_ms(RESET_RETRY_MS);
+    script_identity(&mock, 0x0848);
+    script_after_first_touch(&mock);
+    let mut barometer = Icp10111::new(ADDRESS, PERIOD_MS as u32);
+    barometer.setup(&mut mock.clone(), &mut mock.delay()).unwrap();
+    mock.done();
+    assert!(!barometer.take_general_call());
 }
 
 #[test]

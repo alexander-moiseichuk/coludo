@@ -2,8 +2,8 @@
 //!
 //! The LSM6DSO32 6-DoF IMU (src/glider/drivers/lsm6dso32.py): the PRIMARY raw `accel` and the primary gyro `rate`.
 //! A +/-32 g accel range covers the 8-12 g boost without clipping and still resolves ~1 mg for the airspeed
-//! integrator; the gyro runs at +/-2000 dps. Both at 104 Hz with block data update, so the 12-byte burst at
-//! OUTX_L_G (gyro x..z, then accel x..z, contiguous, signed little-endian) never mixes two conversions.
+//! integrator; the gyro runs at +/-2000 dps. Both at 104 Hz with block data update, so the 12 output bytes at
+//! OUTX_L_G (gyro x..z, then accel x..z, contiguous, signed little-endian) never mix two conversions.
 //!
 //! Wired on SPI (its own chip-select, 4-wire mode 3) for clean high-rate reads; I2C at 0x6A also works when the
 //! config names bus 'i2c'. Multi-byte reads auto-increment through CTRL3_C.IF_INC, so the SPI command byte is the
@@ -19,24 +19,52 @@
 //! peripheral CREATED AND DEINITIALISED under the part, which a pin test does and no flight path does. So this is
 //! not a fix for a flight failure; it is the right shape for the operation, at microseconds a round.
 //!
-//! INT1 data-ready drives the sampling where a pin is wired: the firmware's GPIO interrupt wakes the control
-//! thread, and how many edges arrived per wake (`irq_runs`) is the operator's evidence. A dead INT line used to
-//! masquerade as a healthy sensor: plan B's fallback timeout became the sampling rate, measured at exactly 2.0 Hz
-//! on the bench with the driver reporting healthy, while `rate` has a 20 ms freshness window and no backup on a
-//! board without a BMI323 -- so the PID's D term quietly degraded to derivative-on-error. [`Lsm6dso32::wake`]
-//! keeps plan B's verdict: [`INTERRUPT_SILENT_LIMIT`] timed-out wakes in a row mean the line is dead, and one edge
-//! means it is back.
+//! NEW CONVERSIONS ONLY (avionics-port.md M6). The flight read is [`Lsm6dso32::read_fresh`]: ONE 16-byte burst
+//! from STATUS_REG -- the status, the reserved 0x1F, OUT_TEMP, then the same 12 output bytes -- so the data-available
+//! flags and the sample come out of one chip-select frame. The firmware pushes `accel` only on XLDA and `rate` only
+//! on GDA, writes the row on either, and calls the part unhealthy after [`STALE_LIMIT`] ticks in a row with neither
+//! (avionics-port.md §6's VL53 rule: a repeated value is never republished as fresh). Plan B pushed every pass, but
+//! its pass was slower than the ODR; the 100 Hz tick is not, so without the flags a part slower than the tick would
+//! publish an old sample as a new one. An impossible status (a bit the datasheet fixes at 0, as the 0xFF of an SPI
+//! bus nothing drives) is never fresh, so a part that lost power, chip-select or MISO goes stale the same way.
+//!
+//! One frame keeps the window between the flags and the output small, not empty: a conversion that lands after the
+//! status byte, with none unread before it, is read but flagged as not new, and is lost (an old sample is never
+//! marked fresh). Only a part slower than the tick has such a tick, where the drift wraps: the lost conversion
+//! doubles that wrap's stale tick, two in a row, a 30 ms gap between rows. The chance per wrap is the window
+//! (microseconds) over the drift per tick (about 100 us at 99 Hz), so a few wraps in a hundred.
+//!
+//! THE PART'S OWN ODR. 104 Hz is nominal: the conversions run off the part's own oscillator, whose per-die offset
+//! INTERNAL_FREQ_FINE reports ([`Lsm6dso32::frequency_fine`], [`odr_hz`], 0.15 % per LSB). A part slower than the
+//! 100 Hz tick has no new conversion behind a tick now and then (the taster measured about 1 % of rows with
+//! `irq_runs` 0, so it runs at about 99 Hz); a faster one always has, and skips about 4 conversions a second
+//! instead. The firmware logs the ODR once at bring-up, so each board says which case it is.
+//!
+//! INT1 AND `irq_runs`. The control tick paces the reads: the part is read at the top of every tick, and the config's
+//! `period_ms` is unused. INT1 data-ready is evidence, not a pacer: the firmware's GPIO interrupt only counts its
+//! rising edges, and the tick swaps the count out just BEFORE the read -- plan B's order, whose run loop waited for
+//! the edge, then read. With data-ready latched (COUNTER_BDR_REG1 `dataready_pulsed` 0, the reset default plan B
+//! never wrote) INT1 stays high until the burst reads the output, so a read with a new conversion behind it sees 1;
+//! 0 means no new conversion, or a dead line; and a 0 followed by a 2 is a conversion landing in the microseconds
+//! between the swap and the burst. The latch also means a late tick never piles up edges: more than 2 needs another
+//! read of the output (a probe) to clear data-ready between two swaps. The firmware arms the interrupt AFTER setup,
+//! on the control thread: a conversion that lands between setup's clearing read and the arming leaves INT1 high
+//! with no edge to count, so the first tick's read is what clears it, and the first row's `irq_runs` is 0.
+//!
+//! A dead INT line used to masquerade as a healthy sensor: plan B's fallback timeout became the sampling rate,
+//! measured at exactly 2.0 Hz on the bench with the driver reporting healthy, while `rate` has a 20 ms freshness
+//! window and no backup on a board without a BMI323 -- so the PID's D term quietly degraded to
+//! derivative-on-error. On the tick a dead line no longer slows the sampling, but it still hides a broken wire, so
+//! [`Lsm6dso32::wake`] keeps plan B's verdict as the operator's view: [`INTERRUPT_SILENT_LIMIT`] reads in a row
+//! without an edge mean the line is dead, and one edge means it is back.
 //!
 //! Units (decision D18): accel in f32 g and gyro in f32 degrees per second for the channels. The telemetry row
 //! keeps plan B's integers: the gyro columns are the RAW centidegree-per-second integer `raw x 70 x 100 // 1000`
 //! (never a formatted decimal; the host tools divide by 100 when they render) next to the accel in g and
 //! `irq_runs`.
 //!
-//! Not here (firmware glue): the GPIO interrupt and its wake count, the channel push, the telemetry stream, the
-//! probe's log lines and the inspect JSON. The firmware arms its INT1 edge interrupt BEFORE calling setup: setup
-//! ends with the clearing read, and plan B's rule is that the interrupt is armed first, so a conversion that landed
-//! during configuration is a clean rising edge rather than a missed one (INT1 stays low until setup routes
-//! data-ready to it, so arming early cannot see a spurious edge).
+//! Not here (firmware glue): the GPIO interrupt and its edge count, the stale run and its log line, the channel
+//! push, the telemetry stream, the probe's log lines, the bring-up's ODR line and the inspect JSON.
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::I2c;
@@ -68,6 +96,14 @@ pub const INT1_CTRL: u8 = 0x0D;
 /// one burst fetches both.
 pub const OUTX_L_G: u8 = 0x22;
 
+/// STATUS_REG: the data-available flags, XLDA (bit 0, accel) and GDA (bit 1, gyro), each set by a new conversion
+/// and cleared when its output is read. The registers after it run on to the output bytes: 0x1F (reserved), OUT_TEMP
+/// at 0x20..0x21, then OUTX_L_G, so one burst from here reads the flags and the sample together.
+pub const STATUS_REG: u8 = 0x1E;
+
+/// INTERNAL_FREQ_FINE: the part's own ODR offset from nominal, two's complement, 0.15 % per LSB ([`odr_hz`]).
+pub const INTERNAL_FREQ_FINE: u8 = 0x63;
+
 /// What WHO_AM_I reads on an LSM6DSO32.
 pub const IDENTITY: u8 = 0x6C;
 
@@ -94,13 +130,43 @@ pub const ROUTE_INTERRUPT: RegisterWrite = (INT1_CTRL, 0x01);
 /// The output burst: gyro x, y, z then accel x, y, z, two bytes each.
 pub const FRAME_LENGTH: usize = 12;
 
+/// The bytes the status burst reads before the output: STATUS_REG, the reserved 0x1F and OUT_TEMP (two bytes).
+const STATUS_HEADER_LENGTH: usize = 4;
+
+/// The status burst from STATUS_REG: the header, then the 12 output bytes.
+const STATUS_FRAME_LENGTH: usize = STATUS_HEADER_LENGTH + FRAME_LENGTH;
+
+/// STATUS_REG bit 0, XLDA: a new accel conversion is waiting.
+const ACCEL_DATA_AVAILABLE: u8 = 0x01;
+
+/// STATUS_REG bit 1, GDA: a new gyro conversion is waiting.
+const GYRO_DATA_AVAILABLE: u8 = 0x02;
+
+/// STATUS_REG bits 7..3, which the datasheet fixes at 0 (only TDA, GDA and XLDA exist): a status with any of them
+/// set was not read from the part, it is a bus nothing drives (an SPI part that lost power or chip-select, or a
+/// broken MISO, reads 0xFF with no bus error).
+const STATUS_RESERVED: u8 = 0xF8;
+
+/// Consecutive reads with no new conversion (neither XLDA nor GDA) before the firmware calls the part unhealthy: one
+/// such tick is a part slower than the tick, three in a row are a part that stopped converting.
+pub const STALE_LIMIT: u32 = 3;
+
+/// The base rate every ODR setting divides, in Hz (the datasheet's 6667).
+const BASE_RATE_HZ: f32 = 6667.0;
+
+/// The datasheet's ODR_Coeff for the 104 Hz setting [`CONFIGURATION`] writes: 6667 / 64 = 104.17 Hz nominal.
+const ODR_COEFFICIENT: f32 = 64.0;
+
+/// INTERNAL_FREQ_FINE's step: 0.15 % of the nominal ODR per LSB.
+const FREQUENCY_FINE_STEP: f32 = 0.0015;
+
 /// Accel sensitivity at +/-32 g: 0.976 mg per count (datasheet), in g.
 pub const ACCEL_G_PER_COUNT: f32 = 0.000976;
 
 /// Gyro sensitivity at +/-2000 dps: 70 millidegrees per second per count (datasheet).
 pub const GYRO_MILLIDEGREES_PER_SECOND_PER_COUNT: i32 = 70;
 
-/// Consecutive timed-out wakes (no INT1 edge) before the line is called dead rather than jittery.
+/// Consecutive reads with no INT1 edge behind them before the line is called dead rather than jittery.
 pub const INTERRUPT_SILENT_LIMIT: u32 = 3;
 
 /// The largest 7-bit I2C address: anything above it cannot be put on the wire.
@@ -252,6 +318,38 @@ impl Sample {
     }
 }
 
+/// Which halves of a status burst's sample are new conversions: STATUS_REG's data-available flags.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Fresh {
+    /// XLDA: the accel is a conversion no read has returned before (push `accel`).
+    pub accel: bool,
+    /// GDA: the gyro is a conversion no read has returned before (push `rate`).
+    pub rate: bool,
+}
+
+impl Fresh {
+    /// The flags of a STATUS_REG byte: XLDA (bit 0) and GDA (bit 1); TDA (bit 2, the temperature's) is ignored. A
+    /// status with a [`STATUS_RESERVED`] bit set is impossible from a live part, so it is never fresh: a dead SPI
+    /// part goes stale and turns unhealthy after [`STALE_LIMIT`] ticks instead of publishing 0xFF bytes forever.
+    fn from_status(status: u8) -> Fresh {
+        if status & STATUS_RESERVED != 0 {
+            return Fresh::default();
+        }
+        Fresh {
+            accel: status & ACCEL_DATA_AVAILABLE != 0,
+            rate: status & GYRO_DATA_AVAILABLE != 0,
+        }
+    }
+}
+
+/// The part's own output data rate at the configured 104 Hz setting, in Hz, from its INTERNAL_FREQ_FINE byte: the
+/// datasheet's (6667 + 0.0015 x fine x 6667) / ODR_Coeff with ODR_Coeff 64, that is 104.17 Hz x (1 + 0.15 % per
+/// LSB). 0 is the nominal 104.17 Hz; -33 is about 99.0 Hz, and the extremes are about 84.2 Hz (-128) and 124.0 Hz
+/// (127).
+pub fn odr_hz(fine: i8) -> f32 {
+    BASE_RATE_HZ * (1.0 + FREQUENCY_FINE_STEP * f32::from(fine)) / ODR_COEFFICIENT
+}
+
 /// One LSM6DSO32, reached through the window `F` ([`OverSpi`] or [`OverI2c`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lsm6dso32<F> {
@@ -259,9 +357,9 @@ pub struct Lsm6dso32<F> {
     interface: F,
     /// Whether an INT1 wire is declared: setup routes data-ready to it, and only then.
     interrupt_wired: bool,
-    /// The run of timed-out wakes, toward the silent verdict.
+    /// The run of reads without an INT1 edge, toward the silent verdict.
     strikes: Strikes,
-    /// The operator view: the INT line went silent and sampling runs on the fallback period.
+    /// The operator view: the INT line went silent (the tick still paces the reads; the wire is what is lost).
     interrupt_silent: bool,
 }
 
@@ -281,23 +379,23 @@ impl<F> Lsm6dso32<F> {
         self.interrupt_wired
     }
 
-    /// Whether the INT line is called dead (inspect's `interrupt_silent`): a wired-but-DEAD INT1 is the dangerous
-    /// state, where sampling continues, `rate` goes stale and the PID's D term degrades, so the operator sees it.
+    /// Whether the INT line is called dead (inspect's `interrupt_silent`): the tick still samples, so `rate` stays
+    /// fresh; what is lost is the evidence that the INT1 wire works, so the operator sees it.
     pub fn interrupt_silent(&self) -> bool {
         self.interrupt_silent
     }
 
-    /// Account one sampling wake: `interrupt_runs` INT1 edges arrived since the last (0 = the fallback period ran
-    /// out, 1 = healthy, more = the loop was late and edges piled up, a scheduling symptom rather than a sensor one);
-    /// the telemetry row carries the same count as its `irq_runs` column.
+    /// Account one read: `interrupt_runs` INT1 edges arrived since the previous swap (see the module notes: 0 = no
+    /// new conversion, or a dead line; 1 = healthy; 2 after a 0 = a conversion that landed between the swap and the
+    /// burst; more = another read of the output (a probe) cleared data-ready between two swaps: with data-ready
+    /// latched, a late tick never piles up edges); the telemetry row carries the same count as its `irq_runs` column.
     ///
-    /// Plan B's run-loop verdict: [`INTERRUPT_SILENT_LIMIT`] timed-out wakes IN A ROW set the silent flag, and the
-    /// return is true exactly once then, for the firmware's one log line (`INT1 silent -- sampling on the <period>
-    /// ms fallback`). A single later edge clears it, so a merely noisy line costs nothing permanent. As in plan B the
-    /// count runs with or without a wire declared -- kept on purpose, and pinned by the golden fixture's unwired
-    /// wake cases: plan B's run() never reads the wire here (the BMI323 driver later learnt to skip it without one;
-    /// on every board the LSM6DSO32's INT1 is wired, so an unwired one being called silent is the truthful verdict
-    /// of a part that is sampling on the fallback period).
+    /// Plan B's run-loop verdict: [`INTERRUPT_SILENT_LIMIT`] reads without an edge IN A ROW set the silent flag, and
+    /// the return is true exactly once then, for the firmware's one `INT1 silent` log line. A single later edge
+    /// clears it, so a merely noisy line costs nothing permanent. As in plan B the count runs with or without a wire
+    /// declared -- kept on purpose, and pinned by the golden fixture's unwired wake cases: plan B's run() never reads
+    /// the wire here (the BMI323 driver later learnt to skip it without one; on every board the LSM6DSO32's INT1 is
+    /// wired, so an unwired one being called silent is the truthful verdict of a part with no edge to show).
     pub fn wake(&mut self, interrupt_runs: u32) -> bool {
         if self.strikes.strike(interrupt_runs == 0, INTERRUPT_SILENT_LIMIT) {
             self.interrupt_silent = true;
@@ -329,6 +427,38 @@ impl<F> Lsm6dso32<F> {
         Ok(Sample::decode(&frame))
     }
 
+    /// Read one sample and which of its halves are new: ONE 16-byte burst from STATUS_REG (the status, the reserved
+    /// 0x1F, OUT_TEMP, then the 12 output bytes). One frame keeps the window between the flags and the output small,
+    /// not empty: a conversion that lands after the status byte, with none unread before it, reads as not new and is
+    /// lost (never republished); an old sample is never marked fresh. The status byte gives the [`Fresh`] flags (an
+    /// impossible status is never fresh), the reserved byte and the temperature are discarded, and the output bytes
+    /// decode exactly as [`Lsm6dso32::read`]'s. Over SPI that is one chip-select frame, `0x80 | 0x1E` then 16 bytes
+    /// clocked in; over I2C, the register then a 16-byte read after a repeated start. Like `read`, it clears
+    /// data-ready.
+    pub fn read_fresh<Bus>(&self, bus: &mut Bus) -> Result<(Fresh, Sample), Fault<F::BusError>>
+    where
+        F: Interface<Bus>,
+    {
+        let mut frame = [0u8; STATUS_FRAME_LENGTH];
+        self.interface.read(bus, STATUS_REG, &mut frame).map_err(Fault::Bus)?;
+        let mut output = [0u8; FRAME_LENGTH];
+        output.copy_from_slice(&frame[STATUS_HEADER_LENGTH..]);
+        Ok((Fresh::from_status(frame[0]), Sample::decode(&output)))
+    }
+
+    /// Read INTERNAL_FREQ_FINE once (the bring-up's ODR line, through [`odr_hz`]): the part's own ODR offset, a
+    /// two's-complement byte.
+    pub fn frequency_fine<Bus>(&self, bus: &mut Bus) -> Result<i8, Fault<F::BusError>>
+    where
+        F: Interface<Bus>,
+    {
+        let mut fine = [0u8; 1];
+        self.interface
+            .read(bus, INTERNAL_FREQ_FINE, &mut fine)
+            .map_err(Fault::Bus)?;
+        Ok(i8::from_le_bytes(fine))
+    }
+
     /// The on-demand self-test (lsm6dso32.probe): WHO_AM_I reads back the LSM6DSO32's identity, then one sample
     /// reads. The firmware logs each step and folds the magnitude of the accel into the line.
     pub fn probe<Bus>(&self, bus: &mut Bus) -> Result<Sample, Fault<F::BusError>>
@@ -356,7 +486,8 @@ impl<F> Lsm6dso32<F> {
 
     /// The write-then-verify bring-up (setup's bus half, and the re-arm): pin the interface and read WHO_AM_I, up
     /// to [`IDENTITY_ROUNDS`] times; then the [`CONFIGURATION`]; then, with INT1 wired, [`ROUTE_INTERRUPT`] and the
-    /// clearing read, so the next conversion is a clean edge.
+    /// clearing read. The firmware arms its edge interrupt after this returns (the module notes say why the first
+    /// row's `irq_runs` is then 0).
     ///
     /// A bus failure ends it at once, as plan B's single try around the loop does: only a wrong identity is retried.
     fn bring_up<Bus>(&self, bus: &mut Bus) -> Result<(), Fault<F::BusError>>
