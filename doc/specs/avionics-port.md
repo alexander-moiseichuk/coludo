@@ -585,7 +585,7 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 
 **Operator gains.** The detect-layout and bus-tune cards work. The dashboard layout column is real.
 
-### M6. Control thread, primary IMU, barometer, separation (2 days)
+### M6. Control thread, primary IMU, barometer, separation (2 days; DONE 2026-10-07 on the taster and TMS-7F)
 
 **Scope**
 - **`control.rs`:** a gptimer alarm ISR on core 1 at `flight.schedule_hz` (100) notifies the control thread
@@ -678,7 +678,8 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   minutes: max lateness 40 us on the taster and 77 us on 7F (budget 200 us), 0 overruns, every tick's IMU read, 0
   frames missed. Stack peaks: control 3.5 KB of 6 KB, the owners 3.5 KB of 5 KB.
 - The IMU at rest: rows 10.000 ms apart (9989-10012 us); |a| 1.013 g (sd 0.0017 g); gyro bias < 0.5 deg/s, sd
-  0.036 deg/s, inside plan B's measure_noise spread (0.03-0.095 deg/s, its only recorded noise number).
+  0.036 deg/s, inside plan B's measure_noise spread (0.03-0.095 deg/s, its only recorded noise number). TMS-7F, 30 s
+  of the final build at rest: |a| 1.028 g (sd 0.0017 g), gyro sd 0.027-0.036 deg/s, biases +0.58/-0.03/-0.08 deg/s.
 - The ICP at rest: pressure sd 1.55 Pa (datasheet 1.6 Pa RMS); `update {"rezero": true}` -> `[ground]`, a text
   ground refused, `ground 42.5` -> elevation 0.37 m; `calibrate baro_icp10111` -> null with plan B's ground line.
 - `cc_contract --milestone M6 --allow-active --allow-stage` (with the M6 cases: the parts' inspect shapes, the
@@ -726,6 +727,13 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   10,066-19,667 us after the sustained level began (mean 15,135 us): the hold plus the tick's phase. Two wiggles held a
   contact gap past 10 ms and so made their own pair (30.7 ms and 125.7 ms after the previous event), as the hold
   intends.
+
+**Carried into M9 (measured at the M6 close):** both boards' LSM6DSO32 run below the tick (98.86 and 98.39 Hz), so
+the fresh-only rows skip a tick about 1.5 % of the time and two in a row about 8-9 times a minute: a 30 ms gap that
+lapses the 20 ms `accel`/`rate` window for ~10 ms, about every 7 s (taster 121 in 787 s, 7F 738 in 5257 s). Nothing
+reads those channels in flight in M6; the attitude filter (M9) and the D term (M13) will, and the databoard would hand
+over to the BMI323 for a tick. Choose with M9: run the part at 208 Hz (a fresh conversion every tick, twice the noise
+bandwidth), widen the IMU windows to 30 ms, or close the status-read race.
 
 **Carried into M7 (from the M6 review):**
 - The control thread's mailbox answers through std mpsc, which takes a mutex and a condvar on core 1 when the
