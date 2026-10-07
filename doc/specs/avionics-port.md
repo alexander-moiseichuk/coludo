@@ -1305,6 +1305,15 @@ Partition 2, the videos (mounted at /sdcard/videos):
       free buffer. `dropped` (the SD ring full) was 0 in every run on both cards. So the long card stalls never cost
       a frame (the 2 MB ring absorbs them), and the card's effect on `missed` has no SD-side mechanism yet.
     - Card, layout and scene (two cameras, two views) are still confounded.
+    - The saver's backlog over each whole run (recorder.log's per-second positions, ~168 s under the ring load of
+      ~24 KB/s) is small on both: AB58 mean 33 / 35 / 55 KB, peak 204–224 KB (16–32 s above 64 KB); 267D mean 24 /
+      32 / 30 KB, peak 95–292 KB (6–12 s above 64 KB). The end-of-run figures (2.7 s, 4.5 s against 29 ms) were where
+      each run happened to stop.
+    - The data rate was the same on both (video 995 / 979 KB/s, the ring ~24 KB/s): AB58's higher SD busy share is
+      more card time per byte (~0.60 against ~0.48 s per MB of video), and its run moved more data only because it
+      ran longer (its downloads were slower).
+    - Two partitions stays the layout (the operator, 2026-10-07: it does better on frames), one partition the
+      fallback.
     - The operator's next step: discard both cards and make their file systems again (`tools/sd_prepare.sh`
       discards first), the same layout on both or swapped, then repeat the A/B. AB58 may also have been doing its
       first-use housekeeping.
