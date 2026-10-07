@@ -4,7 +4,8 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Host (CPython) test for tools/sd_prepare.sh, the operator's microSD preparation for a Rust board
 (doc/specs/avionics-port.md "SD and flash file layout", Card preparation): discard the card, two primary FAT32
 partitions (METRICS, the recordings, from 4 MiB for --recordings-gib; VIDEOS, the videos, from there up to 25..50 % of
-the card), the rest untouched.
+the card), the rest untouched; or, with --partitions 1 (comparing the layouts), one METRICS partition over the same
+area with the same clusters.
 
 The script destroys whatever it is pointed at, so this test points it ONLY at plain image files in its own temporary
 directory, sparse so that an 8 GiB "card" costs a few MB: no device node is ever named, and _run() refuses any path
@@ -208,6 +209,44 @@ def test_prepares_half_a_card() -> None:
     assert first != second, 'two preparations gave one serial: the board would take the new card for the old one'
 
 
+def test_prepares_one_partition_over_the_same_area() -> None:
+    """
+    --partitions 1 (comparing the layouts on cards prepared the same way): one FAT32 partition, METRICS, from 4 MiB to
+    the share asked -- the area the two would cover -- with the same 32 KiB clusters, fsck-clean, nothing past it.
+    """
+    path = _image('card16one.img', 16 * GIB)
+    result = _run('--partitions', '1', path, answer='16384')
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    end = 16 * GIB // SECTOR * 50 // 100 // ALIGN * ALIGN
+    partitions = _partitions(path)
+    assert [(partition['start'], partition['size'], partition['type']) for partition in partitions] == \
+        [(ALIGN, end - ALIGN, 'c')], partitions
+    serial = re.search(r'METRICS, volume serial ([0-9A-F]{4})-([0-9A-F]{4}) \(the board', result.stdout)
+    assert serial and 'the recordings and the videos on one volume' in result.stdout, result.stdout
+    assert 'one FAT32 partition' in result.stdout and 'VIDEOS' not in result.stdout, result.stdout
+    boot = _boot_sector(path, ALIGN)
+    assert boot[82:90] == b'FAT32   ' and boot[510:512] == b'\x55\xaa', boot[:96]
+    assert boot[13] * SECTOR == 32 * 1024, boot[13]
+    assert int.from_bytes(boot[67:71], 'little') == int(serial.group(1) + serial.group(2), 16), boot[67:71]
+    assert boot[71:82] == b'METRICS    ', boot[71:82]
+    with open(path, 'rb') as image:
+        try:
+            data = os.lseek(image.fileno(), end * SECTOR, os.SEEK_DATA)
+        except OSError as error:
+            assert error.errno == errno.ENXIO, error
+        else:
+            raise AssertionError('data at byte %d, past the partition' % data)
+    partition = path + '.partition'
+    subprocess.run(['dd', 'if=' + path, 'of=' + partition, 'bs=4M', 'skip=1', 'count=%d' % ((end - ALIGN) // ALIGN),
+                    'conv=sparse', 'status=none'], check=True)
+    fsck = subprocess.run(['fsck.fat', '-n', partition], capture_output=True, text=True)
+    assert fsck.returncode == 0, (fsck.stdout, fsck.stderr)
+    os.remove(partition)
+    # the same card prepared with two again: the two-partition layout, as before
+    again = _run(path, answer='16384')
+    _check_prepared(path, 16 * GIB, 50, again, 4, (32, 32))
+
+
 def test_prepares_a_quarter_with_smaller_clusters() -> None:
     """
     An 8 GiB card at 25 % with 1 GiB of recordings: both partitions about 1 GiB, too few 32 KiB clusters for FAT32,
@@ -259,6 +298,11 @@ def test_refusals() -> None:
         (('--recordings-gib', '08', path), 2, '--recordings-gib takes 1..256 GiB, not 08'),
         (('--use', '040', path), 2, '--use takes 25..50 percent, not 040'),
         (('--bogus', path), 2, 'unknown option --bogus'),
+        (('--partitions', '3', path), 2, '--partitions takes 1 or 2, not 3'),
+        (('--partitions', 'one', path), 2, '--partitions takes 1 or 2, not one'),
+        (('--partitions',), 2, '--partitions needs a value'),
+        (('--partitions', '1', '--recordings-gib', '4', path), 2,
+         '--recordings-gib sizes the recordings partition of two'),
         ((path, small), 2, 'one device only'),
         ((os.path.join(_SCRATCH.name, 'no-such-card.img'),), 1, 'neither a block device nor a card image file'),
         ((directory,), 1, 'neither a block device nor a card image file'),
@@ -407,12 +451,14 @@ if missing:
     print('note: %s not installed, so sd_prepare.sh is not tested' % ', '.join(missing))
     sys.exit(0)
 test_prepares_half_a_card()
+test_prepares_one_partition_over_the_same_area()
 test_prepares_a_quarter_with_smaller_clusters()
 test_dry_run_and_refused_confirmations_write_nothing()
 test_refusals()
 test_a_card_swapped_while_the_confirmation_waits()
 test_devices_are_judged_by_the_kernel()
 print('ok: sd_prepare.sh -- on image files only: two FAT32 partitions, METRICS from 4 MiB for the GiB asked and '
-      'VIDEOS up to the share asked (fsck clean, the serials printed are the ones written, nothing past them); dry '
+      'VIDEOS up to the share asked, or one METRICS over the same area (fsck clean, the serials printed are the ones '
+      'written, nothing past them); dry '
       'runs, wrong confirmations, a card swapped at the prompt, a card too small and bad input write nothing; block '
       'devices judged on stand-ins: eMMC, fixed disks, partitions, big, mounted and held devices refused')

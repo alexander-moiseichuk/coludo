@@ -4,7 +4,7 @@
 # Prepare a microSD card for a Rust (src/avionics) board, the operator's pre-cook (doc/specs/avionics-port.md "SD and
 # flash file layout", Card preparation). DESTRUCTIVE: everything on the card is gone afterwards.
 #
-#   tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] <device>
+#   tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] [--partitions 1|2] <device>
 #
 # What it does, in this order:
 #   1. wipes the card's old signatures and discards the whole card (wipefs, blkdiscard), so its controller knows every
@@ -13,10 +13,12 @@
 #   2. writes an MBR with TWO primary partitions, both type 0x0c (FAT32, LBA): partition 1, the recordings, from
 #      4 MiB (the card's usual allocation-unit alignment) for N GiB (--recordings-gib, default 4: ~26 KB/s of text is
 #      ~94 MB an hour); partition 2, the videos, from there up to PERCENT of the card, rounded down to 4 MiB (--use,
-#      25..50, default 50; the default 8 Mbit/s of video is 3.6 GB an hour);
+#      25..50, default 50; the default 8 Mbit/s of video is 3.6 GB an hour). --partitions 1 writes ONE partition
+#      instead, the recordings and the videos together over the same area, for comparing the layouts on one card
+#      prepared the same way (the same discard, alignment and cluster size);
 #   3. formats each FAT32, written in place at the partition's offset in the device itself: partition 1 labelled
-#      METRICS, partition 2 VIDEOS, each with a fresh random volume serial, 32 KiB clusters (fewer when a small
-#      partition needs them to stay FAT32);
+#      METRICS (the only one with --partitions 1), partition 2 VIDEOS, each with a fresh random volume serial, 32 KiB
+#      clusters (fewer when a small partition needs them to stay FAT32);
 #   4. reads the table and both boot sectors back and checks them.
 # The rest of the card stays unpartitioned and untouched: spare area for the card's controller.
 #
@@ -60,7 +62,7 @@
 # Exit codes: 0 done (or a dry run), 1 refused or failed, 2 a usage error. Sourced rather than run (as the test does),
 # it only defines its functions.
 set -euo pipefail
-usage='usage: sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] <device>'
+usage='usage: sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] [--partitions 1|2] <device>'
 sector=512
 align=8192                  # 4 MiB in sectors: each partition's start and its end are multiples of it
 smallest=$((512 << 20))     # the smallest partition, bytes
@@ -190,9 +192,9 @@ judge() {
 }
 
 main() {
-    local dry_run=0 use=50 recordings_gib=4 device='' tool total end recordings_size videos_start videos_size \
-        recordings_cluster videos_cluster recordings_serial videos_serial shown videos_shown mebibytes answer planned \
-        dump
+    local dry_run=0 use=50 recordings_gib=4 recordings_given=0 partitions=2 device='' tool total end \
+        recordings_size videos_start videos_size recordings_cluster videos_cluster recordings_serial videos_serial \
+        shown videos_shown mebibytes answer planned dump
     while [ $# -gt 0 ]; do
         case $1 in
             --dry-run) dry_run=1; shift ;;
@@ -204,6 +206,12 @@ main() {
             --recordings-gib)
                 [ $# -ge 2 ] || misuse '--recordings-gib needs a value'
                 recordings_gib=$2
+                recordings_given=1
+                shift 2
+                ;;
+            --partitions)
+                [ $# -ge 2 ] || misuse '--partitions needs a value'
+                partitions=$2
                 shift 2
                 ;;
             --help | -h) echo "$usage"; exit 0 ;;
@@ -222,23 +230,36 @@ main() {
         misuse "--use takes 25..50 percent, not $use"
     [[ $recordings_gib =~ ^[1-9][0-9]*$ ]] && [ "$recordings_gib" -ge 1 ] && [ "$recordings_gib" -le 256 ] ||
         misuse "--recordings-gib takes 1..256 GiB, not $recordings_gib"
+    [ "$partitions" = 1 ] || [ "$partitions" = 2 ] || misuse "--partitions takes 1 or 2, not $partitions"
+    [ "$partitions" = 2 ] || [ "$recordings_given" = 0 ] ||
+        misuse '--recordings-gib sizes the recordings partition of two: one partition holds everything'
     for tool in sfdisk mkfs.fat od; do
         command -v "$tool" >/dev/null || fail "$tool is not installed (util-linux, dosfstools, coreutils)"
     done
     judge "$device"
 
     # the plan: the recordings from 4 MiB for the GiB asked, the videos from there up to the share asked, every end
-    # on the 4 MiB grid (a GiB is a multiple of it)
+    # on the 4 MiB grid (a GiB is a multiple of it); with one partition, it alone from 4 MiB up to the share
     total=$((bytes / sector))
     end=$((total * use / 100 / align * align))
-    recordings_size=$((recordings_gib << 30 >> 9))
-    videos_start=$((align + recordings_size))
-    videos_size=$((end - videos_start))
-    [ $((videos_size * sector)) -ge "$smallest" ] ||
-        fail "$device is too small: $use % of it leaves $((videos_size > 0 ? videos_size * sector >> 20 : 0)) MiB" \
-            "for the videos past $recordings_gib GiB of recordings, FAT32 here needs $((smallest >> 20)) MiB"
+    if [ "$partitions" = 1 ]; then
+        recordings_size=$((end - align))
+        [ $((recordings_size * sector)) -ge "$smallest" ] ||
+            fail "$device is too small: $use % of it leaves" \
+                "$((recordings_size > 0 ? recordings_size * sector >> 20 : 0)) MiB, FAT32 here needs" \
+                "$((smallest >> 20)) MiB"
+        videos_start=$end
+        videos_size=0
+    else
+        recordings_size=$((recordings_gib << 30 >> 9))
+        videos_start=$((align + recordings_size))
+        videos_size=$((end - videos_start))
+        [ $((videos_size * sector)) -ge "$smallest" ] ||
+            fail "$device is too small: $use % of it leaves $((videos_size > 0 ? videos_size * sector >> 20 : 0))" \
+                "MiB for the videos past $recordings_gib GiB of recordings, FAT32 here needs $((smallest >> 20)) MiB"
+    fi
     recordings_cluster=$(clusters_for "$recordings_size")
-    videos_cluster=$(clusters_for "$videos_size")
+    videos_cluster=$(clusters_for "$((videos_size > 0 ? videos_size : recordings_size))")
     recordings_serial=$(random_serial)
     videos_serial=$(random_serial)
     while [ "$videos_serial" = "$recordings_serial" ]; do
@@ -249,12 +270,21 @@ main() {
     mebibytes=$((bytes >> 20))
 
     echo "card:      $device ($description), $mebibytes MiB"
-    echo "plan:      discard all $mebibytes MiB, then an MBR with two FAT32 partitions (type 0x0c), $use % of the card:"
-    echo "           1, the recordings: sectors $align..$((videos_start - 1))," \
-        "$((recordings_size * sector >> 20)) MiB, label $recordings_label, volume serial $shown," \
-        "clusters of $((recordings_cluster * sector / 1024)) KiB"
-    echo "           2, the videos: sectors $videos_start..$((end - 1)), $((videos_size * sector >> 20)) MiB," \
-        "label $videos_label, volume serial $videos_shown, clusters of $((videos_cluster * sector / 1024)) KiB"
+    if [ "$partitions" = 1 ]; then
+        echo "plan:      discard all $mebibytes MiB, then an MBR with one FAT32 partition (type 0x0c)," \
+            "$use % of the card:"
+        echo "           1, the recordings and the videos (videos/ a directory): sectors $align..$((end - 1))," \
+            "$((recordings_size * sector >> 20)) MiB, label $recordings_label, volume serial $shown," \
+            "clusters of $((recordings_cluster * sector / 1024)) KiB"
+    else
+        echo "plan:      discard all $mebibytes MiB, then an MBR with two FAT32 partitions (type 0x0c)," \
+            "$use % of the card:"
+        echo "           1, the recordings: sectors $align..$((videos_start - 1))," \
+            "$((recordings_size * sector >> 20)) MiB, label $recordings_label, volume serial $shown," \
+            "clusters of $((recordings_cluster * sector / 1024)) KiB"
+        echo "           2, the videos: sectors $videos_start..$((end - 1)), $((videos_size * sector >> 20)) MiB," \
+            "label $videos_label, volume serial $videos_shown, clusters of $((videos_cluster * sector / 1024)) KiB"
+    fi
     echo "untouched: sectors $end..$((total - 1)), $(((total - end) * sector >> 20)) MiB," \
         "spare area for the card's controller"
     echo "EVERYTHING ON $device IS LOST."
@@ -288,15 +318,17 @@ main() {
 
     # 2. the partition table; the signatures sfdisk finds are wiped as well (a discard may leave the old bytes
     #    readable)
-    printf 'label: dos\nunit: sectors\nstart=%d, size=%d, type=c\nstart=%d, size=%d, type=c\n' \
-        "$align" "$recordings_size" "$videos_start" "$videos_size" |
-        sfdisk --quiet --wipe always --wipe-partitions always "$device" >/dev/null ||
+    {
+        printf 'label: dos\nunit: sectors\nstart=%d, size=%d, type=c\n' "$align" "$recordings_size"
+        [ "$partitions" = 1 ] || printf 'start=%d, size=%d, type=c\n' "$videos_start" "$videos_size"
+    } | sfdisk --quiet --wipe always --wipe-partitions always "$device" >/dev/null ||
         fail "sfdisk could not write the partition table"
 
     # 3. each partition FAT32, in place at its offset in the card itself
     format_partition "$device" "$align" "$recordings_size" "$recordings_cluster" "$recordings_label" \
         "$recordings_serial"
-    format_partition "$device" "$videos_start" "$videos_size" "$videos_cluster" "$videos_label" "$videos_serial"
+    [ "$partitions" = 1 ] ||
+        format_partition "$device" "$videos_start" "$videos_size" "$videos_cluster" "$videos_label" "$videos_serial"
     sync
     if [ "$kind" = device ]; then
         blockdev --flushbufs "$device"
@@ -304,18 +336,25 @@ main() {
         blockdev --rereadpt "$device" 2>/dev/null || true
     fi
 
-    # 4. read back: two partitions where planned, in that order, and a FAT32 boot sector at each naming its serial
+    # 4. read back: the partitions where planned, in that order, and a FAT32 boot sector at each naming its serial
     dump=$(sfdisk --dump "$device")
     grep -Eq "1 : start= *$align, size= *$recordings_size, type=c$" <<<"$dump" &&
-        grep -Eq "2 : start= *$videos_start, size= *$videos_size, type=c$" <<<"$dump" ||
+        { [ "$partitions" = 1 ] || grep -Eq "2 : start= *$videos_start, size= *$videos_size, type=c$" <<<"$dump"; } ||
         fail "the partition table did not read back as written:
 $dump"
-    [ "$(grep -c 'start=' <<<"$dump")" = 2 ] || fail "the partition table holds more than two partitions:
+    [ "$(grep -c 'start=' <<<"$dump")" = "$partitions" ] || fail "the partition table holds other partitions:
 $dump"
     check_boot_sector "$device" "$align" "$recordings_serial"
-    check_boot_sector "$device" "$videos_start" "$videos_serial"
-    echo "done:      $device holds FAT32 $recordings_label, volume serial $shown (the board names the card by it)," \
-        "and FAT32 $videos_label, volume serial $videos_shown"
+    if [ "$partitions" = 1 ]; then
+        echo "done:      $device holds FAT32 $recordings_label, volume serial $shown" \
+            "(the board names the card by it)," \
+            "the recordings and the videos on one volume"
+    else
+        check_boot_sector "$device" "$videos_start" "$videos_serial"
+        echo "done:      $device holds FAT32 $recordings_label, volume serial $shown" \
+            "(the board names the card by it)," \
+            "and FAT32 $videos_label, volume serial $videos_shown"
+    fi
 }
 
 # run as a command; sourced, only the functions above are defined
