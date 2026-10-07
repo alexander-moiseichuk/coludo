@@ -1345,9 +1345,9 @@ Partition 2, the videos (mounted at /sdcard/videos):
 
     There is no elevator: requests go in priority order (the mutex inherits priority), never merged or reordered.
   - **Downloads were slower than in the first two runs** (16–23 s then). Stage 2 of §4.7 (esp_hosted's buffers in
-    PSRAM, lwIP's receive copy) costs ~10–20 % idle (2.6–3.0 MB/s against 3.3) and about a third under video. The
-    lever is raising esp_hosted's queues and the TCP send buffer again (§4.7), now that esp_hosted's pool is no longer
-    internal. Also seen once on the taster in this run: `H_SDIO_DRV: task still writing Rx data to queue!`. esp_hosted
+    PSRAM, lwIP's receive copy) costs ~10–20 % idle (2.6–3.0 MB/s against 3.3) and about a third under video.
+    Raising esp_hosted's queues and the TCP send buffer again won most of it back, for ~1.4 KB of internal RAM, and
+    was reverted: internal RAM comes before Wi-Fi speed (§4.7). Also seen once on the taster in this run: `H_SDIO_DRV: task still writing Rx data to queue!`. esp_hosted
     drops a whole received chunk when its copy task has not finished the last one (`sdio_drv.c:1084`), and the copy
     is now PSRAM to PSRAM beside the encoder. TCP retransmits it; an RPC frame to the C6 has no retransmit.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
@@ -1649,8 +1649,11 @@ What holds it together:
 - **Plain malloc above 4 KB goes to PSRAM.** 4 KB itself stays internal: `esp_flash_read` borrows an internal temp
   buffer (up to 16 KB) for any destination outside internal RAM.
 - **esp_hosted's SDIO queues at 10/10 and the TCP send buffer at 32 KB.** These were set when esp_hosted's pool was
-  internal. With its buffers in PSRAM (below) they could be raised again; untested, so unchanged. Pulls slow from 3.7
-  to 3.3 MB/s idle, and to ~1.3 MB/s while video and the saver run.
+  internal. With its buffers in PSRAM (below), 20/20 and 64 KB were measured again (2026-10-07): idle pulls rose
+  11–21 % (to 3.2–3.3 MB/s) and ~8 % under video, for ~1.4 KB of internal RAM (the queues' own storage). Reverted: the
+  operator's priorities are CPU, FPU, SD and computation, then internal RAM for features. Networking must work, but
+  the board is no NAS: ~1 MB/s is enough, and an OTA can wait. At 10/10: 2.6–2.9 MB/s idle, ~0.7–1 MB/s under FHD
+  video and the saver.
 - **For the two-partition layout:** a second volume on the same card shares the bounce buffer, so every card call
   of `components/sd_card`'s own disk I/O layer holds one card lock (a static FreeRTOS mutex, ~80 B of internal RAM).
   The second volume adds a FatFs volume mutex and a VFS entry (~0.3 KB internal); its `FATFS` object and file

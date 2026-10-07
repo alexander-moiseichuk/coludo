@@ -97,8 +97,10 @@ CONFIG_ESP_WIFI_REMOTE_ENABLED=y
 CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 # esp_hosted's own debug CLI would register commands next to our console
 CONFIG_ESP_HOSTED_CLI_ENABLED=n
-# SDIO queues 10 (was 20): esp_hosted keeps every frame buffer it ever freed (its mempool never shrinks), so its peak
-# is roughly the queues' depth x 1.6 KB of internal DMA memory -- 37 KB after one download at 20/20, 25 KB at 10/10
+# SDIO queues 10 (esp_hosted's default 20). Its frame buffers are in PSRAM now (components/hosted_no_reboot), but the
+# queues' own storage is internal: 20/20 with a 64 KB send buffer cost ~1.4 KB of internal RAM for 11-21 % more Wi-Fi
+# throughput, and the operator puts internal RAM, CPU and SD before Wi-Fi speed (~1 MB/s is enough; measured
+# 2.6-2.9 MB/s idle at 10/10, ~0.7-1 MB/s under FHD video and the saver)
 # esp_hosted's DMA buffers come from PSRAM (components/hosted_no_reboot), aligned to the cache line: 64 B, pinned here.
 # The SDMMC host refuses a buffer whose address or length is not a multiple of the line (sdmmc_host.c:1289), and
 # esp-hosted-mcu #219 lost half its TX frames that way with a 128 B L2 line, IDF's default for a 512 KB L2.
@@ -109,8 +111,7 @@ CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM=16
 CONFIG_WIFI_RMT_DYNAMIC_RX_BUFFER_NUM=64
 # unused while CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y (static TX buffers, see above)
 CONFIG_WIFI_RMT_DYNAMIC_TX_BUFFER_NUM=64
-# 32 KB (was 64): fewer frames in flight, so esp_hosted's frame-buffer pool peaks lower (the internal DMA budget
-# above); a 32 MB pull takes 9.9 s instead of 8.5 s
+# 32 KB (64 before the internal RAM work): fewer frames in flight; see the queues above for what 64 KB buys
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
 CONFIG_LWIP_TCP_WND_DEFAULT=65534
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=64
