@@ -2,6 +2,7 @@
 //!
 //! What the avionics binary and the on-board benches share.
 
+pub mod allocator;
 pub mod gcl;
 pub mod i2c;
 pub mod sd;
