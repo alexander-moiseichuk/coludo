@@ -16,6 +16,7 @@ mod diagnostics;
 mod files;
 mod link;
 mod logging;
+mod owner;
 mod panics_logger;
 mod recorder;
 mod status;
@@ -86,6 +87,17 @@ fn main() -> anyhow::Result<()> {
     {
         log::warn!("video :: encoder not reserved, `video start` will try again: {error}");
     }
+    // the I2C ports, each created by its owner thread on core 1 and lent here; port 0 always (the camera's SCCB is
+    // wired to it), port 1 when the config defines it. Back to their owners at once until layout and setup use them
+    for id in 0..2u8 {
+        let Some((sda, scl, clock_hz)) = i2c_pins(&loaded.document, id).or((id == 0).then_some((7, 8, 400_000))) else {
+            continue;
+        };
+        match owner::spawn(id, sda, scl, clock_hz).and_then(|(parked, port)| owner::start(parked, port)) {
+            Ok(()) => {}
+            Err(error) => log::error!("i2c:{id} :: no bus: {error}"),
+        }
+    }
     // the ring_writer scans the `log` partition in its own thread, then starts the ring_eraser and, with a card, the
     // ring_saver: all three after the encoder's reservation. Boot goes on, and the producers queue meanwhile
     if let Err(error) = recorder::start(settings.clone(), card) {
@@ -121,6 +133,7 @@ fn main() -> anyhow::Result<()> {
     // exactly what this board runs (firmware::gcl)
     firmware::gcl::set_cc_names(commands::names());
     register_system_commands();
+    owner::register_commands();
     if let Err(error) = panics_logger::start_oops() {
         log::error!("panic :: the oops thread did not start, oopses are dropped: {error}");
     }
@@ -150,6 +163,22 @@ fn main() -> anyhow::Result<()> {
     )?;
     log::info!("{}", board.banner());
     link::run(peripherals.modem, event_loop, partition, wifi, credentials, &executor)
+}
+
+/// Port `id`'s pins and speed from the board config's `buses.i2c.<id>` (`sda`, `scl`, `freq` default 400 kHz, plan B
+/// i2cbus.py:91-96); None when the config does not define it.
+fn i2c_pins(document: &serde_json::Value, id: u8) -> Option<(u8, u8, u32)> {
+    let bus = document.get("buses")?.get("i2c")?.get(id.to_string())?;
+    let pin = |key: &str| {
+        bus.get(key)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|pin| u8::try_from(pin).ok())
+    };
+    let clock_hz = bus
+        .get("freq")
+        .and_then(serde_json::Value::as_u64)
+        .map_or(400_000, |hz| hz as u32);
+    Some((pin("sda")?, pin("scl")?, clock_hz))
 }
 
 /// Logs the mounted card: partition 1's serial (the name the session-start record keeps), how its volumes are

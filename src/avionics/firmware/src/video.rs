@@ -11,8 +11,9 @@
 use esp_idf_svc::sys;
 use recorder::layout;
 
+use crate::buses::i2c;
 use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach, Word};
-use crate::{i2c, sd};
+use crate::sd;
 
 /// The OV5647's Bayer order as the ISP must be told it: BGGR. esp_cam_sensor's tables run the readout mirrored
 /// but declare GBRG, which swapped green and magenta; BGGR (what Linux's ov5647 driver declares for the same

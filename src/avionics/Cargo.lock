@@ -708,6 +708,7 @@ dependencies = [
  "anyhow",
  "board_config",
  "cc_protocol",
+ "embedded-hal 1.0.0",
  "embuild",
  "esp-idf-svc",
  "flash_ring",
