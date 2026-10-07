@@ -9,6 +9,9 @@
 // Each test binary uses its own subset of these helpers.
 #![allow(dead_code)]
 
+pub mod board;
+pub mod card;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -74,9 +77,14 @@ pub fn session(boot: u32) -> Session {
 
 /// Boot `boot`'s identity.
 pub fn identity(boot: u32) -> Identity {
+    labelled(boot, session(boot))
+}
+
+/// Boot `boot`'s identity under the session label `label` (a `recorder.session`, which a later boot may reuse).
+pub fn labelled(boot: u32, label: Session) -> Identity {
     Identity {
         boot_id: Some(boot),
-        session: session(boot),
+        session: label,
         board: "taster".into(),
         firmware: "dev".into(),
         config_id: "3f2a91".into(),
@@ -103,6 +111,18 @@ pub fn recorder_of(
     settings: Settings,
     flight: bool,
 ) -> Parts {
+    recorder_as(identity(boot), registry, rings, ring_bytes, settings, flight)
+}
+
+/// As [`recorder_of`], for the boot `identity` names.
+pub fn recorder_as(
+    identity: Identity,
+    registry: Registry,
+    rings: usize,
+    ring_bytes: usize,
+    settings: Settings,
+    flight: bool,
+) -> Parts {
     let clock = TestClock::default();
     clock.set(START_US);
     let reading = clock.clone();
@@ -116,7 +136,7 @@ pub fn recorder_of(
     };
     let recorder = Recorder::new(
         registry,
-        identity(boot),
+        identity,
         settings,
         flight,
         buffers,

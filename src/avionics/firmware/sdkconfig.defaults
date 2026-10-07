@@ -34,6 +34,19 @@ CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 # cache; esp_hosted hands the init config to the C6), which leaves WIFI_RMT_DYNAMIC_TX_BUFFER_NUM below unused.
 # Measured unchanged: 14 MB downloads at 3.3-4.4 MB/s, nine in a row, no assert.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# The internal DMA budget (M4, measured on the taster 2026-10-06; doc/specs/avionics-port.md "Internal RAM budget").
+# Internal DMA memory is what runs out: the encoder holds ~138 KB, the camera's stream takes ~13 KB, esp_hosted's frame
+# pool ~25 KB at its peak, and esp_hosted ASSERTS when it gets none (transport_drv.c:267 copy_buff on TX,
+# sdio_drv.c:862 pkt_rxbuff on RX) -- both hit under FHD video + the ring_saver + a 32 MB Wi-Fi download before this.
+# - A 64 KB pool (IDF default 32 KB) that plain malloc and task stacks cannot take: IDF registers it with only the DMA
+#   and internal caps, so only the allocations that ask for DMA memory get it.
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+# - Plain malloc above 4 KB goes to PSRAM, so ordinary buffers (the ring_saver's staging, the decoder's maps) stop
+#   taking DMA-capable RAM (-15.7 KB of DMA memory under saver load at the IDF default 16 KB, -5.2 KB at 4 KB). 4 KB
+#   itself stays internal: esp_flash reads straight into internal RAM only and borrows an internal temp buffer of up
+#   to 16 KB per read otherwise, so the ring's 4 KB block buffers stay where they are. SD writes from PSRAM bounce
+#   through components/sd_card's persistent buffer, with no allocation.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 
 # FreeRTOS: a 1 ms tick so sleeps and timeouts resolve at 1 ms, not 10
 CONFIG_FREERTOS_HZ=1000
@@ -59,11 +72,17 @@ CONFIG_ESP_WIFI_REMOTE_ENABLED=y
 CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
 # esp_hosted's own debug CLI would register commands next to our console
 CONFIG_ESP_HOSTED_CLI_ENABLED=n
+# SDIO queues 10 (was 20): esp_hosted keeps every frame buffer it ever freed (its mempool never shrinks), so its peak
+# is roughly the queues' depth x 1.6 KB of internal DMA memory -- 37 KB after one download at 20/20, 25 KB at 10/10
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=10
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=10
 CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM=16
 CONFIG_WIFI_RMT_DYNAMIC_RX_BUFFER_NUM=64
 # unused while CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y (static TX buffers, see above)
 CONFIG_WIFI_RMT_DYNAMIC_TX_BUFFER_NUM=64
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65534
+# 32 KB (was 64): fewer frames in flight, so esp_hosted's frame-buffer pool peaks lower (the internal DMA budget
+# above); a 32 MB pull takes 9.9 s instead of 8.5 s
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
 CONFIG_LWIP_TCP_WND_DEFAULT=65534
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=64
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
@@ -73,6 +92,17 @@ CONFIG_LWIP_TCP_SACK_OUT=y
 # FatFs on the microSD: long file names (session files like 000135_flight.csv); FatFs defaults to 8.3 only
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=255
+# FatFs's file lock table, one entry per open file or directory, at least components/sd_card's max_files (40): the
+# video writer, the ring_saver's appends and the HTTP reads share the card. IDF's default 0 has no table, so FatFs lets
+# the saver append to a file an HTTP pull is reading through a second handle (FatFs calls that an illegal open: the
+# read sees the size before the batch, at best). With the table a file open for writing refuses every other open
+# (FR_LOCKED, EACCES through the VFS): files.rs answers 503, and the saver goes on with that file at its next step.
+# A table smaller than max_files would answer FR_TOO_MANY_OPEN_FILES (ENFILE) before the VFS ran out of handles.
+# Its cost is 16 B a file of internal RAM.
+CONFIG_FATFS_FS_LOCK=40
+# f_getlabel, for the card's FAT volume serial (components/sd_card): the session-start record names the card, and the
+# next boot trusts the ring_saver's position hint only for that same card
+CONFIG_FATFS_USE_LABEL=y
 
 # ---------------------------------------------------------------------------------------------------------
 # Camera recorder (components/coludo_video): OV5647 on the 22-pin MIPI-CSI connector -> ISP -> H.264 HW

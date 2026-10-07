@@ -10,6 +10,10 @@
 //!   Recorder::index_session                                                   +--> CC tees (log, tlm)
 //!
 //! flash block --> Decoder::block --> wire lines `[@<routing>@]{OPEN};<payload>;<CLOSE>\n` (ring_saver, /ring, tools)
+//!
+//! flash_ring::Ring --> Saver::step: Walk (in sequence order, up to writer_position) --> Decoder --> batches
+//!   --> Fs: <session>/<session>_<file>, <session>/recorder.log, <session>/session.csv + session.csv; fsync
+//!   --> saver_position (the eraser erases behind it)
 //! ```
 //!
 //! * [`Registry`]: the streams, built before any thread spawns and then fixed.
@@ -19,6 +23,9 @@
 //! * [`Telemetry`]: a stream's producer side, `due`/`push`, owned by its thread.
 //! * [`Writer`]: the ring_writer's loop body, [`Writer::step`], generic over [`flash_ring::Flash`].
 //! * [`Decoder`]: a flash block back to the lines recorderd wrote, for the ring_saver and the tools.
+//! * [`Saver`]: the ring_saver's loop body, [`Saver::step`], over a [`Walk`] of the ring and the card's [`Fs`]
+//!   ([`StdFs`] on the board and the host): the flash emptied to the SD in batches, `saver_position` published only
+//!   once a batch is fsynced.
 //!
 //! Nothing on a producer's path or in the writer prints a record: the records are binary from the producer to
 //! flash, and only the decoder and a tee's drain make text, off the flight path (invariant 4).
@@ -29,19 +36,23 @@
 
 mod byte_ring;
 mod decoder;
+mod fs;
 mod published;
 mod record;
 mod recorder;
 mod registry;
+mod saver;
 mod tee;
 mod telemetry;
 mod writer;
 
 pub use decoder::{BlockError, BlockSummary, DecodedLine, Decoder};
+pub use fs::{Fs, StdFs};
 pub use published::Stats;
 pub use recorder::{AttachError, Attachment, Buffers, Clock, Identity, Inspection, Overflow, Recorder, Settings, Wake};
 pub use recorder_wire::Cell;
 pub use registry::{Registry, RegistryError, Stream, StreamId};
+pub use saver::{Ahead, BATCH_BLOCKS, BATCH_FILES, BATCH_MS, SaveError, Saved, Saver, TAIL_BYTES, WRITE_BYTES, Walk};
 pub use tee::TeeBatch;
 pub use telemetry::Telemetry;
 pub use writer::{ANCHOR_AFTER_US, HEADER_REPEAT_BYTES, MERGE_HORIZON_US, Progress, TICK_US, Writer};

@@ -29,6 +29,10 @@
 //! time within it (a backward jump of more than half a 2^30 period reads as a ticks wrap to `flight_telemetry`),
 //! and a boot that reuses a label is never stamped with an earlier boot's uptimes. Its `k` is the torn chunk's
 //! record count as read, `?` when the count never landed.
+//!
+//! The decoder keeps that state for the boot it is in alone: blocks come in `block_sequence` order and a boot's
+//! blocks are numbered one after another, so a boot left behind never comes back, and a walk over a backlog of
+//! many boots holds no more than one boot's headers.
 
 use std::collections::BTreeMap;
 use std::string::{String, ToString};
@@ -75,6 +79,10 @@ pub struct DecodedLine<'a> {
     pub routing: Option<&'a str>,
     /// The wire line, `[@<routing>@]{OPEN};<payload>;<CLOSE>\n`: what `GET /ring` streams and a capture holds.
     pub wire: &'a [u8],
+    /// It is a HEADER record's column list: a file's header line, which carries no uptime, so the tools can never
+    /// tell a printed-again one from a new boot's (spec "Duplicates"). The ring_saver keeps it out of a file that
+    /// holds it already, after a reboot.
+    pub header: bool,
 }
 
 impl<'a> DecodedLine<'a> {
@@ -88,15 +96,18 @@ impl<'a> DecodedLine<'a> {
 /// A boot as the block headers name it: (session label, boot id).
 type Boot = (String, u32);
 
-/// Decodes blocks into wire lines. It remembers, per boot, the columns each file's header line printed and the
-/// newest uptime seen, so feed it a ring's blocks in `block_sequence` order. A new one prints every file's first
-/// header again: the ring_saver keeps one for as long as it appends to the same files.
+/// Decodes blocks into wire lines. It remembers, for the boot it is in, the columns each file's header line printed
+/// and the newest uptime seen, so feed it a ring's blocks in `block_sequence` order: a block of another boot starts
+/// that memory again. A new one prints every file's first header again: the ring_saver keeps one for as long as it
+/// appends to the same files.
 #[derive(Debug, Default)]
 pub struct Decoder {
-    /// The column list each file last printed, by boot and file name.
-    printed: BTreeMap<(Boot, Vec<u8>), Vec<u8>>,
-    /// The newest uptime seen, by boot: a loss line's stamp.
-    newest_us: BTreeMap<Boot, u64>,
+    /// The boot of the last block decoded: what `printed` and `newest_us` are of.
+    boot: Option<Boot>,
+    /// The column list each file last printed in that boot, by file name.
+    printed: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The newest uptime seen in that boot: a loss line's stamp.
+    newest_us: u64,
     /// The routing being built.
     routing: String,
     /// The line text being built.
@@ -126,6 +137,30 @@ impl Decoder {
         &mut self,
         block: &[u8],
         boot_goes_on: bool,
+        each: impl FnMut(DecodedLine<'_>),
+    ) -> Result<BlockSummary, BlockError> {
+        self.block_from(block, 0, boot_goes_on, each)
+    }
+
+    /// As [`Decoder::block`], for the part of the block from offset `from` on: the ring_saver reads the writer's
+    /// open block in parts, as the writer's position moves, and each chunk must reach the decoder once (it keeps
+    /// which headers printed, and the newest uptime). A chunk that ends at or before `from` was decoded with an
+    /// earlier part, and is passed over whole: nothing printed, nothing remembered, nothing counted. One that only
+    /// starts before it (a position no writer publishes, from a damaged hint) is decoded again: a duplicate at
+    /// worst, never a line left out. A torn chunk before `from` was judged with the part that held it.
+    ///
+    /// Args:
+    /// * `block` - the block's bytes from its offset 0, the header included, up to the end of the part.
+    /// * `from` - where the part starts; 0 for the whole block.
+    /// * `boot_goes_on` - as for [`Decoder::block`].
+    /// * `each` - takes each line of the part.
+    ///
+    /// Returns what the part held. Errors as [`Decoder::block`].
+    pub fn block_from(
+        &mut self,
+        block: &[u8],
+        from: u32,
+        boot_goes_on: bool,
         mut each: impl FnMut(DecodedLine<'_>),
     ) -> Result<BlockSummary, BlockError> {
         let header = BlockHeader::decode(block).map_err(BlockError::Header)?;
@@ -141,19 +176,28 @@ impl Decoder {
         let session = header.session;
         let session = session.as_str();
         let boot = (session.to_string(), header.boot_id);
+        if self.boot.as_ref() != Some(&boot) {
+            // a boot left behind never comes back: forget it
+            self.printed.clear();
+            self.newest_us = 0;
+            self.boot = Some(boot.clone());
+        }
         for walked in chunk::chunks(block) {
             match walked {
+                Walked::Chunk(found)
+                    if found.offset as usize + chunk::chunk_bytes(found.payload.len()) <= from as usize => {}
+                Walked::Torn(torn) if torn.offset < from => {}
                 Walked::Chunk(found) => {
                     let mut records = Records::new(found.payload);
                     for record in records.by_ref() {
                         summary.records += 1;
-                        self.record(&boot, &record, &mut each);
+                        self.record(session, &record, &mut each);
                     }
                     summary.damaged += u32::from(records.damaged());
                 }
                 Walked::Torn(torn) if !torn.followed && !boot_goes_on => {
                     summary.lost += 1;
-                    self.loss(&boot, header.block_sequence, &torn, &mut each);
+                    self.loss(session, header.block_sequence, &torn, &mut each);
                 }
                 Walked::Torn(_) => {} // a failed program: the writer programmed its records again behind it
             }
@@ -161,22 +205,16 @@ impl Decoder {
         Ok(summary)
     }
 
-    /// Print one record of `boot`, unless it is a header its file has printed already in that boot.
-    fn record(&mut self, boot: &Boot, record: &Record, each: &mut impl FnMut(DecodedLine<'_>)) {
-        let session = boot.0.as_str();
-        match self.newest_us.get_mut(boot) {
-            Some(newest) => *newest = (*newest).max(record.uptime_us),
-            None => {
-                self.newest_us.insert(boot.clone(), record.uptime_us);
-            }
-        }
+    /// Print one record of the boot the decoder is in, of `session`, unless it is a header its file has printed
+    /// already in that boot.
+    fn record(&mut self, session: &str, record: &Record, each: &mut impl FnMut(DecodedLine<'_>)) {
+        self.newest_us = self.newest_us.max(record.uptime_us);
         let routing = record.routing(session, &mut self.routing);
         if record.kind == Kind::Header && routing.is_some() {
-            let key = (boot.clone(), record.name().to_vec());
-            if self.printed.get(&key).map(Vec::as_slice) == Some(record.columns()) {
+            if self.printed.get(record.name()).map(Vec::as_slice) == Some(record.columns()) {
                 return;
             }
-            self.printed.insert(key, record.columns().to_vec());
+            self.printed.insert(record.name().to_vec(), record.columns().to_vec());
         }
         self.text.clear();
         record.text_into(&mut self.text);
@@ -186,13 +224,14 @@ impl Decoder {
             session,
             routing,
             wire: &self.wire,
+            header: record.kind == Kind::Header,
         });
     }
 
-    /// Print the loss line of a torn chunk of block `block_sequence` of `boot`, into its session's recorder.log.
-    fn loss(&mut self, boot: &Boot, block_sequence: u32, torn: &Torn, each: &mut impl FnMut(DecodedLine<'_>)) {
-        let session = boot.0.as_str();
-        let uptime_us = self.newest_us.get(boot).copied().unwrap_or(0);
+    /// Print the loss line of a torn chunk of block `block_sequence` of the boot the decoder is in, into the
+    /// recorder.log of `session`.
+    fn loss(&mut self, session: &str, block_sequence: u32, torn: &Torn, each: &mut impl FnMut(DecodedLine<'_>)) {
+        let uptime_us = self.newest_us;
         let records = torn
             .records
             .map_or_else(|| String::from("?"), |records| records.to_string());
@@ -208,6 +247,7 @@ impl Decoder {
             session,
             routing: None,
             wire: &self.wire,
+            header: false,
         });
     }
 }
@@ -405,6 +445,35 @@ mod tests {
     }
 
     #[test]
+    fn the_decoder_remembers_the_boot_it_is_in_alone() {
+        // a backlog of many short boots, a reset loop on the bench: one boot's files at a time, never all of them
+        let mut decoder = Decoder::new();
+        let files = ["imu.csv", "health.csv", "baro.csv"];
+        let records = |uptime_us| -> Vec<Vec<u8>> {
+            let mut records: Vec<Vec<u8>> = files.iter().map(|file| header(file, b"uptime;x")).collect();
+            records.push(row("imu.csv", uptime_us, 1));
+            records
+        };
+        for boot in 1..=200u32 {
+            let session = std::format!("{boot:06}");
+            let (bytes, _) = block_of(&session, boot, VERSION, &[records(u64::from(boot))]);
+            assert_eq!(
+                lines(&mut decoder, &bytes, true).len(),
+                4,
+                "boot {boot}: its headers and its row"
+            );
+        }
+        assert_eq!(decoder.printed.len(), files.len(), "the last boot's files alone");
+        assert_eq!(decoder.newest_us, 200, "the last boot's newest uptime");
+        // negative: the boot it is in still knows its headers, so a repeat prints nothing
+        let (repeat, _) = block_of("000200", 200, VERSION, &[vec![header("imu.csv", b"uptime;x")]]);
+        assert!(lines(&mut decoder, &repeat, true).is_empty());
+        // a boot left behind is forgotten: out of order it prints its headers again, as a fresh decoder would
+        let (earlier, _) = block_of("000007", 7, VERSION, &[records(7)]);
+        assert_eq!(lines(&mut decoder, &earlier, true).len(), 4);
+    }
+
+    #[test]
     fn a_record_the_saver_would_not_file_goes_to_recorder_log() {
         let (bytes, _) = block(
             "000123",
@@ -470,6 +539,89 @@ mod tests {
         let mut found = 0;
         let summary = Decoder::new().block(&bytes, false, |_| found += 1).unwrap();
         assert_eq!((found, summary.records, summary.damaged), (1, 1, 1));
+    }
+
+    #[test]
+    fn a_block_read_in_parts_prints_each_chunk_once_as_the_whole_block_would() {
+        let chunks = [
+            vec![header("imu.csv", b"uptime;ax"), row("imu.csv", 1, 1)],
+            vec![row("imu.csv", 2, 2), header("imu.csv", b"uptime;ax")],
+            vec![log(3, "three"), row("imu.csv", 4, 4)],
+        ];
+        let (bytes, offsets) = block("000123", VERSION, &chunks);
+        let whole = lines(&mut Decoder::new(), &bytes, true);
+        assert_eq!(whole.len(), 5, "the repeat prints nothing");
+        // the writer's position after each chunk, as the saver sees it move
+        let ends: Vec<usize> = offsets
+            .iter()
+            .zip(&chunks)
+            .map(|(&offset, records)| offset + chunk_bytes(records.concat().len()))
+            .collect();
+        let mut decoder = Decoder::new();
+        let mut parts = Vec::new();
+        let mut from = 0;
+        for &end in &ends {
+            decoder
+                .block_from(&bytes[..end], from as u32, true, |line| {
+                    parts.push(String::from_utf8(line.wire.to_vec()).unwrap())
+                })
+                .unwrap();
+            from = end;
+        }
+        assert_eq!(parts, whole);
+        // a position inside a chunk (no writer publishes one) decodes that chunk again: never a line left out
+        let mut again = Vec::new();
+        decoder
+            .block_from(&bytes, ends[0] as u32 - 8, true, |line| {
+                again.push(String::from_utf8(line.wire.to_vec()).unwrap())
+            })
+            .unwrap();
+        assert_eq!(
+            again,
+            whole[1..],
+            "the first chunk's row again, its header not, the rest whole"
+        );
+        // negative: a part past every chunk prints nothing
+        let summary = Decoder::new()
+            .block_from(&bytes, ends[2] as u32, false, |_| panic!())
+            .unwrap();
+        assert_eq!((summary.records, summary.lost), (0, 0));
+    }
+
+    #[test]
+    fn a_torn_chunk_before_the_part_was_judged_with_the_part_that_held_it() {
+        let (mut bytes, offsets) = block(
+            "000123",
+            VERSION,
+            &[vec![row("imu.csv", 1, 1)], vec![row("imu.csv", 2, 2)]],
+        );
+        bytes[offsets[1] + CHUNK_HEADER_BYTES + 2..offsets[1] + 40].fill(0xFF); // the cut
+        let mut decoder = Decoder::new();
+        let mut first = Vec::new();
+        decoder
+            .block_from(&bytes, 0, false, |line| {
+                first.push(String::from_utf8(line.wire.to_vec()).unwrap())
+            })
+            .unwrap();
+        assert!(first[1].contains("torn chunk at"), "{first:?}");
+        let summary = decoder
+            .block_from(&bytes, offsets[1] as u32 + 8, false, |_| panic!())
+            .unwrap();
+        assert_eq!(summary.lost, 0, "no second loss line");
+    }
+
+    #[test]
+    fn a_header_line_says_so_and_no_other_does() {
+        let (bytes, _) = block(
+            "000123",
+            VERSION,
+            &[vec![header("imu.csv", b"uptime;ax"), row("imu.csv", 1, 1), log(2, "x")]],
+        );
+        let mut headers = Vec::new();
+        Decoder::new()
+            .block(&bytes, true, |line| headers.push(line.header))
+            .unwrap();
+        assert_eq!(headers, [true, false, false]);
     }
 
     #[test]

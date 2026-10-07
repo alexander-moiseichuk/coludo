@@ -252,6 +252,9 @@ pub struct Recorder {
     pub(crate) published: PublishedStats,
     /// `writer_position`: the end of what is programmed, for the ring_saver.
     pub(crate) writer_position: PublishedPosition,
+    /// `saver_position`: where the ring_saver goes on, everything before it on the SD and fsynced, for the eraser
+    /// and the figures.
+    pub(crate) saver_position: PublishedPosition,
     /// Whether the stage is in flight (BOOSTING..DONE): the blocks the writer opens carry the flight flag.
     flight: AtomicBool,
     /// Whether a [`crate::Writer`] has taken this Recorder, and whether it still runs (`writer_state`).
@@ -292,6 +295,7 @@ impl Recorder {
             dropped: [AtomicU32::new(0), AtomicU32::new(0)],
             published: PublishedStats::default(),
             writer_position: PublishedPosition::new(),
+            saver_position: PublishedPosition::new(),
             flight: AtomicBool::new(flight),
             writer: AtomicU32::new(writer_state::NONE),
         }
@@ -479,6 +483,20 @@ impl Recorder {
     /// Any thread at any priority may call it: it never waits for the writer, even one it preempted mid-store.
     pub fn writer_position(&self) -> Option<Position> {
         self.writer_position.load()
+    }
+
+    /// `saver_position`: where the ring_saver goes on (block sequence, offset), every line before it on the SD
+    /// card and fsynced (doc/specs/avionics-port.md "The ring_saver"). Blocks before its block are saved, and the
+    /// eraser erases them 100-200 ms later. None while no saver runs (no card), when every closed block is unsaved.
+    ///
+    /// Any thread at any priority may call it: it never waits for the saver, even one it preempted mid-store.
+    pub fn saver_position(&self) -> Option<Position> {
+        self.saver_position.load()
+    }
+
+    /// This boot's id as its block headers carry it: 0 when nothing counted the boot.
+    pub(crate) fn boot_id(&self) -> u32 {
+        self.identity.boot_id.unwrap_or(0)
     }
 
     /// Tell the recorder whether the stage is in flight: true from BOOSTING, false from DONE, and false when the

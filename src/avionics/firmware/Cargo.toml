@@ -32,7 +32,7 @@ serde_json.workspace = true
 
 # esp-idf-sys hands every enabled sdkconfig option to this crate as an `esp_idf_<option>` cfg
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(esp_idf_spiram_xip_from_psram)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(esp_idf_spiram_xip_from_psram)", "cfg(esp_idf_heap_task_tracking)"] }
 
 [build-dependencies]
 embuild = "0.33"

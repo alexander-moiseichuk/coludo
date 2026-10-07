@@ -15,7 +15,9 @@
 //!    next chunk goes into the next block;
 //! 5. programs each chunk with one call ([`flash_ring::Ring::append`]). Then it copies each record into the CC tee
 //!    whose window is open, releases the records from their rings, and publishes `writer_position`;
-//! 6. logs the status line every `stats_ms`, a LOG record of its own merged by uptime with the producers'.
+//! 6. logs the status line every `stats_ms`, a LOG record of its own merged by uptime with the producers': plan
+//!    B's counters, plus the flash ring's figures against the ring_saver's published position, both positions and
+//!    the write rate measured since the last status line, which `stats` reports too.
 //!
 //! The writer prints no record: the ring_saver and the `cc` executor do (invariant 4). It makes three short texts
 //! of its own, rarely: the status message once per `stats_ms`, and the utc cell of the `boot` and `anchor` rows.
@@ -174,6 +176,8 @@ pub struct Writer<'r, 't, F: Flash> {
     anchored: bool,
     /// When the status line was last logged.
     last_status_us: u64,
+    /// The writer position then: the write rate is the flash between it and the next status line's.
+    status_position: Position,
     /// Per stream: its HEADER record is in a chunk this boot, so the repeats carry it.
     headed: Vec<bool>,
     /// Where the last header repeat (at first, this boot's first block) went: the next one is due a MiB of flash
@@ -217,10 +221,12 @@ impl<'r, 't, F: Flash> Writer<'r, 't, F> {
                 held: VecDeque::new(),
             })
             .collect();
+        let position = ring.position();
         Some(Writer {
             recorder,
             _claim: Claim(recorder),
-            repeated_at: ring.position(),
+            repeated_at: position,
+            status_position: position,
             ring,
             sources,
             own: VecDeque::new(),
@@ -376,22 +382,34 @@ impl<'r, 't, F: Flash> Writer<'r, 't, F> {
     }
 
     /// Queue the status line when `stats_ms` has passed since the last: plan B's `Recorder :: <report>`, plus the
-    /// flash ring's figures as `'ring': {...}`, which go to `stats` as well.
+    /// flash ring's figures as `'ring': {...}`, which go to `stats` as well, with the write rate measured since the
+    /// last status line.
+    ///
+    /// The figures count the closed blocks before the saver's published position saved, the rest unsaved (with no
+    /// saver, no card, every closed block). The rate is the flash the writer position moved a second, block headers
+    /// and unused block tails included, since those fill the ring as rows do: what turns the figures into
+    /// `ring_erased_s` and `ring_unsaved_s` (spec "The ring_eraser and newest wins").
     fn status(&mut self) {
         let period_us = u64::from(self.recorder.settings().stats_ms) * 1000;
-        if self.now_us.saturating_sub(self.last_status_us) < period_us {
+        let elapsed_us = self.now_us.saturating_sub(self.last_status_us);
+        if elapsed_us < period_us {
             return;
         }
         self.last_status_us = self.now_us;
-        let figures = self.ring.table().figures(None);
-        self.recorder.published.store_ring(figures);
+        let position = self.ring.position();
+        let written = flash_between(self.status_position, position);
+        self.status_position = position;
+        let write_rate = (written * 1_000_000 / elapsed_us.max(1)).min(u64::from(u32::MAX)) as u32;
+        let saver = self.recorder.saver_position();
+        let figures = self.ring.table().figures(saver);
+        self.recorder.published.store_ring(figures, write_rate);
         let count = self.count();
         let counters = |class: Class| Counters {
             count: count[class as usize],
             max: self.max[class as usize].max(count[class as usize]),
             dropped: self.recorder.dropped[class as usize].load(Ordering::Relaxed),
         };
-        let ring = ring_member(&figures, self.chunks, self.flash_errors, self.ring.position());
+        let ring = ring_member(&figures, self.chunks, self.flash_errors, position, saver, write_rate);
         let message = recorder_wire::status_message(
             self.recorder.session(),
             &counters(Class::Telemetry),
@@ -673,12 +691,21 @@ impl<'r, 't, F: Flash> Writer<'r, 't, F> {
     }
 }
 
-/// The status line's `'ring'` member, a Python dict's repr: the flash ring's figures (with no saver yet, every
-/// closed block counts unsaved), the chunks programmed, the flash calls that failed, and `writer_position`.
-fn ring_member(figures: &Figures, chunks: u32, flash_errors: u32, writer: Position) -> String {
+/// The status line's `'ring'` member, a Python dict's repr: the flash ring's figures (with no saver, every closed
+/// block counts unsaved), the chunks programmed, the flash calls that failed, `writer_position` and
+/// `saver_position` (`None` with no saver) as `(block_sequence, offset)`, and the write rate in bytes a second.
+fn ring_member(
+    figures: &Figures,
+    chunks: u32,
+    flash_errors: u32,
+    writer: Position,
+    saver: Option<Position>,
+    write_rate: u32,
+) -> String {
+    let pair = |position: Position| std::format!("({}, {})", position.block_sequence, position.offset);
     std::format!(
         "{{'erased': {}, 'saved': {}, 'unsaved': {}, 'other_version': {}, 'foreign': {}, 'lost': {}, 'bad': {}, \
-         'chunks': {chunks}, 'flash_errors': {flash_errors}, 'writer': ({}, {})}}",
+         'chunks': {chunks}, 'flash_errors': {flash_errors}, 'writer': {}, 'saver': {}, 'rate': {write_rate}}}",
         figures.erased_ahead,
         figures.saved,
         figures.unsaved,
@@ -686,8 +713,8 @@ fn ring_member(figures: &Figures, chunks: u32, flash_errors: u32, writer: Positi
         figures.foreign,
         figures.lost,
         figures.bad,
-        writer.block_sequence,
-        writer.offset,
+        pair(writer),
+        saver.map_or_else(|| String::from("None"), pair),
     )
 }
 

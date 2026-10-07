@@ -134,6 +134,8 @@ fn degraded(context: &Context) -> Vec<String> {
     if !board.sd_mounted {
         degraded.push("no-sd".into()); // video and the flash-ring copy have nowhere to go
     }
+    // the flash ring: ring-unformatted, ring-low, ring-full, saver-behind (crate::recorder::degraded)
+    degraded.extend(crate::recorder::degraded().into_iter().map(String::from));
     if STATUS.manual() {
         degraded.push("STAGE HELD".into()); // an operator hold suppresses every stage detector
     }

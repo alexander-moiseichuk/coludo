@@ -7,7 +7,9 @@
 //!   erased block (its [`header`] first) when a chunk does not fit;
 //! * the ring_eraser ([`Eraser`]) erases blocks the saver has passed, and when fewer than about 1 % of the blocks
 //!   are free it erases the oldest block even unsaved (newest wins), non-flight blocks first;
-//! * the ring_saver (M4) reads blocks in sequence order and walks their [`chunk`]s, to print them for the SD.
+//! * the ring_saver reads blocks in sequence order ([`BlockTable::next_block`]) and walks their [`chunk`]s, to
+//!   print them for the SD. It lives in crates/recorder (`Saver`), beside the record decoder it prints with: this
+//!   crate cannot depend on that one, nor on `std::fs`. The eraser erases behind the position it publishes.
 //!
 //! They coordinate through the [`BlockTable`], one pair of AtomicU32 per slot that the bring-up [`scan()`] builds,
 //! and through two published positions, which the firmware keeps (each two AtomicU32 under a seqlock: the P4 has
@@ -30,6 +32,7 @@
 
 extern crate alloc;
 
+mod backlog;
 pub mod chunk;
 mod eraser;
 mod geometry;
@@ -39,6 +42,7 @@ mod ring;
 mod scan;
 mod table;
 
+pub use backlog::{BacklogTrend, SAVER_BEHIND_MS};
 pub use eraser::{ERASE_ATTEMPTS, ERASE_DELAY_MS, Eraser, Erasure, Loss};
 pub use geometry::Geometry;
 pub use memory::{MemoryError, MemoryFlash};

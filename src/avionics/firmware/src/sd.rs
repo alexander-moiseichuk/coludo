@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The microSD card (components/sd_card): mount once at boot, report free space, and a write test an operator
-//! can run from the console.
+//! The microSD card (components/sd_card): mount once at boot, name the card by its FAT volume serial, report free
+//! space, and a write test an operator can run from the console.
 
 use std::fs::File;
 use std::io::Write;
@@ -18,10 +18,24 @@ static FREE_MEGABYTES: AtomicU32 = AtomicU32::new(u32::MAX);
 /// Where the card is mounted.
 pub const MOUNT: &str = "/sdcard";
 
+/// The ring_saver's directory on the card: one directory per session and the global session.csv, as recorderd laid
+/// out the Luckfox's /userdata/recordings (doc/specs/avionics-port.md "SD and flash file layout"). `GET
+/// /sd/recordings/<session>/` serves a session to tools/board_pull.sh.
+pub const RECORDINGS: &str = "/sdcard/recordings";
+
 /// Mount the card (never formats). False when there is no usable card; the rest of the board runs on.
 pub fn mount() -> bool {
     // SAFETY: mounts once; a valid C string.
     unsafe { sys::sd_card_mount(c"/sdcard".as_ptr()) == sys::ESP_OK }
+}
+
+/// The mounted card's FAT volume serial number (`blkid`'s UUID `XXXX-XXXX`), read from its boot sector: what the
+/// session-start record names the card by, so the next boot knows whether the card is the one this boot saved to.
+/// None when no card is mounted or the boot sector would not read.
+pub fn volume_serial() -> Option<u32> {
+    let mut serial = 0u32;
+    // SAFETY: a live output; the call reads the mounted card's boot sector under FatFs's own volume lock.
+    (unsafe { sys::sd_card_volume_serial(&mut serial) } == sys::ESP_OK).then_some(serial)
 }
 
 /// Measure the free space now (slow: the volume lock and possibly a FAT scan) and remember it. Call off the hot

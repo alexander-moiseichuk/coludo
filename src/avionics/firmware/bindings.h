@@ -6,3 +6,4 @@
 #include "sd_card.h"
 #include "coludo_video.h"
 #include "log_hook.h"
+#include "esp_heap_task_info.h"

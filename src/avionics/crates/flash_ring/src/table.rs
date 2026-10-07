@@ -268,6 +268,26 @@ impl BlockTable {
         figures
     }
 
+    /// The block of this layout, closed or the writer's open one, with the lowest sequence at or after `from`, as
+    /// (slot, block sequence); None when there is none. One walk over every slot, as [`BlockTable::figures`].
+    ///
+    /// The ring_saver reads blocks in sequence order, which the slots no longer keep once the ring wraps or newest
+    /// wins has erased out of order, so it asks here for the block it stands in, and for the one after it. When
+    /// the block it stands in is gone (newest wins erased it unsaved, and the eraser logged the loss), the answer
+    /// is the next one. A block of another layout version is never the saver's to read, so it is never named.
+    pub fn next_block(&self, from: u32) -> Option<(u32, u32)> {
+        let mut next: Option<(u32, u32)> = None;
+        for slot in 0..self.geometry.blocks() {
+            if let Slot::Valid { block_sequence, .. } | Slot::Open { block_sequence, .. } = self.slot(slot)
+                && block_sequence >= from
+                && next.is_none_or(|(_, lowest)| block_sequence < lowest)
+            {
+                next = Some((slot, block_sequence));
+            }
+        }
+        next
+    }
+
     /// Where the saver starts (spec "Bring-up", step 4): at its `hint` from the `cfg` NVS when the hint names a
     /// block of this layout still in flash, else at the oldest such block, so nothing in flash is left out. With
     /// none at all it is the ring's start, before any block this boot will open.
@@ -391,6 +411,46 @@ mod tests {
             "nothing written: never full"
         );
         assert_eq!(Figures::default().unsaved_seconds(0.0), 0.0, "no backlog at any rate");
+    }
+
+    #[test]
+    fn the_next_block_is_the_lowest_sequence_of_this_layout_from_where_the_saver_stands() {
+        let table = BlockTable::new(Geometry::new(8).unwrap());
+        assert_eq!(table.next_block(0), None, "an empty ring");
+        // out of slot order, as after a wrap: 41 in slot 6, 43 in slot 1, the open 44 in slot 2
+        let valid = |block_sequence| Slot::Valid {
+            block_sequence,
+            flight: false,
+        };
+        table.set(6, valid(41));
+        table.set(1, valid(43));
+        table.set(
+            2,
+            Slot::Open {
+                block_sequence: 44,
+                flight: true,
+            },
+        );
+        table.set(
+            0,
+            Slot::OtherVersion {
+                block_sequence: 42,
+                flight: false,
+                version: 2,
+            },
+        );
+        table.set(3, Slot::Foreign);
+        assert_eq!(table.next_block(0), Some((6, 41)));
+        assert_eq!(table.next_block(41), Some((6, 41)), "the block the saver stands in");
+        assert_eq!(
+            table.next_block(42),
+            Some((1, 43)),
+            "another layout's block is never the saver's"
+        );
+        assert_eq!(table.next_block(44), Some((2, 44)), "the writer's open block");
+        // negative: past the newest block there is nothing to read
+        assert_eq!(table.next_block(45), None);
+        assert_eq!(table.next_block(u32::MAX), None);
     }
 
     #[test]

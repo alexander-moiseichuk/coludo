@@ -275,8 +275,8 @@ fn the_status_line_reports_every_stats_ms_in_the_log_merge() {
             "11000000 Recorder :: {{'session': '000123', 'tlm': {{'count': 0, 'max': 0, 'dropped': 0}}, 'log': \
              {{'count': 0, 'max': 0, 'dropped': 0}}, 'ring': {{'erased': 31, 'saved': 0, 'unsaved': 0, \
              'other_version': 0, 'foreign': 0, 'lost': 0, 'bad': 0, 'chunks': 1, 'flash_errors': 0, \
-             'writer': (0, {})}}}}",
-            position.offset
+             'writer': (0, {}), 'saver': None, 'rate': {}}}}}",
+            position.offset, position.offset
         )]
     );
     let stats = parts.recorder.stats();
@@ -289,6 +289,10 @@ fn the_status_line_reports_every_stats_ms_in_the_log_merge() {
         (stats.ring.erased_ahead, stats.ring.unsaved),
         (31, 0),
         "the figures of the status line"
+    );
+    assert_eq!(
+        stats.write_rate, position.offset,
+        "the boot row's chunk, in the second since the writer started"
     );
 }
 

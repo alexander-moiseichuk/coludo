@@ -1,10 +1,11 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! What the ring_writer publishes for other threads, with no 64-bit atomic (the P4 has none):
-//! * [`PublishedPosition`], the end of what is programmed (`writer_position`, doc/specs/avionics-port.md "The
-//!   ring_writer", step 6): the ring_saver never reads past it. A block sequence and an offset that must be read
-//!   as a pair, so a seqlock over AtomicU32, in its two-copy "latch" form so that a reader never waits for the
-//!   writer;
+//! What the ring tasks publish for other threads, with no 64-bit atomic (the P4 has none):
+//! * [`PublishedPosition`], a ring position: the end of what is programmed (`writer_position`,
+//!   doc/specs/avionics-port.md "The ring_writer", step 6), which the ring_saver never reads past, and where the
+//!   saver goes on (`saver_position`, "The ring_saver"), which the eraser erases behind. A block sequence and an
+//!   offset that must be read as a pair, so a seqlock over AtomicU32, in its two-copy "latch" form so that a reader
+//!   never waits for the task that stores it;
 //! * [`PublishedStats`], the counters and ring figures `stats`/`inspect` report. Each counter is an AtomicU32 read
 //!   on its own, since a report may mix two steps' values without harm; the ring figures are copied whole.
 
@@ -46,7 +47,8 @@ impl Replica {
     }
 }
 
-/// A [`Position`] one writer stores and any thread loads whole: a seqlock latch over two copies.
+/// A [`Position`] one task stores (the ring_writer its own, the ring_saver its own) and any thread loads whole: a
+/// seqlock latch over two copies.
 ///
 /// A store bumps the sequence and writes copy 0, then bumps it again and writes copy 1. A reader takes the copy
 /// the sequence's low bit names, the one no store is writing, and keeps it when the sequence did not move
@@ -70,7 +72,8 @@ impl PublishedPosition {
         }
     }
 
-    /// Store `position`. Only the ring_writer calls it: one writer, so the sequence needs no read-modify-write.
+    /// Store `position`. Only the position's own task calls it: one storer, so the sequence needs no
+    /// read-modify-write.
     pub(crate) fn store(&self, position: Position) {
         let sequence = self.sequence.load(Ordering::Relaxed);
         if sequence == 0 {
@@ -128,6 +131,8 @@ pub(crate) struct PublishedStats {
     chunks: AtomicU32,
     /// Flash calls of the writer that failed this boot.
     flash_errors: AtomicU32,
+    /// The measured write rate in bytes of flash a second, as of the last status line.
+    write_rate: AtomicU32,
 }
 
 /// The recorder's health: what `stats` and the status line report.
@@ -144,6 +149,12 @@ pub struct Stats {
     pub chunks: u32,
     /// Flash calls of the writer that failed this boot (a chunk or a block header program, a check read).
     pub flash_errors: u32,
+    /// The measured write rate: bytes of flash the writer position moved a second (block headers and the unused
+    /// tails of closed blocks included, as they fill the ring), over the last `stats_ms`. It turns the ring figures
+    /// into time: `ring.erased_seconds(rate)` is `ring_erased_s`, the time before newest wins, and
+    /// `ring.unsaved_seconds(rate)` is `ring_unsaved_s`, the flash-to-SD backlog (spec "The ring_eraser and newest
+    /// wins", budget figures). 0 before the first status line.
+    pub write_rate: u32,
 }
 
 impl PublishedStats {
@@ -157,11 +168,13 @@ impl PublishedStats {
         self.flash_errors.store(flash_errors, Ordering::Relaxed);
     }
 
-    /// Publish the ring's figures, unless a `stats` reader holds them right now.
-    pub(crate) fn store_ring(&self, ring: Figures) {
+    /// Publish the ring's figures, unless a `stats` reader holds them right now, and the write rate that goes with
+    /// them (bytes a second), which never waits.
+    pub(crate) fn store_ring(&self, ring: Figures, write_rate: u32) {
         if let Ok(mut figures) = self.ring.try_lock() {
             *figures = ring;
         }
+        self.write_rate.store(write_rate, Ordering::Relaxed);
     }
 
     /// The published figures, with the drop counts (telemetry, log) the producers keep.
@@ -177,6 +190,7 @@ impl PublishedStats {
             ring: *self.ring.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
             chunks: self.chunks.load(Ordering::Relaxed),
             flash_errors: self.flash_errors.load(Ordering::Relaxed),
+            write_rate: self.write_rate.load(Ordering::Relaxed),
         }
     }
 }
@@ -273,7 +287,7 @@ mod tests {
             bad: 7,
         };
         published.store([10, 20], [11, 21], 7, 8);
-        published.store_ring(ring);
+        published.store_ring(ring, 16_384);
         let stats = published.load([12, 22]);
         assert_eq!(
             (stats.telemetry.count, stats.telemetry.max, stats.telemetry.dropped),
@@ -281,8 +295,9 @@ mod tests {
         );
         assert_eq!((stats.log.count, stats.log.max, stats.log.dropped), (20, 21, 22));
         assert_eq!((stats.ring, stats.chunks, stats.flash_errors), (ring, 7, 8));
+        assert_eq!(stats.write_rate, 16_384);
         let held = published.ring.lock().unwrap();
-        published.store_ring(Figures::default());
+        published.store_ring(Figures::default(), 99);
         published.store([0, 0], [0, 0], 9, 9);
         drop(held);
         assert_eq!(
@@ -291,5 +306,6 @@ mod tests {
             "a busy copy is skipped, not waited for"
         );
         assert_eq!(published.load([0, 0]).chunks, 9, "the counters never wait");
+        assert_eq!(published.load([0, 0]).write_rate, 99, "nor does the rate");
     }
 }

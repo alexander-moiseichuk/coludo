@@ -2,9 +2,10 @@
 //!
 //! Avionics bring-up (doc/specs/avionics-port.md "Bring-up order"): start the clock, count the boot and load the
 //! board config, which name this boot's records; open the recorder before anything else logs, so every later line is
-//! kept; mount the card and start the ring_writer; then the board, the supervisor, the mission, the CC executor and
-//! the UART console, and finally join Wi-Fi through the C6 and serve the CC hub forever. A panic anywhere prints its
-//! backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
+//! kept; mount the card and start the ring tasks (the writer, the eraser, and the saver that copies the flash to the
+//! card); then the board, the supervisor, the mission, the CC executor and the UART console, and finally join Wi-Fi
+//! through the C6 and serve the CC hub forever. A panic anywhere prints its backtrace and reboots (sdkconfig:
+//! PANIC_PRINT_REBOOT).
 
 mod board;
 mod clock;
@@ -54,11 +55,16 @@ fn main() -> anyhow::Result<()> {
         .inspect_err(|error| log::warn!("thermometer :: {error}"))
         .ok();
     let sd_mounted = firmware::sd::mount();
-    if sd_mounted {
+    // the card by its volume serial: the ring_saver's position hint is trusted only for the card it was saved to
+    let card = sd_mounted.then(|| recorder::Card {
+        serial: firmware::sd::volume_serial(),
+    });
+    if let Some(card) = card {
         let start = std::time::Instant::now();
         let free = firmware::sd::measure_free();
         log::info!(
-            "sd :: mounted, {free:?} MB free (measured in {} ms)",
+            "sd :: mounted card {}, {free:?} MB free (measured in {} ms)",
+            card.name(),
             start.elapsed().as_millis()
         );
     } else {
@@ -69,8 +75,9 @@ fn main() -> anyhow::Result<()> {
     if sd_mounted && let Err(error) = firmware::video::reserve() {
         log::warn!("video :: encoder not reserved, `video start` will try again: {error}");
     }
-    // the ring_writer scans the `log` partition in its own thread; boot goes on, and the producers queue meanwhile
-    if let Err(error) = recorder::start(settings.clone(), sd_mounted) {
+    // the ring_writer scans the `log` partition in its own thread, then starts the ring_eraser and, with a card, the
+    // ring_saver: all three after the encoder's reservation. Boot goes on, and the producers queue meanwhile
+    if let Err(error) = recorder::start(settings.clone(), card) {
         log::error!("Recorder :: the ring_writer did not start: {error}");
     }
     let board = Arc::new(board::Board::new(

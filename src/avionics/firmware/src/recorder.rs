@@ -2,43 +2,68 @@
 //!
 //! The recorder on the board (doc/specs/avionics-port.md "Storage design", and "Bring-up order" step 3): the glue
 //! between crates/recorder, crates/flash_ring and the ESP32-P4. Power can drop at any moment, so every record goes
-//! to flash as soon as it can; the SD copy (the ring_saver) comes with M4.
+//! to flash as soon as it can; the ring_saver copies the flash to the SD card behind it, and the ring_eraser erases
+//! what the saver has passed.
 //!
 //! ```text
 //! producers (any core) --binary records--> PSRAM rings --> ring_writer (core 0, prio 7) --> `log` partition, 24 MiB
-//!   supervisor, executor, eraser,          + misc ring          |  one chunk per ~10 ms tick       ^
-//!   everyone else (log bridge, IDF)                             +--> CC tees (`log`, `tlm`)         | one 4 KiB erase
-//!                                                                         ring_eraser (core 0, prio 3)
+//!   supervisor, executor, eraser,          + misc ring          |  one chunk per ~10 ms tick    |          ^
+//!   everyone else (log bridge, IDF)                             +--> CC tees (`log`, `tlm`)     |          | 4 KiB erases
+//!                                                                                               v          |
+//!                       /sdcard/recordings/<session>/... <-- ring_saver (core 0, prio 4) -- saver_position --+
+//!                                                            text, batches, fsync           ring_eraser (core 0, prio 3)
 //! ```
 //!
 //! The bring-up runs in two steps, so no line of the boot is lost and boot never waits on flash:
 //! 1. [`open`], on main right after the board config: the stream registry, the producer rings and the CC tees in
 //!    PSRAM, and the Recorder, published to every thread. From then on every log line and telemetry row queues in
 //!    PSRAM, whoever makes it.
-//! 2. [`start`], on main once the SD card's state is known: spawns the ring_writer. Its bring-up routine (spec "The
-//!    scan, the positions and the session-start record") reads the ring positions from the `cfg` NVS, scans the 6144
-//!    block headers, writes the session-start record, spawns the ring_eraser, and only then starts programming; boot
-//!    goes on meanwhile, and the producers queue.
+//! 2. [`start`], on main once the SD card's state is known and the camera's encoder has its internal RAM: spawns the
+//!    ring_writer. Its bring-up routine (spec "The scan, the positions and the session-start record") reads the ring
+//!    positions and the previous boot's session-start record from the `cfg` NVS, scans the 6144 block headers,
+//!    writes this boot's record, spawns the ring_eraser and, with a card mounted, the ring_saver, and only then
+//!    starts programming; boot goes on meanwhile, and the producers queue.
 //!
 //! What lives in the `cfg` NVS, namespace `recorder`, all of it hints the scan can do without:
 //! * `writer`: the writer position, written about once a second by the ring_eraser, never by the writer itself (a
 //!   u64: block sequence << 32 | offset); it only keeps the block numbering from going back after the newest blocks
 //!   were erased;
-//! * `saver`: the saver position, written by the ring_saver (M4); read here, and never trusted yet;
-//! * `start`: the session-start record, once per boot (JSON): boot id, session, config id, reset cause, whether a
-//!   card is mounted, and the positions this boot started from.
+//! * `saver`: the saver position, the same u64, written by the ring_saver after every batch it commits (about once a
+//!   second when it keeps up), and by the bring-up once, before the session-start record names a new card. It is
+//!   the saver's only record of progress, and is trusted only for the card it was saved to;
+//! * `start`: the session-start record, once per boot (JSON): boot id, session, config id, reset cause, the card
+//!   (its FAT volume serial `XXXX-XXXX`, `unknown` when unreadable, null with none), and the positions this boot
+//!   started from.
+//!
+//! **The card the saver hint belongs to** (spec "Bring-up", steps 4 and 5). A boot compares the mounted card's
+//! volume serial with the card the previous boot's record names. The same card: the saver starts at the hint, and
+//! the eraser takes every block behind it as saved. Another card, or one whose serial would not read: the saver
+//! starts at the oldest block in flash, so the new card gets everything still there, and nothing counts as saved.
+//! No card: no saver (M19's uart_saver may later walk with a cursor of its own), and the blocks behind the hint
+//! count as saved, since they are on the card it was saved to. The bring-up writes the new saver start as the hint
+//! BEFORE the record that names the new card, so a cut between the two never leaves an old card's position beside
+//! a record naming the new card: the worst a cut there does is re-save into duplicates (spec "Duplicates").
+//!
+//! IDF serialises every NVS call, on every partition, behind one global lock, which a config save (the executor's
+//! ~10 KB blob) holds for tens of ms. So the ring_writer never touches the NVS after its bring-up: the eraser and
+//! the saver, the two lowest ring tasks, write the hints and can wait for the lock without harm. What reaches the
+//! writer is only the flash lock of the NVS's own flash calls (a page erase, at most ~16 ms, inside the writer's
+//! power-cut bound).
 //!
 //! Nothing here runs on core 1, the flight core, and no producer takes a lock (crates/recorder). Every big buffer is
-//! in PSRAM; what stays in internal RAM is the three thread stacks (writer 8 KiB, eraser 6 KiB, supervisor 6 KiB in
-//! supervisor.rs) and the crates' small working buffers (about 18 KiB: the writer's chunk, the ring's chunk and its
-//! 4 KiB erased-check buffer, and the eraser's per-slot failure counts). The 48 KiB block table is in PSRAM: the heap
-//! puts any allocation of 16 KiB or more there (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL).
+//! in PSRAM. What stays in internal RAM is the four thread stacks (writer 8 KiB, eraser 6 KiB, saver 8 KiB, and
+//! the supervisor's 6 KiB in supervisor.rs) and the crates' working buffers: about 18 KiB for the writer and the
+//! eraser (the writer's chunk, the ring's chunk and its 4 KiB erased-check buffer, the eraser's per-slot failure
+//! counts), and for the saver its 4 KiB block buffer, which esp_flash fills directly (a PSRAM buffer would bounce
+//! through internal DMA memory), its 1 KiB tail buffer, and its batch while it collects: the lines of up to a second,
+//! one growing buffer per file, internal while a file's buffer is under 16 KiB. The 48 KiB block table is in PSRAM:
+//! the heap puts any allocation of 16 KiB or more there (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL).
 
 use std::ffi::CStr;
 use std::num::NonZeroU32;
 use std::ptr;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use esp_idf_svc::hal::cpu::Core;
@@ -48,9 +73,16 @@ use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::nvs::{EspCustomNvsPartition, EspNvs, NvsCustom};
 use esp_idf_svc::sys;
 use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
+use firmware::sd;
 use flash_ring::header::Session;
-use flash_ring::{BLOCK_BYTES, BlockTable, Eraser, Erasure, Flash, Geometry, Hints, Loss, Position, Ring};
-use recorder::{Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, Settings, StreamId, TICK_US, Writer};
+use flash_ring::{
+    BLOCK_BYTES, BacklogTrend, BlockTable, Eraser, Erasure, Figures, Flash, Geometry, Hints, Position, Ring,
+};
+use recorder::{
+    BATCH_BLOCKS, Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, SaveError, Saved, Saver, Settings, StdFs,
+    StreamId, TICK_US, Writer,
+};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{board, clock, config, supervisor};
@@ -112,6 +144,32 @@ const ERASER_PAUSE: Duration = Duration::from_millis(1);
 /// How often the writer position is written to the `cfg` NVS when it moved: about once a second (spec "Positions").
 const HINT_PERIOD_US: u64 = 1_000_000;
 
+/// The ring_saver's priority on core 0: below the video SD writer (6) and the encoder (10), so on the card video comes
+/// first and logging second, and above the eraser (3), which erases behind it (spec "The ring_saver", Thread).
+const SAVER_PRIORITY: u8 = 4;
+
+/// The ring_saver's stack: a step's flash reads, the decode (f32 `Display` included), FatFs's open, write and fsync
+/// through the VFS and the SD driver, and the hint's NVS write; every buffer it fills is on the heap. `stats recorder`
+/// reports how much of it was never used (`saver.stack_free`), to tune on the board.
+const SAVER_STACK: usize = 8 << 10;
+
+/// How long the saver rests when it has caught up with the writer: the walk reads the writer's open block in parts,
+/// one every rest, so ten parts a second at most; a batch still goes to the card about once a second (BATCH_MS).
+const SAVER_IDLE: Duration = Duration::from_millis(100);
+
+/// The least the saver rests between two full batches of a backlog: one tick, so the eraser below it (and the idle
+/// task the task watchdog watches) gets core 0 between batches, as the eraser leaves the writer room between erases.
+const SAVER_PAUSE: Duration = Duration::from_millis(1);
+
+/// The longest the saver rests after a call that failed. The rest doubles from [`SAVER_IDLE`] up to this while the
+/// calls keep failing: a dead card's calls run into the SD driver's timeouts, on the SDMMC host the C6's Wi-Fi link
+/// shares (slot 1), and a card that refuses one file (an HTTP pull holding it open) is a second or two.
+const SAVER_BACKOFF: Duration = Duration::from_secs(5);
+
+/// How long `ring-full` stays up after newest wins last erased an unsaved block, ms: with no card the ring loses a
+/// block every few seconds at the flight rate but only every minute or so on the pad, and the token must not flicker.
+const RING_FULL_HOLD_MS: u32 = 60_000;
+
 /// The longest a CC drain waits for the writer to catch up with its request ([`catch_up`]), ms: a writer that
 /// cannot program (no erased block yet) must not hold the executor.
 const CATCH_UP_LIMIT_MS: u32 = 100;
@@ -132,7 +190,7 @@ const START_KEY: &str = "start";
 /// The key of the writer position hint.
 const WRITER_KEY: &str = "writer";
 
-/// The key of the saver position hint (the ring_saver writes it, M4).
+/// The key of the saver position hint (the ring_saver writes it after every batch it commits; the bring-up once).
 const SAVER_KEY: &str = "saver";
 
 /// `recorder.telemetry_ms` when the config sets none: plan B's code fallback (recorder.py `_DEFAULT_TELEMETRY_MS`,
@@ -159,16 +217,43 @@ struct Recording {
 /// The recorder once [`open`] built it.
 static RECORDING: OnceLock<Recording> = OnceLock::new();
 
-/// The flash ring once the bring-up scan has run: what `GET /ring`, `GET /ring/image` and the `ring` command read.
+/// The microSD card as the ring knows it at boot: mounted, and named by its FAT volume serial (spec "Bring-up", step
+/// 4: the saver hint is trusted only for the card it was saved to).
+#[derive(Clone, Copy, Debug)]
+pub struct Card {
+    /// Its FAT volume serial (firmware::sd::volume_serial); None when the boot sector would not read, so it is never
+    /// taken for the previous boot's card.
+    pub serial: Option<u32>,
+}
+
+impl Card {
+    /// The card as the session-start record names it: the serial as `blkid` shows it (`1A2B-3C4D`), or `unknown`.
+    pub fn name(self) -> String {
+        self.serial.map_or_else(
+            || "unknown".to_string(),
+            |serial| format!("{:04X}-{:04X}", serial >> 16, serial & 0xFFFF),
+        )
+    }
+}
+
+/// The flash ring once the bring-up scan has run: what `GET /ring`, `GET /ring/image`, the `ring` command, `stats`
+/// and `health` read.
 pub struct RingView {
     /// The `log` partition.
     pub partition: Partition,
-    /// The block table the writer and the eraser share.
+    /// The block table the writer, the eraser and the saver share.
     pub table: &'static BlockTable,
     /// The sequence of the first block this boot opens: every older block was in flash at boot.
     pub first_sequence: u32,
     /// The scan found no block of any layout: the eraser formats the foreign slots ahead of the writer.
     pub unformatted: bool,
+    /// The card mounted at boot; None without one (no saver runs then).
+    pub card: Option<Card>,
+    /// Where the saver started: the previous boot's position when the card is the one it was saved to, else the
+    /// oldest block in flash. None without a card.
+    pub saver_start: Option<Position>,
+    /// The card is the one the previous boot's session-start record names, so the saver resumed at its hint.
+    pub same_card: bool,
 }
 
 /// The flash ring, set once by the writer's bring-up.
@@ -282,16 +367,19 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, config_id: &s
 }
 
 /// Spawns the ring_writer (core 0, priority 7). Its bring-up routine, run at the main task's priority, scans the `log`
-/// partition, writes the session-start record and spawns the ring_eraser; then the writer steps forever. Boot goes
-/// on meanwhile.
+/// partition, writes the session-start record and spawns the ring_eraser and, with a card, the ring_saver; then the
+/// writer steps forever. Boot goes on meanwhile.
+///
+/// Call it after the camera's encoder has reserved its internal RAM (video::reserve): the three ring threads'
+/// stacks and buffers come from the same heap, and would split the encoder's ~138 KB block.
 ///
 /// Args:
 /// * `settings` - the `cfg` partition: the ring positions and the session-start record live there.
-/// * `card` - whether a microSD card is mounted; the session-start record says so (M4 adds its volume serial,
-///   which tells the saver whether the previous boot's saver position is this card's).
+/// * `card` - the mounted microSD card; None without one. Its volume serial tells whether the previous boot's saver
+///   position is this card's (see the module notes).
 ///
 /// Errors: the recorder did not open, or the thread would not spawn.
-pub fn start(settings: EspCustomNvsPartition, card: bool) -> anyhow::Result<()> {
+pub fn start(settings: EspCustomNvsPartition, card: Option<Card>) -> anyhow::Result<()> {
     let recording = RECORDING
         .get()
         .ok_or_else(|| anyhow::anyhow!("the recorder did not open"))?;
@@ -303,15 +391,17 @@ pub fn start(settings: EspCustomNvsPartition, card: bool) -> anyhow::Result<()> 
 /// The ring_writer thread: the bring-up routine, then [`Writer::step`] on every ~10 ms tick or durable record's
 /// wake, forever. A ring that cannot come up (no `log` partition, a scan that keeps failing) parks the thread with a
 /// log line: the records then stay in PSRAM until their rings fill, and drop counted.
-fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: bool) {
+fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: Option<Card>) {
     if let Some(current) = task::current() {
         WRITER_TASK.store(current, Ordering::Release);
     }
     let recorder = recording.recorder;
-    let store = RecorderStore::open(settings)
+    let store = RecorderStore::open(settings.clone())
         .inspect_err(|error| log::warn!("ring :: the cfg NVS would not open, no positions kept: {error}"))
         .ok();
     let hints = store.as_ref().map_or_else(Hints::default, RecorderStore::hints);
+    // the card the previous boot's record names: its saver hint is that card's (read before this boot's record)
+    let previous_card = store.as_ref().and_then(RecorderStore::previous_card);
     let Some(partition) = Partition::find() else {
         log::error!("ring :: no `log` partition in the partition table: nothing reaches flash this boot");
         park();
@@ -343,6 +433,22 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: b
             ""
         },
     );
+    // spec "Bring-up", steps 4 and 5: the saver hint is this card's only when the previous boot named this card
+    let same_card =
+        card.is_some_and(|card| card.serial.is_some() && previous_card.as_deref() == Some(card.name().as_str()));
+    let saver_start = card.map(|_| table.saver_start(hints.saver.filter(|_| same_card)));
+    // as Eraser::new judges it too: a hint that names no block in flash passes nothing off as saved
+    let saved = hints
+        .saver
+        .filter(|&hint| (card.is_none() || same_card) && table.saver_start(Some(hint)) == hint);
+    log_saver_start(card, previous_card.as_deref(), same_card, saver_start, saved);
+    // the new card's start becomes the hint before the record names the new card (see the module notes)
+    if let (Some(store), Some(start)) = (&store, saver_start)
+        && hints.saver != Some(start)
+        && let Err(error) = store.publish(SAVER_KEY, start)
+    {
+        log::warn!("ring :: the saver's start was not written to the cfg NVS: {error}");
+    }
     // spec "Bring-up", step 6: what a fast start needs, written once per boot
     let first = Position {
         block_sequence: scan.next_sequence,
@@ -353,9 +459,9 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: b
         "session": recording.session.as_str(),
         "config_id": recording.config_id,
         "reset_cause": board::reset_reason(),
-        "card": card,
+        "card": card.map(Card::name),
         "writer": [first.block_sequence, first.offset],
-        "saver": pair(table.saver_start(hints.saver)),
+        "saver": saver_start.map(pair),
     });
     if let Some(store) = &store
         && let Err(error) = store.record_start(&record)
@@ -367,10 +473,16 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: b
         table,
         first_sequence: scan.next_sequence,
         unformatted: scan.unformatted,
+        card,
+        saver_start,
+        same_card,
     });
-    // the store goes to the eraser, which keeps the writer position hint from here on: this thread never touches
-    // the NVS again
-    start_eraser(partition, table, recorder, store);
+    // the store goes to the eraser, which keeps the writer position hint from here on, and the saver opens its own
+    // for its hint: this thread never touches the NVS again
+    start_eraser(partition, table, recorder, store, saved);
+    if let Some(start) = saver_start {
+        start_saver(partition, table, recorder, settings, start);
+    }
     let ring = match Ring::new(
         partition,
         table,
@@ -431,18 +543,19 @@ pub fn catch_up() {
 ///
 /// Args:
 /// * `partition` - the `log` partition.
-/// * `table` - the block table the writer shares.
-/// * `recorder` - for the loss lines and the writer position.
+/// * `table` - the block table the writer and the saver share.
+/// * `recorder` - for the loss lines and the two positions.
 /// * `store` - the `cfg` NVS records; None when they would not open (no hint is kept then).
+/// * `saved` - the previous boot's saver position when the bring-up trusts it (the same card, or none): every
+///   block before it is on that card, so the eraser erases those blocks at once, with no loss line.
 fn start_eraser(
     partition: Partition,
     table: &'static BlockTable,
     recorder: &'static Recorder,
     store: Option<RecorderStore>,
+    saved: Option<Position>,
 ) {
-    // no saver hint is trusted: the spec trusts one only with the card it was saved to (or none), and naming the
-    // card is the saver's part (M4); until then the blocks behind it go only under newest wins
-    let eraser = match Eraser::new(partition, table, None) {
+    let eraser = match Eraser::new(partition, table, saved) {
         Ok(eraser) => eraser,
         Err(error) => {
             log::error!("ring :: the eraser would not open the ring: {error:?}");
@@ -456,15 +569,18 @@ fn start_eraser(
     }
 }
 
-/// The ring_eraser thread: one [`Eraser::erase_step`] after another, forever. M3 has no saver, so the steps erase
-/// foreign slots and, once no more than ~1 % of the ring is free, the oldest blocks unsaved (newest wins, pad blocks
-/// before flight blocks), each a loss logged into recorder.log.
+/// When newest wins last erased an unsaved block (uptime ms, wrapping), for `ring-full`; the table counts the losses.
+static LOST_MS: AtomicU32 = AtomicU32::new(0);
+
+/// The ring_eraser thread: one [`Eraser::erase_step`] after another, forever. A step erases a foreign slot, else a
+/// block the saver passed 100-200 ms ago (the saver's published position, or behind a trusted hint), else, once no
+/// more than ~1 % of the ring is free, the oldest block unsaved (newest wins, pad blocks before flight blocks), each a
+/// loss logged into recorder.log.
 ///
 /// Between steps it writes the writer position hint to the `cfg` NVS, about once a second ([`Hint`]). The hint is
-/// kept here and not on the ring_writer: IDF serialises every NVS call, on every partition, behind one global lock,
-/// which a config save (the executor's ~10 KB blob) holds for tens of ms. A writer waiting on it would program
-/// nothing meanwhile, past the power-cut bound of spec "The ring_writer"; the eraser, the lowest of the ring tasks,
-/// can wait without harm (the erased reserve lasts ~15 s at the flight rate).
+/// kept here and not on the ring_writer: a writer waiting on IDF's one global NVS lock (see the module notes) would
+/// program nothing meanwhile, past the power-cut bound of spec "The ring_writer"; the eraser, the lowest of the ring
+/// tasks, can wait without harm (the erased reserve lasts ~15 s at the flight rate).
 fn erase(mut eraser: Eraser<'static, Partition>, recorder: &'static Recorder, store: Option<RecorderStore>) {
     let _attachment = recorder
         .attach(Producer::Eraser as usize)
@@ -473,10 +589,11 @@ fn erase(mut eraser: Eraser<'static, Partition>, recorder: &'static Recorder, st
     let mut hint = Hint::default();
     loop {
         let started_us = uptime_us();
-        let erased = match eraser.erase_step(None, uptime_ms()) {
+        let erased = match eraser.erase_step(recorder.saver_position(), uptime_ms()) {
             Ok(Erasure::Idle) => false,
             Ok(Erasure::Lost(loss)) => {
-                recorder.log("ring", &loss_message(&loss));
+                LOST_MS.store(uptime_ms(), Ordering::Relaxed);
+                recorder.log("ring", &loss.to_string());
                 true
             }
             Ok(Erasure::Foreign { .. } | Erasure::Saved { .. }) => true,
@@ -498,18 +615,192 @@ fn erase(mut eraser: Eraser<'static, Partition>, recorder: &'static Recorder, st
     }
 }
 
-/// The loss line of a block newest wins erased unsaved (spec "The ring_eraser and newest wins"): `block <sequence>
-/// (boot <id>, session <s>, flight <0|1>) erased unsaved`, `?` where the header no longer told.
-fn loss_message(loss: &Loss) -> String {
-    let (boot, session) = loss.header.map_or_else(
-        || ("?".to_string(), "?".to_string()),
-        |header| (header.boot_id.to_string(), header.session.as_str().to_string()),
+/// Logs where the ring_saver starts and why (spec "Bring-up", steps 4 and 5): the card, whether it is the one the
+/// previous boot saved to, and which blocks the eraser takes as saved.
+///
+/// Args:
+/// * `card` - the mounted card; None without one.
+/// * `previous` - the card the previous boot's session-start record names; None when it names none, or there is no
+///   record.
+/// * `same_card` - the mounted card is that one.
+/// * `start` - where the saver starts; None without a card.
+/// * `saved` - the hint the eraser trusts; None when it trusts none.
+fn log_saver_start(
+    card: Option<Card>,
+    previous: Option<&str>,
+    same_card: bool,
+    start: Option<Position>,
+    saved: Option<Position>,
+) {
+    let position = |position: Position| format!("block {} offset {}", position.block_sequence, position.offset);
+    let behind = saved.map_or_else(
+        || "no block counts as saved".to_string(),
+        |saved| format!("the blocks before {} count as saved", position(saved)),
     );
-    format!(
-        "block {} (boot {boot}, session {session}, flight {}) erased unsaved",
-        loss.block_sequence,
-        u8::from(loss.flight)
-    )
+    match (card, start) {
+        (Some(card), Some(start)) => log::info!(
+            "ring :: card {}, {}: the saver starts at {}; {behind}",
+            card.name(),
+            if same_card {
+                "the one the previous boot saved to".to_string()
+            } else {
+                format!("not the previous boot's ({})", previous.unwrap_or("none"))
+            },
+            position(start),
+        ),
+        _ => log::info!("ring :: no card, no saver; {behind}"),
+    }
+}
+
+/// The ring_saver's figures, for `stats recorder`, `inspect recorder`, the `ring` command and `saver-behind`: each an
+/// AtomicU32 (the P4 has no 64-bit atomics) that only the saver thread stores, read on its own by any thread.
+struct SaverFigures {
+    /// The saver thread runs.
+    running: AtomicBool,
+    /// Batches committed this boot.
+    batches: AtomicU32,
+    /// Blocks they held (a part of a block counts once per batch).
+    blocks: AtomicU32,
+    /// Lines they put on the card.
+    lines: AtomicU32,
+    /// Bytes they put on the card, in KiB.
+    kilobytes: AtomicU32,
+    /// Card calls that failed (a step that failed counts once).
+    card_errors: AtomicU32,
+    /// Flash reads that failed.
+    flash_errors: AtomicU32,
+    /// When a step last found nothing more to read: the walk at the writer's published position (uptime ms).
+    caught_up_ms: AtomicU32,
+    /// The least stack the saver thread has left since it started, bytes.
+    stack_free: AtomicU32,
+}
+
+/// The ring_saver's figures this boot.
+static SAVER: SaverFigures = SaverFigures {
+    running: AtomicBool::new(false),
+    batches: AtomicU32::new(0),
+    blocks: AtomicU32::new(0),
+    lines: AtomicU32::new(0),
+    kilobytes: AtomicU32::new(0),
+    card_errors: AtomicU32::new(0),
+    flash_errors: AtomicU32::new(0),
+    caught_up_ms: AtomicU32::new(0),
+    stack_free: AtomicU32::new(0),
+};
+
+/// Spawns the ring_saver (core 0, priority 4) over the mounted card's recordings directory, from `start`. A spawn
+/// that fails is logged: nothing then reaches the card, `saver-behind` comes up after a minute, and newest wins keeps
+/// the newest ~26 min in flash, as with no card.
+///
+/// Args:
+/// * `partition` - the `log` partition.
+/// * `table` - the block table the writer and the eraser share.
+/// * `recorder` - this boot's recorder: the writer's position, and where the saver publishes its own.
+/// * `settings` - the `cfg` partition, for the saver's own handle on the hint (see the module notes).
+/// * `start` - where the saver starts (see the module notes).
+fn start_saver(
+    partition: Partition,
+    table: &'static BlockTable,
+    recorder: &'static Recorder,
+    settings: EspCustomNvsPartition,
+    start: Position,
+) {
+    let body = move || {
+        let store = RecorderStore::open(settings)
+            .inspect_err(|error| log::warn!("ring :: the saver keeps no position, the cfg NVS would not open: {error}"))
+            .ok();
+        // the saver's buffers are allocated here, on its own thread, after the encoder's reservation (start)
+        let saver = Saver::new(recorder, partition, table, StdFs::new(sd::RECORDINGS), start);
+        save(saver, store)
+    };
+    if let Err(error) = spawn(c"ring_saver", SAVER_STACK, SAVER_PRIORITY, body) {
+        log::error!("ring :: the saver would not start, nothing reaches the card: {error}");
+    }
+}
+
+/// The ring_saver thread: [`Saver::step`] again and again, forever (spec "The ring_saver"). The saver collects what
+/// the writer has published into a batch, and once a batch is due (a second of collecting, or 64 blocks) appends it
+/// to the card's files, fsyncs them and publishes `saver_position` past it; the eraser then erases those blocks.
+///
+/// After every batch it commits, it writes [`Saved::position`] to the `cfg` NVS hint, before its next step: about
+/// once a second when it keeps up, at every batch of a backlog. The hint is the saver's only record of progress, and
+/// the crate relies on it being the last committed batch's: a restart that began in an earlier boot than the card's
+/// last would print that boot's headers again into files that hold them (crates/recorder saver.rs, "Headers after a
+/// reboot"). The saver writes it itself, rather than handing it to the eraser as the writer does, because it may
+/// wait for IDF's global NVS lock without harm (its batch is on the card already; only the next one waits), and one
+/// thread per key keeps a commit and its hint in order.
+///
+/// Rests: [`SAVER_IDLE`] when caught up, [`SAVER_PAUSE`] between full batches of a backlog, and after a failed call
+/// a rest that doubles up to [`SAVER_BACKOFF`]. A failed card call leaves the batch as it was: the next step goes on
+/// with the file that failed, so a card that refuses a file for a while (FR_LOCKED while an HTTP pull reads it)
+/// costs only the wait. Only the first failure of a run is logged.
+fn save(mut saver: Saver<'static, 'static, Partition, StdFs>, store: Option<RecorderStore>) {
+    SAVER.running.store(true, Ordering::Relaxed);
+    SAVER.caught_up_ms.store(uptime_ms(), Ordering::Relaxed);
+    let mut backoff = SAVER_IDLE;
+    let mut failing = false;
+    let mut hint_failing = false;
+    let mut bytes: u64 = 0;
+    loop {
+        let rest = match saver.step(uptime_ms()) {
+            Ok(Some(saved)) => {
+                count_batch(&saved, &mut bytes);
+                if let Some(store) = &store {
+                    match store.publish(SAVER_KEY, saved.position) {
+                        Ok(()) => hint_failing = false,
+                        Err(error) if !hint_failing => {
+                            log::warn!("ring :: the saver position was not written to the cfg NVS: {error}");
+                            hint_failing = true;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                failing = false;
+                backoff = SAVER_IDLE;
+                if saved.blocks >= BATCH_BLOCKS {
+                    SAVER_PAUSE
+                } else {
+                    SAVER_IDLE
+                }
+            }
+            Ok(None) => {
+                SAVER.caught_up_ms.store(uptime_ms(), Ordering::Relaxed);
+                failing = false;
+                backoff = SAVER_IDLE;
+                SAVER_IDLE
+            }
+            Err(error) => {
+                let (counter, what) = match &error {
+                    SaveError::Card(error) => (&SAVER.card_errors, format!("a card call failed ({error})")),
+                    SaveError::Flash(error) => (&SAVER.flash_errors, format!("a flash read failed ({error})")),
+                };
+                counter.fetch_add(1, Ordering::Relaxed);
+                if !failing {
+                    log::warn!(
+                        "ring :: {what}: the saver goes on where it stopped, after a rest of up to {} s",
+                        SAVER_BACKOFF.as_secs()
+                    );
+                    failing = true;
+                }
+                let rest = backoff;
+                backoff = (backoff * 2).min(SAVER_BACKOFF);
+                rest
+            }
+        };
+        // SAFETY: the calling task's own high-water mark (a null handle is the calling task).
+        let stack_free = unsafe { sys::uxTaskGetStackHighWaterMark(ptr::null_mut()) };
+        SAVER.stack_free.store(stack_free, Ordering::Relaxed);
+        std::thread::sleep(rest);
+    }
+}
+
+/// Adds a committed batch to the saver's figures; `bytes` is the running total the KiB figure is taken from.
+fn count_batch(saved: &Saved, bytes: &mut u64) {
+    *bytes += u64::from(saved.bytes);
+    SAVER.batches.fetch_add(1, Ordering::Relaxed);
+    SAVER.blocks.fetch_add(saved.blocks, Ordering::Relaxed);
+    SAVER.lines.fetch_add(saved.lines, Ordering::Relaxed);
+    SAVER.kilobytes.store((*bytes >> 10) as u32, Ordering::Relaxed);
 }
 
 /// The writer position hint's bookkeeping: what was written to the NVS last, and when it was last looked at.
@@ -535,7 +826,7 @@ impl Hint {
         let Some(position) = position.filter(|&position| Some(position) != self.written) else {
             return;
         };
-        match store.publish_writer(position) {
+        match store.publish(WRITER_KEY, position) {
             Ok(()) => {
                 self.written = Some(position);
                 self.failing = false;
@@ -580,10 +871,21 @@ impl RecorderStore {
         })
     }
 
-    /// Writes the writer position: one u64 entry, so a cut keeps the old one or the new one, never half of each.
-    fn publish_writer(&self, position: Position) -> anyhow::Result<()> {
+    /// Writes a position hint under `key` ([`WRITER_KEY`], [`SAVER_KEY`]): one u64 entry, so a cut keeps the old one
+    /// or the new one, never half of each.
+    fn publish(&self, key: &str, position: Position) -> anyhow::Result<()> {
         let packed = (u64::from(position.block_sequence) << 32) | u64::from(position.offset);
-        Ok(self.nvs.set_u64(WRITER_KEY, packed)?)
+        Ok(self.nvs.set_u64(key, packed)?)
+    }
+
+    /// The card the previous boot's session-start record names (`1A2B-3C4D`, or `unknown`); None when it named none,
+    /// or there is no record, or it does not read (an M3 record said only whether a card was mounted).
+    fn previous_card(&self) -> Option<String> {
+        let length = self.nvs.blob_len(START_KEY).ok()??;
+        let mut buffer = vec![0u8; length];
+        let bytes = self.nvs.get_blob(START_KEY, &mut buffer).ok()??;
+        let record: Value = serde_json::from_slice(bytes).ok()?;
+        record["card"].as_str().map(str::to_string)
     }
 
     /// Writes the session-start record, replacing the previous boot's only once it is written.
@@ -828,7 +1130,8 @@ fn register_commands(recorder: &'static Recorder) {
         Command {
             owner: "recorder",
             words: "ring",
-            about: "the flash ring: blocks erased, closed, lost, the writer position, chunks, and the record counters",
+            about: "the flash ring: blocks erased, saved, unsaved, lost, both positions, the backlog in seconds, the record \
+                    counters, and the ring_saver's card, batches and errors",
             gate: Gate::Open,
             reach: Reach::Everywhere,
             parameters: &[],
@@ -861,8 +1164,9 @@ fn register_commands(recorder: &'static Recorder) {
 
 /// The `ring` command's answer: `ok ring name=value ...`, or `err ring <why>` before the bring-up scan has run.
 ///
-/// The block figures are walked from the table now (no saver yet, so every closed block counts unsaved); the
-/// record counters are what the writer published last.
+/// The block figures are walked from the table now, against the saver's published position (with no saver, every
+/// closed block counts unsaved); the record counters and the write rate are what the writer published last. The
+/// `saver_*` figures are the ring_saver's own ([`SaverReport`]).
 fn ring_report(recorder: &'static Recorder) -> String {
     let Some(view) = ring() else {
         return cc_protocol::build(
@@ -874,30 +1178,36 @@ fn ring_report(recorder: &'static Recorder) -> String {
             &[],
         );
     };
-    let figures = view.table.figures(None);
+    let report = RingReport::new(view, recorder);
+    let saver = SaverReport::new(Some(view), recorder);
     let stats = recorder.stats();
-    let writer = recorder.writer_position().map_or_else(
-        || "none".to_string(),
-        |position| format!("{}/{}", position.block_sequence, position.offset),
-    );
+    let position = |position: Option<[u32; 2]>| {
+        position.map_or_else(
+            || "none".to_string(),
+            |[sequence, offset]| format!("{sequence}/{offset}"),
+        )
+    };
+    let seconds = |seconds: Option<f32>| seconds.map_or_else(|| "None".to_string(), |seconds| seconds.to_string());
     // SAFETY: a plain read of a counter components/log_hook keeps.
     let idf_dropped = unsafe { sys::log_hook_dropped() };
     let values = [
-        ("erased", figures.erased_ahead.to_string()),
-        ("saved", figures.saved.to_string()),
-        ("unsaved", figures.unsaved.to_string()),
-        ("other_version", figures.other_version.to_string()),
-        ("foreign", figures.foreign.to_string()),
-        ("lost", figures.lost.to_string()),
-        ("bad", figures.bad.to_string()),
-        (
-            "unformatted",
-            u8::from(view.unformatted && figures.foreign > 0).to_string(),
-        ),
-        ("first", view.first_sequence.to_string()),
-        ("writer", writer),
-        ("chunks", stats.chunks.to_string()),
-        ("flash_errors", stats.flash_errors.to_string()),
+        ("erased", report.erased.to_string()),
+        ("saved", report.saved.to_string()),
+        ("unsaved", report.unsaved.to_string()),
+        ("other_version", report.other_version.to_string()),
+        ("foreign", report.foreign.to_string()),
+        ("lost", report.lost.to_string()),
+        ("bad", report.bad.to_string()),
+        ("reserve", report.reserve.to_string()),
+        ("unformatted", u8::from(report.unformatted).to_string()),
+        ("first", report.first.to_string()),
+        ("writer", position(report.writer)),
+        ("saver", position(report.saver)),
+        ("rate", report.rate.to_string()),
+        ("erased_s", seconds(report.erased_s)),
+        ("unsaved_s", seconds(report.unsaved_s)),
+        ("chunks", report.chunks.to_string()),
+        ("flash_errors", report.flash_errors.to_string()),
         ("tlm_count", stats.telemetry.count.to_string()),
         ("tlm_max", stats.telemetry.max.to_string()),
         ("tlm_dropped", stats.telemetry.dropped.to_string()),
@@ -905,7 +1215,274 @@ fn ring_report(recorder: &'static Recorder) -> String {
         ("log_max", stats.log.max.to_string()),
         ("log_dropped", stats.log.dropped.to_string()),
         ("idf_dropped", idf_dropped.to_string()),
+        ("card", saver.card.unwrap_or_else(|| "none".to_string())),
+        ("saver_running", u8::from(saver.running).to_string()),
+        ("saver_same_card", u8::from(saver.same_card).to_string()),
+        ("saver_start", position(saver.start)),
+        ("saver_batches", saver.batches.to_string()),
+        ("saver_blocks", saver.blocks.to_string()),
+        ("saver_lines", saver.lines.to_string()),
+        ("saver_kb", saver.kilobytes.to_string()),
+        ("saver_card_errors", saver.card_errors.to_string()),
+        ("saver_flash_errors", saver.flash_errors.to_string()),
+        (
+            "saver_behind_ms",
+            saver.behind_ms.map_or_else(|| "None".to_string(), |ms| ms.to_string()),
+        ),
+        ("saver_stack_free", saver.stack_free.to_string()),
     ];
     let named: Vec<(&str, &str)> = values.iter().map(|(key, value)| (*key, value.as_str())).collect();
     cc_protocol::build("ok", &["ring"], &named)
+}
+
+/// The flash ring's figures (spec "The ring_eraser and newest wins", budget figures) as `stats recorder` and `inspect
+/// recorder` carry them (`ring: {...}`), and the `ring` command prints them. A typed struct rather than a `json!`
+/// value: a Value widens an f32 to f64, and 12.3 would print as 12.300000190734863.
+#[derive(Serialize)]
+struct RingReport {
+    /// Erased slots, all of them ahead of the writer: fewer than `reserve` is `ring-low`.
+    erased: u32,
+    /// Closed blocks the saver has passed, which the eraser erases within 100-200 ms.
+    saved: u32,
+    /// Closed blocks the saver has not passed: the flash-to-SD backlog (every closed block with no saver).
+    unsaved: u32,
+    /// Blocks of another layout version: kept, never saved by this build.
+    other_version: u32,
+    /// Foreign slots waiting for their erase.
+    foreign: u32,
+    /// Unsaved blocks newest wins erased this boot.
+    lost: u32,
+    /// Slots the eraser gave up this boot.
+    bad: u32,
+    /// The erased reserve the eraser keeps ahead of the writer, blocks (~1 % of the ring).
+    reserve: u32,
+    /// The eraser is still formatting a first boot's foreign slots (`ring-unformatted`).
+    unformatted: bool,
+    /// The sequence of the first block this boot opened.
+    first: u32,
+    /// `writer_position` as [block_sequence, offset]; None before the writer's first step.
+    writer: Option<[u32; 2]>,
+    /// `saver_position` as [block_sequence, offset]; None while no saver runs.
+    saver: Option<[u32; 2]>,
+    /// The measured write rate, bytes of flash a second, as of the writer's last status line.
+    rate: u32,
+    /// `ring_erased_s`: erased and saved blocks at that rate, the time before newest wins; None at a zero rate.
+    erased_s: Option<f32>,
+    /// `ring_unsaved_s`: the unsaved blocks at that rate, the flash-to-SD backlog; None at a zero rate.
+    unsaved_s: Option<f32>,
+    /// Chunks programmed this boot.
+    chunks: u32,
+    /// The writer's flash calls that failed this boot.
+    flash_errors: u32,
+}
+
+impl RingReport {
+    /// The figures now: the table walked against the saver's published position, and the writer's counters.
+    fn new(view: &RingView, recorder: &Recorder) -> RingReport {
+        let saver = recorder.saver_position();
+        let figures = view.table.figures(saver);
+        let stats = recorder.stats();
+        let rate = stats.write_rate;
+        // a zero rate gives infinity, which JSON has no number for: the figure is None then
+        let seconds = |seconds: fn(&Figures, f32) -> f32| {
+            (rate > 0).then(|| (seconds(&figures, rate as f32) * 10.0).round() / 10.0)
+        };
+        RingReport {
+            erased: figures.erased_ahead,
+            saved: figures.saved,
+            unsaved: figures.unsaved,
+            other_version: figures.other_version,
+            foreign: figures.foreign,
+            lost: figures.lost,
+            bad: figures.bad,
+            reserve: view.table.geometry().reserve_blocks(),
+            unformatted: view.unformatted && figures.foreign > 0,
+            first: view.first_sequence,
+            writer: recorder.writer_position().map(pair),
+            saver: saver.map(pair),
+            rate,
+            erased_s: seconds(Figures::erased_seconds),
+            unsaved_s: seconds(Figures::unsaved_seconds),
+            chunks: stats.chunks,
+            flash_errors: stats.flash_errors,
+        }
+    }
+}
+
+/// The ring_saver as `stats recorder` and `inspect recorder` carry it (`saver: {...}`), and the `ring` command
+/// prints it (`saver_*`).
+#[derive(Serialize)]
+struct SaverReport {
+    /// The saver thread runs (a card is mounted and the thread started).
+    running: bool,
+    /// The card mounted at boot, by its FAT volume serial (`1A2B-3C4D`, `unknown`); None without a card.
+    card: Option<String>,
+    /// The card is the one the previous boot saved to, so the saver resumed at the previous boot's position.
+    same_card: bool,
+    /// Where the saver started, [block_sequence, offset]; None without a card.
+    start: Option<[u32; 2]>,
+    /// Batches committed this boot.
+    batches: u32,
+    /// Blocks they held.
+    blocks: u32,
+    /// Lines they put on the card.
+    lines: u32,
+    /// What they put on the card, KiB.
+    kilobytes: u32,
+    /// Card calls that failed this boot.
+    card_errors: u32,
+    /// Flash reads that failed this boot.
+    flash_errors: u32,
+    /// How long since the saver last caught up with the writer, ms; None while no saver runs.
+    behind_ms: Option<u32>,
+    /// The least stack the saver thread has had left, bytes (of [`SAVER_STACK`]).
+    stack_free: u32,
+}
+
+impl SaverReport {
+    /// The saver's figures now; `view` is None before the bring-up scan has run.
+    fn new(view: Option<&RingView>, recorder: &Recorder) -> SaverReport {
+        let running = SAVER.running.load(Ordering::Relaxed) && recorder.saver_position().is_some();
+        let load = |counter: &AtomicU32| counter.load(Ordering::Relaxed);
+        SaverReport {
+            running,
+            card: view.and_then(|view| view.card).map(Card::name),
+            same_card: view.is_some_and(|view| view.same_card),
+            start: view.and_then(|view| view.saver_start).map(pair),
+            batches: load(&SAVER.batches),
+            blocks: load(&SAVER.blocks),
+            lines: load(&SAVER.lines),
+            kilobytes: load(&SAVER.kilobytes),
+            card_errors: load(&SAVER.card_errors),
+            flash_errors: load(&SAVER.flash_errors),
+            behind_ms: running.then(|| uptime_ms().wrapping_sub(load(&SAVER.caught_up_ms))),
+            stack_free: load(&SAVER.stack_free),
+        }
+    }
+}
+
+/// A queue's counters as plan B's `stats recorder` prints them: `{count, max, dropped}`.
+#[derive(Serialize)]
+struct QueueReport {
+    /// Records queued now.
+    count: u32,
+    /// The most ever queued.
+    max: u32,
+    /// Records dropped.
+    dropped: u32,
+}
+
+impl From<recorder_wire::Counters> for QueueReport {
+    fn from(counters: recorder_wire::Counters) -> QueueReport {
+        QueueReport {
+            count: counters.count,
+            max: counters.max,
+            dropped: counters.dropped,
+        }
+    }
+}
+
+/// `stats recorder`: plan B's report (the session and the two queues' counters), plus the flash ring and the saver.
+#[derive(Serialize)]
+pub struct StatsReport {
+    /// This boot's file prefix.
+    session: &'static str,
+    /// The telemetry records' counters.
+    tlm: QueueReport,
+    /// The log records' counters.
+    log: QueueReport,
+    /// The flash ring; None before the bring-up scan has run.
+    ring: Option<RingReport>,
+    /// The ring_saver.
+    saver: SaverReport,
+}
+
+/// `inspect recorder`: plan B's properties (the session, the status line's period, the queues' sizes), plus the flash
+/// ring and the saver.
+#[derive(Serialize)]
+pub struct InspectReport {
+    /// This boot's file prefix.
+    session: &'static str,
+    /// The status line's period, ms (`update recorder {"stats_ms": n}` changes it).
+    stats_ms: u32,
+    /// Each producer ring's size in bytes, by [`Producer`] index.
+    producer_bytes: Vec<usize>,
+    /// The shared `misc` ring's size in bytes.
+    misc_bytes: usize,
+    /// The flash ring; None before the bring-up scan has run.
+    ring: Option<RingReport>,
+    /// The ring_saver.
+    saver: SaverReport,
+}
+
+/// The `stats recorder` report; None without a recorder (it is then not among the objects).
+pub fn stats_report() -> Option<StatsReport> {
+    let recording = RECORDING.get()?;
+    let recorder = recording.recorder;
+    let stats = recorder.stats();
+    Some(StatsReport {
+        session: recording.session.as_str(),
+        tlm: stats.telemetry.into(),
+        log: stats.log.into(),
+        ring: ring().map(|view| RingReport::new(view, recorder)),
+        saver: SaverReport::new(ring(), recorder),
+    })
+}
+
+/// The `inspect recorder` report; None without a recorder.
+pub fn inspect_report() -> Option<InspectReport> {
+    let recorder = get()?;
+    let inspection = recorder.inspect();
+    Some(InspectReport {
+        session: inspection.session,
+        stats_ms: inspection.stats_ms,
+        producer_bytes: inspection.producer_bytes,
+        misc_bytes: inspection.misc_bytes,
+        ring: ring().map(|view| RingReport::new(view, recorder)),
+        saver: SaverReport::new(ring(), recorder),
+    })
+}
+
+/// The flash-to-SD backlog's trend from one `health` read to the next, for `saver-behind` (flash_ring's
+/// [`BacklogTrend`]: a window of a minute at a time, judged by its lowest backlog, since a slow card's every commit
+/// drops the backlog while it grows across the minute). Only `health` takes it, on the executor, so the lock is never
+/// contended, and no producer comes near it.
+static BACKLOG: Mutex<BacklogTrend> = Mutex::new(BacklogTrend::new());
+
+/// The flash ring's degraded tokens for `health` (spec "The ring_eraser and newest wins", Degraded tokens):
+/// * `ring-unformatted`: the eraser is formatting the foreign slots of a first boot;
+/// * `ring-low`: fewer erased blocks ahead of the writer than the ~1 % reserve: the eraser is not keeping up;
+/// * `ring-full`: newest wins erased an unsaved block within the last minute ([`RING_FULL_HOLD_MS`]);
+/// * `saver-behind`: a card is mounted, and over a minute the backlog did not fall and the saver never caught up
+///   ([`BacklogTrend::behind`]): a dead card, a card slower than the writer, a saver that never started.
+///
+/// Nothing before the bring-up scan has run. Call it from `health` alone: it is where the backlog's trend is followed,
+/// from one health read to the next.
+pub fn degraded() -> Vec<&'static str> {
+    let (Some(view), Some(recorder)) = (ring(), get()) else {
+        return Vec::new();
+    };
+    let now_ms = uptime_ms();
+    let figures = view.table.figures(recorder.saver_position());
+    let mut tokens = Vec::new();
+    if view.unformatted && figures.foreign > 0 {
+        tokens.push("ring-unformatted");
+    }
+    if figures.erased_ahead < view.table.geometry().reserve_blocks() {
+        tokens.push("ring-low");
+    }
+    if figures.lost > 0 && now_ms.wrapping_sub(LOST_MS.load(Ordering::Relaxed)) < RING_FULL_HOLD_MS {
+        tokens.push("ring-full");
+    }
+    if view.card.is_some() {
+        let caught_up_ms = SAVER
+            .running
+            .load(Ordering::Relaxed)
+            .then(|| SAVER.caught_up_ms.load(Ordering::Relaxed));
+        let mut trend = BACKLOG.lock().unwrap_or_else(PoisonError::into_inner);
+        if trend.behind(figures.unsaved, caught_up_ms, now_ms) {
+            tokens.push("saver-behind");
+        }
+    }
+    tokens
 }

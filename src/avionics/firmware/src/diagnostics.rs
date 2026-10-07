@@ -4,7 +4,9 @@
 //! - `load seconds=5` -- per-core CPU load and the busiest tasks over a window;
 //! - `pace seconds=10 source=gptimer` -- a 1 kHz loop on core 1 (priority 20, the flight thread's place) woken by a
 //!   gptimer interrupt allocated on core 1 (the flight design) or by an esp_timer (its task lives on core 0), and how
-//!   late each tick wakes.
+//!   late each tick wakes;
+//! - `heap [tasks]` -- where the RAM is: internal, DMA-capable and PSRAM heaps, and (in an investigation build) each
+//!   task's share.
 //! Run them while the camera records to price video against the flight loop. Both are SETTING-only: `pace` runs a
 //! priority-20 loop on the flight core, and neither belongs anywhere near a flight.
 //!
@@ -47,6 +49,119 @@ fn snapshot() -> (Vec<Sample>, u64) {
         })
         .collect();
     (samples, total as u64)
+}
+
+/// One heap class's figures for `heap`: free bytes, the largest free block, and the lowest free since boot.
+fn heap_class(caps: u32) -> [String; 3] {
+    let mut info = sys::multi_heap_info_t::default();
+    // SAFETY: fills a plain struct with the heap allocator's own counters.
+    unsafe { sys::heap_caps_get_info(&mut info, caps) };
+    [
+        info.total_free_bytes.to_string(),
+        info.largest_free_block.to_string(),
+        info.minimum_free_bytes.to_string(),
+    ]
+}
+
+/// `heap`: where the RAM is, as one CC line. Internal RAM is the scarce kind on the P4: the camera's encoder holds one
+/// ~138 KB block of it, esp_hosted copies every Wi-Fi frame into internal DMA memory and asserts when it gets none,
+/// and the SD driver bounces every transfer whose buffer is not DMA-ready through internal DMA memory. So: free bytes,
+/// the largest free block (what one allocation can get) and the lowest free since boot, for internal RAM, its
+/// DMA-capable part, and PSRAM.
+pub fn heap() -> String {
+    let internal = heap_class(sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_8BIT);
+    let dma = heap_class(sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_DMA);
+    let psram = heap_class(sys::MALLOC_CAP_SPIRAM);
+    cc_protocol::build(
+        "ok",
+        &["heap"],
+        &[
+            ("internal_free", &internal[0]),
+            ("internal_largest", &internal[1]),
+            ("internal_min", &internal[2]),
+            ("dma_free", &dma[0]),
+            ("dma_largest", &dma[1]),
+            ("dma_min", &dma[2]),
+            ("psram_free", &psram[0]),
+            ("psram_largest", &psram[1]),
+            ("psram_min", &psram[2]),
+        ],
+    )
+}
+
+/// `heap tasks`: each task's current heap use, internal and PSRAM, as `<task>=<internal>/<psram>` bytes, the largest
+/// internal users first. Only in an investigation build with CONFIG_HEAP_TASK_TRACKING: that option crashes on any
+/// allocation made while the scheduler is suspended, so it never ships. Task handles are matched against the live
+/// task list (a deleted task's handle is never dereferenced); allocations of tasks that are gone show as `gone`.
+#[cfg(esp_idf_heap_task_tracking)]
+pub fn heap_tasks() -> String {
+    const MAXIMUM_TASKS: usize = 64;
+    // SAFETY: plain C structs, valid all-zero.
+    let mut totals: Vec<sys::heap_task_totals_t> = vec![unsafe { std::mem::zeroed() }; MAXIMUM_TASKS];
+    let mut count: usize = 0;
+    let mut parameters = sys::heap_task_info_params_t {
+        caps: [sys::MALLOC_CAP_INTERNAL as i32, sys::MALLOC_CAP_SPIRAM as i32, 0, 0],
+        mask: [sys::MALLOC_CAP_INTERNAL as i32, sys::MALLOC_CAP_SPIRAM as i32, 0, 0],
+        tasks: std::ptr::null_mut(),
+        num_tasks: 0,
+        totals: totals.as_mut_ptr(),
+        num_totals: &mut count,
+        max_totals: MAXIMUM_TASKS,
+        blocks: std::ptr::null_mut(),
+        max_blocks: 0,
+    };
+    // SAFETY: the totals array has MAXIMUM_TASKS slots and `count` says how many the call filled.
+    unsafe { sys::heap_caps_get_per_task_info(&mut parameters) };
+    // the live tasks' handles and names, to name the totals without touching a deleted task's handle
+    // SAFETY: as in snapshot(): the array is sized from the scheduler's count plus slack, and the call fills at most it.
+    let capacity = unsafe { sys::uxTaskGetNumberOfTasks() } as usize + 8;
+    let mut status: Vec<sys::TaskStatus_t> = Vec::with_capacity(capacity);
+    let mut total = 0;
+    let live = unsafe { sys::uxTaskGetSystemState(status.as_mut_ptr(), capacity as u32, &mut total) } as usize;
+    // SAFETY: `live` entries were written.
+    unsafe { status.set_len(live) };
+    let name_of = |handle: sys::TaskHandle_t| -> String {
+        if handle.is_null() {
+            return "boot".to_string();
+        }
+        status
+            .iter()
+            .find(|task| task.xHandle == handle)
+            // SAFETY: a live task's name is a NUL-terminated string.
+            .map(|task| {
+                unsafe { std::ffi::CStr::from_ptr(task.pcTaskName) }
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .unwrap_or_else(|| "gone".to_string())
+    };
+    let mut rows: Vec<(String, usize, usize)> = totals[..count.min(MAXIMUM_TASKS)]
+        .iter()
+        .map(|entry| (name_of(entry.task), entry.size[0], entry.size[1]))
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    let values: Vec<(String, String)> = rows
+        .iter()
+        .map(|(name, internal, psram)| (name.replace(' ', "_"), format!("{internal}/{psram}")))
+        .collect();
+    let named: Vec<(&str, &str)> = values
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    cc_protocol::build("ok", &["heap", "tasks"], &named)
+}
+
+/// `heap tasks` in a build without CONFIG_HEAP_TASK_TRACKING: why there is no per-task figure.
+#[cfg(not(esp_idf_heap_task_tracking))]
+pub fn heap_tasks() -> String {
+    cc_protocol::build(
+        "err",
+        &[
+            "heap",
+            "per-task figures need an investigation build with CONFIG_HEAP_TASK_TRACKING",
+        ],
+        &[],
+    )
 }
 
 /// Per-core load over `seconds` and the busiest tasks, as one CC line.
@@ -255,6 +370,19 @@ pub fn pace(seconds: u64, source: Source) -> String {
 /// The diagnostics' console commands (the Glider Command Language), registered at boot.
 pub fn register_commands() {
     firmware::gcl::register(vec![
+        Command {
+            owner: "diagnostics",
+            words: "heap",
+            about: "where the RAM is: free, largest block and lowest-ever free of internal, DMA-capable and PSRAM heaps",
+            gate: Gate::Open,
+            reach: Reach::Everywhere,
+            parameters: &[],
+            bare_words: &[firmware::gcl::Word {
+                name: "tasks",
+                about: "each task's internal/PSRAM heap use (an investigation build with CONFIG_HEAP_TASK_TRACKING only)",
+            }],
+            run: Box::new(|arguments| if arguments.word("tasks") { heap_tasks() } else { heap() }),
+        },
         Command {
             owner: "diagnostics",
             words: "load",

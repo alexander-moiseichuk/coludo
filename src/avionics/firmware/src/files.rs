@@ -3,7 +3,16 @@
 //! Read-only HTTP access to the microSD and to the flash ring: how recordings and logs come off the board over Wi-Fi
 //! -- on the pad, and after landing. Nothing is ever written.
 //! * `GET /sd/<path>` returns a file, or a directory's listing (one `<name>;<bytes>` line per entry). Paths are
-//!   confined to the card.
+//!   confined to the card. A file another task holds open for writing (the ring_saver appending a batch, the video
+//!   writer) answers `503` with `Retry-After: 1`: FatFs's lock table (CONFIG_FATFS_FS_LOCK) refuses the open
+//!   (FR_LOCKED, EACCES through the VFS), as it refuses a full table (ENFILE). A saver batch holds a file for a
+//!   moment, so the client asks again; the video file being recorded stays busy until `video stop`.
+//!
+//!   A file's reply carries its size as of the open in `X-Coludo-Bytes`, the one proof a client has that the file
+//!   came whole: esp-idf-svc 0.53 drops the Content-Length and sends the body chunked, and when a read fails
+//!   mid-file it still closes the reply as if it were whole. The listing cannot stand in for it: a session the
+//!   board is still saving grows between the listing and the read. The size at the open is the size sent, since the
+//!   lock table keeps every writer out until the reader closes the file. tools/board_pull.sh checks it.
 //! * `GET /ring[?boot=N]` streams every valid block of the `log` partition decoded to wire lines,
 //!   `[@<routing>@]{OPEN};<payload>;<CLOSE>\n`, in block_sequence order: a byte-exact wire capture, the lines the
 //!   ring_saver would file (doc/specs/avionics-port.md "CC tees and the HTTP exits"). `boot=N` keeps only that
@@ -21,7 +30,7 @@ use std::io::Read;
 
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::http::Method;
-use esp_idf_svc::http::server::{Configuration, EspHttpServer};
+use esp_idf_svc::http::server::{Configuration, EspHttpConnection, EspHttpServer, Request};
 use esp_idf_svc::io::Write;
 use esp_idf_svc::sys::EspError;
 use flash_ring::header::{BlockHeader, HEADER_BYTES, Session};
@@ -68,24 +77,41 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
             return Ok(());
         };
         if metadata.is_dir() {
+            let entries = match std::fs::read_dir(&path) {
+                Ok(entries) => entries,
+                Err(error) if busy(&error) => return answer_busy(request),
+                Err(error) => return Err(error.into()),
+            };
             let mut listing = String::new();
-            for entry in std::fs::read_dir(&path)?.flatten() {
+            for entry in entries.flatten() {
                 let bytes = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
                 listing.push_str(&format!("{};{bytes}\n", entry.file_name().to_string_lossy()));
             }
             request.into_ok_response()?.write_all(listing.as_bytes())?;
             return Ok(());
         }
-        let length = metadata.len().to_string();
+        // opened before the answer starts, so a busy file still gets its 503 status line
+        let mut file = match File::open(&path) {
+            Ok(file) => file,
+            Err(error) if busy(&error) => return answer_busy(request),
+            Err(error) => return Err(error.into()),
+        };
+        // the size as of the open: the lock table keeps every writer out until the file is closed again. The
+        // Content-Length goes nowhere (esp-idf-svc 0.53), so X-Coludo-Bytes carries it to the client (see the
+        // module notes)
+        let length = file
+            .metadata()
+            .map_or(metadata.len(), |metadata| metadata.len())
+            .to_string();
         let mut response = request.into_response(
             200,
             None,
             &[
                 ("Content-Type", "application/octet-stream"),
                 ("Content-Length", &length),
+                (SIZE_HEADER, &length),
             ],
         )?;
-        let mut file = File::open(&path)?;
         let mut buffer = vec![0u8; CHUNK];
         loop {
             let read = file.read(&mut buffer)?;
@@ -155,6 +181,28 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
         Ok(())
     })?;
     Ok(server)
+}
+
+/// The header a file's reply carries its size in, bytes as of the open (see the module notes).
+const SIZE_HEADER: &str = "X-Coludo-Bytes";
+
+/// errno EACCES: FatFs's FR_LOCKED through the VFS, a file another task holds open for writing.
+const LOCKED: i32 = 13;
+
+/// errno ENFILE: FatFs's lock table, or the VFS's `max_files` handles, are all taken.
+const NO_HANDLE: i32 = 23;
+
+/// Whether an open failed only because the card is busy with that file, or with too many: worth asking again.
+fn busy(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(LOCKED | NO_HANDLE))
+}
+
+/// Answers `503` with `Retry-After: 1`: the file is open for writing elsewhere, or no handle is free right now.
+fn answer_busy(request: Request<&mut EspHttpConnection<'_>>) -> anyhow::Result<()> {
+    request.into_response(503, None, &[("Retry-After", "1")])?.write_all(
+        b"busy: the file is being written (the ring_saver or the video), or no handle is free; try again\n",
+    )?;
+    Ok(())
 }
 
 /// The `boot=N` of a `/ring` URI: None when there is no query. Errors: the query names anything else, or N is not

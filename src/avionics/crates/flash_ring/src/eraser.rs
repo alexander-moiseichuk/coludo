@@ -21,6 +21,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec;
+use core::fmt;
 
 use crate::header::{BlockHeader, HEADER_BYTES};
 use crate::{BlockTable, Error, Flash, Position, Slot};
@@ -40,7 +41,7 @@ pub const ERASE_DELAY_MS: u32 = 100;
 pub const ERASE_ATTEMPTS: u8 = 3;
 
 /// An unsaved block newest wins erased: the log line `<uptime> ring :: block <sequence> (boot <id>, session <s>,
-/// flight <0|1>) erased unsaved` is made from it.
+/// flight <0|1>) erased unsaved` is made from it, its message by [`Loss`]'s `Display`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Loss {
     /// The slot it was in.
@@ -52,6 +53,20 @@ pub struct Loss {
     /// Its header, read just before the erase, for the boot id and session. None when the header could not be
     /// read, no longer decodes, or names another block (an earlier erase of it failed part way).
     pub header: Option<BlockHeader>,
+}
+
+impl fmt::Display for Loss {
+    /// The loss line's message, as the eraser's thread logs it under the descriptor `ring` (spec "The ring_eraser
+    /// and newest wins"): `block <sequence> (boot <id>, session <s>, flight <0|1>) erased unsaved`, with `?` for the
+    /// boot and the session when the header no longer told them.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "block {} (boot ", self.block_sequence)?;
+        match &self.header {
+            Some(header) => write!(formatter, "{}, session {}", header.boot_id, header.session.as_str())?,
+            None => formatter.write_str("?, session ?")?,
+        }
+        write!(formatter, ", flight {}) erased unsaved", u8::from(self.flight))
+    }
 }
 
 /// What one [`Eraser::erase_step`] did.
@@ -288,5 +303,44 @@ impl<'table, F: Flash> Eraser<'table, F> {
                 Err(Error::Flash(error))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::ToString;
+
+    use super::Loss;
+    use crate::header::{BlockHeader, Session, VERSION};
+
+    #[test]
+    fn a_loss_prints_the_spec_line_and_a_question_mark_for_what_the_header_no_longer_told() {
+        let header = BlockHeader {
+            version: VERSION,
+            flight: true,
+            block_sequence: 41,
+            boot_id: 123,
+            session: Session::new("000123").unwrap(),
+        };
+        let loss = Loss {
+            slot: 5,
+            block_sequence: 41,
+            flight: true,
+            header: Some(header),
+        };
+        assert_eq!(
+            loss.to_string(),
+            "block 41 (boot 123, session 000123, flight 1) erased unsaved"
+        );
+        // negative: an unreadable header names neither the boot nor the session
+        let unknown = Loss {
+            flight: false,
+            header: None,
+            ..loss
+        };
+        assert_eq!(
+            unknown.to_string(),
+            "block 41 (boot ?, session ?, flight 0) erased unsaved"
+        );
     }
 }

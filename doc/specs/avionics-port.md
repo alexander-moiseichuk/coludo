@@ -354,7 +354,7 @@ re-pointed at the binary blocks.
 11 ms typical and at most about 45 ms at risk (65 ms for log lines, §3.3). No Luckfox and no SD card are needed
 to get a record.
 
-### M4. ring_saver, SD, HTTP pull (2 days)
+### M4. ring_saver, SD, HTTP pull (2 days; DONE 2026-10-06 on the taster)
 
 **Scope**
 - **`crates/flash_ring`:** the saver's walk, decode and batches (§3.9) over the `Flash` and `Fs` traits; the
@@ -388,6 +388,23 @@ to get a record.
 - On the taster: a session lands on the SD while video records, and parses through `assemble_capture`,
   `flight_telemetry` and `recorder_flight`. 5 power pulls during saver batches each resume the copy at the next
   boot with no line lost (duplicates only).
+
+**Results (2026-10-06, the taster):**
+- Host: 234 crate tests, including a cut at every step of a batch, a dead card, and the real `recorder_flight`,
+  `assemble_capture` and `flight_telemetry` on the card the saver writes. `src/control` tests 20/20.
+- The saver lives in `crates/recorder` (`saver.rs`, `fs.rs`), not `flash_ring`: `flash_ring` cannot depend on the
+  decoder and has no filesystem. It writes the NVS hint after every committed batch.
+- Contract `--milestone M4`: 0 violations.
+- Catch-up: the first boot on a new card saved 2342 blocks, 62 326 lines and 8.9 MB in about 40 s, with 0 errors.
+- A session saved while FHD@25 recorded, pulled with `board_pull.sh`, parsed all 'good' through `assemble_capture` +
+  `flight_telemetry`. `recorder_flight` needs an IMU stream, so it waits for M6.
+- 7 EN resets under `ring load` plus video, each resumed on the same card: no hole, no duplicate in any numbered load
+  run, and every session's last line within the reset estimate (−39…+23 ms, ±70–90 ms resolution).
+- The internal DMA budget had to be fixed first (§4.7): the build as first written lost SD writes
+  (`allocate_dma_buf`) and asserted in esp_hosted under video + saver + a Wi-Fi download.
+- Open:
+  - true power pulls (the hub's per-port cut is data-only: its switching is ganged);
+  - one boot whose Wi-Fi associated but got no IP for minutes, not reproduced since.
 
 **Operator gains.** `tools/board_pull.sh taster` drops a session into the same tool chain as before
 (`assemble_capture`, `flight_svg`, `flight_report`, `flight_kpi`, `recorder_flight`). The flash empties itself
@@ -1411,6 +1428,45 @@ Bus owners run their tables on the same notify:
   lives in `cfg`.
 
 ---
+
+### 4.7 Internal RAM budget
+
+Internal **DMA** memory is the P4's scarce resource. The cost of running out:
+- esp_hosted asserts and reboots the board (`transport_drv.c:267 copy_buff` on TX, `sdio_drv.c:862 pkt_rxbuff` on
+  RX);
+- the SD driver fails writes (`allocate_dma_buf`).
+
+Measured on the taster, 2026-10-06 (`heap`: free, largest block and low-water mark per class):
+
+| consumer | internal DMA memory |
+|---|---|
+| H.264 encoder reference buffer, 1080p (`3 × 16 × 24 × 120`) | ~138 KB, one block, reserved at boot (`video::reserve`) |
+| the camera's stream (CSI, ISP), while recording | ~13 KB |
+| esp_hosted's frame pool after a download (it never shrinks) | ~25 KB at SDIO queues 10/10 (~37 KB at 20/20) |
+| the ring_saver's working buffers under load | ~5 KB with `ALWAYSINTERNAL=4096` (~16 KB at the IDF default 16 KB) |
+| SD bounce buffer | 8 KB, persistent (`components/sd_card`) |
+| free at idle, Wi-Fi joined | ~57 KB |
+| lowest seen: video + saver + four 32 MB downloads at once | ~11 KB |
+
+What holds it together:
+- **The encoder reserves its block at boot**, before anything fragments the heap.
+- **A persistent SD bounce buffer.** IDF's default allocates an 8 KB bounce per unaligned transfer, which every
+  FatFs sector-buffer write is.
+- **A 64 KB DMA-only reserve** (`SPIRAM_MALLOC_RESERVE_INTERNAL`). IDF registers it with only the DMA and internal
+  caps, so plain malloc and task stacks cannot take it.
+- **Plain malloc above 4 KB goes to PSRAM.** 4 KB itself stays internal: `esp_flash_read` borrows an internal temp
+  buffer (up to 16 KB) for any destination outside internal RAM.
+- **esp_hosted's SDIO queues at 10/10 and the TCP send buffer at 32 KB**, which bounds esp_hosted's pool. Pulls slow
+  from 3.7 to 3.3 MB/s idle, and to ~1.3 MB/s while video and the saver run.
+- **Rules from here:**
+  - every new consumer (M5's buses and DMA transfers, task stacks, drivers) is priced with `heap` against this table;
+  - the stress run (video + saver + downloads) repeats after each milestone;
+  - with ~11 KB at the worst point, M5 must not take internal DMA memory without giving some back. The candidates:
+    fewer capture buffers, smaller esp_hosted queues, task stacks of non-flash tasks in PSRAM.
+- **For the two-partition layout:** a second volume on the same card shares the bounce buffer, so the card's driver
+  calls need a lock of their own first.
+- `heap tasks` exists only in an investigation build with `CONFIG_HEAP_TASK_TRACKING`. Its heap walk holds the
+  allocator's lock long enough for core 1's interrupt watchdog to fire, so treat it as a one-off and never ship it.
 
 ## 5. Golden vectors and the contract runner
 
