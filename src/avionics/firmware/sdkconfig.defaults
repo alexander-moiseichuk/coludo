@@ -38,8 +38,12 @@ CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 # Internal DMA memory is what runs out: the encoder holds ~138 KB, the camera's stream takes ~13 KB, esp_hosted's frame
 # pool ~25 KB at its peak, and esp_hosted ASSERTS when it gets none (transport_drv.c:267 copy_buff on TX,
 # sdio_drv.c:862 pkt_rxbuff on RX) -- both hit under FHD video + the ring_saver + a 32 MB Wi-Fi download before this.
-# - A 64 KB pool (IDF default 32 KB) that plain malloc and task stacks cannot take: IDF registers it with only the DMA
-#   and internal caps, so only the allocations that ask for DMA memory get it.
+# - A 64 KB internal pool (IDF default 32 KB). NOT a DMA reserve, whatever its name suggests: IDF carves it out of the
+#   existing internal RAM (esp_psram.c:644-654) and registers it at the head of the heap list with the INTERNAL|DMA caps
+#   at priority 1 (heap_caps_init.c:339), so every internal request -- task stacks and malloc of 4 KB or less too --
+#   takes from it after the main RAM heap and before RETENT_RAM (heap_caps_base.c:144). On the P4 every L2 memory heap
+#   is DMA-capable anyway (heap/port/esp32p4/memory_layout.c:48), so the pool adds and protects no DMA memory; it only
+#   keeps DEFAULT-only requests (the over-4 KB malloc fallback after PSRAM fails) out. Kept: changing it is DMA-neutral.
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
 # - Plain malloc above 4 KB goes to PSRAM, so ordinary buffers (the ring_saver's staging, the decoder's maps) stop
 #   taking DMA-capable RAM (-15.7 KB of DMA memory under saver load at the IDF default 16 KB, -5.2 KB at 4 KB). 4 KB
@@ -47,6 +51,26 @@ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
 #   to 16 KB per read otherwise, so the ring's 4 KB block buffers stay where they are. SD writes from PSRAM bounce
 #   through components/sd_card's persistent buffer, with no allocation.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+# Internal RAM optimization, stage 1 (avionics-port.md §4.7). Every byte of .iram0.text is internal, DMA-capable
+# memory the heap does not get: the RETENT_RAM heap starts right after the statics. With XIP from PSRAM, SPI1 flash
+# operations take a mutex and leave the cache on (spi_flash_os_func_app.c:29), so code kept in IRAM only for
+# cache-off windows can leave. The one runtime cache-off window left is esp_mmu_map (the first partition-table load,
+# on main at boot; OTA's image checks at M15), and no interrupt allocated in IRAM reaches the code moved here.
+# - Ring buffers serve only the UART and USB-serial-JTAG drivers, whose interrupts are not IRAM ones (UART_ISR_IN_IRAM
+#   off, and the JTAG driver is never installed): ~5.4 KB.
+CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH=y
+CONFIG_RINGBUF_PLACE_ISR_FUNCTIONS_INTO_FLASH=y
+# - newlib's lock API: its only IRAM callers are spi1_start/spi1_end, in task context with the cache on: ~1.4 KB.
+CONFIG_LIBC_LOCKS_PLACE_IN_IRAM=n
+# - Light-sleep code, selected by esp_wifi_remote for the C6's Wi-Fi 6. The P4 never sleeps (no PM_ENABLE) and nothing
+#   on this side reads it (nothing reaches the C6 over RPC): ~1.8 KB. The RTC clock code and esp_timer stay in IRAM.
+CONFIG_WIFI_RMT_SLP_IRAM_OPT=n
+CONFIG_PM_SLEEP_FUNC_IN_IRAM=n
+CONFIG_PM_SLP_IRAM_OPT=n
+# NOT here, each for its reason (avionics-port.md §4.7): SPI_FLASH_AUTO_SUSPEND (this GD part, 0xC84019, is not on
+# IDF's suspend list: esp_flash_init aborts every boot), FREERTOS_PLACE_FUNCTIONS_INTO_FLASH (it moves part of every
+# interrupt-exit context switch into PSRAM, on both cores), HEAP_PLACE_FUNCTION_INTO_FLASH (forces the SPI master ISR
+# out of IRAM, the IMU's path from M5).
 
 # FreeRTOS: a 1 ms tick so sleeps and timeouts resolve at 1 ms, not 10
 CONFIG_FREERTOS_HZ=1000
