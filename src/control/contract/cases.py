@@ -615,6 +615,26 @@ def _verify_consistent(reply: _Reply, context: dict) -> str | None:
     return None
 
 
+def _names_itself(reply: _Reply, context: dict) -> str | None:
+    """A device's snapshot carries its own name (plan B Task.inspect)."""
+    target = cc.parse(reply.request).args[0]
+    return None if reply.payload['name'] == target else 'inspect %s names %r' % (target, reply.payload['name'])
+
+
+def _changed_ground(reply: _Reply, context: dict) -> str | None:
+    """A ground set or a re-zero changes exactly the ground."""
+    changed = reply.payload['changed']
+    return None if changed == ['ground'] else 'changed %s, expected [ground]' % changed
+
+
+def _succeeded(reply: _Reply, context: dict) -> str | None:
+    """`calibrate <device>` / `probe <device>` answer that one device with null: done, or healthy."""
+    target = cc.parse(reply.request).args[0]
+    answer = reply.values[0]
+    return None if answer == {target: None} else '%s answered %s, expected {%r: null}' % (
+        cc.parse(reply.request).command, answer, target)
+
+
 """Not-yet answers: legitimate for a board that has not grown the feature."""
 
 
@@ -754,6 +774,54 @@ def _inspect_each(context: dict) -> list:
     return [cc.build('inspect', [name]) for name in context['objects']]
 
 
+def _device(context: dict, driver: str) -> str:
+    """
+    The name of the device with this driver that came up: a config entry (sensors or components) the board
+    lists as an object.
+
+    Raises:
+        Blocked - none came up: a board without the part, or plan B on CPython, which sets no device up.
+    """
+    entries = context['running'].get('sensors', []) + context['running'].get('components', [])
+    for entry in entries:
+        if entry.get('driver') == driver and entry.get('name') in context['objects']:
+            return entry['name']
+    raise Blocked('no %s device came up (plan B on CPython sets none up)' % driver)
+
+
+def _on_device(command: str, driver: str, properties: dict | None = None) -> typing.Callable:
+    """A request: `<command> <the device with this driver>`, with its properties as JSON when given."""
+
+    def request(context: dict) -> str:
+        """The line, once the device is known."""
+        arguments = [_device(context, driver)]
+        if properties is not None:
+            arguments.append(json.dumps(properties))
+        return cc.build(command, arguments)
+
+    return request
+
+
+def _ground_write(context: dict) -> str:
+    """`update <barometer> {"ground": 100}`; marks it, so the re-zero after it (or the undo) puts a live ground back."""
+    line = _on_device('update', 'icp10111', {'ground': 100})(context)
+    context['ground_written'] = True
+    return line
+
+
+def _probe_devices(context: dict) -> list:
+    """`probe <device>` for each M6 part that came up."""
+    names = []
+    for driver in _M6_DRIVERS:
+        try:
+            names.append(_device(context, driver))
+        except Blocked:
+            continue
+    if not names:
+        raise Blocked('none of %s came up (plan B on CPython sets none up)' % ', '.join(_M6_DRIVERS))
+    return [cc.build('probe', [name]) for name in names]
+
+
 def _remember(key: str) -> typing.Callable:
     """A remember hook storing the passing answer's payload as context[key]."""
 
@@ -810,6 +878,14 @@ _DETECT: dict = {'detected': 'str|null', 'applied': 'str|null', 'detail': 'any'}
 _PUSH_STATUS: dict = {'uploading': 'str|null', 'orphans': 'list', 'received?': 'int', 'size?': 'int',
                       'chunks?': 'int'}
 _ANY_OBJECT: dict = {}
+# The M6 parts' snapshots: plan B Task.inspect (name, ok, healthy) and each driver's own keys, a stale or never-read
+# channel null (lsm6dso32.py, icp10111.py, separation.py `inspect`)
+_IMU: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'interrupt': 'bool', 'interrupt_silent': 'bool',
+              'accel_g': 'list|null', 'rate_dps': 'list|null'}
+_BAROMETER: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'altitude_m': 'number|null',
+                    'temperature_c': 'number|null', 'pressure_pa': 'number|null', 'elevation_m': 'number|null'}
+_SEPARATION: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'separated': 'bool'}
+_M6_DRIVERS: tuple = ('lsm6dso32', 'icp10111', 'separation')
 
 
 def _bad_arguments(message: object = TEXT) -> tuple:
@@ -924,6 +1000,21 @@ _INSPECT: tuple = (
     Case('inspect', 'stats_without_object', 'stats', (_bad_arguments('stats <object>'),)),
     Case('inspect', 'stats_unknown_object', 'stats nosuch', (_bad_arguments('no object nosuch'),)),
     Case('inspect', 'stats_mission', 'stats mission', (('ok', _ANY_OBJECT),), ()),
+    Case('inspect', 'inspect_imu', _on_device('inspect', 'lsm6dso32'), (('ok', _IMU),), (_names_itself,),
+         milestone=6),
+    Case('inspect', 'inspect_barometer', _on_device('inspect', 'icp10111'), (('ok', _BAROMETER),), (_names_itself,),
+         milestone=6),
+    Case('inspect', 'inspect_separation', _on_device('inspect', 'separation'), (('ok', _SEPARATION),),
+         (_names_itself,), milestone=6),
+    Case('inspect', 'update_barometer_ground', _ground_write, (('ok', {'changed': 'list'}),), (_changed_ground,),
+         allow=('active',), milestone=6,
+         note='sets the ground 100 m AMSL directly (the warm start\'s rebase); the re-zero below puts a live one back'),
+    Case('inspect', 'update_barometer_text_ground', _on_device('update', 'icp10111', {'ground': 'high'}),
+         (('err', 'refused', TEXT),), allow=('active',), milestone=6,
+         note='plan B\'s float() raises inside the refusal guard'),
+    Case('inspect', 'update_barometer_rezero', _on_device('update', 'icp10111', {'rezero': True}),
+         (('ok', {'changed': 'list'}),), (_changed_ground,), allow=('active',), milestone=6,
+         note='re-captures the ground from the live altitude, as setup did'),
 )
 
 _CONTROL: tuple = (
@@ -950,6 +1041,10 @@ _CONTROL: tuple = (
          (('ok', {'changed': 'list'}), ('err', 'unsafe', _REFUSED_OUTSIDE_SETTING)), allow=('stage',),
          note='plan B leaves update open in flight (an empty update changes nothing); the Rust board refuses every '
               'change outside SETTING, the operator\'s rule'),
+    Case('control', 'calibrate_while_held', _while_held('calibrate nosuch'),
+         (('err', 'unsafe', _REFUSED_IN_FLIGHT), ('err', 'unsafe', _REFUSED_OUTSIDE_SETTING)), allow=('stage',),
+         milestone=6,
+         note='a baro calibrate mid-air re-zeroes elevation: both boards refuse before they look the name up'),
     Case('control', 'stage_return_to_ground', _return_to_ground, (('ok', _STAGE),), (_stage_is('setting', False),),
          allow=('stage',),
          note='stage setting is a return to the ground, not a hold: manual goes false (Controller.hold)'),
@@ -964,12 +1059,21 @@ _DIAGNOSTICS: tuple = (
          note='no argument: a read of the outstanding calibrations, open in every stage'),
     Case('diagnostics', 'calibrate_unknown_device', 'calibrate nosuch',
          (_bad_arguments('no calibrate for nosuch'),), allow=('active',)),
+    Case('diagnostics', 'calibrate_not_a_device', 'calibrate mission', (_bad_arguments('no calibrate for mission'),),
+         allow=('active',), milestone=6),
+    Case('diagnostics', 'calibrate_barometer', _on_device('calibrate', 'icp10111'), (('ok', _ANY_OBJECT),),
+         (_succeeded,), allow=('active',), milestone=6,
+         note='re-captures the ground (and logs `calibrated: ground <m> m AMSL`): the glider still on the pad'),
+    Case('diagnostics', 'calibrate_imu', _on_device('calibrate', 'lsm6dso32'), (('ok', _ANY_OBJECT),), (_succeeded,),
+         allow=('active',), milestone=6, note='nothing outstanding: plan B\'s Task.calibrate answers null'),
     Case('diagnostics', 'probe_all', 'probe', (('ok', _ANY_OBJECT), ('ok', _ANY_OBJECT, _ANY_OBJECT)),
          (_probe_maps,), allow=('active',)),
     Case('diagnostics', 'probe_mission', 'probe mission', (('ok', _ANY_OBJECT), ('ok', _ANY_OBJECT, _ANY_OBJECT)),
          (_probe_maps, _names_its_target), allow=('active',)),
     Case('diagnostics', 'probe_unknown_object', 'probe nosuch', (_bad_arguments('no probe for nosuch'),),
          allow=('active',)),
+    Case('diagnostics', 'probe_devices', _probe_devices, (('ok', _ANY_OBJECT), ('ok', _ANY_OBJECT, _ANY_OBJECT)),
+         (_probe_maps, _names_its_target, _succeeded), allow=('active',), milestone=6),
     Case('diagnostics', 'verify', 'verify', (('ok', _VERIFY),), (_verify_consistent,),
          allow=('active',)),
     Case('diagnostics', 'detect', 'detect', (('ok', _DETECT),), (), allow=('active',), milestone=5,
@@ -1094,8 +1198,9 @@ def _undo(transport: transports.Transport, context: dict) -> list:
     Put the board back after a run that stopped half way: the undo of every write that went out, best effort.
 
     The cases undo their own writes whatever the write answered, but only if the run reaches them; an
-    exception (a USB unplug, Ctrl-C during a 30 s probe) skips them, and could leave the board held at gliding
-    or carrying the probe launch id. Every undo is idempotent, so one a case already sent is merely repeated.
+    exception (a USB unplug, Ctrl-C during a 30 s probe) skips them, and could leave the board held at gliding,
+    carrying the probe launch id, or with its barometer's ground at 100 m AMSL. Every undo is idempotent, so one a
+    case already sent is merely repeated.
     The disarm goes first: an armed board is the one that can move a fin.
 
     Args:
@@ -1114,6 +1219,8 @@ def _undo(transport: transports.Transport, context: dict) -> list:
         undo.append(('launch_id restore', _launch_restore(context)))
     if context.get('board_written') and context.get('config_source') == 'default':
         undo.append(('reset-config', 'reset-config'))
+    if context.get('ground_written'):
+        undo.append(('barometer re-zero', _on_device('update', 'icp10111', {'rezero': True})(context)))
     report = []
     for what, line in undo:
         try:

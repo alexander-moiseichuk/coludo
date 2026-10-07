@@ -653,7 +653,14 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - The ICP at rest: pressure sd 1.55 Pa (datasheet 1.6 Pa RMS); `update {"rezero": true}` -> `[ground]`, a text
   ground refused, `ground 42.5` -> elevation 0.37 m; `calibrate baro_icp10111` -> null with plan B's ground line.
 - `cc_contract --milestone M6 --allow-active`: 0 violations (inspect 28 cases).
-- Owed: the separation switch's live edge (pads opened; a sub-20 ms blip must not count) needs the operator's hands.
+- The separation switch's live edge (the operator's hands on the taster, SETTING): the pads opened, then closed
+  5.73 s later. `separated` and then `nested` were logged and the latch followed (`control`). Session 000409's
+  `separation.csv` holds both rows, `345852929;separated;setting` and `351582929;nested;setting`, and the stage
+  stayed SETTING (separation acts only in BOOSTING). The log's timestamps sit a constant 940 ms after the rows'
+  uptimes: `esp_log_timestamp`'s base, not latency. The sub-20 ms blip that must not count is proved on the
+  host, against plan B's debounce: every case ends with plan B's latch and stage (a 7 ms blip and a 40 ms open at a
+  50 ms debounce both rejected). Which ticks report a verdict on the way still differs (open, with the debounce's
+  level rule).
 
 **Carried into M7 (from the M6 review):**
 - The control thread's mailbox answers through std mpsc, which takes a mutex and a condvar on core 1 when the

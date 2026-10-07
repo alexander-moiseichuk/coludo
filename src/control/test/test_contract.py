@@ -41,7 +41,10 @@ from contract import cases, normalize, transports  # noqa: E402
 
 _PLAN_B: transports.Fake = transports.Fake()  # one plan B for the whole file (tools' own runs build theirs)
 _EPOCH_2020: int = 1577836800  # Unix seconds at 2020-01-01: any real host clock reads later
-_BOARD_ONLY: set = {'log_tee_trigger', 'hub'}  # the cases plan B on CPython cannot run: no tee, no hub
+# the cases plan B on CPython cannot run: no tee, no hub, and no device set up (the M6 parts' cases)
+_BOARD_ONLY: set = {'log_tee_trigger', 'hub', 'inspect_imu', 'inspect_barometer', 'inspect_separation',
+                    'update_barometer_ground', 'update_barometer_text_ground', 'update_barometer_rezero',
+                    'calibrate_barometer', 'calibrate_imu', 'probe_devices'}
 _PROBE_LAUNCH: str = cc.build('set-config', ['launch', json.dumps({'launch_id': 'contract-probe'})])
 
 
@@ -87,6 +90,55 @@ class _Tampered:
 
     def close(self) -> None:
         """The shared plan B stays open for the next test."""
+
+
+def _fitted_answers() -> dict:
+    """The healthy M6 parts' answers, by request line: the snapshots, the ICP's update round trip, calibrate, probe."""
+    ok = lambda payload: [cc.build('ok', [json.dumps(payload)])]  # noqa: E731
+    update = lambda properties: cc.build('update', ['baro_icp10111', json.dumps(properties)])  # noqa: E731
+    return {
+        'inspect imu_lsm6dso32': ok({'name': 'imu_lsm6dso32', 'ok': True, 'healthy': True, 'interrupt': True,
+                                     'interrupt_silent': False, 'accel_g': [0.01, -0.02, 1.01],
+                                     'rate_dps': [0.1, 0.0, -0.1]}),
+        'inspect baro_icp10111': ok({'name': 'baro_icp10111', 'ok': True, 'healthy': True, 'altitude_m': 42.1,
+                                     'temperature_c': None, 'pressure_pa': 100810.5, 'elevation_m': 0.2}),
+        'inspect separation': ok({'name': 'separation', 'ok': True, 'healthy': True, 'separated': False}),
+        update({'ground': 100}): ok({'changed': ['ground']}),
+        update({'ground': 'high'}): [cc.build('err', ['refused', "could not convert string to float: 'high'"])],
+        update({'rezero': True}): ok({'changed': ['ground']}),
+        'calibrate baro_icp10111': ok({'baro_icp10111': None}),
+        'calibrate imu_lsm6dso32': ok({'imu_lsm6dso32': None}),
+        'probe imu_lsm6dso32': ok({'imu_lsm6dso32': None}),
+        'probe baro_icp10111': ok({'baro_icp10111': None}),
+        'probe separation': ok({'separation': None}),
+    }
+
+
+class _Fitted(_Tampered):
+    """
+    Plan B with the M6 parts fitted, which plan B on CPython never sets up: `objects` lists the default config's
+    imu_lsm6dso32, baro_icp10111 and separation, and their requests get `answers` (request line -> reply lines, or
+    an exception to raise) instead of reaching plan B.
+    """
+
+    def __init__(self, answers: dict) -> None:
+        """Answer through plan B, the M6 parts by `answers`."""
+        super().__init__()
+        self._answers: dict = answers
+
+    def exchange(self, line: str) -> list:
+        """Record the line; a part's request gets its answer, `objects` lists the parts, the rest is plan B's."""
+        self.sent.append(line)
+        if line in self._answers:
+            answer = self._answers[line]
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        lines = _PLAN_B.exchange(line)
+        if line == 'objects':
+            names = json.loads(cc.parse(lines[0]).args[0])
+            return [cc.build('ok', [json.dumps(sorted(names + ['baro_icp10111', 'imu_lsm6dso32', 'separation']))])]
+        return lines
 
 
 class _Settling(_Tampered):
@@ -380,6 +432,60 @@ def test_invariants_beyond_the_core_are_checked() -> None:
         assert {result.name for result in failed} == names, (request, [(item.name, item.reason) for item in failed])
         assert all(reason in result.reason for result in failed), (request, [result.reason for result in failed])
     assert json.loads(cc.parse(_PLAN_B.exchange('stage')[0]).args[0]) == {'stage': 'setting', 'manual': False}
+
+
+def test_the_m6_parts_are_held_to_plan_b_shapes() -> None:
+    """
+    The M6 parts' cases pass on healthy answers, and each broken answer fails exactly its own case: a snapshot short
+    of a key or naming another part, a ground write that changed nothing, a calibrate or a probe that failed. A
+    board without the parts skips them; a run that stops after the ground write re-zeroes on its way out.
+    """
+    tiers, allowed = ('config', 'inspect', 'diagnostics'), ('active',)
+    results = cases.run(_Fitted(_fitted_answers()), tiers, allowed, None, milestone=6)
+    m6 = {result.name: result.outcome for result in results if result.name.split('[')[0] in _BOARD_ONLY}
+    assert set(m6.values()) == {cases.PASS}, m6
+    assert {name.split('[')[0] for name in m6} == _BOARD_ONLY - {'log_tee_trigger', 'hub'}, m6
+    assert len([name for name in m6 if name.startswith('probe_devices[')]) == 3, m6
+
+    def broken(request: str, payload: object, status: str = 'ok') -> dict:
+        """The healthy answers with one replaced."""
+        answers = _fitted_answers()
+        answers[request] = [cc.build(status, [json.dumps(payload)])]
+        return answers
+
+    update = lambda properties: cc.build('update', ['baro_icp10111', json.dumps(properties)])  # noqa: E731
+    scenarios = (
+        (broken('inspect separation', {'name': 'separation', 'ok': True, 'healthy': True}),
+         {'inspect_separation'}, "lacks key 'separated'"),
+        (broken('inspect baro_icp10111', {'name': 'baro', 'ok': True, 'healthy': True, 'altitude_m': None,
+                                          'temperature_c': None, 'pressure_pa': None, 'elevation_m': None}),
+         {'inspect_barometer'}, "inspect baro_icp10111 names 'baro'"),
+        (broken(update({'ground': 100}), {'changed': []}), {'update_barometer_ground'}, 'expected [ground]'),
+        (broken(update({'ground': 'high'}), {'changed': ['ground']}), {'update_barometer_text_ground'}, ''),
+        (broken('calibrate baro_icp10111', {'baro_icp10111': 'ground zero: no fresh altitude'}),
+         {'calibrate_barometer'}, 'expected {\'baro_icp10111\': null}'),
+        (broken('probe separation', {'separation': 'separation -- pin 33 reads nothing'}),
+         {'probe_devices[probe separation]'}, 'expected {\'separation\': null}'),
+    )
+    for answers, names, reason in scenarios:
+        results = cases.run(_Fitted(answers), tiers, allowed, None)
+        failed = [result for result in results if result.outcome == cases.FAIL]
+        assert {result.name for result in failed} == names, [(result.name, result.reason) for result in failed]
+        assert all(reason in result.reason for result in failed), [result.reason for result in failed]
+
+    bare = {result.name: result for result in cases.run(_PLAN_B, tiers, allowed, None)}
+    assert bare['inspect_barometer'].outcome == cases.SKIP and 'no icp10111' in bare['inspect_barometer'].reason
+
+    answers = _fitted_answers()
+    answers[update({'ground': 'high'})] = RuntimeError('USB gone')  # right after the ground write
+    unplugged = _Fitted(answers)
+    try:
+        cases.run(unplugged, tiers, allowed, None)
+    except cases.Aborted as error:
+        assert 'barometer re-zero: ok' in str(error), error
+    else:
+        raise AssertionError('a transport error did not abort the run')
+    assert unplugged.sent[-1] == update({'rezero': True}), unplugged.sent[-3:]
 
 
 def test_the_hold_needs_a_disarmed_board() -> None:
@@ -962,6 +1068,7 @@ test_round_trips_put_the_board_back()
 test_nothing_active_without_its_flag()
 test_violations_are_caught()
 test_invariants_beyond_the_core_are_checked()
+test_the_m6_parts_are_held_to_plan_b_shapes()
 test_the_hold_needs_a_disarmed_board()
 test_not_yet_is_reported_not_failed()
 test_a_milestone_makes_its_cases_mandatory()
@@ -981,7 +1088,7 @@ test_command_line()
 _PLAN_B.close()
 print('ok: cc contract -- plan B passes every case of every tier in its own process (board-only cases skip), '
       'round trips restore, nothing active without its flag, violations caught (status, keys, types, empty line, '
-      'two replies, codes, every invariant), the hold needs a disarmed board, preflight refusal, iam id, '
+      'two replies, codes, every invariant), the M6 parts, the hold needs a disarmed board, preflight refusal, iam id, '
       'config_source gating, the reboot proof, the tee, milestones, aborted runs undo, --diff masking + known '
       'differences, hub line fidelity + HTTP errors + the hub tier, console log/ROM filter + no-reset open, '
       'the command line')
