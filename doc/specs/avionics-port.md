@@ -1571,45 +1571,125 @@ Measured on the taster, 2026-10-06 (`heap`: free, largest block and low-water ma
 | lowest seen: video + saver + four 32 MB downloads at once | ~11 KB |
 
 What holds it together:
-- **The encoder reserves its block at boot**, before anything fragments the heap.
+- **The encoder reserves its block at boot**, before anything fragments the heap. A board without a camera (no
+  `ov5647` entry in its config) reserves nothing, so the ~138 KB block stays in the heap.
 - **A persistent SD bounce buffer.** IDF's default allocates an 8 KB bounce per unaligned transfer, which every
   FatFs sector-buffer write is.
-- **A 64 KB DMA-only reserve** (`SPIRAM_MALLOC_RESERVE_INTERNAL`). IDF registers it with only the DMA and internal
-  caps, so plain malloc and task stacks cannot take it.
+- **The 64 KB `SPIRAM_MALLOC_RESERVE_INTERNAL` pool is NOT a DMA reserve** (corrected 2026-10-07). IDF carves it out
+  of existing internal RAM and registers it at the head of the heap list with the INTERNAL|DMA caps at priority 1
+  (`esp_psram.c:644-654`, `heap_caps_init.c:339`). So every internal request takes from it: task stacks, malloc of
+  4 KB or less, after the main RAM heap and before RETENT_RAM (`heap_caps_base.c:144`). On the P4 every L2 memory heap
+  is DMA-capable anyway (`heap/port/esp32p4/memory_layout.c:48`), so the pool adds and protects no DMA memory. Kept:
+  changing its size is DMA-neutral.
 - **Plain malloc above 4 KB goes to PSRAM.** 4 KB itself stays internal: `esp_flash_read` borrows an internal temp
   buffer (up to 16 KB) for any destination outside internal RAM.
-- **esp_hosted's SDIO queues at 10/10 and the TCP send buffer at 32 KB**, which bounds esp_hosted's pool. Pulls slow
-  from 3.7 to 3.3 MB/s idle, and to ~1.3 MB/s while video and the saver run.
-- **Rules from here:**
-  - every new consumer (M5's buses and DMA transfers, task stacks, drivers) is priced with `heap` against this table;
-  - the stress run (video + saver + downloads) repeats after each milestone;
-  - with ~11 KB at the worst point, M5 must not take internal DMA memory without giving some back. The candidates:
-    fewer capture buffers, smaller esp_hosted queues, task stacks of non-flash tasks in PSRAM.
+- **esp_hosted's SDIO queues at 10/10 and the TCP send buffer at 32 KB.** These were set when esp_hosted's pool was
+  internal. With its buffers in PSRAM (below) they could be raised again; untested, so unchanged. Pulls slow from 3.7
+  to 3.3 MB/s idle, and to ~1.3 MB/s while video and the saver run.
 - **For the two-partition layout:** a second volume on the same card shares the bounce buffer, so every card call
   of `components/sd_card`'s own disk I/O layer holds one card lock (a static FreeRTOS mutex, ~80 B of internal RAM).
   The second volume adds a FatFs volume mutex and a VFS entry (~0.3 KB internal); its `FATFS` object and file
   handles are in PSRAM (`CONFIG_FATFS_ALLOC_PREFER_EXTRAM`).
-- **Where the 768 KB go** (taster, after init, Wi-Fi joined):
+- **Where the 768 KB go** (taster, after init, Wi-Fi joined, before the optimization below):
   - 128 KB is the L2 cache (`CACHE_L2_CACHE_128KB`);
   - ~124 KB is static: 92 KB `.iram0.text`, 18 KB `.dram0.data`, 13.5 KB `.dram0.bss`;
-  - 513 KB is heap, plus 38 KB from LP RAM and SPM, so 551 KB of heap in all;
-  - ~95 KB of that heap is free, of which ~55 KB is DMA-capable (mostly the reserve).
-- **2026-10-07, after the two-partition mount:** under video + saver + Wi-Fi pulls, the lowest DMA free was 1.6 KB
-  on the taster and 2.3 KB on 7F, with no failure. The margin is gone: the optimization below is required before M5,
-  not optional.
-- **Open, untraced panic (taster, 2026-10-07).** 25 min after the swapped-card A/B stress (lowest DMA free 1280 B),
-  the taster saved a 7 KB `set-config board` that had arrived over Wi-Fi, logged it, and panicked before its reply
-  went out (`reset_cause panic`). No console was attached, so the backtrace is lost. Four repeats were clean: three
-  that re-created the key after `reset-config`, and one overwrite. Suspect: esp_hosted's DMA allocation assert on
-  the burst. The stress runs after the optimization below will show whether it recurs. A flash coredump partition in
-  the free 0x720000..0x800000 would keep the next backtrace.
-- **A board without a camera** (no `ov5647` entry in its config) reserves no encoder, so its ~138 KB block stays in
-  the heap.
-- **Planned before M5 (operator, 2026-10-06): internal RAM optimization.** The first lever is the 92 KB of code in
-  internal RAM. With XIP from PSRAM, flash operations no longer disable the cache, so much of what IDF places there
-  for cache-disabled windows may move out: FreeRTOS, heap, ring buffer, esp_timer, lwIP and driver ISR paths.
-  Measure each move with `heap` and against `pace`. Then stacks of tasks that never touch flash in PSRAM, and fewer
-  capture buffers.
+  - 513 KB is heap, plus 38 KB from LP RAM (RTC, 31.9 KB) and SPM (7.7 KB), so 551 KB of heap in all. The RTC and
+    SPM heaps are internal but not DMA-capable, and they sit idle (`heap`'s `rtc_free`/`spm_free`);
+  - ~95 KB of that heap was free.
+
+**The optimization (2026-10-07, before M5).** An investigation of IDF v5.5.5 under XIP from PSRAM (five readers, then
+an adversarial check of the riskiest claims) established three things:
+- SPI1 flash operations take a mutex and never turn the cache off (`spi_flash_os_func_app.c:29`). The one runtime
+  cache-off window left is `esp_mmu_map`/`esp_mmu_unmap`, reached today only by the first partition-table load (on
+  main, at boot) and, from M15, by OTA's image checks (`esp_ota_end`, `esp_ota_set_boot_partition`,
+  `esp_ota_get_boot_partition`).
+- So a task may have a PSRAM stack, and code may leave IRAM, as long as neither runs inside that window. The test is
+  "never calls `esp_mmu_map`/`esp_mmu_unmap`", not "never touches flash".
+- No interrupt allocated in IRAM (systick, esp_timer, crosscore, brownout, the CSI/DW-GDMA camera interrupt) reaches
+  the code moved below.
+
+Measured on 7F (card 267D), the same stress each time: colour bars at FHD@25 (no scene), the ring load at the flight
+rate, four parallel 24 MB pulls. From stage 2 on it also ran 40 refused 1 MB uploads (receive traffic), each pull
+hashed against a reference read, the host's TCP checksum-error counters, and 20 `set-config` saves over Wi-Fi:
+
+| stage | idle internal / DMA | lowest in the stress | result |
+|---|---|---|---|
+| before | 93.5 / 53.9 KB | 0 | assert `sdio_drv.c:862` (`pkt_rxbuff`), 2 of 2 |
+| 1a: IRAM knobs (`.iram0.text` 94.2 → 85.5 KB) | 102.9 / 63.2 KB | DMA 1.5 KB | survived |
+| 1b: four core-0 stacks in PSRAM (38.9 KB) | 141.9 / 102.3 KB | DMA 34.5 KB | `set-config` ×20 took internal to 20 B |
+| the allocator | 143.8 / 104.2 KB | 76.4 / 36.8 KB | `set-config` leaves internal RAM alone |
+| (uploads added) | 136.4 / 96.8 KB | DMA 1.5 KB | assert `sdio_drv.c:830` (RX double buffer) |
+| 2a: esp_hosted's buffers in PSRAM | 149.2 / 109.6 KB | internal 0.3 KB, transient | survived |
+| 2b: `LWIP_L2_TO_L3_COPY` | 148.4 / 108.8 KB | 95.4 / 55.8 KB (flat) | every hash matches, 0 checksum errors |
+
+With stage 2b the low-water mark during the stress stays where boot left it. The taster (card AB58, its own camera)
+gave the same with the final build: low-water at boot's values, every hash matching, 0 internal fallbacks. Pace
+(gptimer, core 1) under the full stress: p99 17-23 µs, max 35-60 µs, 0 missed. The core-0 esp_timer path is noisier under Wi-Fi bursts (max 0.02 to
+6.1 ms): esp_hosted's tasks run at priority 23, above esp_timer's. That is not the flight path, and Wi-Fi is off in
+flight.
+
+What each stage is:
+- **1a** (`sdkconfig.defaults`): `RINGBUF_PLACE_FUNCTIONS_INTO_FLASH` and its ISR variant, `LIBC_LOCKS_PLACE_IN_IRAM=n`,
+  `WIFI_RMT_SLP_IRAM_OPT=n`, `PM_SLEEP_FUNC_IN_IRAM=n`, `PM_SLP_IRAM_OPT=n`: −8.7 KB of `.iram0.text`. The RETENT_RAM
+  heap starts right after the statics, so every byte becomes heap.
+- **1b:** the four slow core-0 threads get PSRAM stacks (`ThreadSpawnConfiguration::stack_alloc_caps`, httpd's
+  `task_caps`). The console was unpinned (pthread's default core); it is now on core 0.
+- **The allocator** (`firmware/src/allocator.rs`, the `#[global_allocator]`): std's allocator, except that a Rust
+  allocation made on a PSRAM stack (the stack pointer is the marker) goes to PSRAM. The cause: one `set-config` of a
+  7 KB config is thousands of allocations under 4 KB (the parsed document, its validation, canonical text and hash),
+  which IDF keeps internal. What such a thread needs internal it asks for by name: `allocator::InternalBuffer`, used
+  for the file server's flash-read destinations (`esp_flash_read` into PSRAM bounces through internal memory per
+  call).
+- **2a** (`components/hosted_no_reboot`): esp_hosted's aligned malloc, which every buffer handed to the SDIO DMA comes
+  from, now takes PSRAM. The caps are upstream 2.12.8's: SPIRAM|DMA|8BIT, cache-line aligned. A full PSRAM falls
+  back to internal memory, counted (`heap`'s `hosted_internal`); a missing hook raises the degraded token
+  `c6-buffers-internal`. `CACHE_L2_CACHE_LINE_64B` is pinned, because the SDMMC host refuses lines it cannot align
+  to.
+- **2b:** `LWIP_L2_TO_L3_COPY`. lwIP copies each received frame into its own pbuf (PSRAM first) and frees esp_hosted's
+  internal per-frame copy (`sdio_drv.c:1139`, asserted on failure) at once.
+
+**The open panic of 2026-10-07 (taster, after a 7 KB `set-config` over Wi-Fi) is most likely explained.** The stress
+reproduced three esp_hosted assert sites on internal DMA exhaustion: `pkt_rxbuff`, the RX double buffer, and
+`copy_payload` by margin. `set-config` itself drained internal RAM. Since stages 2a and 2b, none recurred. It stays
+untraced: no console was attached.
+
+**Rules from here:**
+- every new consumer (M5's buses and DMA transfers, task stacks, drivers) is priced with `heap`, `heap stacks` and the
+  stress (`hosted_internal` must stay 0);
+- a task with a PSRAM stack never calls `esp_mmu_map`/`esp_mmu_unmap`: M15's OTA (and its `esp_ota_get_boot_partition`
+  arm check) runs on a thread with an internal stack, or reads otadata with `esp_partition_read`;
+- the flight threads (core 1) keep internal stacks and allocate internal. What the CC executor builds for them (the
+  activated config, the mission) lives in PSRAM: copy what the flight loop reads into its own memory when M6/M7 hand
+  it over;
+- M5: the LSM6DSO32's SPI bus keeps esp-idf-hal's empty `intr_flags`, since its ISR runs the Rust `post_cb` from
+  PSRAM. Budget ~3.6 KB of IRAM for the SPI master and GDMA ISR code when `spi_master` links. Install the GNSS UART
+  driver from a core-0 thread.
+
+**Not done, and why:**
+- `SPI_FLASH_AUTO_SUSPEND`, and every knob only it unlocks (esp_timer, log, libc misc, FreeRTOS ISR functions in
+  flash): this GD part (0xC84019) is not on IDF's suspend list, so `esp_flash_init` would abort every boot.
+- `FREERTOS_PLACE_FUNCTIONS_INTO_FLASH` (~11.6 KB): on the P4 it moves part of every interrupt-exit context switch
+  (`pxPortGetCoprocArea`, through `hwlp_restore_if_used`) into PSRAM, on both cores. It also gives up
+  `SPI_MASTER_IN_IRAM`. Revisit only against M5's measured control step and I2C transaction p99.
+- `HEAP_PLACE_FUNCTION_INTO_FLASH` (8.6 KB): it forces the SPI master ISR out of IRAM.
+- Fewer capture buffers: they are in PSRAM already, so nothing internal is saved.
+
+**Remaining levers**, in order of yield, each measured the same way:
+- esp_hosted's own task stacks in PSRAM (~28 KB; its data path, priority 23);
+- the ring threads' stacks (saver and eraser 14 KB, writer 8 KB last), after moving their stack-local flash-read
+  targets to internal buffers;
+- the main task (16.9 KB), if `link::run` moves to a PSRAM-stack thread;
+- the SD bounce buffer (8 KB) and the video tasks' stacks (8 KB while recording) in PSRAM;
+- the idle RTC/SPM heaps (39 KB, not DMA-capable) for cold internal objects.
+
+**For M15, a latent bug:** the camera's DW-GDMA interrupt is allocated in IRAM, but its frame-done callback calls
+`dw_gdma_channel_config_transfer` from flash on every frame (`esp_cam_ctlr_csi.c:366`). It is harmless while no
+cache-off window can meet a running camera: today's only window is at boot. Before OTA can run with the camera on,
+pin that function in IRAM with a linker fragment, or stop the camera around OTA.
+
+**A flash core dump** (a partition in the free 0x720000..0x800000) would keep the next untraced backtrace. It also
+rules out ever moving the SPI1 flash driver out of IRAM (~8.3 KB): the dump runs that driver with the cache
+suspended. That is the operator's call (partition table).
 - `heap tasks` exists only in an investigation build with `CONFIG_HEAP_TASK_TRACKING`. Its heap walk holds the
   allocator's lock long enough for core 1's interrupt watchdog to fire, so treat it as a one-off and never ship it.
 
