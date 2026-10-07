@@ -1653,7 +1653,12 @@ What holds it together:
   11–21 % (to 3.2–3.3 MB/s) and ~8 % under video, for ~1.4 KB of internal RAM (the queues' own storage). Reverted: the
   operator's priorities are CPU, FPU, SD and computation, then internal RAM for features. Networking must work, but
   the board is no NAS: ~1 MB/s is enough, and an OTA can wait. At 10/10: 2.6–2.9 MB/s idle, ~0.7–1 MB/s under FHD
-  video and the saver.
+  video and the saver. **The networking bar (operator, 2026-10-07):**
+  - the board is controllable from CC, over a stable link;
+  - an OTA image uploads within ~5 minutes (M15; a 1.6–3 MB image takes seconds at these rates);
+  - the camera preview shows in CC's window at 1 fps at least (M7's preview).
+
+  Anything past that bar is not worth internal RAM, CPU or SD time.
 - **For the two-partition layout:** a second volume on the same card shares the bounce buffer, so every card call
   of `components/sd_card`'s own disk I/O layer holds one card lock (a static FreeRTOS mutex, ~80 B of internal RAM).
   The second volume adds a FatFs volume mutex and a VFS entry (~0.3 KB internal); its `FATFS` object and file
