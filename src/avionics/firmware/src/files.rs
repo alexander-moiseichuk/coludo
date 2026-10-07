@@ -61,6 +61,10 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
         // core 0 with the rest of the link (spec "Threads, cores, priorities"): unpinned, httpd could decode a whole
         // `/ring` on core 1, the flight core
         core: Some(Core::Core0),
+        // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): it reads the card and the ring with
+        // esp_flash_read, never esp_mmu_map, the one runtime path that turns the cache off (no OTA here: M15's runs
+        // elsewhere)
+        task_caps: esp_idf_svc::sys::MALLOC_CAP_SPIRAM | esp_idf_svc::sys::MALLOC_CAP_8BIT,
         ..Default::default()
     })?;
     server.fn_handler::<anyhow::Error, _>("/sd/*", Method::Get, |request| {

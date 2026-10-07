@@ -27,7 +27,7 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 use cc_protocol::Message;
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
+use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use firmware::gcl::Origin;
 use mission::Mission;
 use sequencer::Stage;
@@ -270,6 +270,9 @@ impl Executor {
             stack_size: STACK_SIZE,
             priority: 5,
             pin_to_core: Some(Core::Core0),
+            // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
+            // esp_mmu_map, the one runtime path that turns the cache off (no partition mmap; M15's OTA runs elsewhere)
+            stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
             ..Default::default()
         }
         .set()?;

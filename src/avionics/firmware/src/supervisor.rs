@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
+use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::sys;
 use recorder::{Cell, Telemetry};
 
@@ -64,6 +64,9 @@ pub fn start(board: Arc<Board>) -> anyhow::Result<()> {
         stack_size: STACK_SIZE,
         priority: PRIORITY,
         pin_to_core: Some(Core::Core0),
+        // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
+        // esp_mmu_map, the one runtime path that turns the cache off
+        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
         ..Default::default()
     }
     .set()?;
