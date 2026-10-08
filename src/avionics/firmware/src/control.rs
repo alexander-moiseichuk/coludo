@@ -1130,9 +1130,14 @@ struct Wakers {
     tasks: [sys::TaskHandle_t; 3],
     /// How many are used.
     count: usize,
+    /// The alarms so far: the even ones wake the control thread, the odd ones the owners.
+    alarms: AtomicU32,
 }
 
-/// The gptimer alarm ISR: notify every waker (eIncrement, so a pile-up counts the missed ticks). Integer only.
+/// The gptimer alarm ISR, at twice the tick rate (D20 of the M9 plan): an even alarm wakes the control thread, an odd
+/// one the I2C owners, half a tick after it -- so a backup's push lands half a tick before the control thread reads it
+/// (about 5 ms old there, not 10-20), measured needed under the flight's load (the BMI323's lapses passed 1 a minute
+/// with the video and the ring load running). eIncrement, so a pile-up counts the missed wakes. Integer only.
 unsafe extern "C" fn alarm(
     _timer: sys::gptimer_handle_t,
     _event: *const sys::gptimer_alarm_event_data_t,
@@ -1141,7 +1146,13 @@ unsafe extern "C" fn alarm(
     // SAFETY: `context` is the leaked Wakers, alive for the program.
     let wakers = unsafe { &*(context as *const Wakers) };
     let mut woken: sys::BaseType_t = 0;
-    for &task in &wakers.tasks[..wakers.count] {
+    let owners = wakers.alarms.fetch_add(1, Ordering::Relaxed) % 2 == 1;
+    let tasks = if owners {
+        &wakers.tasks[1..wakers.count]
+    } else {
+        &wakers.tasks[..1]
+    };
+    for &task in tasks {
         // SAFETY: each handle is a task that lives for the program (the control thread and the owners never end).
         unsafe {
             sys::xTaskGenericNotifyFromISR(
@@ -1157,8 +1168,8 @@ unsafe extern "C" fn alarm(
     woken != 0
 }
 
-/// Starts the control thread (core 1, priority 20) ticking at `schedule_hz`, waking the I2C owners that run on each
-/// tick too, with the SPI parts that came up (`spi`: the primary IMU), the separation switch, the stage machine, the
+/// Starts the control thread (core 1, priority 20) ticking at `schedule_hz`, waking the I2C owners half a tick after
+/// each tick (D20 of the M9 plan), with the SPI parts that came up (`spi`: the primary IMU), the separation switch, the stage machine, the
 /// databoard's `topology`, the device `table` whose entries' health the tick writes, and the flight word's one
 /// `writer`, which the thread owns from here on. Call it after the owners started (their task handles are taken here).
 ///
@@ -1296,8 +1307,13 @@ fn run(
         tasks[count] = task;
         count += 1;
     }
-    let wakers: &'static Wakers = Box::leak(Box::new(Wakers { tasks, count }));
-    if let Err(error) = start_timer(period_us as u64, wakers) {
+    let wakers: &'static Wakers = Box::leak(Box::new(Wakers {
+        tasks,
+        count,
+        alarms: AtomicU32::new(0),
+    }));
+    // the alarm at half the tick: the control thread on the even alarms, the owners on the odd ones
+    if let Err(error) = start_timer(period_us as u64 / 2, wakers) {
         log::error!("control :: no tick ({error}): the control thread stops");
         // the switch's name is in SWITCH once Switch::new ran
         let driven = [

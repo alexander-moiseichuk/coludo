@@ -323,6 +323,12 @@ with a space, parsed by the same parser.
     The board then answers the hub `err unsafe <command> is console only`. The hub has still logged the line,
     so never type a password at the hub.
   - A command that takes the board away needs the word `confirm` (`panic confirm`, `c6reset confirm`).
+  - A bus diagnostic (`i2c read`, `i2c touch`, `i2c general-call`, `imu mute`) also refuses while armed, `err unsafe
+    refused -- armed (bus diagnostics only while disarmed)`: it holds a bus owner off its parts, so never in the
+    last seconds on the pad (M9). `bustune` (a CC command) runs armed only back to the bus's configured clock, so an
+    interrupted sweep can be undone.
+- **Replies carry their figures as `name=value` params** (`ok control schedule_hz=100 ...`); the hub passes them to
+  its operators as they came, each value in the protocol's own encoding (plain when simple, `base64:` otherwise).
 - **Long diagnostics** (`load`, `pace`, `sdtest`) answer after their `seconds=` window. The hub gives them its
   30 s exchange timeout, so keep the window under ~25 s through the hub.
 - **Video has one owner** (M7): `video start` and `video stop` go to the video thread, the only caller of the

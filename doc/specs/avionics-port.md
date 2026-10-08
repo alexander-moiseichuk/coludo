@@ -1121,7 +1121,7 @@ honest. TMS-7F arms on a bench copy of its config (the not-ported entries remove
 **Operator gains.** A mid-air reset resumes the flight, and a reset after landing starts a fresh session. The
 board can no longer hang silently.
 
-### M9. SEN0697: BMI323, BMP581, BMM350, and the attitude filter (2 days)
+### M9. SEN0697: BMI323, BMP581, BMM350, and the attitude filter (2 days; DONE 2026-10-08 on the taster and TMS-7F)
 
 **Scope**
 - **BMI323** (2 dummy bytes per read, start-up marker wait, INT1 on GPIO4 on v1.x). Accel and rate at p1.
@@ -1135,16 +1135,69 @@ board can no longer hang silently.
   stay valid. It reaches the separation's thrust gate (+x, M7) too.
 - **Video start** moves from arm to the attitude trigger: the glider standing vertical on the rod (M7).
 
-**Proof**
-- Golden `drivers_bmi323.json`, `drivers_bmp581.json` and `drivers_bmm350.json` (decode, coverage,
-  calibrate refusal).
-- Golden `attitude.json`: trajectory tolerance 0.1 deg after N steps; flags `free`, `mag_known` and `blind`
-  EXACT.
-- On the taster: a move-and-hold axis check, LSM6DSO32 vs BMI323 in the same frame (§7, Q7). The mag
-  calibration figure is saved and survives a reflash to plan B and back (shared NVS key).
+**As built (2026-10-08; the plan and its review in the session's m9_plan.md, the operator's answers its §10):**
+- **Measured -> reported:** no stream is decimated (`telemetry_ms` is read by nothing); every part runs at the rate
+  its consumers need and every conversion is a row: LSM6DSO32 104 Hz, BMI323 100 Hz, BMP581 50 Hz (polled every
+  tick), BMM350 12.5 Hz averaging 8 (AGGR_SET 0x37, polled every 40 ms), ICP-10111 every cycle, attitude.csv on every
+  publish. Each barometer publishes `change` (m/s, the least-squares slope of its altitude over 500 ms, crates/control
+  `change`), registered with its `elevation`; the barometer row has 5 columns.
+- **Freshness:** the IMUs by their data-ready flags, the bytes only correcting them (a raced conversion pushed, its
+  duplicate skipped; reserved bits, all-zero and 0x8000 frames never fresh), counted as raced/identical with every
+  accel/rate channel's consumer-side `lapses`; the BMP581 and BMM350 by changed bytes. The BMP581 reads its burst twice
+  and checks its operating range (about 0.1% of its bursts are bus garbage), its ground capture too; the BMM350's
+  no-data frame after a re-arm is never judged or observed.
+- **The BMI323** runs on its bus owner, first in each wake; its INT1 is counted as evidence (reads paced by the
+  tick). The gptimer alarms at twice the tick: the control thread on the even alarms, the bus owners on the odd ones
+  (D20), so a backup's push is about 5 ms old at the control read -- needed under the flight's load (the BMI323's
+  lapses passed 1 a minute with the video and the ring load running; 0.35-0.55 at rest without). `axes` applies on
+  both IMUs (converted values, push and row alike); a mirror fails setup. `imu mute ms=` is the failover's forced
+  proof.
+- **The multi-source stage machine** runs on the control thread (bound slots, decider by rank, peer veto, physics
+  vetoes; vetoes.csv); the BMP581 publishes its elevation.
+- **The BMP581** joins the re-zero (`calibrate`, `update ground/rezero`, DONE, the warm rebase). **The BMM350**'s
+  calibration is computed on the owner, persisted to NVS by the executor, then applied (plan B's order); bring-up
+  restores it; its instruction is worded on the executor.
+- **The attitude filter** steps on the control thread every `period_ms`, after the requests and before the stage
+  machine; `inspect/probe attitude`, `attitude-backup` and `attitude-blind` as plan B; the executor reads it through
+  atomics.
+- **The video** starts on the rod trigger: armed, and the fused +x >= 0.87 g for 8 looks (2 s); armed alone on a board
+  with no accelerometer.
+- **Diagnostics:** `i2c read` (register facts), `inspect databoard` / `stats databoard` (plan B's object), `inspect
+  sequencer`; the bus diagnostics run only in SETTING while disarmed, `bustune` armed only back to the configured
+  clock; `health` reports `sources-disagree` (information, the operator's Q5: never an arm gate).
 
-**Operator gains.** Primary attitude with redundancy on every scanned board. The mag-calibration flow works from
-the dashboard 'calibrate' button.
+**Proof (2026-10-08, as measured):**
+- Register facts (stage 0): the BMI323's STATUS 0x02 carries data-ready bits that clear on the status read (flag set
+  exactly on the bursts whose data changed, 100 Hz); no SEN0697 part honours the I2C general call.
+- Rates (10-11 min at rest, both boards): ICP 8.0, LSM 99.0-99.6, BMI323 99.7, BMP581 50.1-50.2, BMM350 12.5 rows/s;
+  `change` sd 0.31-0.33 m/s (ICP), 0.073 m/s (BMP581); LSM lapses at D1's predicted residual, M6's 30 ms race gaps gone;
+  a ground step moves the elevation and never `change`.
+- Failover: `imu mute ms=5000` hands accel and rate to the BMI323 within 0.4 s and back; the attitude filter never
+  goes blind and steps at most 0.26 deg on TMS-7F.
+- Axes, by hand on TMS-7F (180 deg yaw both ways, 45 deg nose up/down and each wing down): the LSM6DSO32 reads the
+  marks frame; the SEN0697's BMI323 needs `-y+x+z` and its BMM350 `+x-y-z` (180 deg about x), proven end to end
+  after the keys (both IMUs read the same tilts within 0.05 g); the yaw-rate sign is positive in a left turn on both.
+- The stage machine on TMS-7F's bench copies: peer, at-rest and peer+at-rest veto episodes hold one-baro and
+  at-rest altitude launches; with both baros agreeing and no IMU the altitude launch walks to DONE; the axes copy's
+  accel launch walks to DONE; held `boosting` + `stage auto` walks to `done;stationary 1.0g`.
+- Attitude, 10 min at rest on TMS-7F: 50.00 rows/s, roll and pitch sd 0.02 deg (range < 0.2 deg), heading drifting
+  4.2 deg/min free-running.
+- The rod trigger started the flight video 1.79 s after the arm on a nose-up copy and never on the flat board.
+- The magnetometer refuses a still board and a half turn; its positive calibration needs a full level circle in one
+  boot (left for the assembled airframe).
+- The soak (TMS-7F, 1 h: colour-bar video at FHD@25, the flight-rate ring load of 200 lines/s, every M9 run): tick
+  lateness at most 90 us, no overrun; video 90,026 frames at 25.0 fps, 29 missed, 0 dropped; the ring lost 0 with
+  the saver 0.4 s behind; attitude 50.00, BMP581 50.09, ICP 8.04, BMI323 99.44, LSM 99.03, BMM350 12.56 rows/s; the
+  internal low-water 41.2 KB with the video running; the largest tick work 1.0 ms (the flash ring's writes stall core
+  1 briefly; inside the 10 ms tick). Its one miss, the BMI323's lapses at ~1.5 a minute, went to 0 in 21 min under
+  the same load once the owners woke half a tick after the control thread (D20); its longest row gap 51 -> 20 ms, the
+  BMP581's 71 -> 40 ms.
+- R14, the camera's start on port 0: the BMI323's rows keep their 20 ms, the BMP581's at most 39 ms, the BMM350's
+  120 ms.
+- `cc_contract --milestone M9` on the taster: 0 violations (32 M9 cases).
+
+**Operator gains.** Primary attitude with a backup IMU on every SEN0697 board, measured on the bench; the stage
+machine decides from every source; the video starts when the glider stands on the rod.
 
 ### M10. Pitot, power monitor, laser (2 days)
 
@@ -2471,7 +2524,7 @@ be fatal or not.
 | `commons.json` | `dwell_step`, `apogee_step`, `fin_deflection_limit`, `altitude_m` | `dwell_step`, `fin_deflection_limit` exact; `apogee_step` abs 1e-3 m; `altitude_m` abs 0.01 m (f32: a pressure ratio near 1 resolves to ~3.4 mm) | M7 |
 | `sequencer_trace.json` | `Sequencer._tick` with scripted post-freshness reads (`test_sequencer.py:43-140` + regressions) | exact | M7 |
 | `warmstart.json` | `should_restore` boundaries, torn crumb | exact | M8 |
-| `attitude.json`, `magnetic_yaw.json` | `tasks/attitude.py` | angle 0.1 deg; flags exact | M9 |
+| `attitude.json`, `magnetic_yaw.json`, `on_backup.json` | `tasks/attitude.py`, cc_client `_on_backup` | angle 0.1 deg; flags exact | M9 (the drivers' M9 divergences pinned in `drivers_bmi323/bmp581/bmm350.json`: the BMI323's status burst, the BMP581's doubled ground reads, the BMM350's AGGR_SET 0x37; the physics vetoes' in `sequencer_trace.json`) |
 | `gnss.json` | `test_gnss.py` bursts; `_commands(hz)` bytes for hz 0/1/5/10 | exact; lat/lon 1e-6 deg | M11 |
 | `gnss_calib.json`, `field.json` | drift averaging, auto-arm dwell | abs / exact | M11 |
 | `pid.json`, `mixer.json`, `governor.json`, `airspeed.json`, `wind.json`, `navigation.json`, `guidance.json` | the corresponding tests' inputs + seeded sweeps | per-function (pid 0.02 deg/step, nav 0.5 m / 0.05 deg, mixer exact) | M13 |
@@ -2657,6 +2710,32 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
   and stays off the link (`launched` is set); the pad latch stops at `launch_alt_m`/2 of elevation.
 - **`panic`** (§4.8) is console-only and open in every stage, with the kinds `twdt` and `stall`.
 
+- **M9, measured -> reported (the operator):** no stream is decimated and `telemetry_ms` is read by nothing; each part
+  runs at its consumers' rate (the BMM350 at 12.5 Hz averaging 8, AGGR_SET 0x37; the `period_ms` of the BMI323,
+  BMP581 and BMM350 entries unused); attitude.csv gets a row on every publish.
+- **M9, `change`:** each barometer's climb rate, a new quantity registered with its `elevation` (no board-file key);
+  the barometer row has a fifth column.
+- **M9, freshness:** the IMUs publish only fresh conversions by their data-ready flags with byte corrections; the
+  BMP581 and BMM350 by changed bytes; the BMI323's burst starts at STATUS 0x02 (16 B); the BMP581 reads twice and
+  range-checks (its ground capture too); the BMM350's no-data frame is never observed. Plan B read blind and pushed
+  whatever came, a 0x8000 frame included.
+- **M9, the BMI323** is read on the owner's tick; its INT1 is evidence only (plan B sampled on the edge).
+- **M9, the BMP581** gets `calibrate` and joins the re-zero (DONE, the warm rebase); plan B had none.
+- **M9, the multi-source stage machine** (crates/sequencer) and vetoes.csv; its plan B divergences are pinned in
+  `sequencer_trace.json` with a counting test.
+- **M9, the filter's frame maps** from the marks frame: rate (x, -y, -z), gravity (-x, y, z), field (x, -y, -z), each
+  flipping plan B's real-board sign of pitch, yaw rate and magnetic heading (plan B assumed gx->roll, gy->pitch,
+  gz->yaw).
+- **M9, the video** starts on the rod trigger (Rust-only; plan B records no video).
+- **M9, `sources-disagree`** in `health` (Rust-only, information).
+- **M9, the BMM350 calibration** is persisted from the executor, then applied on the owner (plan B's order, split
+  across threads).
+- **M9, the I2C owners wake half a tick after the control thread** (D20; plan B's tasks ran on their own sleeps):
+  the gptimer alarms at twice the tick rate.
+- **M9, diagnostics:** the bus diagnostics run only while disarmed (`bustune` armed only back to its configured
+  clock); `imu mute` and `i2c read` are Rust-only forced-proof tools; `inspect databoard` / `stats databoard` as plan B;
+  the BMI323 inspects `rate_dps` (deg/s, as the LSM6DSO32) where plan B had `rate_cds`.
+
 **Unchanged** (contract): the CC grammar and replies, the routing and CRC wrapper, the session.csv columns, the
 stream names and field lists, the config JSON schema and `config_id` algorithm, the NVS namespace `coludo` and
 the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `bmm350_cal` (16 B), and the
@@ -2680,10 +2759,10 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 | R8 | base64 strictness differs: CPython is lenient, Rust is strict. A bad token could answer differently from the fake. | Rust answers `err badargs` (strict). The contract runner records the fake's deviation as known. |
 | R9 | Detector drift vs the host sim: `virtual_flight.py` grades the Python detectors once the board runs Rust. | `commons.json`, `sequencer_trace.json`, `control_trace_*.json` are the only guards. `generate.py --check` in CI. |
 | R10 | HITL masking: a fresh bench sensor silently becomes the only source (pitot 7/27, mag 9/16). | `sim_link.rs` masks the `_SIM_SENSORS` sensors by config name (they are sensor names, not drivers), as plan B does, and re-applies the mask after layout. It then refuses to start if one is still enabled, which is new (plan B only masks). |
-| R11 | Per-sensor axes: the LSM6DSO32 and BMI323 publish raw axes into one channel, and a failover may flip axes. gx/gy and the signs are unverified on any airframe. | The IMUs are mounted per their marks in the body frame (+x nose, +y left, +z up), and the optional `axes` key covers an exception (§7.2, Q7). From M7 the separation's thrust gate rests on +x: a wrong axis or sign fails safe (thrust is never seen, and the 100 ms backstop decides), and each airframe's mount is checked nose up (+x reads about +1 g). M9 move-and-hold check. |
+| R11 | Per-sensor axes: the LSM6DSO32 and BMI323 publish raw axes into one channel, and a failover may flip axes. | **Measured (M9):** the LSM6DSO32 reads the marks frame; TMS-7F's SEN0697 does not (BMI323 `-y+x+z`, BMM350 `+x-y-z`; its silkscreen shows y to the right) and carries both keys; unmapped, the taster's breadboard parts made a 4.8 deg attitude step at a failover, mapped TMS-7F's 0.26 deg. Every SEN0697 airframe is checked by hand once (tilts and a yaw both ways), and `health` reports `sources-disagree` past 10 deg at rest. |
 | R12 | Two physics implementations would repeat the sim-mirrors-flight-code trap. | `sim_model.py` stays the only physics. Rust never ports it. |
 | R13 | Silent-success harness traps (1 of 12 flown reported done; empty streams passed). | Every new runner counts artefacts and fails loudly. |
-| R14 | Port 0 is shared with the camera SCCB, and `i2c_master`'s internal mutex arbitrates. | Camera register traffic only pre-flight. Measure the bus-owner jitter with video on in M6. |
+| R14 | Port 0 is shared with the camera SCCB, and `i2c_master`'s internal mutex arbitrates. | Camera register traffic only pre-flight. **Measured (M9 soak):** around the camera's start the BMI323's rows keep their 20 ms spacing, the BMP581's open to at most 39 ms, the BMM350's to 120 ms. |
 | R15 | One reply line must stay under the hub's 2 MiB limit (`server.py:697`). | Tee capped at 256 KiB of records (~0.9 MB in base64 when full, with JSON quoting). `get-config` ~10 KB. |
 
 ### 7.2 Decided
