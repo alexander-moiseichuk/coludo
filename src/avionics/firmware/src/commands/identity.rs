@@ -141,6 +141,63 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
     super::ok_json(&info)
 }
 
+/// How far apart two accelerometers at rest may read before `health` says so: 10 degrees (D15 of the M9 plan).
+const ACCEL_DISAGREE_DEGREES: f32 = 10.0;
+
+/// The live sources of one quantity that disagree (D15 of the M9 plan; the operator's Q5: information for the
+/// reader, never an arm gate -- the stage machine's own peer vote handles an outlier): two accelerometers more than
+/// [`ACCEL_DISAGREE_DEGREES`] apart while both read inside the still band (a part mounted off its `axes`), and two
+/// barometers' elevations more than half `launch_alt_m` apart (a re-zero missed). Each its own line; none when they
+/// agree or fewer than two are live.
+fn disagreements(context: &Context) -> Vec<String> {
+    let settings = board_config::entries(&context.config.document)
+        .iter()
+        .find(|entry| entry.implementation == "sequencer")
+        .and_then(|entry| sequencer::Settings::from_config(&serde_json::Value::Object(entry.fields.clone())).ok())
+        .unwrap_or_default();
+    // SAFETY: a plain read of the monotonic timer.
+    let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+    let mut lines = Vec::new();
+    if let Some(accel) = context.topology.vector("accel") {
+        let at_rest: Vec<(&str, [f32; 3])> = accel
+            .sources()
+            .filter_map(|source| Some((source, accel.channel(source)?.recent(accel.window_us(), now_us)?)))
+            .filter(|(_, [x, y, z])| ((x * x + y * y + z * z).sqrt() - 1.0).abs() <= settings.still_g)
+            .take(2)
+            .collect();
+        if let [(first, a), (second, b)] = at_rest[..] {
+            let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            let norms = (a.iter().map(|v| v * v).sum::<f32>() * b.iter().map(|v| v * v).sum::<f32>()).sqrt();
+            let degrees = (dot / norms).clamp(-1.0, 1.0).acos().to_degrees();
+            if degrees > ACCEL_DISAGREE_DEGREES {
+                lines.push(format!("sources-disagree: accel {first}/{second} {degrees:.1} deg"));
+            }
+        }
+    }
+    if let Some(elevation) = context.topology.scalar("elevation") {
+        let live: Vec<(&str, f32)> = elevation
+            .sources()
+            .filter(|source| *source != crate::control::GNSS_SOURCE)
+            .filter_map(|source| {
+                Some((
+                    source,
+                    elevation.channel(source)?.recent(elevation.window_us(), now_us)?,
+                ))
+            })
+            .take(2)
+            .collect();
+        if let [(first, a), (second, b)] = live[..]
+            && (a - b).abs() > settings.launch_alt_m / 2.0
+        {
+            lines.push(format!(
+                "sources-disagree: elevation {first}/{second} {:.1} m",
+                (a - b).abs()
+            ));
+        }
+    }
+    lines
+}
+
 /// The non-nominal states, one operator signal (src/glider cc_client health `degraded`), `flight` the snapshot the
 /// rest of the reply shows. Empty = nominal.
 fn degraded(context: &Context, flight: Flight) -> Vec<String> {
@@ -179,6 +236,7 @@ fn degraded(context: &Context, flight: Flight) -> Vec<String> {
     if crate::control::attitude_blind() {
         degraded.push("attitude-blind".into());
     }
+    degraded.extend(disagreements(context));
     if flight.manual {
         degraded.push("STAGE HELD".into()); // an operator hold suppresses every stage detector
     }

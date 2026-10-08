@@ -11,9 +11,10 @@
 //! **One owner, the `video` thread** (core 0, low priority, PSRAM stack), started only when the board config declares
 //! a camera and the card mounts ([`start`]). It is the only caller of `coludo_video_start` and `coludo_video_stop`,
 //! whose C side assumes one caller (its starts and stops never overlap). It looks at the flight word every
-//! [`LOOK_PERIOD`] and follows the camera-by-stage rules (crates/sequencer `video`): armed in SETTING starts the
-//! flight recording, replacing an operator's; a disarm in SETTING stops it; DONE stops whatever records; nothing
-//! starts outside SETTING. The GCL `video start` and `video stop` post to its mailbox and wait for the answer at most
+//! [`LOOK_PERIOD`] and follows the camera-by-stage rules (crates/sequencer `video`): armed in SETTING, the airframe
+//! standing nose up on the rod for 2 s (the fused accel's +x, M9) starts the flight recording, replacing an
+//! operator's -- at the arm itself on a board with no accelerometer; a disarm in SETTING stops it; DONE stops
+//! whatever records; nothing starts outside SETTING. The GCL `video start` and `video stop` post to its mailbox and wait for the answer at most
 //! [`ANSWER_DEADLINE`], so a recorder call that never returns cannot hold the CC executor. `video stats` only copies
 //! the counters, on the executor. Video is a utility: none of this blocks `arm` or takes anything from the flight.
 
@@ -24,8 +25,8 @@ use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::sys;
 use recorder::layout;
-use sequencer::video::{Duty, Owner, Refusal};
-use sequencer::{Flight, FlightWord, Stage};
+use sequencer::video::{Duty, Owner, Refusal, Trigger};
+use sequencer::{FlightWord, Stage};
 
 use crate::buses::i2c;
 use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach, Word};
@@ -233,8 +234,7 @@ const START_PARAMETERS: &[Parameter] = &[
     },
 ];
 
-/// How often the video thread looks at the flight word: an arm starts the flight recording within this, plus the start
-/// itself.
+/// How often the video thread looks at the flight word and the accel: the rod trigger's 8 looks are 2 s at this.
 const LOOK_PERIOD: Duration = Duration::from_millis(250);
 
 /// How long `video start` and `video stop` wait for the video thread's answer. A start (the first one opens the
@@ -293,18 +293,26 @@ struct Posted {
 /// * `session` - this boot's session: the videos directory the files go to;
 /// * `boot_id` - this boot's id, stamped into every frame;
 /// * `camera` - the camera the board config declares;
-/// * `flight` - the flight word the flight recording follows.
+/// * `flight` - the flight word the flight recording follows;
+/// * `accel` - the fused `accel` quantity the rod trigger reads, None on a board with no accelerometer.
 ///
 /// Errors: the thread would not spawn. Nothing is registered then, so `help` lists no `video`.
-pub fn start(session: String, boot_id: u32, camera: Camera, flight: &'static FlightWord) -> anyhow::Result<()> {
+pub fn start(
+    session: String,
+    boot_id: u32,
+    camera: Camera,
+    flight: &'static FlightWord,
+    accel: Option<&'static databoard::Parameter<[f32; 3]>>,
+) -> anyhow::Result<()> {
     let (orders, posted) = sync_channel(MAILBOX_DEPTH);
     let owner = VideoThread {
         session,
         boot_id,
         camera,
         flight,
+        accel,
         recording: None,
-        seen: Flight::GROUND,
+        trigger: Trigger::new(accel.is_some()),
     };
     ThreadSpawnConfiguration {
         name: Some(c"video"),
@@ -336,10 +344,12 @@ struct VideoThread {
     camera: Camera,
     /// The flight word it follows.
     flight: &'static FlightWord,
+    /// The fused `accel` the rod trigger reads, None on a board with no accelerometer.
+    accel: Option<&'static databoard::Parameter<[f32; 3]>>,
     /// The running recording: who started it, and its file.
     recording: Option<(Owner, String)>,
-    /// The flight at the last look.
-    seen: Flight,
+    /// The rod trigger: the arm episode's nose-up looks and whether it started.
+    trigger: Trigger,
 }
 
 impl VideoThread {
@@ -366,11 +376,16 @@ impl VideoThread {
         self.recording.as_ref().map(|(owner, _)| *owner)
     }
 
-    /// One look at the flight word, and the duty it asks for (crates/sequencer `video::look`).
+    /// One look at the flight word and the fused accel, and the duty they ask for (crates/sequencer `video::Trigger`).
     fn look(&mut self) {
         let now = self.flight.load();
-        let duty = sequencer::video::look(self.seen, now, self.owner());
-        self.seen = now;
+        // SAFETY: a plain read of the monotonic timer.
+        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let accel = self
+            .accel
+            .and_then(|parameter| parameter.read(now_us))
+            .map(|reading| reading.value);
+        let duty = self.trigger.look(now, accel, self.owner());
         match duty {
             None => {}
             Some(Duty::StartFlight) => self.start_flight(),
@@ -387,19 +402,20 @@ impl VideoThread {
         }
     }
 
-    /// Armed in SETTING: the flight recording, after the operator's stops (logged). A start that fails is logged
-    /// here, once: the next try is the next arm, and a dead camera never blocks one.
+    /// Armed in SETTING and on the rod (or armed, with no accelerometer): the flight recording, after the operator's
+    /// stops (logged). A start that fails is logged here, once: the next try is the next arm, and a dead camera never
+    /// blocks one.
     fn start_flight(&mut self) {
         if let Some((_, path)) = self.stop_running(false) {
-            log::info!("video :: armed: the operator's recording {path} stopped for the flight's");
+            log::info!("video :: on the rod: the operator's recording {path} stopped for the flight's");
         }
         match start_recording(&self.session, self.boot_id, self.camera, &FLIGHT) {
             Ok(path) => {
-                log::info!("video :: armed: the flight recording {path}");
+                log::info!("video :: on the rod: the flight recording {path}");
                 self.recording = Some((Owner::Flight, path));
             }
             Err(error) => log::error!(
-                "video :: armed, but the flight recording did not start: {error} -- not retried before the next arm"
+                "video :: on the rod, but the flight recording did not start: {error} -- not retried before the next arm"
             ),
         }
     }

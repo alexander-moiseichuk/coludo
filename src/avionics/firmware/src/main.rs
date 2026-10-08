@@ -275,6 +275,7 @@ fn main() -> anyhow::Result<()> {
                 board.boot_id.unwrap_or(0) as u32,
                 camera,
                 &status::FLIGHT,
+                topology.vector("accel"),
             )
         {
             log::error!("video :: the video thread did not start, no video this boot: {error}");
