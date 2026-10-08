@@ -1024,7 +1024,7 @@ proven once. Neither is on the HITL path.
 - Preview: the dashboard shows the taster's camera at 1 Hz, `bars` confirming the packing, byte order and colour
   range; a hand-shaken launch stops the preview.
 
-### M8. Warm start, checkpoint, supervisor watchdog (1-2 days)
+### M8. Warm start, checkpoint, supervisor watchdog (1-2 days; DONE 2026-10-08 on the taster and TMS-7F)
 
 **Before M8 -- the altitude launch's rate gate (operator, 2026-10-08):** TMS-7F false-launched on the bench overnight,
 unarmed: weather drift moved the barometer's elevation +10 m in 2.17 h and the altitude launch fired (plan B's rule:
@@ -1065,8 +1065,8 @@ honest. TMS-7F arms on a bench copy of its config (the not-ported entries remove
   any thread spawns, and a restore into BOOSTING..LANDING sets `launched`, so a warm-started board does not rejoin
   the link (watch it on the console). The crumb reads the one word. The gate's separation latch is the counted one:
   a separation still pending under the closed thrust gate is not a separation.
-- **`panic` is SETTING-only** (`firmware/src/main.rs:295`), but the proof below calls it in a held GLIDING: open it
-  there, or reboot the board another way.
+- **`panic`** is console-only in every stage (§4.8), with the kinds `twdt` (the supervisor stops feeding) and `stall`
+  (the control tick stops), each refused where nothing would fire it.
 
 **Proof**
 - Golden `warmstart.json`: `should_restore` over every crumb, cause and age boundary, plus a torn crumb, exact
@@ -1078,6 +1078,45 @@ honest. TMS-7F arms on a bench copy of its config (the not-ported entries remove
   BOOSTING, so a disarmed hold straight from SETTING reboots cold.) The survival of `gettimeofday` across
   SW/panic/TWDT resets is itself measured here (§7, R7).
 - On the taster: the same armed run carried on to DONE, then a console `panic`, boots a new session in SETTING.
+
+**As built (2026-10-08):**
+- The crumb is saved only while armed **and** launched (the machine's own launch, §4.1), about once a second on the
+  supervisor's grid, `stage` written last; any edge out of that state clears it, and a failed save or clear is
+  retried every poll (§6). A held armed stage therefore writes none, so the plan's held-GLIDING proof became the
+  hands-free altitude launch on TMS-7F (a bench copy without the IMU entries, so the at-rest veto stays off).
+- The restore runs on main after the owners' bring-up and before the control thread takes the flight word's writer
+  (`FlightWriter::restore`); it commits the stage, the arming and `launched`, and rebases every barometer that
+  publishes an elevation to the crumb's pad (the BMP581 says it does not, until M9). After a warm start
+  `sequencer.csv` opens with `<stage>;external` only.
+- The supervisor (core 0, a 100 ms grid) runs the checkpoint, the health row and the watchdog. It reconfigures the
+  TWDT to panic and subscribes itself alone (§6); its console lines go through the printer's queue, so a long `tlm`
+  drain on the console can never starve the feed. `controlling` = armed, launched, airborne and the tick seen, judged
+  by the control tick's millisecond stamp; a stall past `stall_ms` logs `watchdog :: control loop stalled
+  (stage=X) -> reset`, waits for the printer (at most 100 ms) and restarts. A stall restart's own warm start
+  never stall-restarts again (`warmstart::stall_restart_suppressed`), so a stall that returns every boot leaves the
+  board stalled rather than cycling it.
+- Deferred: the pitot tare restore (M10), the airspeed seed (M13), the BMP581 rebase (M9), `freeze_launch` from a
+  GNSS fix (M11), the HITL warm-gate comparison and Q19's step 2 (M12/M14), a BOOSTING crumb whose latch already reads
+  separated (M13, with the boost law), a cap on warm cycles (M13/M14), a watchdog through bring-up (later: a guard
+  shorter than a failing part's slowest bring-up would turn a slow boot into a reset loop).
+
+**Proof (2026-10-08, as measured):**
+- Host: warmstart 58 tests (the gate over every crumb, cause and age boundary, a torn crumb; the stall suppression
+  over every reset), golden `warmstart.json` exact; sequencer, controller and board_config as in stage 1.
+- The crumb (TMS-7F): about one save a second while armed and launched, 0 failures, the longest save 6.4 ms; a held
+  arm saves none; the stamp is 1 s behind `whoami`; recovery (`stage done`, re-zero, `stage setting`) clears it.
+- Warm GLIDING (TMS-7F): a console panic in GLIDING boots `gate: recover gliding, 3s after checkpoint (reset_cause
+  panic)`, the ICP rebased exactly to the crumb's pad (10.119909 m), `WARM START -> gliding, armed`, then the machine
+  walks it to DONE; `degraded` reads `WARM-STARTED (rebooted in flight)`.
+- Warm BOOSTING (the taster): the same, rebased exactly to 25.133308 m; the backstop re-based.
+- Cold: a crumb at DONE (the bench copy's 60 s flight timeout) gives `crumb reads done -> a new session`; a held
+  arm's panic finds no crumb; a nested separation latch refuses GLIDING (the taster).
+- The task watchdog (TMS-7F, timeout 5000 ms): `panic kind=twdt` in SETTING ends in `task_wdt: ... supervisor (CPU
+  0)`, the panic record reads `task-watchdog`, and the boot is cold; the same in armed GLIDING boots `reset_cause
+  task-watchdog` and warm.
+- The stall (TMS-7F): `control loop stalled (stage=gliding) -> reset`, then a warm boot (`reset_cause software`)
+  with `restart_suppressed: true`, and a second `panic kind=stall` refused. The taster (no watchdog entry) refuses
+  both kinds.
 
 **Operator gains.** A mid-air reset resumes the flight, and a reset after landing starts a fresh session. The
 board can no longer hang silently.
@@ -1945,8 +1984,8 @@ or becomes a wrapping u32 in milliseconds (M1's log tee does that).
 | `Task.note` / `strike` | `Strikes{count}` + `AtomicBool healthy` in the status block |
 | `Task.event` → `<name>_events.csv` + log | the same stream (`decimate_us = -1`), a durable record |
 | `Controller.find` / `query(waiting=True)` | static wiring: handles passed at spawn; a missing dependency fails bring-up |
-| `machine.WDT` + watchdog task (stall check) | the supervisor reconfigures the TWDT to panic (`esp_task_wdt_reconfigure`, `trigger_panic = true`, timeout `wdt_timeout_ms`, as `machine.WDT` does; by default a timeout only warns) and feeds it; control stall > `stall_ms` while controlling → event + `esp_restart` |
-| `Mission` singleton | owned by the supervisor (by the `cc` executor until a supervisor thread exists); the others post requests; `MissionGeometry` published by seqlock |
+| `machine.WDT` + watchdog task (stall check) | the supervisor reconfigures the TWDT to panic (`esp_task_wdt_reconfigure`, `trigger_panic = true`, timeout `wdt_timeout_ms`, as `machine.WDT` does; by default a timeout only warns) and feeds it; control stall > `stall_ms` while controlling (armed, launched, airborne, the tick seen; judged by the tick's ms stamp, floored at two periods) → event + `esp_restart`, never again in a stall restart's own warm start (M8) |
+| `Mission` singleton | owned by the `cc` executor (M8); the checkpoint reads a snapshot it republishes after every line under a core-0 mutex, never on the flight core |
 | `cc_client` Dispatcher in the asyncio loop | the `cc` executor thread, fed by link + console |
 | GC off / rescue / OOM forecast / `fixed.py` | not ported (§6) |
 
@@ -1961,7 +2000,7 @@ or becomes a wrapping u32 in milliseconds (M1's log tee does that).
 | `gnss` | 1 | 14 | UART2 receiver, NMEA/UBX | blocking read with timeout |
 | esp_hosted, Wi-Fi, lwIP | 0* | 18-23 | IDF; never switched off: after the detected launch the link never rejoins (M7); the beacon AP at DONE (M11b) | — |
 | `video encoder` | 0 | 10 | exists | camera |
-| `supervisor` | 0 | 9 | TWDT feed, health 1 Hz, checkpoint (NVS), gnss_calib, field, Mission | 100 ms base tick |
+| `supervisor` | 0 | 9 | TWDT feed, stall check, health 1 Hz, checkpoint (NVS); later gnss_calib, field | 100 ms base tick |
 | `ring_writer` | 0 | 7 | programs the `log` partition; ring consumers, tees | ~10 ms tick, or a durable record's notify |
 | `video SD writer` | 0 | 6 | exists | — |
 | `video` (M7; only with a camera and a card configured) | 0 | low | the only caller of `coludo_video_start`/`stop`: the flight recording by stage, GCL `video start`/`stop` by mailbox; PSRAM stack | the flight word every 250 ms |
@@ -2027,7 +2066,8 @@ R5).
    every 100 ms, sampled before the gates. Disarmed or no setpoint gives neutral once (gated on `_active`).
    Stale attitude and the on-rod guidance gate apply neutral on every tick and leave `_active` set;
    compare-and-set makes the effect similar.
-8. **Heartbeat:** `last_tick_us`, `steps`, `controlling`.
+8. **Heartbeat:** `LAST_TICK_MS` (u32 ms, one Relaxed store) and `TICKS`; the supervisor derives `controlling` from
+   the flight word (M8).
 
 On a `Result` error exit the fins go neutral before returning (the `flight.run` finally invariant). Nothing
 ever unwinds: the firmware target uses panic-strategy abort, so a panic aborts and resets the chip. LEDC stops,
@@ -2094,8 +2134,8 @@ Bus owners run their tables on the same notify:
    `provides`. Then the alternatives pass.
 7. Freeze the databoard topology and the inspector (`Box::leak` → `&'static`).
 8. `warm.rs` restore, before any flight-relevant thread runs.
-9. Unpark the bus owners. Spawn control (core 1) and the supervisor. Arm the gptimer. Reconfigure the TWDT to
-   panic at `wdt_timeout_ms` and subscribe the supervisor to it.
+9. Unpark the bus owners. Spawn control (core 1) and the supervisor. Arm the gptimer. The supervisor itself
+   reconfigures the TWDT to panic at `wdt_timeout_ms` and subscribes to it (M8).
 10. Console, link and httpd (as today).
 
 ### 4.6 Warm-start, boot rules and reset classes
@@ -2114,8 +2154,8 @@ Bus owners run their tables on the same notify:
     - the reset is a reset class (below);
     - `0 ≤ now − stamp ≤ 600 s` via `gettimeofday`;
     - GLIDING and LANDING also need the separation latch read at setup.
-    - The warmstart crate already matches it on golden vectors. M8 proves it in HITL against the plan B
-      baselines and measures R7.
+    - The warmstart crate matches it on golden vectors, and M8 proved it on the bench (TMS-7F and the taster). The
+      HITL comparison against the plan B baselines moves to M12/M14, as does step 2.
   - **Step 2, after M8's HITL comparison (Q19): the simple state machine.** Only physical evidence can refuse:
     - the crumb must carry a stage;
     - GLIDING and LANDING still need the separation latch (it is the latch no software can fake, so a nested glider
@@ -2357,8 +2397,11 @@ be fatal or not.
     buffers, never into PSRAM (the file server's own memory);
   - `tools/panic_decode.py <board|file>` decodes MEPC, RA and the stack's code words against the firmware ELF with
     addr2line.
-- **Test command:** `panic kind=rust|fault|abort|oops confirm` (SETTING). The first three reboot through a Rust
-  panic, a store to address 0 and C's `abort()`; `oops` records a non-fatal one.
+- **Test command:** `panic kind=rust|fault|abort|oops|twdt|stall confirm`, console-only and open in every stage (the
+  warm-start proofs need it in the air; the hub never sends it). The first three reboot through a Rust panic, a store
+  to address 0 and C's `abort()`; `oops` records a non-fatal one; `twdt` stops the supervisor's feed until the task
+  watchdog panics; `stall` stops the control tick until the stall check restarts the board (M8). Each is refused where
+  it cannot fire: no armed task watchdog, no stall check, or a stall restart already suppressed.
 - **Proof (taster, 2026-10-07):**
   - each fatal kind was recorded by the next boot with 4.1–4.2 KB of text, `intact=1`, tagged with the boot that
     crashed;
@@ -2601,6 +2644,18 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
   same patch, its one sanctioned change (commit 76c138c, M5, §7.2 Q9).
 - **INA226 `rearm()`** also restores ALERT_LIM and MASK.
 - **VL53 poll mode** checks data-ready, so a repeated range is never republished as fresh.
+- **The crumb (M8)** is saved only while armed and launched (the machine's launch), so a held armed stage writes none,
+  and it is cleared on any edge out of that state, every failed save or clear retried; plan B saves on any armed
+  airborne stage. Cost: plan B's simulated HITL reboot (an outage modelled as a disarm) cannot pass the gate.
+  `checkpoint.csv` is durable and never decimated (the stage column the id, as plan B), and the clock is re-anchored
+  to the RTC before each stamp.
+- **The watchdog (M8)** watches the supervisor alone, plus the control tick's stall check; plan B's watched its whole
+  event loop, a hung bus included (here a hung bus shows as failing reads, I2C transfers time out at 50 ms). A stall
+  restart flushes its line first, and its own warm start never stall-restarts again. Watchdog and checkpoint keys
+  are refused at bring-up, where plan B's arm refused them after a run crash (stricter: a text `stall_ms`, bools).
+- **A warm start (M8)** prints its gate as text, opens `sequencer.csv` with `<stage>;external` only, records no video
+  and stays off the link (`launched` is set); the pad latch stops at `launch_alt_m`/2 of elevation.
+- **`panic`** (§4.8) is console-only and open in every stage, with the kinds `twdt` and `stall`.
 
 **Unchanged** (contract): the CC grammar and replies, the routing and CRC wrapper, the session.csv columns, the
 stream names and field lists, the config JSON schema and `config_id` algorithm, the NVS namespace `coludo` and
@@ -2621,7 +2676,7 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 | R4 | The first Rust boot carries nothing from MicroPython's VFS (board.config, launch.config, `*.creds`). TMS-7F is sealed and Wi-Fi only. | `tools/provision.sh` writes the `cfg` partition (config, launch, creds) over USB with esptool, after `flash.sh` and **before** the seal. Never flash a sealed board without it. |
 | R5 | esp_hosted 2.7.0 tasks run at priority 23, unpinned (plain `xTaskCreate`); the streaming-mode length assert is still open. | lwIP's TCP/IP task is pinned to core 0 already (M1). M1b pins esp_hosted by wrapping `g_hosted_osi_funcs._h_thread_create`, the hook `components/hosted_no_reboot` uses for `_h_restart_host`. From M7 the radio stays on in Rust, but after the detected launch the link never rejoins, hunts or dials (§6), so esp_hosted carries no traffic once the pad session drops. |
 | R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Rust re-initializes every device registered on the bus after a general call (M5). Plan B is patched the same way (commit 76c138c, §7.2 Q9). |
-| R7 | `gettimeofday` surviving SW, panic and TWDT resets on the P4 is unverified, and step 1's age check (plan B's gate) depends on it. | Measured in M8. Q19's step 2 drops the age check, which closes it. |
+| R7 | `gettimeofday` surviving SW, panic and TWDT resets on the P4; step 1's age check (plan B's gate) depends on it. | **Measured (M8):** a panic keeps the clock but returns it off by the drift since boot (+25.3 s / -22.6 s after ~9.7 h, ~700 ppm); a software reboot keeps it; a power-on loses it. The crumb re-anchors the clock before each stamp; the rod is under 30 min, so no resync (operator). Q19's step 2 drops the age check. |
 | R8 | base64 strictness differs: CPython is lenient, Rust is strict. A bad token could answer differently from the fake. | Rust answers `err badargs` (strict). The contract runner records the fake's deviation as known. |
 | R9 | Detector drift vs the host sim: `virtual_flight.py` grades the Python detectors once the board runs Rust. | `commons.json`, `sequencer_trace.json`, `control_trace_*.json` are the only guards. `generate.py --check` in CI. |
 | R10 | HITL masking: a fresh bench sensor silently becomes the only source (pitot 7/27, mag 9/16). | `sim_link.rs` masks the `_SIM_SENSORS` sensors by config name (they are sensor names, not drivers), as plan B does, and re-applies the mask after layout. It then refuses to start if one is still enabled, which is new (plan B only masks). |
