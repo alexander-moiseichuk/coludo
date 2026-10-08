@@ -1034,6 +1034,11 @@ of a second, drift takes hours. The accel launch is unchanged. A plan B divergen
 **The stage machine's sources (operator, the same day):** the stage machine must decide from several sources -- the
 pitot (SDP810), both barometers (ICP-10111, BMP581), the IMU and the accelerometer -- not one quantity per detector.
 The design lands with the sources: M9 (BMP581, the attitude IMU) and M10 (the pitot).
+**Every barometer's quantities (operator, the same day):** temperature, pressure, altitude above sea level, elevation
+above the zeroed ground, and **change** -- the elevation's rate in m/s, climb positive -- new beside plan B's four. It is
+each barometer's climb rate for the multi-source detectors, and the launch rate gate's natural source once it exists.
+**Measured before M8 (R7):** the wall clock survives a panic reset but returns off by the drift since boot -- +25.3 s
+on the taster and -22.6 s on TMS-7F after ~9.7 h (~700 ppm, the RTC slow clock).
 
 **Scope**
 - `crates/warmstart` plus `warm.rs`. Restore runs **before** any thread spawns: stage, armed, ground for all
