@@ -142,15 +142,15 @@ pub struct Flight {
     pub manual: bool,
     /// Actuation enabled: the arm gate passed (plan B `armed`). Disarmed fins hold neutral.
     pub armed: bool,
-    /// The stage machine itself detected this flight's launch (its own SETTING -> BOOSTING advance), and no
-    /// operator hold has come since. While it is set the link never rejoins, hunts or dials
-    /// ([`Flight::reconnect_allowed`]).
+    /// The stage machine itself detected this flight's launch (its own SETTING -> BOOSTING advance), or a warm
+    /// start restored a flight that was in the air ([`FlightWriter::restore`]), and no operator hold has come since.
+    /// While it is set the link never rejoins, hunts or dials ([`Flight::reconnect_allowed`]).
     pub launched: bool,
 }
 
 impl Flight {
     /// A board on the pad: SETTING, no hold, disarmed, no launch. Every boot starts here; only a warm start's
-    /// restore moves the word before the threads run.
+    /// restore ([`FlightWriter::restore`]) moves the word on from it before the threads run.
     pub const GROUND: Flight = Flight {
         stage: Stage::Setting,
         manual: false,
@@ -368,6 +368,26 @@ impl FlightWriter<'_> {
     pub fn apply(&mut self, request: Request) -> Result<Commit, StageProblem> {
         let after = self.flight.apply(request)?;
         Ok(self.commit(after))
+    }
+
+    /// Commit a warm start's restored flight, before any thread runs: the crumb's airborne stage and arming, no hold,
+    /// and `launched`, since the board was in the air when it reset, so the link stays down (plan B's warmstart
+    /// `set_stage`, then `arm()` when the crumb was armed). The stage machine then sees the stage as moved from
+    /// outside, and re-bases its backstop on it.
+    ///
+    /// Args: `stage` the crumb's stage; `armed` the crumb's arming.
+    ///
+    /// Returns: the commit, for BOOSTING through LANDING; None, with nothing committed, for SETTING or DONE, which
+    /// are never a warm start (a crumb reading DONE starts a new session in SETTING).
+    pub fn restore(&mut self, stage: Stage, armed: bool) -> Option<Commit> {
+        stage.airborne().then(|| {
+            self.commit(Flight {
+                stage,
+                manual: false,
+                armed,
+                launched: true,
+            })
+        })
     }
 
     /// Store `after` in the word and report the change.
@@ -740,6 +760,119 @@ mod tests {
         writer.apply(Request::Hold(Stage::Boosting)).unwrap();
         let commit = writer.separate().unwrap();
         assert_eq!((commit.after.stage, commit.after.manual), (Stage::Gliding, true));
+    }
+
+    #[test]
+    fn a_restore_commits_the_crumbs_airborne_flight_as_launched() {
+        for stage in [Stage::Boosting, Stage::Gliding, Stage::Landing] {
+            for armed in [false, true] {
+                let word = FlightWord::new();
+                let mut writer = word.writer().unwrap();
+                let commit = writer.restore(stage, armed).unwrap();
+                let restored = Flight {
+                    stage,
+                    manual: false,
+                    armed,
+                    launched: true,
+                };
+                assert_eq!(
+                    commit,
+                    Commit {
+                        before: Flight::GROUND,
+                        after: restored
+                    }
+                );
+                assert_eq!(Flight::unpack(restored.pack()), Some(restored));
+                assert_eq!((word.load(), writer.flight()), (restored, restored));
+                assert_eq!(commit.flight_flag(), Some(FlightFlag::Raise), "{stage:?}");
+                assert!(
+                    !word.load().reconnect_allowed(),
+                    "the link stays down after a warm start"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_restored_flight_flies_on() {
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        writer.restore(Stage::Boosting, true).unwrap();
+        let separated = writer.separate().unwrap().after;
+        assert_eq!(
+            separated,
+            Flight {
+                stage: Stage::Gliding,
+                manual: false,
+                armed: true,
+                launched: true
+            }
+        );
+        let landed = writer.advance(advance(Stage::Landing));
+        assert_eq!(
+            landed.after,
+            Flight {
+                stage: Stage::Landing,
+                ..separated
+            }
+        );
+        let done = writer.advance(advance(Stage::Done));
+        assert_eq!(done.flight_flag(), Some(FlightFlag::Lower));
+        assert!(done.after.launched);
+        // an operator hold after the restore is no launch: it clears launched, the arming stays
+        let held = writer.apply(Request::Hold(Stage::Gliding)).unwrap().after;
+        assert_eq!(
+            held,
+            Flight {
+                stage: Stage::Gliding,
+                manual: true,
+                armed: true,
+                launched: false
+            }
+        );
+        assert_eq!(word.load(), held);
+    }
+
+    #[test]
+    fn a_restore_commits_the_crumbs_flight_whatever_the_word_held() {
+        // armed, then held at GLIDING: a restore to a disarmed LANDING takes the crumb's arming and no hold
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        writer.apply(Request::Arm).unwrap();
+        let held = writer.apply(Request::Hold(Stage::Gliding)).unwrap().after;
+        let commit = writer.restore(Stage::Landing, false).unwrap();
+        let restored = Flight {
+            stage: Stage::Landing,
+            manual: false,
+            armed: false,
+            launched: true,
+        };
+        assert_eq!(
+            commit,
+            Commit {
+                before: held,
+                after: restored
+            }
+        );
+        assert_eq!(word.load(), restored);
+    }
+
+    #[test]
+    fn a_restore_on_the_ground_commits_nothing() {
+        for stage in [Stage::Setting, Stage::Done] {
+            for armed in [false, true] {
+                let word = FlightWord::new();
+                let mut writer = word.writer().unwrap();
+                assert_eq!(writer.restore(stage, armed), None, "{stage:?} armed {armed}");
+                assert_eq!((word.load(), writer.flight()), (Flight::GROUND, Flight::GROUND));
+            }
+        }
+        // the restore goes through the one writer: none is handed out beside it, before or after
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        assert!(word.writer().is_none());
+        writer.restore(Stage::Gliding, false).unwrap();
+        assert!(word.writer().is_none());
     }
 
     /// The flight flag's change for a commit from stage `from` to stage `to`.

@@ -35,8 +35,8 @@ const RESERVED_PINS: [(&str, &[u64]); 1] = [("esp32p4", &[6, 14, 15, 16, 17, 18,
 
 /// The lowest hardware watchdog timeout an enabled watchdog may ask for, in milliseconds: below it the board
 /// boot-loops (3000 still did, 4000 was stable), and with servos enabled every boot re-centres every fin
-/// (config.py `_WDT_FLOOR_MS`).
-const WATCHDOG_FLOOR_MS: i64 = 4000;
+/// (config.py `_WDT_FLOOR_MS`). The typed view's `watchdog` enforces it too, on any enabled watchdog's timeout.
+pub(crate) const WATCHDOG_FLOOR_MS: i64 = 4000;
 
 /// The longest `debounce_ms` a device may ask for, in milliseconds: a port rule, plan B checks none.
 ///

@@ -12,7 +12,8 @@
 //! * [`write()`]: the canonical pretty text (`json.dumps(indent=1, sort_keys=True)` plus a newline).
 //! * A typed view of the few keys the firmware reads so far: [`board_id`], [`mcu`], [`wifi`],
 //!   [`max_range_m`], [`camera`]; and for the device bring-up (M5) the buses ([`i2c_bus`], [`spi_bus`]), the
-//!   device [`directory`] with each entry's [`pin`]s and [`provides`], and the [`setup_retries`].
+//!   device [`directory`] with each entry's [`pin`]s and [`provides`], and the [`setup_retries`]; and for the
+//!   supervisor (M8) the [`checkpoint`] cadence, the [`warm_start`] toggle and the [`watchdog`] settings.
 //! * [`python`]: Python's `==`, `%s` and truthiness over config values, for the ports that read a config as
 //!   plan B does.
 //!
@@ -47,8 +48,9 @@ use sha2::{Digest, Sha256};
 
 pub use validate::{LONGEST_DEBOUNCE_MS, validate};
 pub use view::{
-    Camera, CameraClock, Entry, Hub, I2cSpecification, Network, Provide, Section, SpiSpecification, Wifi, board_id,
-    camera, directory, entries, i2c_bus, max_range_m, mcu, pin, provides, schedule_hz, setup_retries, spi_bus, wifi,
+    Camera, CameraClock, Entry, Hub, I2cSpecification, Network, Provide, Section, SpiSpecification, Watchdog, Wifi,
+    board_id, camera, checkpoint, directory, entries, i2c_bus, max_range_m, mcu, pin, provides, schedule_hz,
+    setup_retries, spi_bus, warm_start, watchdog, wifi,
 };
 pub use writer::write;
 

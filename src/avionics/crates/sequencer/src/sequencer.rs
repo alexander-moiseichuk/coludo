@@ -4,8 +4,9 @@
 //! guarded, forward-only stage automation the control loop gates on.
 //!
 //! - SETTING -> BOOSTING: |accel| over `launch_g` for `launch_ms` of net time (motor ignition), OR the baro
-//!   climbing past `launch_alt_m` for as long (an independent, threshold-robust backup). Never the GNSS
-//!   elevation.
+//!   climbing past `launch_alt_m` for as long (an independent, threshold-robust backup), having risen
+//!   `launch_alt_m` within `launch_alt_window_ms` above a level held for `launch_ms` (the rate gate, not plan B's:
+//!   weather drift is no launch, nor one low read). Never the GNSS elevation.
 //! - BOOSTING -> GLIDING: the separation switch is primary, and it moves the stage from OUTSIDE (the firmware's
 //!   separation debounce, plan B drivers/separation.py) -- the machine sees it as an external move. Else the baro
 //!   APOGEE (`apogee_drop_m` below the smoothed peak, blind for `apogee_arm_ms` after BOOSTING entry); the
@@ -45,7 +46,8 @@ use crate::controller::Stage;
 
 /// The sequencer's board-config keys, each field named after its key (the contract): the step period and the
 /// stage machine's thresholds, read by [`Settings::from_config`] with plan B's `Sequencer.setup()` defaults for a
-/// missing one ([`Settings::default`]). `disable_gc_flight` is not ported.
+/// missing one ([`Settings::default`]), and the altitude launch's rate gate, which plan B does not have.
+/// `disable_gc_flight` is not ported.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     /// The step period in ms (plan B's loop sleep): the control thread steps the machine on a `period_ms` grid of
@@ -56,10 +58,18 @@ pub struct Settings {
     /// ~2.84 g, so 3.0 would MISS the launch of the real airframe; config_default ships 2.5.
     pub launch_g: f32,
     /// The launch dwell in ms of net time, for the accel and the baro trigger alike -- and, as in plan B, the
-    /// apogee dwell too (§7.2 Q14: ported faithfully, to stay comparable with the HITL baselines).
+    /// apogee dwell too (§7.2 Q14: ported faithfully, to stay comparable with the HITL baselines). The baro trigger's
+    /// rate gate also takes it as how long a level must hold to be the pad a climb is measured from.
     pub launch_ms: u32,
     /// The baro launch backup in metres above the pad: clearly climbed off the rod.
     pub launch_alt_m: f32,
+    /// The baro launch backup's rate gate in ms: the elevation must also have risen `launch_alt_m` above the lowest
+    /// level it held for `launch_ms` within this window (the hold ending in it), through the whole `launch_ms` dwell.
+    /// Not plan B's (operator, 2026-10-08): TMS-7F launched unarmed on the bench overnight when weather drift carried
+    /// its elevation +10 m in 2.17 h past `launch_alt_m`. A rocket gains 10 m within about a second of ignition even
+    /// on the slowest v2 stack (2.84 g), drift takes hours. A window shorter than `launch_ms` holds no level that
+    /// long, so the altitude launch never fires. At most [`LONGEST_LAUNCH_ALTITUDE_WINDOW_MS`].
+    pub launch_alt_window_ms: u32,
     /// The burnout fallback in ms after BOOSTING entry, for a flat or absent baro. Plan B's setup() default is
     /// 6000 while config_default ships 12000 (past the slowest v2 apogee, ~11 s), so it never pre-empts the
     /// apogee.
@@ -91,13 +101,15 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    /// Plan B's `Sequencer.setup()` defaults: what a board config without the key flies.
+    /// Plan B's `Sequencer.setup()` defaults, and the operator's 1 s rate gate: what a board config without the key
+    /// flies.
     fn default() -> Settings {
         Settings {
             period_ms: 50,
             launch_g: 2.5,
             launch_ms: 100,
             launch_alt_m: 10.0,
+            launch_alt_window_ms: 1000,
             boost_timeout_ms: 6000,
             apogee_drop_m: 5.0,
             apogee_arm_ms: 4000,
@@ -116,8 +128,10 @@ impl Settings {
     ///
     /// It takes every value plan B flies as written and refuses the rest. A g or metre key takes any JSON number, as
     /// f32. A `*_ms` key takes a whole number of ms from 0 to 2147483647 (about 24.8 days, the longest the machine's
-    /// signed elapsed time reaches), written with a fraction of zero too (`300.0`, which plan B flies as 300).
-    /// Anything else is refused, naming the key, so the board fails the entry at bring-up and `arm` refuses. Plan B
+    /// signed elapsed time reaches), written with a fraction of zero too (`300.0`, which plan B flies as 300). The rate
+    /// gate's `launch_alt_window_ms`, which plan B has none of, takes the same, up to
+    /// [`LONGEST_LAUNCH_ALTITUDE_WINDOW_MS`], the window the machine's history holds. Anything else is refused,
+    /// naming the key, so the board fails the entry at bring-up and `arm` refuses. Plan B
     /// with the same block: a text `launch_g` or `still_g` failed its setup; a text `period_ms` or `launch_alt_m`
     /// crashed the task on the pad; a text `launch_ms` passed arm and crashed at ignition; the other keys passed arm
     /// and crashed their stage's detector in flight; and a fractional or negative `*_ms` flew. Keys it does not know
@@ -128,20 +142,27 @@ impl Settings {
     /// Returns: the settings, or the first key refused and why.
     pub fn from_config(config: &Value) -> Result<Settings, SettingsError> {
         let defaults = Settings::default();
+        let duration = |key, default| milliseconds(config, key, default, LONGEST_MS);
         Ok(Settings {
-            period_ms: milliseconds(config, "period_ms", defaults.period_ms)?,
+            period_ms: duration("period_ms", defaults.period_ms)?,
             launch_g: real(config, "launch_g", defaults.launch_g)?,
-            launch_ms: milliseconds(config, "launch_ms", defaults.launch_ms)?,
+            launch_ms: duration("launch_ms", defaults.launch_ms)?,
             launch_alt_m: real(config, "launch_alt_m", defaults.launch_alt_m)?,
-            boost_timeout_ms: milliseconds(config, "boost_timeout_ms", defaults.boost_timeout_ms)?,
+            launch_alt_window_ms: milliseconds(
+                config,
+                "launch_alt_window_ms",
+                defaults.launch_alt_window_ms,
+                LONGEST_LAUNCH_ALTITUDE_WINDOW_MS,
+            )?,
+            boost_timeout_ms: duration("boost_timeout_ms", defaults.boost_timeout_ms)?,
             apogee_drop_m: real(config, "apogee_drop_m", defaults.apogee_drop_m)?,
-            apogee_arm_ms: milliseconds(config, "apogee_arm_ms", defaults.apogee_arm_ms)?,
-            flight_timeout_ms: milliseconds(config, "flight_timeout_ms", defaults.flight_timeout_ms)?,
+            apogee_arm_ms: duration("apogee_arm_ms", defaults.apogee_arm_ms)?,
+            flight_timeout_ms: duration("flight_timeout_ms", defaults.flight_timeout_ms)?,
             land_agl_m: real(config, "land_agl_m", defaults.land_agl_m)?,
-            land_ms: milliseconds(config, "land_ms", defaults.land_ms)?,
+            land_ms: duration("land_ms", defaults.land_ms)?,
             still_g: real(config, "still_g", defaults.still_g)?,
-            ground_ms: milliseconds(config, "ground_ms", defaults.ground_ms)?,
-            land_timeout_ms: milliseconds(config, "land_timeout_ms", defaults.land_timeout_ms)?,
+            ground_ms: duration("ground_ms", defaults.ground_ms)?,
+            land_timeout_ms: duration("land_timeout_ms", defaults.land_timeout_ms)?,
         })
     }
 }
@@ -159,23 +180,30 @@ fn real(config: &Value, key: &'static str, default: f32) -> Result<f32, Settings
 
 /// The longest `*_ms` setting, `i32::MAX` (about 24.8 days): the machine compares a signed 32-bit elapsed time
 /// ([`commons::reached`]), which never reaches a longer threshold, so one would silently switch its detector or
-/// backstop off. Every `*_ms` key takes the same bound, `period_ms` included.
+/// backstop off. Every `*_ms` key plan B has takes the same bound, `period_ms` included.
 const LONGEST_MS: u32 = i32::MAX as u32;
 
-/// A `*_ms` key of `config`: a whole number of ms up to [`LONGEST_MS`], an integer or a float with no fraction;
+/// The longest `launch_alt_window_ms`, twice the operator's 1 s: the machine keeps the elevation history for it in a
+/// fixed array of 81 slots, 25 ms apart, 12 bytes each (972 B, in the machine on the control thread's stack), and
+/// allocates nothing. A sluggish 1.5 g boost is 10 m up 2.0 s after ignition: a 2 s window
+/// passes it then, the default 1 s about 0.5 s later.
+pub const LONGEST_LAUNCH_ALTITUDE_WINDOW_MS: u32 = 2000;
+
+/// A `*_ms` key of `config`: a whole number of ms up to `longest`, an integer or a float with no fraction;
 /// `default` when the key is absent.
-fn milliseconds(config: &Value, key: &'static str, default: u32) -> Result<u32, SettingsError> {
+fn milliseconds(config: &Value, key: &'static str, default: u32, longest: u32) -> Result<u32, SettingsError> {
     let Some(value) = config.get(key) else {
         return Ok(default);
     };
     let refused = |problem| Err(SettingsError::new(key, value, problem));
+    let too_long = SettingsProblem::TooLong { longest_ms: longest };
     let Value::Number(number) = value else {
         return refused(SettingsProblem::NotANumber);
     };
     if let Some(whole) = number.as_u64() {
         return match u32::try_from(whole) {
-            Ok(whole) if whole <= LONGEST_MS => Ok(whole),
-            _ => refused(SettingsProblem::TooLong),
+            Ok(whole) if whole <= longest => Ok(whole),
+            _ => refused(too_long),
         };
     }
     // a negative integer, or a float
@@ -188,8 +216,8 @@ fn milliseconds(config: &Value, key: &'static str, default: u32) -> Result<u32, 
     if float.fract() != 0.0 {
         return refused(SettingsProblem::Fractional);
     }
-    if float > f64::from(LONGEST_MS) {
-        return refused(SettingsProblem::TooLong);
+    if float > f64::from(longest) {
+        return refused(too_long);
     }
     Ok(float as u32)
 }
@@ -226,8 +254,12 @@ pub enum SettingsProblem {
     Negative,
     /// A `*_ms` with a fraction: plan B flew one, a clock in whole ms cannot.
     Fractional,
-    /// A `*_ms` past 2147483647 (`i32::MAX`, about 24.8 days): the machine's signed elapsed time never reaches it.
-    TooLong,
+    /// A `*_ms` past the longest its key takes: 2147483647 (`i32::MAX`, about 24.8 days), which the machine's signed
+    /// elapsed time never passes, or for `launch_alt_window_ms` [`LONGEST_LAUNCH_ALTITUDE_WINDOW_MS`].
+    TooLong {
+        /// The longest the key takes, in ms.
+        longest_ms: u32,
+    },
 }
 
 impl fmt::Display for SettingsError {
@@ -238,7 +270,9 @@ impl fmt::Display for SettingsError {
             SettingsProblem::NotANumber => write!(formatter, "{key}: {value} is not a number"),
             SettingsProblem::Negative => write!(formatter, "{key}: {value} is negative"),
             SettingsProblem::Fractional => write!(formatter, "{key}: {value} is not a whole number of ms"),
-            SettingsProblem::TooLong => write!(formatter, "{key}: {value} is past the longest, {LONGEST_MS} ms"),
+            SettingsProblem::TooLong { longest_ms } => {
+                write!(formatter, "{key}: {value} is past the longest, {longest_ms} ms")
+            }
         }
     }
 }
@@ -391,6 +425,125 @@ impl Step {
     }
 }
 
+/// The clock span of one slot of the climb history, in ms: the shortest step period it keeps apart. Half the shipped
+/// `period_ms` (50), so the shipped steps, 50 ms apart give or take a control tick, each keep a slot of their own and
+/// the window is exact. Faster steps share a slot, dated by its first reading: the window then loses up to a slot at
+/// its far end, and never grows.
+const CLIMB_SLOT_MS: u32 = 25;
+
+/// The slots the climb history holds: as many as can begin within the longest window, one slot apart.
+const CLIMB_SLOTS: usize = (LONGEST_LAUNCH_ALTITUDE_WINDOW_MS / CLIMB_SLOT_MS) as usize + 1;
+
+/// One slot of the climb history.
+#[derive(Clone, Copy, Debug, Default)]
+struct Slot {
+    /// The clock of the first reading in it.
+    start_ms: u32,
+    /// The highest elevation read in it, in metres: what a later reading's hold looks back at.
+    highest_m: f32,
+    /// The lowest level, in metres, that the elevation had held for `launch_ms` at one of its readings (the highest
+    /// it read over the `launch_ms` before that reading); infinite while none of them had a history reaching back
+    /// that far.
+    held_m: f32,
+}
+
+/// The fresh barometer elevations of the last `launch_alt_window_ms`, for the altitude launch's rate gate: how far
+/// the elevation has risen above the lowest level it held for `launch_ms` within the window. A level counts only
+/// once held as long as the launch itself must be, so one low or glitched read is no pad to climb from, as one high
+/// read is no climb. A fixed ring of [`CLIMB_SLOTS`] slots, so stepping it allocates nothing.
+#[derive(Clone, Debug)]
+struct Climb {
+    /// The slots, a ring: `count` of them from `oldest` on, each starting at least [`CLIMB_SLOT_MS`] after the one
+    /// before it.
+    slots: [Slot; CLIMB_SLOTS],
+    /// The index of the oldest slot.
+    oldest: usize,
+    /// How many slots hold readings.
+    count: usize,
+}
+
+impl Climb {
+    /// A history with no readings.
+    fn new() -> Climb {
+        Climb {
+            slots: [Slot::default(); CLIMB_SLOTS],
+            oldest: 0,
+            count: 0,
+        }
+    }
+
+    /// Forget every reading.
+    fn clear(&mut self) {
+        self.count = 0;
+    }
+
+    /// Record a fresh elevation and say how far it lies above the lowest level held for `held_ms` within the window.
+    ///
+    /// From the oldest on, a slot is dropped, its readings with it, while it began more than `window_ms` ago, or
+    /// reads as begun after `now_ms` (the clock stepped back, or ran on 24.8 days or more, past what its signed
+    /// elapsed time tells apart): nothing older than the window counts, nor a reading the clock no longer compares
+    /// with. A reading less than [`CLIMB_SLOT_MS`] after the newest slot began (or before it: a clock stepping back)
+    /// joins that slot; any other opens a new one. A window past [`LONGEST_LAUNCH_ALTITUDE_WINDOW_MS`], which only a
+    /// hand-built `Settings` carries, acts as the longest. So a new slot finds the others begun between one slot and
+    /// one window ago, a slot apart at least, and the ring never holds more than [`CLIMB_SLOTS`].
+    ///
+    /// The level this reading confirms is the highest read from the slot in effect `held_ms` ago (the newest begun
+    /// that long ago) on, this reading included: the elevation held at or below it all that time, a gap in the
+    /// readings holding the last one. With no slot begun that long ago, none is confirmed: right after the history
+    /// starts, after a gap longer than the window, and always for a `held_ms` longer than the window.
+    ///
+    /// Args: `now_ms` the step clock; `elevation_m` the fresh elevation; `window_ms` `launch_alt_window_ms`;
+    /// `held_ms` `launch_ms`.
+    ///
+    /// Returns: the rise in metres: the elevation minus the lowest level confirmed within the window, or 0.0 when
+    /// none lies below it (NaN for a NaN elevation, which no comparison passes).
+    fn rise(&mut self, now_ms: u32, elevation_m: f32, window_ms: u32, held_ms: u32) -> f32 {
+        let window_ms = window_ms.min(LONGEST_LAUNCH_ALTITUDE_WINDOW_MS);
+        let within = |start_ms: u32| {
+            u32::try_from(commons::elapsed_ms(now_ms, start_ms)).is_ok_and(|age_ms| age_ms <= window_ms)
+        };
+        while self.count > 0 && !within(self.slot(0).start_ms) {
+            self.oldest = (self.oldest + 1) % CLIMB_SLOTS;
+            self.count -= 1;
+        }
+        if self.count > 0 && !commons::reached(now_ms, self.slot(self.count - 1).start_ms, CLIMB_SLOT_MS) {
+            let newest = self.slot_mut(self.count - 1);
+            newest.highest_m = newest.highest_m.max(elevation_m);
+        } else {
+            self.count += 1;
+            *self.slot_mut(self.count - 1) = Slot {
+                start_ms: now_ms,
+                highest_m: elevation_m,
+                held_m: f32::INFINITY,
+            };
+        }
+        let mut highest_m = elevation_m;
+        let confirmed = (0..self.count).rev().find_map(|offset| {
+            let slot = self.slot(offset);
+            highest_m = highest_m.max(slot.highest_m);
+            commons::reached(now_ms, slot.start_ms, held_ms).then_some(highest_m)
+        });
+        if let Some(level_m) = confirmed {
+            let newest = self.slot_mut(self.count - 1);
+            newest.held_m = newest.held_m.min(level_m);
+        }
+        let lowest_m = (0..self.count)
+            .map(|offset| self.slot(offset).held_m)
+            .fold(elevation_m, f32::min);
+        elevation_m - lowest_m
+    }
+
+    /// The slot `offset` places after the oldest.
+    fn slot(&self, offset: usize) -> Slot {
+        self.slots[(self.oldest + offset) % CLIMB_SLOTS]
+    }
+
+    /// The slot `offset` places after the oldest, to change.
+    fn slot_mut(&mut self, offset: usize) -> &mut Slot {
+        &mut self.slots[(self.oldest + offset) % CLIMB_SLOTS]
+    }
+}
+
 /// The stage machine: plan B's `Sequencer` state, stepped by [`StageMachine::step`].
 #[derive(Clone, Debug)]
 pub struct StageMachine {
@@ -416,6 +569,8 @@ pub struct StageMachine {
     launch_dwell: Dwell,
     /// The leaky launch dwell on the baro elevation.
     altitude_dwell: Dwell,
+    /// The baro elevations of the rate gate's window, recorded on the pad.
+    climb: Climb,
     /// The step clock of BOOSTING entry: arms the apogee detector and bases the flight timeout. Re-based on the
     /// first step of an airborne stage entered without BOOSTING (a warm start, an operator move).
     boost_entry_ms: Option<u32>,
@@ -444,6 +599,7 @@ impl StageMachine {
             apogee: Apogee::default(),
             launch_dwell: Dwell::default(),
             altitude_dwell: Dwell::default(),
+            climb: Climb::new(),
             boost_entry_ms: None,
             landing_entry_ms: None,
         }
@@ -518,6 +674,7 @@ impl StageMachine {
             self.landing_entry_ms = None;
             self.launch_dwell = Dwell::default();
             self.altitude_dwell = Dwell::default();
+            self.climb.clear(); // the pad's elevation is measured afresh (after a re-zero, from the new ground)
         }
         if stage == Stage::Landing {
             self.landing_entry_ms = Some(now_ms); // starts the landing timeout (a warm start into LANDING too)
@@ -555,6 +712,13 @@ impl StageMachine {
     /// `launch_alt_m` the same way (the ICP-10111 read timeouts on the bench), and it must hold `launch_ms`
     /// through the same leaky dwell as the accel: one sample over the line was enough once, which a single spike
     /// or a glitched read could satisfy. And the GNSS elevation is no baro (see [`Source::Gnss`]).
+    ///
+    /// The baro sample counts for the dwell only when the elevation has also RISEN more than `launch_alt_m` within
+    /// `launch_alt_window_ms` (the rate gate, not plan B's): a rocket gains it within a second, weather drift over
+    /// hours, and a pad drifted past `launch_alt_m` launched TMS-7F unarmed overnight under plan B's rule alone. The
+    /// rise is measured from a level the elevation HELD for `launch_ms`, as the climb must hold: one low or glitched
+    /// read on a drifted pad would otherwise stand in for the pad for the whole window. So an elevation already over
+    /// the line on the pad's first readings (no rise seen) is no launch either.
     fn detect_launch(&mut self, now_ms: u32, readings: &Readings) -> Option<Transition> {
         let elevation = readings
             .elevation
@@ -563,7 +727,16 @@ impl StageMachine {
         let magnitude_squared = readings
             .acceleration
             .map(|reading| commons::magnitude_squared(reading.value));
-        let climbed_now = elevation.is_some_and(|metres| metres > self.settings.launch_alt_m);
+        let Settings {
+            launch_alt_m: line_m,
+            launch_alt_window_ms: window_ms,
+            launch_ms,
+            ..
+        } = self.settings;
+        let climbed_now = elevation.is_some_and(|metres| {
+            let rise_m = self.climb.rise(now_ms, metres, window_ms, launch_ms);
+            metres > line_m && rise_m > line_m
+        });
         let (altitude_dwell, climbed) =
             commons::dwell_step(climbed_now, now_ms, self.altitude_dwell, self.settings.launch_ms);
         self.altitude_dwell = altitude_dwell;
@@ -676,7 +849,10 @@ impl StageMachine {
 mod tests {
     use serde_json::json;
 
-    use super::{Reading, Readings, Reason, Settings, SettingsProblem, Source, Stage, StageMachine, Step, Transition};
+    use super::{
+        CLIMB_SLOTS, LONGEST_LAUNCH_ALTITUDE_WINDOW_MS, Reading, Readings, Reason, Settings, SettingsProblem, Source,
+        Stage, StageMachine, Step, Transition,
+    };
 
     /// test_sequencer.py's SPEC: small thresholds for fast cases.
     fn spec() -> Settings {
@@ -817,12 +993,29 @@ mod tests {
             .map(|tick| (tick * 50, if tick % 2 == 0 { gnss } else { nothing }))
             .collect();
         assert_eq!(run(&mut machine, Stage::Setting, &ticks), Stage::Setting);
-        // the same 15 m from a barometer is a launch
-        let baro = elevation(15.0, Source::Other);
-        assert_eq!(
-            run(&mut machine, Stage::Setting, &[(2000, baro), (2100, baro)]),
-            Stage::Boosting
-        );
+        // the same 15 m from a barometer, risen from the pad it held, is a launch
+        let (pad, baro) = (elevation(0.0, Source::Other), elevation(15.0, Source::Other));
+        let ticks = [(1850, pad), (1900, pad), (1950, pad), (2000, baro), (2100, baro)];
+        assert_eq!(run(&mut machine, Stage::Setting, &ticks), Stage::Boosting);
+    }
+
+    #[test]
+    fn the_gnss_elevation_is_no_pad_to_climb_from() {
+        // the baro drifted to 10.5 m; both baros go stale for 200 ms and the databoard falls through to the GNSS,
+        // zeroed at its first fix and reading -1 m; then the baro is back at 10.5 m, which never rose from the GNSS
+        let flown = |low: Source| {
+            let ticks: Vec<(u32, Readings)> = (0..=3000)
+                .step_by(50)
+                .map(|now_ms| match now_ms {
+                    1000..1200 => (now_ms, elevation(-1.0, low)),
+                    _ => (now_ms, elevation(10.5, Source::Other)),
+                })
+                .collect();
+            run(&mut gated(1000), Stage::Setting, &ticks)
+        };
+        assert_eq!(flown(Source::Gnss), Stage::Setting);
+        // the same -1 m from a barometer is a pad the 10.5 m rose 11.5 m from
+        assert_eq!(flown(Source::Other), Stage::Boosting);
     }
 
     #[test]
@@ -996,24 +1189,42 @@ mod tests {
             .last()
     }
 
+    /// A machine on `spec()` that has read a pad of `pad_m`, from 0 through 100 ms: a level held `launch_ms`.
+    fn on_a_pad(pad_m: f32) -> StageMachine {
+        let mut machine = StageMachine::new(spec());
+        assert_eq!(
+            repeat(&mut machine, Stage::Setting, elevation(pad_m, Source::Other), 0, 100),
+            None
+        );
+        machine
+    }
+
     #[test]
     fn the_launch_lines_are_strict() {
-        // exactly launch_g (3.0 g) and exactly launch_alt_m (10.0 m), held: no launch; f32 holds both exactly
-        let mut machine = StageMachine::new(spec());
-        assert_eq!(repeat(&mut machine, Stage::Setting, acceleration(3.0), 0, 300), None);
+        // exactly launch_g (3.0 g) and exactly launch_alt_m (10.0 m) up from a 0 m pad, held: no launch; f32 holds
+        // both exactly
+        let mut machine = on_a_pad(0.0);
+        assert_eq!(repeat(&mut machine, Stage::Setting, acceleration(3.0), 150, 450), None);
         assert_eq!(
-            repeat(&mut machine, Stage::Setting, elevation(10.0, Source::Other), 350, 650),
+            repeat(&mut machine, Stage::Setting, elevation(10.0, Source::Other), 500, 800),
             None
         );
         // clearly over either line, it launches
-        let launch = repeat(&mut machine, Stage::Setting, acceleration(3.5), 700, 800);
+        let launch = repeat(&mut machine, Stage::Setting, acceleration(3.5), 850, 950);
         assert_eq!(
             launch.map(|step| step.reason.to_string()),
             Some("launch |a|=3.5g dwell=100ms".to_string())
         );
-        let mut machine = StageMachine::new(spec());
-        let launch = repeat(&mut machine, Stage::Setting, elevation(10.5, Source::Other), 0, 100);
-        assert_eq!(launch.map(|step| step.to), Some(Stage::Boosting));
+        // from a pad of pad_m to metres, held
+        let climb = |pad_m: f32, metres: f32| {
+            let high = elevation(metres, Source::Other);
+            repeat(&mut on_a_pad(pad_m), Stage::Setting, high, 150, 1050).map(|step| step.to)
+        };
+        assert_eq!(climb(0.0, 10.5), Some(Stage::Boosting));
+        // over the line, but risen exactly launch_alt_m (10.5 up from a 0.5 m pad): the rise is strict too
+        assert_eq!(climb(0.5, 10.5), None);
+        // risen 11 m from a -1 m pad, but exactly on launch_alt_m: plan B's line stays strict under the gate
+        assert_eq!(climb(-1.0, 10.0), None);
     }
 
     #[test]
@@ -1075,17 +1286,35 @@ mod tests {
 
     #[test]
     fn entering_setting_restarts_the_launch_dwells() {
-        for readings in [acceleration(8.0), elevation(15.0, Source::Other)] {
-            let mut machine = StageMachine::new(spec());
-            machine.step(0, Stage::Setting, &readings, false);
-            machine.step(50, Stage::Setting, &readings, false);
-            machine.step(60, Stage::Gliding, &readings, false);
-            // back on the pad 4.9 s later: the half credit is gone, so one sample is no launch
-            let step = machine.step(5000, Stage::Setting, &readings, false);
-            assert_eq!(rows(step), [(Stage::Setting, "external".to_string())]);
-            assert_eq!(machine.step(5050, Stage::Setting, &readings, false).advance, None);
-            assert!(machine.step(5100, Stage::Setting, &readings, false).advance.is_some());
-        }
+        let (still, boost) = (acceleration(1.0), acceleration(8.0));
+        let mut machine = StageMachine::new(spec());
+        machine.step(0, Stage::Setting, &still, false);
+        machine.step(50, Stage::Setting, &boost, false);
+        machine.step(100, Stage::Setting, &boost, false);
+        machine.step(110, Stage::Gliding, &boost, false);
+        // back on the pad 30 ms later: a kept half credit would only drain to 20 and launch at 230; restarted, the
+        // dwell needs launch_ms afresh
+        let step = machine.step(130, Stage::Setting, &still, false);
+        assert_eq!(rows(step), [(Stage::Setting, "external".to_string())]);
+        assert_eq!(machine.step(180, Stage::Setting, &boost, false).advance, None);
+        assert_eq!(machine.step(230, Stage::Setting, &boost, false).advance, None);
+        assert!(machine.step(280, Stage::Setting, &boost, false).advance.is_some());
+        // the altitude dwell: the pad must hold launch_ms afresh first, which drains any credit kept, so only a clock
+        // stepping back shows one. It feeds an inactive dwell: a kept half credit would complete on the pad's reading
+        let (pad, high) = (elevation(0.0, Source::Other), elevation(15.0, Source::Other));
+        let mut machine = on_a_pad(0.0);
+        machine.step(150, Stage::Setting, &high, false);
+        machine.step(200, Stage::Setting, &high, false);
+        machine.step(210, Stage::Gliding, &high, false);
+        let step = machine.step(110, Stage::Setting, &pad, false);
+        assert_eq!(rows(step), [(Stage::Setting, "external".to_string())]);
+        // restarted, the pad holds from 110 to 210, and launch_ms of the climb after it launches
+        assert_eq!(repeat(&mut machine, Stage::Setting, pad, 160, 210), None);
+        let launch = repeat(&mut machine, Stage::Setting, high, 260, 360);
+        assert_eq!(
+            launch.map(|step| step.reason.to_string()),
+            Some("launch alt=15m dwell=100ms".to_string())
+        );
     }
 
     #[test]
@@ -1139,7 +1368,7 @@ mod tests {
 
     #[test]
     fn the_launch_reasons_plan_b_prints() {
-        // both dwells complete on one tick: the baro backup is checked first
+        // both dwells complete on one tick, the elevation risen from the pad: the baro backup is checked first
         let both = Readings {
             elevation: Some(Reading {
                 value: 15.0,
@@ -1147,18 +1376,22 @@ mod tests {
             }),
             ..acceleration(8.0)
         };
-        let mut machine = StageMachine::new(spec());
-        let launch = repeat(&mut machine, Stage::Setting, both, 0, 100);
+        let launch = repeat(&mut on_a_pad(0.0), Stage::Setting, both, 150, 250);
         assert_eq!(
             launch.map(|step| step.reason.to_string()),
             Some("launch alt=15m dwell=100ms".to_string())
         );
         // a clock stepping back onto a sample with no reading feeds the dwell to full: plan B prints 0
-        for (readings, text) in [
-            (acceleration(8.0), "launch |a|=0.0g dwell=100ms"),
-            (elevation(15.0, Source::Other), "launch alt=0m dwell=100ms"),
+        for (pad, readings, text) in [
+            (acceleration(1.0), acceleration(8.0), "launch |a|=0.0g dwell=100ms"),
+            (
+                elevation(0.0, Source::Other),
+                elevation(15.0, Source::Other),
+                "launch alt=0m dwell=100ms",
+            ),
         ] {
             let mut machine = StageMachine::new(spec());
+            assert_eq!(repeat(&mut machine, Stage::Setting, pad, 850, 950), None);
             machine.step(1000, Stage::Setting, &readings, false);
             machine.step(1080, Stage::Setting, &readings, false);
             let step = machine.step(1060, Stage::Setting, &Readings::default(), false);
@@ -1220,15 +1453,18 @@ mod tests {
             (settings.still_g, settings.ground_ms, settings.land_timeout_ms),
             (0.3, 3000, 10_000)
         );
+        // the rate gate is not plan B's: the operator's 10 m within 1 s
+        assert_eq!(settings.launch_alt_window_ms, 1000);
         assert_eq!(StageMachine::new(settings).settings(), &settings);
     }
 
     /// Every key [`Settings::from_config`] reads.
-    const KEYS: [&str; 13] = [
+    const KEYS: [&str; 14] = [
         "period_ms",
         "launch_g",
         "launch_ms",
         "launch_alt_m",
+        "launch_alt_window_ms",
         "boost_timeout_ms",
         "apogee_drop_m",
         "apogee_arm_ms",
@@ -1291,6 +1527,47 @@ mod tests {
         assert_eq!(
             (settings.launch_g, settings.land_agl_m, settings.still_g),
             (3.0, -2.5, 0.001)
+        );
+    }
+
+    #[test]
+    fn the_rate_gate_window_reads_as_the_other_ms_keys_up_to_its_history() {
+        for (value, expected) in [
+            (json!(500), 500),
+            (json!(250.0), 250),
+            (json!(0), 0),
+            (json!(-0.0), 0),
+            (json!(2000), 2000),
+            (json!(2e3), 2000),
+        ] {
+            let settings = Settings::from_config(&json!({ "launch_alt_window_ms": value }));
+            assert_eq!(
+                settings.map(|settings| settings.launch_alt_window_ms),
+                Ok(expected),
+                "{value}"
+            );
+        }
+        let cases = [
+            (json!(2001), "2001 is past the longest, 2000 ms"),
+            (json!(2000.5), "2000.5 is not a whole number of ms"),
+            (json!(2001.0), "2001.0 is past the longest, 2000 ms"),
+            (json!(3_600_000), "3600000 is past the longest, 2000 ms"),
+            (json!(-1), "-1 is negative"),
+            (json!(500.5), "500.5 is not a whole number of ms"),
+            (json!("1000"), "\"1000\" is not a number"),
+            (json!(true), "true is not a number"),
+            (json!(null), "null is not a number"),
+        ];
+        for (value, why) in cases {
+            let error = Settings::from_config(&json!({ "launch_alt_window_ms": value })).unwrap_err();
+            assert_eq!(error.key, "launch_alt_window_ms");
+            assert_eq!(error.to_string(), format!("launch_alt_window_ms: {why}"));
+        }
+        assert_eq!(
+            Settings::from_config(&json!({"launch_alt_window_ms": 2001}))
+                .unwrap_err()
+                .problem,
+            SettingsProblem::TooLong { longest_ms: 2000 }
         );
     }
 
@@ -1364,6 +1641,371 @@ mod tests {
             config[key] = json!({"value": 1});
             let error = Settings::from_config(&config).unwrap_err();
             assert_eq!((error.key, error.problem), (key, SettingsProblem::NotANumber));
+        }
+    }
+
+    /// The shipped thresholds (`launch_alt_m` 10, `launch_ms` 100) with this rate gate window.
+    fn gated(window_ms: u32) -> StageMachine {
+        StageMachine::new(Settings {
+            launch_alt_window_ms: window_ms,
+            ..Settings::default()
+        })
+    }
+
+    /// Step SETTING every `period_ms` from `from_ms` through `to_ms` on a fresh barometer reading of
+    /// `elevation_m(now_ms)`, and return the first launch: its clock and its reason, None when there is none.
+    fn first_launch(
+        machine: &mut StageMachine,
+        from_ms: u32,
+        to_ms: u32,
+        period_ms: usize,
+        elevation_m: impl Fn(u32) -> f32,
+    ) -> Option<(u32, String)> {
+        (from_ms..=to_ms).step_by(period_ms).find_map(|now_ms| {
+            let readings = elevation(elevation_m(now_ms), Source::Other);
+            let advance = machine.step(now_ms, Stage::Setting, &readings, false).advance;
+            advance.map(|advance| (now_ms, advance.reason.to_string()))
+        })
+    }
+
+    #[test]
+    fn ten_metres_risen_in_half_a_second_launch() {
+        // a second on the pad, then 0 -> 12 m in 500 ms (24 m/s), held: over both lines from 1450 (10.8 m), and
+        // launch_ms later it launches
+        let climb = |now_ms: u32| (now_ms.saturating_sub(1000) as f32 * 0.024).min(12.0);
+        assert_eq!(
+            first_launch(&mut gated(1000), 0, 5000, 50, climb),
+            Some((1550, "launch alt=12m dwell=100ms".to_string()))
+        );
+    }
+
+    #[test]
+    fn ten_metres_risen_in_one_and_a_half_seconds_do_not() {
+        // 0 -> 12 m in 1.5 s (8 m/s), held: over the line from 2300 on, which plan B's rule alone launches on, but
+        // never 10 m above the lowest level it held within the last second
+        let climb = |now_ms: u32| (now_ms.saturating_sub(1010) as f32 * 0.008).min(12.0);
+        assert_eq!(first_launch(&mut gated(1000), 0, 10_000, 50, climb), None);
+        // a 2 s window takes the same climb: 10.32 m up at 2300, all of it within the window
+        assert_eq!(
+            first_launch(&mut gated(2000), 0, 10_000, 50, climb),
+            Some((2400, "launch alt=11m dwell=100ms".to_string()))
+        );
+    }
+
+    #[test]
+    fn two_hours_of_drift_never_launch() {
+        // TMS-7F's night, a little steeper: the pad's elevation creeps +12 m in 2 h (it launched on +10 m in
+        // 2.17 h), with 0.3 m of sawtooth noise, read every 50 ms
+        let drift = |now_ms: u32| now_ms as f32 * 12.0 / 7_200_000.0 + (now_ms / 50 % 7) as f32 * 0.05;
+        assert_eq!(first_launch(&mut gated(1000), 0, 7_200_000, 50, drift), None);
+        assert!(drift(6_100_000) > 10.0, "over the line for the last 18 minutes");
+    }
+
+    #[test]
+    fn a_step_launches_and_a_spike_shorter_than_launch_ms_does_not() {
+        // two 15 m readings 50 ms apart, twice: over both lines, but never for launch_ms
+        let spikes = |now_ms: u32| {
+            if matches!(now_ms, 1000 | 1050 | 2000 | 2050) {
+                15.0
+            } else {
+                0.0
+            }
+        };
+        assert_eq!(first_launch(&mut gated(1000), 0, 5000, 50, spikes), None);
+        // the same step held, as the bench makes a launch (`update` lowers the ground 15 m in SETTING)
+        let step = |now_ms: u32| if now_ms >= 1000 { 15.0 } else { 0.0 };
+        assert_eq!(
+            first_launch(&mut gated(1000), 0, 5000, 50, step),
+            Some((1100, "launch alt=15m dwell=100ms".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_rise_must_still_end_over_the_line() {
+        // a pad re-zeroed 5 m high (it reads -5 m), then 8 m: risen 13 m, but not launch_alt_m above the ground
+        let shape = |now_ms: u32| if now_ms < 1000 { -5.0 } else { 8.0 };
+        assert_eq!(first_launch(&mut gated(1000), 0, 3000, 50, shape), None);
+        // on to 12 m within the window, it launches
+        let higher = |now_ms: u32| if now_ms < 1500 { shape(now_ms) } else { 12.0 };
+        assert_eq!(
+            first_launch(&mut gated(1000), 0, 3000, 50, higher),
+            Some((1600, "launch alt=12m dwell=100ms".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_low_read_on_a_drifted_pad_is_no_pad_to_climb_from() {
+        // TMS-7F's bench at dawn: the pad drifted to 10.5 m, over launch_alt_m. One glitched read of 0 m would stand
+        // for the pad through the whole window, 10.5 m below; a level is one held launch_ms, as a climb is
+        let dip = |last_ms: u32| move |now_ms: u32| if (5000..=last_ms).contains(&now_ms) { 0.0 } else { 10.5 };
+        assert_eq!(first_launch(&mut gated(1000), 0, 10_000, 50, dip(5000)), None);
+        // two low reads in a row neither; three, 100 ms of 0 m, are a level the 10.5 m rose from
+        assert_eq!(first_launch(&mut gated(1000), 0, 10_000, 50, dip(5050)), None);
+        assert_eq!(
+            first_launch(&mut gated(1000), 0, 10_000, 50, dip(5100)),
+            Some((5250, "launch alt=10m dwell=100ms".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_window_ends_exactly_launch_alt_window_ms_back() {
+        // the pad's 0 m from 0 to 100, a level held launch_ms at 100; then 5 m, then 11 m for 100 ms: risen 11 m above
+        // the pad's level only. On time, the dwell completes with that level confirmed exactly 1000 ms before, still
+        // in the window; a millisecond later it is out
+        for (late_ms, launched) in [(0, true), (1, false)] {
+            let ticks: Vec<(u32, Readings)> = (0..=1100)
+                .step_by(50)
+                .map(|now_ms| match now_ms {
+                    0..=100 => (now_ms, elevation(0.0, Source::Other)),
+                    150..1000 => (now_ms, elevation(5.0, Source::Other)),
+                    _ => (now_ms + late_ms, elevation(11.0, Source::Other)),
+                })
+                .collect();
+            let stage = run(&mut gated(1000), Stage::Setting, &ticks);
+            assert_eq!(stage == Stage::Boosting, launched, "the climb {late_ms} ms late");
+        }
+    }
+
+    #[test]
+    fn a_window_shorter_than_launch_ms_never_launches_by_altitude() {
+        // 11 m more on every reading, 50 ms apart: a 100 ms window still holds the level confirmed launch_ms (100)
+        // after the reading it looks back to; a shorter one has dropped that reading first
+        let climb = |now_ms: u32| now_ms.saturating_sub(950) as f32 * 0.22;
+        for (window_ms, launch_ms) in [(100, Some(1100)), (99, None), (0, None)] {
+            let launch = first_launch(&mut gated(window_ms), 0, 3000, 50, climb);
+            assert_eq!(launch.map(|(now_ms, _)| now_ms), launch_ms, "{window_ms} ms");
+        }
+        // the accel launch is not gated
+        let launch = repeat(&mut gated(0), Stage::Setting, acceleration(8.0), 0, 100);
+        assert_eq!(launch.map(|launch| launch.to), Some(Stage::Boosting));
+    }
+
+    #[test]
+    fn the_longest_window_fits_the_history() {
+        // a reading every 25 ms, a slot each: the pad's 0 m from 0 to 100, its level confirmed at 100; 5 m, then 11 m
+        // from 2000. The dwell completes at 2100 with that level exactly 2000 ms old, in the oldest of 81 slots: the
+        // history is full
+        assert_eq!(CLIMB_SLOTS, 81);
+        let shape = |now_ms: u32| match now_ms {
+            0..=100 => 0.0,
+            101..2000 => 5.0,
+            _ => 11.0,
+        };
+        let mut machine = gated(LONGEST_LAUNCH_ALTITUDE_WINDOW_MS);
+        assert_eq!(
+            first_launch(&mut machine, 0, 3000, 25, shape),
+            Some((2100, "launch alt=11m dwell=100ms".to_string()))
+        );
+        assert_eq!(machine.climb.count, CLIMB_SLOTS);
+    }
+
+    #[test]
+    fn a_reading_one_slot_after_the_newest_opens_its_own() {
+        // a reading every 25 ms, exactly a slot apart: the pad's 0 m from 0 to 125, then 5 m, then 11 m from 1025. The
+        // level confirmed at 125 has a slot of its own, dated 125, so it counts until exactly 1125, when the dwell
+        // completes; sharing the slot begun at 100, it would be gone 25 ms before
+        let shape = |now_ms: u32| match now_ms {
+            0..=125 => 0.0,
+            126..1025 => 5.0,
+            _ => 11.0,
+        };
+        assert_eq!(
+            first_launch(&mut gated(1000), 0, 3000, 25, shape),
+            Some((1125, "launch alt=11m dwell=100ms".to_string()))
+        );
+    }
+
+    #[test]
+    fn steps_just_under_a_slot_apart_share_one_and_fit_the_longest_window() {
+        // a reading every 24 ms, two to a slot: 42 slots span the 2000 ms window, where one each would take 84, past
+        // the 81 the history holds. The pad's 0 m from 0 to 120, its level confirmed at 120 in the slot begun at 96;
+        // 5 m, then 11 m from 1968: the dwell completes at 2088, the pad's slot 1992 ms old and still counted
+        let shape = |now_ms: u32| match now_ms {
+            0..=120 => 0.0,
+            121..1968 => 5.0,
+            _ => 11.0,
+        };
+        let mut machine = gated(LONGEST_LAUNCH_ALTITUDE_WINDOW_MS);
+        assert_eq!(
+            first_launch(&mut machine, 0, 3000, 24, shape),
+            Some((2088, "launch alt=11m dwell=100ms".to_string()))
+        );
+        assert_eq!(machine.climb.count, 42);
+    }
+
+    #[test]
+    fn a_window_past_the_longest_acts_as_the_longest() {
+        // only a hand-built Settings carries one. 0 -> 12 m at 4 m/s, read every 50 ms: never 10 m up within 2 s,
+        // though it is within 10 s
+        let climb = |now_ms: u32| (now_ms.saturating_sub(1010) as f32 * 0.004).min(12.0);
+        assert_eq!(first_launch(&mut gated(10_000), 0, 20_000, 50, climb), None);
+    }
+
+    #[test]
+    fn a_reading_the_clock_no_longer_compares_with_is_forgotten() {
+        // a second on the pad at 0 m, then no fresh baro for 2^31 ms (24.8 days): the signed elapsed time reads the
+        // pad's readings as being from the future, so they are dropped, and 11 m is no rise
+        let resumed_ms = 1000 + (1_u32 << 31);
+        let mut ticks: Vec<(u32, Readings)> = (0..=1000)
+            .step_by(50)
+            .map(|now_ms| (now_ms, elevation(0.0, Source::Other)))
+            .collect();
+        ticks.extend((0..20).map(|tick| (resumed_ms + tick * 50, elevation(11.0, Source::Other))));
+        assert_eq!(run(&mut gated(1000), Stage::Setting, &ticks), Stage::Setting);
+        // the same climb across the clock's wrap, read every 50 ms, launches
+        let start = u32::MAX - 1000;
+        let ticks: Vec<(u32, Readings)> = (0..40)
+            .map(|tick: u32| {
+                let metres = if tick < 25 { 0.0 } else { 11.0 };
+                (start.wrapping_add(tick * 50), elevation(metres, Source::Other))
+            })
+            .collect();
+        assert_eq!(run(&mut gated(1000), Stage::Setting, &ticks), Stage::Boosting);
+    }
+
+    #[test]
+    fn a_level_confirmed_before_the_clock_stepped_back_is_forgotten() {
+        // the pad's 0 m from 1000 to 1500, then 11 m: launch_ms into the climb, it launches
+        let pad = |now_ms: u32| (now_ms, elevation(0.0, Source::Other));
+        let high = |now_ms: u32| (now_ms, elevation(11.0, Source::Other));
+        let mut ticks: Vec<(u32, Readings)> = (1000..=1500).step_by(50).map(pad).collect();
+        ticks.extend((1550..=2000).step_by(50).map(high));
+        assert_eq!(run(&mut gated(1000), Stage::Setting, &ticks), Stage::Boosting);
+        // the same 11 m once the clock has stepped back to 600: the pad's level reads as confirmed in the future, and
+        // no climb is measured from it
+        let mut ticks: Vec<(u32, Readings)> = (1000..=1500).step_by(50).map(pad).collect();
+        ticks.extend((600..=2000).step_by(50).map(high));
+        assert_eq!(run(&mut gated(1000), Stage::Setting, &ticks), Stage::Setting);
+    }
+
+    #[test]
+    fn faster_steps_share_a_slot_dated_by_its_first_reading() {
+        // a reading every 10 ms, three to a slot: the pad's 0 m to pad_end_ms, then 5 m, then 11 m from climb_ms
+        let launch = |pad_end_ms: u32, climb_ms: u32| {
+            let shape = |now_ms: u32| match now_ms {
+                _ if now_ms <= pad_end_ms => 0.0,
+                _ if now_ms < climb_ms => 5.0,
+                _ => 11.0,
+            };
+            first_launch(&mut gated(1000), 0, 3000, 10, shape).map(|(now_ms, _)| now_ms)
+        };
+        // the pad's level, last confirmed at 200 in the slot begun at 180, counts until 1180: a climb from 1080
+        // launches then
+        assert_eq!(launch(200, 1080), Some(1180));
+        // 10 ms later the slot is gone at 1190, though the reading that confirmed the level is 990 ms old: a shared
+        // slot shortens the window at its far end, and never lengthens it
+        assert_eq!(launch(200, 1090), None);
+        // the pad ending on the slot's first reading, its 5 m reads after confirm 5 m: the slot keeps the lowest level
+        assert_eq!(launch(180, 1080), Some(1180));
+    }
+
+    #[test]
+    fn a_level_counts_once_held_exactly_launch_ms() {
+        // the drifted pad's 10.5 m, then 0 m read at 5000 and again held_ms later, nothing between (a gap holds the
+        // last reading), then 10.5 m: held exactly launch_ms, the 0 m is a level the 10.5 m rose from; a millisecond
+        // short, it is not
+        for (held_ms, launched) in [(100, true), (99, false)] {
+            let mut ticks: Vec<(u32, Readings)> = (0..5000)
+                .step_by(50)
+                .map(|now_ms| (now_ms, elevation(10.5, Source::Other)))
+                .collect();
+            ticks.extend([5000, 5000 + held_ms].map(|now_ms| (now_ms, elevation(0.0, Source::Other))));
+            ticks.extend(
+                (5150..=6000)
+                    .step_by(50)
+                    .map(|now_ms| (now_ms, elevation(10.5, Source::Other))),
+            );
+            let stage = run(&mut gated(1000), Stage::Setting, &ticks);
+            assert_eq!(stage == Stage::Boosting, launched, "held {held_ms} ms");
+        }
+    }
+
+    #[test]
+    fn a_shared_slot_keeps_its_highest_read_for_the_holds_after_it() {
+        // a reading every 10 ms, three to a slot, the pad at 0 m but for one 6 m read every 90 ms, each the middle
+        // reading of its slot: the elevation never holds 0 m for launch_ms, so 11 m is only 5 m above a held level
+        let pad = |spikes: bool| {
+            move |now_ms: u32| match now_ms {
+                1000.. => 11.0,
+                _ if spikes && now_ms % 90 == 10 => 6.0,
+                _ => 0.0,
+            }
+        };
+        assert_eq!(first_launch(&mut gated(1000), 0, 3000, 10, pad(true)), None);
+        // without the 6 m reads, the same climb launches
+        assert_eq!(
+            first_launch(&mut gated(1000), 0, 3000, 10, pad(false)),
+            Some((1100, "launch alt=11m dwell=100ms".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_return_to_setting_measures_the_pad_afresh() {
+        let high = elevation(15.0, Source::Other);
+        let mut machine = on_a_pad(0.0);
+        machine.step(150, Stage::Setting, &high, false);
+        machine.step(160, Stage::Gliding, &high, false);
+        // back on the pad 10 ms later, still 15 m up: the pad's level before the excursion is forgotten, so no rise is
+        // seen
+        let step = machine.step(170, Stage::Setting, &high, false);
+        assert_eq!(rows(step), [(Stage::Setting, "external".to_string())]);
+        assert_eq!(repeat(&mut machine, Stage::Setting, high, 220, 2000), None);
+    }
+
+    #[test]
+    fn a_hold_records_no_level() {
+        // the pad at 5 m; an operator hold (`stage gliding`, a fin check) reads 0 m; `stage setting` ends it where the
+        // machine last looked, so nothing restarts, and 11 m is risen only 6 m above the level the machine saw
+        let (low, high) = (elevation(0.0, Source::Other), elevation(11.0, Source::Other));
+        let mut machine = on_a_pad(5.0);
+        for now_ms in (550..=800).step_by(50) {
+            assert_eq!(machine.step(now_ms, Stage::Gliding, &low, true), Step::default());
+        }
+        assert_eq!(repeat(&mut machine, Stage::Setting, high, 850, 2000), None);
+        // the same 0 m read on the pad is a level the 11 m rose from
+        let mut machine = on_a_pad(5.0);
+        assert_eq!(repeat(&mut machine, Stage::Setting, low, 550, 800), None);
+        assert!(repeat(&mut machine, Stage::Setting, high, 850, 2000).is_some());
+    }
+
+    #[test]
+    fn a_warm_entry_is_unaffected_by_the_gate() {
+        // a warm start into each airborne stage flies the same whatever the window: the gate looks only in SETTING
+        let ticks: Vec<(u32, Readings)> = (0..80)
+            .map(|tick| {
+                let now_ms = tick * 50;
+                let metres = 200.0 - (now_ms as f32 - 600.0).abs() * 0.1;
+                let readings = Readings {
+                    elevation: Some(Reading {
+                        value: metres.max(0.0),
+                        source: Source::Other,
+                    }),
+                    ..acceleration(1.0)
+                };
+                (now_ms, readings)
+            })
+            .collect();
+        for stage in [Stage::Boosting, Stage::Gliding, Stage::Landing] {
+            let flown = |window_ms: u32| {
+                let mut machine = StageMachine::new(Settings {
+                    launch_alt_window_ms: window_ms,
+                    apogee_arm_ms: 0,
+                    land_agl_m: 150.0,
+                    ..spec()
+                });
+                let mut current = stage;
+                let mut recorded = Vec::new();
+                for (now_ms, readings) in &ticks {
+                    let step = machine.step(*now_ms, current, readings, false);
+                    current = step.advance.map_or(current, |advance| advance.to);
+                    recorded.extend(rows(step));
+                }
+                (current, recorded)
+            };
+            let (end, recorded) = flown(1000);
+            assert_eq!(end, Stage::Done, "{stage:?} flies to the ground");
+            assert_eq!(flown(0), (end, recorded.clone()), "{stage:?}");
+            assert_eq!(flown(LONGEST_LAUNCH_ALTITUDE_WINDOW_MS), (end, recorded), "{stage:?}");
         }
     }
 }

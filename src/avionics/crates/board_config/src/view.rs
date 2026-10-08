@@ -10,6 +10,11 @@
 //! attempts ([`setup_retries`]). They are meant for the post-layout document (crates/layout rewrites it in place
 //! first), as plan B's Controller reads the config layout.resolve has rewritten.
 //!
+//! For the supervisor (M8): the checkpoint's cadence ([`checkpoint`]), the warm start's toggle ([`warm_start`]) and
+//! the watchdog's settings ([`watchdog`]). Unlike the readers above, the checkpoint and the watchdog refuse a key
+//! plan B could not run with, so the firmware fails the entry at bring-up and arm refuses, as plan B's arm refused
+//! a task whose setup failed or whose run loop crashed on one.
+//!
 //! Where plan B would carry a value of the wrong type into the radio or the socket and fail there (a text
 //! `retry_ms`, a numeric password, a host that is not text), the view reads it as the default or as off; each
 //! such reading is named on its function. Every reader borrows the document and changes nothing.
@@ -19,6 +24,7 @@ use std::fmt;
 use serde_json::{Map, Value};
 
 use crate::python::{equals_integer, formatted, integer, truthy};
+use crate::validate::WATCHDOG_FLOOR_MS;
 
 /// How long a network waits between two attempts to join it when the config does not say, in milliseconds
 /// (drivers/wifi.py `wifi.get('retry_ms', 10000)`).
@@ -255,8 +261,7 @@ fn hub_port(port: Option<&Value>) -> u16 {
 /// Mission's default, as plan B does (`field_cfg.get('max_range_m', 200)`). Also None for a value that is not
 /// a number (null, text, a bool), which plan B would carry into the Mission's range comparisons and fail on.
 pub fn max_range_m(document: &Value) -> Option<f32> {
-    let (_, field) =
-        devices(document).find(|(_, device)| device.get("name").and_then(Value::as_str) == Some("field"))?;
+    let field = named(document, "field")?;
     // f64 at the JSON boundary, metres in f32 from here on
     field
         .get("max_range_m")
@@ -639,6 +644,207 @@ pub fn setup_retries(document: &Value) -> u32 {
     attempts.clamp(1, i128::from(u32::MAX)) as u32
 }
 
+/// The checkpoint's implementation in a device entry (plan B's `@task.activity('checkpoint')`), and the name of the
+/// entry whose `warm_start` gates the restore.
+const CHECKPOINT: &str = "checkpoint";
+
+/// The supervisor watchdog's implementation in a device entry (plan B's `@task.activity('watchdog')`).
+const WATCHDOG: &str = "watchdog";
+
+/// The shortest airborne checkpoint cadence, in seconds, which is also the cadence an entry without `checkpoint_s`
+/// gets: plan B's `max(1, self.config.get('checkpoint_s', 1))` (warmstart.py:311).
+const SHORTEST_CHECKPOINT_S: f32 = 1.0;
+
+/// Why a key that must be a number is refused: text, a bool where one is refused, null, a list or an object.
+const NOT_A_NUMBER: &str = "not a number";
+
+/// Why a key that must be a JSON integer is refused when it is written as a float, even with no fraction.
+const NOT_AN_INTEGER: &str = "not an integer";
+
+/// Why a watchdog key that must be above zero is refused.
+const NOT_POSITIVE: &str = "not positive";
+
+/// The longest `wdt_timeout_ms` the task watchdog keeps whole, in ms (i32::MAX). IDF v5.5.5 programs the timer's
+/// first stage as `timeout_ms * 2` ticks of 500 us in a u32 (esp_system/task_wdt/task_wdt_impl_timergroup.c), so from
+/// 2^31 on the hold wraps: to 0 at 2^31, and to 2000 ms, under the boot floor, at 2^31 + 2000. It is plan B's limit
+/// too: `WDT(timeout=)` takes an mp_int_t, an i32 on the P4, so its run loop crashed on a larger one. The second
+/// stage, `timeout_ms * 4`, already wraps from 2^30 on, as under plan B; it only follows a first stage of over 12 days.
+const LONGEST_TIMEOUT_MS: u32 = i32::MAX as u32;
+
+/// The longest `period_ms` plan B's watchdog could sleep, in ms (2^29 - 1): its `asyncio.sleep_ms` hands the period
+/// to `ticks_add`, which refuses an interval of half the 2^30 ms tick period or more (extmod/modtime.c), so its run
+/// loop crashed on a longer one.
+const LONGEST_PERIOD_MS: u32 = (1 << 29) - 1;
+
+/// The supervisor watchdog's settings, as plan B's watchdog task reads its entry (tasks/watchdog.py:34-36).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Watchdog {
+    /// How long the task watchdog waits for a feed before it panics the board, in ms (`wdt_timeout_ms`): from the
+    /// 4000 ms boot floor to i32::MAX.
+    pub timeout_ms: u32,
+    /// How often the supervisor checks the control thread for a stall, in ms (`period_ms`): from 1 to 2^29 - 1.
+    pub period_ms: u32,
+    /// How long the control thread may go without a tick while it controls a flight before the board restarts, in
+    /// ms (`stall_ms`), above zero; a fraction is kept, as plan B scales it to microseconds.
+    pub stall_ms: f32,
+}
+
+/// The watchdog's settings when its entry gives none of the keys (tasks/watchdog.py:34-36).
+const DEFAULT_WATCHDOG: Watchdog = Watchdog {
+    timeout_ms: 5000,
+    period_ms: 200,
+    stall_ms: 500.0,
+};
+
+/// The airborne checkpoint cadence, in seconds: `checkpoint_s` on the first enabled entry whose implementation is the
+/// `checkpoint` activity (plan B runs a Checkpoint task per such entry; this reads the first), read as plan B's setup
+/// reads it, `max(1, self.config.get('checkpoint_s', 1))` (warmstart.py:311).
+///
+/// Absent is 1 s, and so is a bool (Python's `max(1, True)` is the int 1). A number is kept as f32 and floored at
+/// 1 s, a negative one included. Anything else (null, text, a list, an object) is refused, as plan B's `max` raised
+/// TypeError on it in setup, so its checkpoint failed and arm refused.
+///
+/// Returns: None when no enabled entry runs the checkpoint; else the cadence in seconds, at least 1, or
+/// `checkpoint_s: not a number`.
+pub fn checkpoint(document: &Value) -> Option<Result<f32, String>> {
+    let entry = first_enabled(document, CHECKPOINT)?;
+    Some(match entry.fields.get("checkpoint_s") {
+        None | Some(Value::Bool(_)) => Ok(SHORTEST_CHECKPOINT_S),
+        // f64 at the JSON boundary, seconds in f32 from here on
+        Some(value) => value
+            .as_f64()
+            .map(|seconds| (seconds as f32).max(SHORTEST_CHECKPOINT_S))
+            .ok_or_else(|| refusal("checkpoint_s", NOT_A_NUMBER)),
+    })
+}
+
+/// Whether a crumb may warm-start the board: `warm_start` on the first sensor or component NAMED `checkpoint`,
+/// enabled or not, by Python's truthiness, and true when there is no such entry or it has no `warm_start`. Plan B's
+/// restore reads `(config.device(cfg, name='checkpoint') or {}).get('warm_start', True)` (warmstart.py:274).
+///
+/// Found by its name, not its implementation, as plan B finds it. A present `warm_start` that is falsy (false, null,
+/// 0, '', an empty list or object) turns the warm start off.
+pub fn warm_start(document: &Value) -> bool {
+    named(document, CHECKPOINT)
+        .and_then(|checkpoint| checkpoint.get("warm_start"))
+        .is_none_or(truthy)
+}
+
+/// The supervisor watchdog's settings: the first enabled entry whose implementation is the `watchdog` activity, each
+/// key absent read as plan B's default (5000, 200 and 500 ms, tasks/watchdog.py:34-36).
+///
+/// The keys must be what plan B's watchdog runs with, or it is refused at bring-up, where plan B's own refusal came
+/// later but with the same outcome, arm refused:
+///  * `wdt_timeout_ms` is a JSON integer of at least 4000 ms, the boot floor validate() holds an enabled watchdog
+///    to, and at most i32::MAX, the longest the task watchdog keeps whole (`LONGEST_TIMEOUT_MS`). A float is
+///    refused even with no fraction: plan B's `WDT(timeout=)` takes only an int, so its run loop crashed on one,
+///    which put the task in the failures arm refuses on. So `100.0` and `3999.0`, which validate() does not hold to
+///    the floor (it checks an int timeout only), never reach the task watchdog;
+///  * `period_ms` is a JSON integer from 1 to 2^29 - 1 (`LONGEST_PERIOD_MS`): plan B's `sleep_ms` crashed its run
+///    loop on a float or a longer one too. 0 or below is refused, where plan B would spin;
+///  * `stall_ms` is any number above zero as an f32, a fraction included, as plan B multiplies it by 1000 and
+///    compares.
+///
+/// Stricter than plan B: a bool for any key (Python's int there), a text `stall_ms` (plan B failed only at its
+/// first stall check, in flight), a `stall_ms` at or below zero, and a `period_ms` at or below 0.
+///
+/// Returns: None when no enabled entry runs the watchdog (the task watchdog keeps IDF's warn-only default); else
+/// the settings, or the first key refused, in the order above, as `<key>: <why>`.
+pub fn watchdog(document: &Value) -> Option<Result<Watchdog, String>> {
+    let entry = first_enabled(document, WATCHDOG)?;
+    Some(watchdog_settings(entry.fields))
+}
+
+/// The settings of a watchdog entry, or the first key refused (see [`watchdog`]).
+fn watchdog_settings(fields: &Map<String, Value>) -> Result<Watchdog, String> {
+    let floor = format!("below the {WATCHDOG_FLOOR_MS} ms boot floor (the board boot-loops)");
+    Ok(Watchdog {
+        timeout_ms: integer_milliseconds(
+            fields,
+            "wdt_timeout_ms",
+            DEFAULT_WATCHDOG.timeout_ms,
+            WATCHDOG_FLOOR_MS,
+            &floor,
+            LONGEST_TIMEOUT_MS,
+        )?,
+        period_ms: integer_milliseconds(
+            fields,
+            "period_ms",
+            DEFAULT_WATCHDOG.period_ms,
+            1,
+            NOT_POSITIVE,
+            LONGEST_PERIOD_MS,
+        )?,
+        stall_ms: positive_milliseconds(fields, "stall_ms", DEFAULT_WATCHDOG.stall_ms)?,
+    })
+}
+
+/// A key that must be a JSON integer from `least` to `most` ms; `default` when absent.
+///
+/// Refused as `<key>: <why>`: anything but a number (a bool included), a float even with no fraction, a value below
+/// `least` (`short` says why) and one past `most`.
+fn integer_milliseconds(
+    fields: &Map<String, Value>,
+    key: &str,
+    default: u32,
+    least: i64,
+    short: &str,
+    most: u32,
+) -> Result<u32, String> {
+    let Some(value) = fields.get(key) else {
+        return Ok(default);
+    };
+    let Value::Number(number) = value else {
+        return Err(refusal(key, NOT_A_NUMBER));
+    };
+    if number.is_f64() {
+        return Err(refusal(key, NOT_AN_INTEGER));
+    }
+    match number.as_i64() {
+        Some(milliseconds) if milliseconds < least => Err(refusal(key, short)),
+        // None: an integer past i64, so past `most` too
+        milliseconds => milliseconds
+            .and_then(|milliseconds| u32::try_from(milliseconds).ok())
+            .filter(|milliseconds| *milliseconds <= most)
+            .ok_or_else(|| refusal(key, &format!("longer than {most} ms"))),
+    }
+}
+
+/// A key that must be a number above zero, in ms, kept as f32; `default` when absent. Refused as `<key>: <why>`:
+/// anything but a number (a bool included), and zero or below as an f32, so a positive value too small for one too.
+fn positive_milliseconds(fields: &Map<String, Value>, key: &str, default: f32) -> Result<f32, String> {
+    let Some(value) = fields.get(key) else {
+        return Ok(default);
+    };
+    // f64 at the JSON boundary, ms in f32 from here on: judged after the conversion, which takes 1e-50 to 0
+    match value.as_f64().map(|milliseconds| milliseconds as f32) {
+        Some(milliseconds) if milliseconds > 0.0 => Ok(milliseconds),
+        Some(_) => Err(refusal(key, NOT_POSITIVE)),
+        None => Err(refusal(key, NOT_A_NUMBER)),
+    }
+}
+
+/// A refused key, as the firmware fails its entry: `<key>: <why>`.
+fn refusal(key: &str, why: &str) -> String {
+    format!("{key}: {why}")
+}
+
+/// The first enabled, named entry `implementation` runs, as plan B's Controller creates the tasks (see
+/// [`directory`]).
+fn first_enabled<'d>(document: &'d Value, implementation: &str) -> Option<Entry<'d>> {
+    directory(document)
+        .into_iter()
+        .find(|entry| entry.implementation == implementation)
+}
+
+/// The first sensor or component named `name`, enabled or not: plan B's `config.device(cfg, name=...)`
+/// (config.py:699-718).
+fn named<'d>(document: &'d Value, name: &str) -> Option<&'d Map<String, Value>> {
+    devices(document)
+        .find(|(_, device)| device.get("name").and_then(Value::as_str) == Some(name))
+        .map(|(_, device)| device)
+}
+
 /// Every device entry that is an object, with its list: plan B's `config.get('sensors', []) +
 /// config.get('components', [])` (controller.py:96-98), in that order. A `sensors` or `components` that is not a
 /// list holds none here, and an item that is not an object is skipped (plan B raises on either).
@@ -668,8 +874,8 @@ fn implementation(device: &Map<String, Value>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, DEFAULT_SCHEDULE_HZ, Hub, Network, board_id, camera,
-        max_range_m, mcu, schedule_hz, wifi,
+        Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, DEFAULT_SCHEDULE_HZ, Hub, Network, Watchdog, board_id,
+        camera, checkpoint, max_range_m, mcu, schedule_hz, warm_start, watchdog, wifi,
     };
     use serde_json::{Value, json};
 
@@ -1019,6 +1225,333 @@ mod tests {
         assert_eq!(
             schedule_hz(&json!({"components": [{"name": "law", "activity": "flight", "schedule_hz": 200}]})),
             200
+        );
+    }
+
+    /// A document whose one component is `entry`.
+    fn component(entry: Value) -> Value {
+        json!({"components": [entry]})
+    }
+
+    /// An enabled entry running `activity` under its own name, with `fields` added.
+    fn activity(activity: &str, fields: Value) -> Value {
+        let mut entry = json!({"name": activity, "activity": activity});
+        for (key, value) in fields.as_object().expect("the fields are an object") {
+            entry[key] = value.clone();
+        }
+        entry
+    }
+
+    /// The cadence the view reads from a checkpoint entry whose `checkpoint_s` is `value`.
+    fn cadence(value: Value) -> Option<Result<f32, String>> {
+        checkpoint(&component(activity("checkpoint", json!({"checkpoint_s": value}))))
+    }
+
+    #[test]
+    fn the_checkpoint_cadence_is_checkpoint_s_floored_at_a_second() {
+        assert_eq!(cadence(json!(1)), Some(Ok(1.0)));
+        assert_eq!(cadence(json!(5)), Some(Ok(5.0)));
+        assert_eq!(cadence(json!(2.5)), Some(Ok(2.5)), "a fraction above the floor is kept");
+        for short in [json!(0.4), json!(0), json!(-3)] {
+            assert_eq!(cadence(short.clone()), Some(Ok(1.0)), "{short}");
+        }
+        // a bool is Python's int, which `max(1, ...)` answers as the 1
+        assert_eq!(cadence(json!(true)), Some(Ok(1.0)));
+        assert_eq!(cadence(json!(false)), Some(Ok(1.0)));
+        // absent
+        assert_eq!(checkpoint(&component(activity("checkpoint", json!({})))), Some(Ok(1.0)));
+    }
+
+    #[test]
+    fn a_checkpoint_s_plan_b_cannot_take_is_refused() {
+        for refused in [json!(null), json!("1"), json!([1]), json!({"s": 1})] {
+            assert_eq!(
+                cadence(refused.clone()),
+                Some(Err("checkpoint_s: not a number".to_string())),
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_checkpoint_is_the_first_enabled_checkpoint_activity() {
+        let disabled = activity("checkpoint", json!({"enabled": false, "checkpoint_s": 7}));
+        assert_eq!(checkpoint(&component(disabled.clone())), None);
+        // a disabled entry is never read, so its refused key is not refused
+        assert_eq!(
+            checkpoint(&component(activity(
+                "checkpoint",
+                json!({"enabled": 0, "checkpoint_s": null})
+            ))),
+            None
+        );
+        // the disabled first one is skipped for the enabled second, found by its activity under another name
+        let second = json!({"name": "crumbs", "activity": "checkpoint", "checkpoint_s": 3});
+        assert_eq!(
+            checkpoint(&json!({"components": [disabled, second.clone()]})),
+            Some(Ok(3.0))
+        );
+        // of two enabled entries the first is read, and a sensor comes before a component
+        let first = json!({"name": "trail", "activity": "checkpoint", "checkpoint_s": 2});
+        assert_eq!(
+            checkpoint(&json!({"components": [first.clone(), second.clone()]})),
+            Some(Ok(2.0))
+        );
+        assert_eq!(
+            checkpoint(&json!({"sensors": [second], "components": [first]})),
+            Some(Ok(3.0))
+        );
+        // the name alone runs nothing, and an unnamed entry is no task
+        assert_eq!(
+            checkpoint(&component(json!({"name": "checkpoint", "activity": "flight"}))),
+            None
+        );
+        assert_eq!(
+            checkpoint(&component(json!({"activity": "checkpoint", "checkpoint_s": 3}))),
+            None
+        );
+        assert_eq!(checkpoint(&json!({})), None);
+    }
+
+    /// The warm start's toggle for a checkpoint entry whose `warm_start` is `value`.
+    fn toggle(value: Value) -> bool {
+        warm_start(&component(activity("checkpoint", json!({"warm_start": value}))))
+    }
+
+    #[test]
+    fn the_warm_start_is_the_checkpoint_entrys_truthiness() {
+        assert!(toggle(json!(true)));
+        assert!(toggle(json!(1)));
+        assert!(toggle(json!("off")), "any non-empty text is truthy");
+        assert!(toggle(json!([0])));
+        for falsy in [
+            json!(false),
+            json!(0),
+            json!(0.0),
+            json!(""),
+            json!([]),
+            json!({}),
+            json!(null),
+        ] {
+            assert!(!toggle(falsy.clone()), "{falsy}");
+        }
+    }
+
+    #[test]
+    fn with_no_warm_start_key_or_no_entry_a_crumb_restores() {
+        assert!(warm_start(&component(activity("checkpoint", json!({})))));
+        assert!(warm_start(&json!({})));
+        assert!(warm_start(&component(activity(
+            "watchdog",
+            json!({"warm_start": false})
+        ))));
+    }
+
+    #[test]
+    fn the_warm_start_entry_is_found_by_name_enabled_or_not() {
+        assert!(!warm_start(&component(activity(
+            "checkpoint",
+            json!({"enabled": false, "warm_start": false})
+        ))));
+        // the name, not the activity
+        assert!(warm_start(&component(
+            json!({"name": "crumbs", "activity": "checkpoint", "warm_start": false})
+        )));
+        assert!(!warm_start(&component(
+            json!({"name": "checkpoint", "activity": "other", "warm_start": 0})
+        )));
+        // the first of the name wins, sensors first
+        let both = json!({"sensors": [{"name": "checkpoint", "warm_start": false}],
+                          "components": [{"name": "checkpoint", "activity": "checkpoint", "warm_start": true}]});
+        assert!(!warm_start(&both));
+    }
+
+    /// The watchdog settings of a document whose one component is an enabled watchdog with `fields`.
+    fn watchdog_with(fields: Value) -> Option<Result<Watchdog, String>> {
+        watchdog(&component(activity("watchdog", fields)))
+    }
+
+    /// Settings the view accepts.
+    fn settings(timeout_ms: u32, period_ms: u32, stall_ms: f32) -> Option<Result<Watchdog, String>> {
+        Some(Ok(Watchdog {
+            timeout_ms,
+            period_ms,
+            stall_ms,
+        }))
+    }
+
+    /// A refusal, as the view words it.
+    fn refused(why: &str) -> Option<Result<Watchdog, String>> {
+        Some(Err(why.to_string()))
+    }
+
+    #[test]
+    fn an_absent_watchdog_key_is_plan_bs_default() {
+        assert_eq!(watchdog_with(json!({})), settings(5000, 200, 500.0));
+        assert_eq!(
+            watchdog_with(json!({"wdt_timeout_ms": 8000})),
+            settings(8000, 200, 500.0)
+        );
+        assert_eq!(
+            watchdog_with(json!({"period_ms": 100, "stall_ms": 250})),
+            settings(5000, 100, 250.0)
+        );
+    }
+
+    #[test]
+    fn the_timeout_is_an_integer_at_the_boot_floor_or_above() {
+        assert_eq!(
+            watchdog_with(json!({"wdt_timeout_ms": 4000})),
+            settings(4000, 200, 500.0)
+        );
+        // the longest the task watchdog's doubled u32 hold keeps whole
+        assert_eq!(
+            watchdog_with(json!({"wdt_timeout_ms": i32::MAX})),
+            settings(i32::MAX as u32, 200, 500.0)
+        );
+        for below in [json!(3999), json!(100), json!(0), json!(-5000)] {
+            assert_eq!(
+                watchdog_with(json!({"wdt_timeout_ms": below.clone()})),
+                refused("wdt_timeout_ms: below the 4000 ms boot floor (the board boot-loops)"),
+                "{below}"
+            );
+        }
+        // a float never reaches the task watchdog, whole or past the floor
+        for float in [json!(100.0), json!(3999.0), json!(5000.0), json!(4000.5)] {
+            assert_eq!(
+                watchdog_with(json!({"wdt_timeout_ms": float.clone()})),
+                refused("wdt_timeout_ms: not an integer"),
+                "{float}"
+            );
+        }
+        for not_a_number in [json!("5000"), json!(true), json!(null), json!([5000])] {
+            assert_eq!(
+                watchdog_with(json!({"wdt_timeout_ms": not_a_number.clone()})),
+                refused("wdt_timeout_ms: not a number"),
+                "{not_a_number}"
+            );
+        }
+        // 2^31 doubles to a hold of 0, and 2^31 + 2000 to 2000 ms, under the boot floor
+        for too_long in [
+            json!(2_147_483_648_u32),
+            json!(2_147_485_648_u32),
+            json!(u32::MAX),
+            json!(u64::from(u32::MAX) + 1),
+            json!(u64::MAX),
+        ] {
+            assert_eq!(
+                watchdog_with(json!({"wdt_timeout_ms": too_long.clone()})),
+                refused("wdt_timeout_ms: longer than 2147483647 ms"),
+                "{too_long}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_period_is_a_positive_integer() {
+        assert_eq!(watchdog_with(json!({"period_ms": 1})), settings(5000, 1, 500.0));
+        assert_eq!(watchdog_with(json!({"period_ms": 1000})), settings(5000, 1000, 500.0));
+        // the longest plan B's `ticks_add` took
+        assert_eq!(
+            watchdog_with(json!({"period_ms": 536_870_911})),
+            settings(5000, 536_870_911, 500.0)
+        );
+        for not_positive in [json!(0), json!(-200)] {
+            assert_eq!(
+                watchdog_with(json!({"period_ms": not_positive.clone()})),
+                refused("period_ms: not positive"),
+                "{not_positive}"
+            );
+        }
+        for float in [json!(50.5), json!(200.0)] {
+            assert_eq!(
+                watchdog_with(json!({"period_ms": float.clone()})),
+                refused("period_ms: not an integer"),
+                "{float}"
+            );
+        }
+        for not_a_number in [json!("200"), json!(false), json!(null)] {
+            assert_eq!(
+                watchdog_with(json!({"period_ms": not_a_number.clone()})),
+                refused("period_ms: not a number"),
+                "{not_a_number}"
+            );
+        }
+        for too_long in [json!(536_870_912), json!(u32::MAX), json!(u64::from(u32::MAX) + 1)] {
+            assert_eq!(
+                watchdog_with(json!({"period_ms": too_long.clone()})),
+                refused("period_ms: longer than 536870911 ms"),
+                "{too_long}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_stall_limit_is_any_positive_number() {
+        assert_eq!(watchdog_with(json!({"stall_ms": 500.5})), settings(5000, 200, 500.5));
+        assert_eq!(watchdog_with(json!({"stall_ms": 1})), settings(5000, 200, 1.0));
+        assert_eq!(watchdog_with(json!({"stall_ms": 0.25})), settings(5000, 200, 0.25));
+        // 1e-50 is positive, but 0 as an f32
+        for not_positive in [json!(0), json!(0.0), json!(-1), json!(-0.5), json!(1e-50)] {
+            assert_eq!(
+                watchdog_with(json!({"stall_ms": not_positive.clone()})),
+                refused("stall_ms: not positive"),
+                "{not_positive}"
+            );
+        }
+        for not_a_number in [json!("500"), json!(true), json!(null), json!({"ms": 500})] {
+            assert_eq!(
+                watchdog_with(json!({"stall_ms": not_a_number.clone()})),
+                refused("stall_ms: not a number"),
+                "{not_a_number}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_first_key_refused_is_the_one_named() {
+        assert_eq!(
+            watchdog_with(json!({"wdt_timeout_ms": 100, "period_ms": 0, "stall_ms": "x"})),
+            refused("wdt_timeout_ms: below the 4000 ms boot floor (the board boot-loops)")
+        );
+        assert_eq!(
+            watchdog_with(json!({"period_ms": 0, "stall_ms": "x"})),
+            refused("period_ms: not positive")
+        );
+    }
+
+    #[test]
+    fn the_watchdog_is_the_first_enabled_watchdog_activity() {
+        // disabled, as the defaults ship it: none, and a refused key in it is never read
+        let disabled = activity("watchdog", json!({"enabled": false, "wdt_timeout_ms": 100}));
+        assert_eq!(watchdog(&component(disabled.clone())), None);
+        assert_eq!(watchdog(&json!({})), None);
+        // the disabled first one is skipped for the enabled second, found by its activity under another name
+        let second = json!({"name": "dog", "activity": "watchdog", "enabled": "yes", "wdt_timeout_ms": 6000});
+        assert_eq!(
+            watchdog(&json!({"components": [disabled, second.clone()]})),
+            settings(6000, 200, 500.0)
+        );
+        // of two enabled entries the first is read, and a sensor comes before a component
+        let third = json!({"name": "hound", "activity": "watchdog", "wdt_timeout_ms": 7000});
+        assert_eq!(
+            watchdog(&json!({"components": [second.clone(), third.clone()]})),
+            settings(6000, 200, 500.0)
+        );
+        assert_eq!(
+            watchdog(&json!({"sensors": [third], "components": [second]})),
+            settings(7000, 200, 500.0)
+        );
+        // the name alone runs nothing, and a truthy driver runs the entry instead of the activity
+        assert_eq!(
+            watchdog(&component(json!({"name": "watchdog", "activity": "flight"}))),
+            None
+        );
+        assert_eq!(
+            watchdog(&component(
+                json!({"name": "watchdog", "driver": "x", "activity": "watchdog"})
+            )),
+            None
         );
     }
 }

@@ -6,7 +6,10 @@
 //!   crates/control's): the detector primitives case by case;
 //! - sequencer_trace.json (golden/build_sequencer_trace.py): plan B's `Sequencer._tick` driven tick by tick,
 //!   where every stage and every sequencer.csv row (stage and reason text) must match EXACTLY, from settings
-//!   `Settings::from_config` reads out of each scenario's config as the firmware reads the board config.
+//!   `Settings::from_config` reads out of each scenario's config as the firmware reads the board config. The one
+//!   exception is pinned in the fixture: the altitude launch's rate gate (the port's, not plan B's) removes the
+//!   altitude launches whose elevation never rose `launch_alt_m` within `launch_alt_window_ms` above a level it held
+//!   for `launch_ms`, each step it changes carrying the `divergence` the port owes instead.
 
 use golden::{Compare, Fixture};
 use sequencer::commons::{self, Apogee, Dwell};
@@ -202,10 +205,28 @@ fn stage(value: &Value) -> Stage {
     Stage::from_name(value.as_str().expect("a stage is a name")).unwrap_or_else(|| panic!("no stage {value}"))
 }
 
-/// Every scenario step, run on the port: (name, plan B's out, the Rust out). Each step's stage and manual flag
-/// come from the fixture -- the Controller's, after the step's events -- and the machine's advance is reported
-/// as the stage after the step.
-fn trace_answers() -> Vec<(String, Value, Value)> {
+/// One scenario step as the port ran it.
+struct Answer {
+    /// The scenario, the step's index and its clock, for a failure message.
+    name: String,
+    /// Plan B's out.
+    plan_b: Value,
+    /// The out the port owes instead, on a step the rate gate changes; None on every other.
+    divergence: Option<Value>,
+    /// The port's out.
+    port: Value,
+}
+
+impl Answer {
+    /// The out the port owes: the divergence's, else plan B's.
+    fn owed(&self) -> &Value {
+        self.divergence.as_ref().unwrap_or(&self.plan_b)
+    }
+}
+
+/// Every scenario step, run on the port. Each step's stage and manual flag come from the fixture -- the
+/// Controller's, after the step's events -- and the machine's advance is reported as the stage after the step.
+fn trace_answers() -> Vec<Answer> {
     let fixture = Fixture::parse(SEQUENCER_TRACE);
     let mut answers = Vec::new();
     for scenario in fixture.get("scenarios").as_array().expect("scenarios is a list") {
@@ -227,11 +248,12 @@ fn trace_answers() -> Vec<(String, Value, Value)> {
                 .transitions()
                 .map(|transition| json!([transition.to.name(), transition.reason.to_string()]))
                 .collect();
-            answers.push((
-                format!("{name} step {index} (now_ms {now_ms})"),
-                step["out"].clone(),
-                json!({"stage": after.name(), "records": records}),
-            ));
+            answers.push(Answer {
+                name: format!("{name} step {index} (now_ms {now_ms})"),
+                plan_b: step["out"].clone(),
+                divergence: step.get("divergence").map(|divergence| divergence["out"].clone()),
+                port: json!({"stage": after.name(), "records": records}),
+            });
         }
     }
     answers
@@ -252,7 +274,7 @@ fn the_settings_and_their_defaults_are_plan_b_s() {
 }
 
 #[test]
-fn the_trace_matches_plan_b_exactly() {
+fn the_trace_matches_plan_b_exactly_but_for_the_rate_gate() {
     let fixture = Fixture::parse(SEQUENCER_TRACE);
     let compare = fixture.compare();
     assert_eq!(compare, Compare::Exact, "stages and reasons compare exactly");
@@ -260,7 +282,7 @@ fn the_trace_matches_plan_b_exactly() {
     assert!(answers.len() > 100, "a trace that compared nothing must not pass");
     let failures: Vec<String> = answers
         .iter()
-        .filter_map(|(name, owed, answer)| compare.check(name, owed, answer).err())
+        .filter_map(|answer| compare.check(&answer.name, answer.owed(), &answer.port).err())
         .collect();
     assert!(
         failures.is_empty(),
@@ -269,6 +291,150 @@ fn the_trace_matches_plan_b_exactly() {
         answers.len(),
         failures.join("\n")
     );
+    // every pinned divergence is one: the port answers plan B's out there, and only there, differently
+    let differing: Vec<&str> = answers
+        .iter()
+        .filter(|answer| answer.port != answer.plan_b)
+        .map(|answer| answer.name.as_str())
+        .collect();
+    let pinned: Vec<&str> = answers
+        .iter()
+        .filter(|answer| answer.divergence.is_some())
+        .map(|answer| answer.name.as_str())
+        .collect();
+    assert_eq!(differing, pinned);
+}
+
+/// How many of an out's rows have a reason starting with `prefix`.
+fn rows_starting(out: &Value, prefix: &str) -> usize {
+    out["records"]
+        .as_array()
+        .expect("records is a list")
+        .iter()
+        .filter(|record| record[1].as_str().is_some_and(|reason| reason.starts_with(prefix)))
+        .count()
+}
+
+/// An out's rows without its altitude launch.
+fn without_the_altitude_launch(out: &Value) -> Vec<Value> {
+    let records = out["records"].as_array().expect("records is a list");
+    records
+        .iter()
+        .filter(|record| {
+            !record[1]
+                .as_str()
+                .is_some_and(|reason| reason.starts_with("launch alt="))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Whether a scenario's fresh barometer elevation, over its steps up to and including `last`, ever rose more than
+/// `rise_m` within `window_ms` above a level it held for `held_ms`: the rate gate's question asked of the fixture's
+/// own reads (every fresh reading that is not the GNSS's, whatever the stage, each at its own clock), not of the
+/// machine. A reading confirms the highest of the readings from the last one at least `held_ms` older on, itself
+/// included; with none that old it confirms no level.
+fn rose_within(steps: &[Value], last: usize, rise_m: f32, window_ms: u32, held_ms: u32) -> bool {
+    let readings: Vec<(u32, f32)> = steps[..=last]
+        .iter()
+        .filter_map(|step| {
+            let reading = reading(&step["in"]["reads"]["elevation"], float)?;
+            (reading.source == Source::Other).then(|| (milliseconds(&step["in"]["now_ms"]), reading.value))
+        })
+        .collect();
+    let age_ms = |now_ms: u32, then_ms: u32| i64::from(commons::elapsed_ms(now_ms, then_ms));
+    let levels: Vec<Option<f32>> = (0..readings.len())
+        .map(|confirming| {
+            let now_ms = readings[confirming].0;
+            let held_from = readings[..=confirming]
+                .iter()
+                .rposition(|&(then_ms, _)| age_ms(now_ms, then_ms) >= i64::from(held_ms))?;
+            let held = readings[held_from..=confirming].iter().map(|&(_, metres)| metres);
+            Some(held.fold(f32::MIN, f32::max))
+        })
+        .collect();
+    readings.iter().enumerate().any(|(later, &(now_ms, metres))| {
+        readings[..later].iter().zip(&levels).any(|(&(then_ms, _), level)| {
+            let within = (0..=i64::from(window_ms)).contains(&age_ms(now_ms, then_ms));
+            within && level.is_some_and(|level_m| metres - level_m > rise_m)
+        })
+    })
+}
+
+#[test]
+fn the_rate_gate_removes_only_altitude_launches_of_a_slow_rise() {
+    let fixture = Fixture::parse(SEQUENCER_TRACE);
+    let (mut made, mut removed, mut carried) = (0, 0, 0);
+    for scenario in fixture.get("scenarios").as_array().unwrap() {
+        let settings = settings(&scenario["init"]["config"]);
+        let (line_m, window_ms) = (settings.launch_alt_m, settings.launch_alt_window_ms);
+        let steps = scenario["steps"].as_array().unwrap();
+        for (index, step) in steps.iter().enumerate() {
+            let name = format!("{} step {index}", scenario["name"]);
+            let fast = || rose_within(steps, index, line_m, window_ms, settings.launch_ms);
+            let Some(divergence) = step.get("divergence") else {
+                // an altitude launch the port makes as plan B does: the same question answers that it rose
+                if rows_starting(&step["out"], "launch alt=") > 0 {
+                    assert!(
+                        fast(),
+                        "{name}: an altitude launch that never rose launch_alt_m within the window"
+                    );
+                    made += 1;
+                }
+                continue;
+            };
+            let (out, owed) = (&step["out"], &divergence["out"]);
+            if rows_starting(out, "launch alt=") > 0 {
+                // an altitude launch removed: the rise was slow, and the tick records nothing else differently
+                assert!(!fast(), "{name}: the elevation rose launch_alt_m within the window");
+                assert_eq!(rows_starting(owed, "launch alt="), 0, "{name}");
+                let accel_launch = rows_starting(owed, "launch |a|=");
+                assert_eq!(
+                    without_the_altitude_launch(owed).len(),
+                    without_the_altitude_launch(out).len() + accel_launch,
+                    "{name}"
+                );
+                assert!(
+                    without_the_altitude_launch(owed).starts_with(&without_the_altitude_launch(out)),
+                    "{name}"
+                );
+                let stage = if accel_launch > 0 {
+                    &out["stage"]
+                } else {
+                    &step["in"]["stage"]
+                };
+                assert_eq!(&owed["stage"], stage, "{name}");
+                removed += 1;
+                continue;
+            }
+            // the tick after a launch the port did not make: plan B's BOOSTING reaches it from outside
+            let before = &steps[index - 1];
+            assert!(
+                rows_starting(&before["out"], "launch alt=") > 0 && before["divergence"]["out"]["stage"] == "setting",
+                "{name}: a divergence that follows no removed launch"
+            );
+            let mut records = vec![json!([step["in"]["stage"], "external"])];
+            records.extend(out["records"].as_array().unwrap().iter().cloned());
+            assert_eq!(owed, &json!({"stage": out["stage"], "records": records}), "{name}");
+            carried += 1;
+        }
+    }
+    assert_eq!(
+        (made, removed, carried),
+        (1, 9, 3),
+        "the fast climb kept; six launches over the line from the first fresh baro reading, two from one low reading, \
+         one slow climb removed; three flights carried on"
+    );
+    // the gate only removes: every launch the port makes, plan B makes on the same tick
+    for answer in trace_answers() {
+        if rows_starting(&answer.port, "launch ") > 0 {
+            assert!(
+                rows_starting(&answer.plan_b, "launch ") > 0,
+                "{}: a launch plan B did not make",
+                answer.name
+            );
+        }
+    }
 }
 
 #[test]
@@ -293,7 +459,7 @@ fn the_trace_covers_every_reason_and_a_two_row_step() {
     let answers = trace_answers();
     let texts: Vec<&str> = answers
         .iter()
-        .flat_map(|(_, owed, _)| owed["records"].as_array().unwrap())
+        .flat_map(|answer| answer.owed()["records"].as_array().unwrap())
         .map(|record| record[1].as_str().unwrap())
         .collect();
     for reason in reasons {
@@ -308,12 +474,12 @@ fn the_trace_covers_every_reason_and_a_two_row_step() {
     assert!(
         answers
             .iter()
-            .any(|(_, owed, _)| owed["records"].as_array().unwrap().len() == 2),
+            .any(|answer| answer.owed()["records"].as_array().unwrap().len() == 2),
         "no step with two rows"
     );
     for stage in Stage::ALL {
         assert!(
-            answers.iter().any(|(_, owed, _)| owed["stage"] == stage.name()),
+            answers.iter().any(|answer| answer.owed()["stage"] == stage.name()),
             "the trace never reaches {}",
             stage.name()
         );

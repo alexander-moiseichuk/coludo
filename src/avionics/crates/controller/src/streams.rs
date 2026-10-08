@@ -3,8 +3,9 @@
 //! The device telemetry streams (doc/specs/avionics-port.md M6): which entry writes which stream,
 //! with its file, its columns, its decimation window and whether it is durable, as plan B's drivers build their
 //! Telemetry at setup (drivers/lsm6dso32.py:124-126, drivers/icp10111.py:123-125, drivers/separation.py:57,
-//! tasks/sequencer.py:110). M6 records the LSM6DSO32, the ICP-10111 and the separation switch, and M7 the stage
-//! machine's transitions; every other part, the BMI323 among them until M9, has none yet.
+//! tasks/sequencer.py:110, warmstart.py:318). M6 records the LSM6DSO32, the ICP-10111 and the separation switch, M7
+//! the stage machine's transitions, and M8 the checkpoint's timeline; every other part, the BMI323 among them until
+//! M9, has none yet.
 //!
 //! The port, against plan B:
 //!  * Plan B registers a stream in its task's setup. The firmware registers one at `recorder::open` for every named
@@ -16,6 +17,9 @@
 //!    event". Here the stream is durable and never decimated.
 //!  * Plan B's sequencer passes its `<name>.csv` no window either. Its rows are the stage transitions, a handful a
 //!    flight, so here that stream too is durable and never decimated.
+//!  * Plan B's checkpoint passes `checkpoint.csv` no window either. Its rows come once a stage change and once a
+//!    `checkpoint_s` aloft, and the last one before a reset is the post-mortem's record of where the flight was, so
+//!    here it is durable and never decimated too.
 //!  * separation.csv gains two columns, `moment` and `duration`: the first edge of the contact's episode the row
 //!    concludes, on the uptime column's own clock, microseconds, and the microseconds from it to the episode's last
 //!    edge (the wobble). A row's `uptime` is the tick that concluded the episode, a quiet after its last edge, so the
@@ -44,8 +48,16 @@ pub const SEPARATION_FIELDS: [&str; 4] = ["event", "stage", "moment", "duration"
 /// and why (`launch |a|=...`, or `external` for a move it did not make).
 pub const SEQUENCER_FIELDS: [&str; 2] = ["stage", "reason"];
 
+/// The checkpoint's columns (plan B warmstart.py:318-319): the stage's id, 1 (SETTING) to 5 (DONE), as plan B pushes
+/// `controller.stage`; the altitude in m AMSL, the speed and the airspeed in m/s; and the uptime in ms the checkpoint
+/// was taken at.
+pub const CHECKPOINT_FIELDS: [&str; 5] = ["stage", "altitude", "speed", "airspeed", "ticks_ms"];
+
 /// The separation switch's file, whatever its entry's name (plan B drivers/separation.py:57).
 const SEPARATION_FILE: &str = "separation.csv";
+
+/// The checkpoint's file, whatever its entry's name (plan B warmstart.py:318).
+const CHECKPOINT_FILE: &str = "checkpoint.csv";
 
 /// The window that reads the global `recorder.telemetry_ms` at each use: 0, as the recorder's
 /// `Telemetry::window_us` reads it.
@@ -68,14 +80,15 @@ pub struct Stream {
     /// The decimation window in microseconds: positive its own, 0 the global `recorder.telemetry_ms`, negative
     /// never decimated.
     pub decimate_us: i32,
-    /// Whether each row wakes the ring_writer at once (separation.csv and the stage machine's: the stage
-    /// transitions' record).
+    /// Whether each row wakes the ring_writer at once: separation.csv; the stage machine's, the stage transitions'
+    /// record; and checkpoint.csv, the last state before a reset.
     pub durable: bool,
 }
 
 /// The stream `entry` writes, when its part is one the port records: the LSM6DSO32 and the ICP-10111 as
-/// `<name>.csv` with their entry's window (`window_us`), the separation switch as the fixed `separation.csv`, and the
-/// stage machine as `<name>.csv`, the last two durable and never decimated. None for any other part.
+/// `<name>.csv` with their entry's window (`window_us`), the separation switch as the fixed `separation.csv`, the
+/// stage machine as `<name>.csv` and the checkpoint as the fixed `checkpoint.csv`, the last three durable and never
+/// decimated. None for any other part.
 pub fn stream(entry: &Entry) -> Option<Stream> {
     let (file, fields, decimate_us, durable): (String, &'static [&'static str], i32, bool) = match entry.implementation
     {
@@ -88,6 +101,7 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
         ),
         "separation" => (SEPARATION_FILE.to_string(), &SEPARATION_FIELDS, NEVER_DECIMATED, true),
         "sequencer" => (format!("{}.csv", entry.name), &SEQUENCER_FIELDS, NEVER_DECIMATED, true),
+        "checkpoint" => (CHECKPOINT_FILE.to_string(), &CHECKPOINT_FIELDS, NEVER_DECIMATED, true),
         _ => return None,
     };
     Some(Stream {
@@ -117,7 +131,7 @@ fn window_us(entry: &Entry) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BAROMETER_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, stream};
+    use super::{BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, stream};
     use board_config::{directory, entries};
     use serde_json::{Value, json};
 
@@ -157,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn the_defaults_record_the_imu_the_barometer_the_separation_switch_and_the_stage_machine() {
+    fn the_defaults_record_the_imu_the_barometer_the_separation_switch_the_stage_machine_and_the_checkpoint() {
         let document = defaults();
         let streams: Vec<(&str, Stream)> = entries(&document)
             .iter()
@@ -202,7 +216,47 @@ mod tests {
                         durable: true,
                     }
                 ),
+                (
+                    "checkpoint",
+                    Stream {
+                        file: "checkpoint.csv".to_string(),
+                        fields: &CHECKPOINT_FIELDS,
+                        decimate_us: -1,
+                        durable: true,
+                    }
+                ),
             ]
+        );
+    }
+
+    #[test]
+    fn the_checkpoint_writes_plan_b_s_columns_to_checkpoint_csv_whatever_its_name() {
+        assert_eq!(CHECKPOINT_FIELDS.join(";"), "stage;altitude;speed;airspeed;ticks_ms");
+        let document = json!({"components": [
+            {"name": "crumbs", "activity": "checkpoint", "enabled": false, "telemetry_ms": 50},
+        ]});
+        assert_eq!(
+            only(&document),
+            Some(Stream {
+                file: "checkpoint.csv".to_string(),
+                fields: &CHECKPOINT_FIELDS,
+                decimate_us: -1,
+                durable: true,
+            }),
+            "disabled, renamed and with a window of its own: still checkpoint.csv, durable and never decimated"
+        );
+    }
+
+    #[test]
+    fn the_checkpoint_is_known_by_its_activity_not_its_name() {
+        assert_eq!(
+            only(&json!({"components": [{"name": "checkpoint", "activity": "watchdog"}]})),
+            None
+        );
+        assert_eq!(
+            only(&json!({"components": [{"name": "checkpoint", "driver": "x", "activity": "checkpoint"}]})),
+            None,
+            "a truthy driver runs the entry instead"
         );
     }
 

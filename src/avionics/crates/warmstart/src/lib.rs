@@ -16,9 +16,10 @@
 //!    write leaves the previous stage, never a new stage pointing at a half-written blob; the i32 is authoritative
 //!    over the blob's own copy.
 //!
-//! Only an ARMED flight writes a crumb (a disarmed passive flight must never warm-start into an armed stage), and
-//! the recovery identity (the launch point, the zone, the pad altitude, the pitot tare) is frozen once, at
-//! BOOSTING entry, and rides every later crumb.
+//! Only a FLYING board writes a crumb: armed (a disarmed passive flight must never warm-start into an armed stage)
+//! and launched by its own stage machine (an operator's held stage is a bench test, never a flight to resume). The
+//! recovery identity (the launch point, the zone, the pad altitude, the pitot tare) is frozen once, at BOOSTING
+//! entry, and rides every later crumb.
 //!
 //! The pieces, each plan B's function as data, so the firmware's `warm.rs` and supervisor only move bytes:
 //!  * [`Crumb`], with [`Crumb::from_json`] and [`Crumb::to_json`], and [`save`]/[`clear`]/[`load`] over the [`Nvs`]
@@ -26,7 +27,9 @@
 //!  * [`should_restore`], the gate, with [`ResetReason`] (the ESP-IDF reset reasons and which count as a reset);
 //!  * [`ApplyPlan`], what a passed gate restores, in plan B's order;
 //!  * [`restore`], plan B's boot decision end to end;
-//!  * [`Checkpoint`], plan B's Checkpoint task as a pure schedule: when to write, and the identity it carries.
+//!  * [`Checkpoint`], plan B's Checkpoint task as a pure schedule: when to write, and the identity it carries;
+//!  * [`Keeper`], the schedule over NVS: a crumb only while flying, a clear when the flight ends, and a refused
+//!    write retried until it lands.
 //!
 //! Nothing here reads a clock: the time is an argument. A crumb's `stamp` is whole seconds since 2000-01-01 UTC,
 //! MicroPython's esp32 epoch, so plan B's crumbs and these share one clock; the firmware subtracts
@@ -50,12 +53,26 @@
 //!    when the corners' units sum to an odd number the two differ by half a unit (5.6 mm). The checkpoint fixture
 //!    compares exactly and holds coordinates of at most 7 decimals, so it cannot carry that half unit.
 //!
+//! The [`Keeper`] departs from plan B's Checkpoint task on purpose too, each departure pinned by the unit tests:
+//!  * plan B saved a crumb whenever the board was armed; the keeper saves one only while armed AND launched, so an
+//!    armed bench hold (`arm`, then `stage gliding`) writes none, and a reset never resumes it as a launched flight;
+//!  * plan B left the last crumb in NVS after a disarm; the keeper clears it on any edge out of flying (a disarm, or
+//!    a hold, which clears `launched`). The recovery from a false launch (disarm, `stage done`, the re-zero, `stage
+//!    setting`) so leaves no armed BOOSTING crumb for a reset within [`MAX_AGE_S`] to warm-start on the pad. The
+//!    cost: plan B's simulated HITL reboot, whose outage begins with a disarm, finds no crumb;
+//!  * plan B wrote each crumb once, whatever NVS answered; the keeper retries a refused crumb or clear on every poll
+//!    until it lands. The schedule never re-checkpoints DONE, so a lost DONE crumb left the last airborne one, and a
+//!    reset then warm-started a landed glider;
+//!  * plan B latched every fresh altitude in SETTING as the pad; the keeper latches one only while the elevation is
+//!    under a ceiling (half the sequencer's `launch_alt_m`). A launch the accel trigger missed stays in SETTING
+//!    through the baro launch dwell, and plan B latched its "pad" metres up the climb.
+//!
 //! Not ported: the GC handling (plan B collected and disabled the GC on an airborne warm start), the log lines
 //! (the firmware logs the [`Reason`] it gets back), and MicroPython's SOFT_RESET (an interpreter reboot without a
 //! chip reset), which has no ESP-IDF reason.
 
 use control::navigation::Position;
-use sequencer::Stage;
+use sequencer::{Flight, Stage};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use std::fmt;
@@ -291,21 +308,32 @@ fn zone(value: &Value) -> Option<[Position; 2]> {
 /// Returns true when committed; false, having written nothing, when the crumb has no stage, and false when NVS
 /// refused a write (absent or full). Never panics: a failed checkpoint must never block the flight.
 pub fn save(nvs: &mut impl Nvs, crumb: &Crumb) -> bool {
-    let Some(stage) = crumb.stage else {
-        return false;
-    };
-    nvs.set_blob(CRUMB_KEY, crumb.to_json().as_bytes())
-        .and_then(|()| nvs.set_i32(STAGE_KEY, stage))
-        .and_then(|()| nvs.commit())
-        .is_ok()
+    crumb
+        .stage
+        .is_some_and(|stage| try_save(nvs, stage, &crumb.to_json()).is_ok())
 }
 
-/// Reset the stage i32 to [`NO_STAGE`] after a rejected warm start (plan B `clear`), so the next boot is
-/// unambiguously cold. The blob stays: the i32 alone decides, so the clear is one fast write. A failed clear is
-/// swallowed.
-pub fn clear(nvs: &mut impl Nvs) {
-    // a failed clear only means the next boot re-reads the crumb, and the gate refuses it again
-    let _ = nvs.set_i32(STAGE_KEY, NO_STAGE).and_then(|()| nvs.commit());
+/// [`save`]'s writes in its order: the blob, then the stage i32, then the commit; the first refusal is the error.
+fn try_save(nvs: &mut impl Nvs, stage: i32, blob: &str) -> Result<(), NvsError> {
+    nvs.set_blob(CRUMB_KEY, blob.as_bytes())?;
+    nvs.set_i32(STAGE_KEY, stage)?;
+    nvs.commit()
+}
+
+/// Reset the stage i32 to [`NO_STAGE`] (plan B `clear`), so the next boot is unambiguously cold: after a rejected
+/// warm start, and when a flight ends ([`Keeper`]). The blob stays: the i32 alone decides, so the clear is one fast
+/// write.
+///
+/// Returns: true when committed; false when NVS refused (the stage i32 may still hold the crumb's stage). Never
+/// panics.
+pub fn clear(nvs: &mut impl Nvs) -> bool {
+    try_clear(nvs).is_ok()
+}
+
+/// [`clear`]'s writes: the stage i32, then the commit; the first refusal is the error.
+fn try_clear(nvs: &mut impl Nvs) -> Result<(), NvsError> {
+    nvs.set_i32(STAGE_KEY, NO_STAGE)?;
+    nvs.commit()
 }
 
 /// The last checkpoint crumb (plan B `load`): the stage i32 gates it, then the blob fills it in.
@@ -628,9 +656,10 @@ impl ApplyPlan {
 pub enum Restore {
     /// No crumb: the normal cold boot, nothing written.
     Cold,
-    /// A crumb, but the checkpoint component's `warm_start` is off: a cold boot; the stage was cleared.
+    /// A crumb, but the checkpoint component's `warm_start` is off: a cold boot; the stage cleared, unless NVS
+    /// refused ([`restore`]).
     Disabled,
-    /// The gate refused: a cold boot; the stage was cleared, so the next boot is unambiguously cold.
+    /// The gate refused: a cold boot; the stage cleared so the next boot is cold, unless NVS refused ([`restore`]).
     Refused(Reason),
     /// The gate passed: apply the plan before any thread runs.
     Warm {
@@ -641,8 +670,24 @@ pub enum Restore {
     },
 }
 
+impl Restore {
+    /// Whether the recorder's flight flag stays up: the recorder opens with it raised for a crumb [`load`] reads in
+    /// BOOSTING..LANDING, and only a warm start keeps it. Cold, Disabled and Refused lower it, Cold included: a
+    /// stage i32 whose blob does not read is Cold with nothing cleared, so a flag kept there would stay up all
+    /// session, and on every later boot.
+    pub fn keeps_flight(&self) -> bool {
+        matches!(self, Restore::Warm { .. })
+    }
+}
+
 /// Decide the boot from NVS (plan B `restore`, without its logging and GC handling): load the crumb, honour the
 /// config toggle, ask the gate, and clear the stage on a refusal.
+///
+/// A refused clear is ignored, as plan B swallowed it, so the stage i32 keeps the crumb for the next boot. A
+/// refusal that lasts (DONE, SETTING, torn, no flight stage, too old) refuses it there again; one that can change by
+/// then (a power-on, the toggle off, a nested latch, a clock behind the stamp) can pass. The [`Keeper`] clears only
+/// a crumb it saved or was seeded with, so a later reset within [`MAX_AGE_S`] of the stamp can warm-start a landed
+/// board. Plan B has the same gap.
 ///
 /// `warm_start` is the checkpoint component's toggle (default on), `separated` the separation latch read at
 /// setup, `reset` this boot's reset reason, `now_s` the clock in seconds since 2000, and `sensors` the board
@@ -677,7 +722,8 @@ pub fn restore<'a>(
 pub struct Step {
     /// The recovery identity was frozen on this pass (BOOSTING entry with none held).
     pub froze: bool,
-    /// Write a checkpoint now: the telemetry row always, and the NVS crumb ([`Checkpoint::crumb`]) when armed.
+    /// Write a checkpoint now: the telemetry row always, and the NVS crumb ([`Checkpoint::crumb`]) when flying
+    /// ([`Keeper`]).
     pub checkpoint: bool,
 }
 
@@ -713,8 +759,8 @@ pub struct Live {
 /// airborne, the recovery identity frozen at BOOSTING entry, the pad altitude latched in SETTING.
 ///
 /// SETTING and DONE checkpoint once on entry and never periodically: nothing moves during the long pad dwell or the
-/// post-landing wait, so re-writing every period would only wear the flash. The NVS crumb goes out only for an
-/// ARMED flight (the caller checks), the telemetry row always.
+/// post-landing wait, so re-writing every period would only wear the flash. The [`Keeper`] decides which
+/// checkpoints also save the NVS crumb (only a flying board's); the telemetry row goes out on every one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Checkpoint {
     /// The airborne cadence in microseconds (`checkpoint_s`, floored at 1 s).
@@ -836,6 +882,182 @@ impl Checkpoint {
             ticks_ms: Some(live.ticks_ms),
             identity: self.identity,
         }
+    }
+}
+
+/// An NVS action of the [`Keeper`]: the one it owes, and the one a pass committed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Write {
+    /// The flight's crumb, built from the pass that writes it, in [`save`]'s order.
+    Crumb,
+    /// The stage i32 back to [`NO_STAGE`] ([`clear`]): the flight ended, so no reset may resume it.
+    Clear,
+}
+
+/// What one [`Keeper::pass`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pass {
+    /// The recovery identity was frozen on this pass (BOOSTING entry with none held).
+    pub froze: bool,
+    /// A checkpoint is due at this stage, flying or not: the caller pushes its checkpoint.csv row and log line. An
+    /// owed crumb went to NVS first, so a full telemetry ring never costs the crumb.
+    pub row: Option<Stage>,
+    /// The NVS action this pass committed.
+    pub wrote: Option<Write>,
+    /// Why NVS refused this pass's action; it stays owed ([`Keeper::owed`]), and the next pass tries it again.
+    pub failed: Option<NvsError>,
+}
+
+/// The [`Keeper`]'s NVS tallies since boot, for `inspect checkpoint`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counters {
+    /// Crumbs committed.
+    pub saves: u32,
+    /// Actions NVS refused, crumbs and clears alike.
+    pub failures: u32,
+    /// Attempts at an action an earlier pass's refusal left owed.
+    pub retries: u32,
+}
+
+/// The checkpoint schedule over NVS: the supervisor runs one [`pass`](Keeper::pass) every
+/// [`poll_ms`](Keeper::poll_ms).
+///
+/// The crumb is keyed on FLYING, `armed && launched` of one flight word load, so the stage and the arming a crumb
+/// carries are of one moment:
+///  * a checkpoint due while flying owes a crumb. Every hold clears `launched`, so an armed bench hold (`arm`, then
+///    `stage gliding`) owes none: keyed on the arming alone, a reset would resume it as a launched flight;
+///  * leaving flying (a disarm, or any hold) while a crumb may be in NVS owes a clear, which replaces an owed crumb.
+///    The recovery from a false launch (disarm, `stage done`, the re-zero, `stage setting`) would otherwise leave an
+///    armed BOOSTING crumb, and a reset within [`MAX_AGE_S`] would warm-start the pad board armed;
+///  * an owed action is tried on every pass until NVS commits it, an owed crumb rebuilt from the pass that tries
+///    it. The schedule counts a checkpoint done whether its crumb landed or not and never re-checkpoints DONE, so
+///    without the retry a refused DONE crumb leaves the last airborne one, and a reset warm-starts a landed glider.
+///
+/// A crumb may be in NVS from a [`seed`](Keeper::seed) (the warm start's restored crumb) or from any crumb attempt,
+/// a refused one included (its stage i32 may have landed before the commit failed), until a clear commits.
+///
+/// The pad latch has a ceiling: the schedule latches a fresh altitude as the pad only while the fresh elevation is
+/// under it. A launch the accel trigger missed stays in SETTING through the baro launch dwell, where plan B latched
+/// the pad up the climb; the ceiling bounds that error, and a drifted pad's, to the ceiling itself.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Keeper {
+    /// When to checkpoint, and the identity a crumb carries.
+    checkpoint: Checkpoint,
+    /// The pad latch ceiling in metres of elevation; None latches every fresh altitude, as plan B.
+    pad_ceiling_m: Option<f32>,
+    /// A crumb may be in NVS: seeded, or a crumb attempted since the last committed clear.
+    crumb_live: bool,
+    /// The action NVS has not committed yet.
+    owed: Option<Write>,
+    /// The tallies since boot.
+    counters: Counters,
+}
+
+impl Keeper {
+    /// A keeper for a `checkpoint_s` cadence ([`Checkpoint::new`]) started at `now_us`, its pad latch under
+    /// `pad_ceiling_m` metres of elevation: half the sequencer's `launch_alt_m`, or None without a sequencer, which
+    /// latches as plan B does.
+    pub fn new(checkpoint_s: f32, now_us: u64, pad_ceiling_m: Option<f32>) -> Keeper {
+        Keeper {
+            checkpoint: Checkpoint::new(checkpoint_s, now_us),
+            pad_ceiling_m,
+            crumb_live: false,
+            owed: None,
+            counters: Counters::default(),
+        }
+    }
+
+    /// The polling period in milliseconds between [`pass`](Keeper::pass)es ([`Checkpoint::poll_ms`]).
+    pub fn poll_ms(&self) -> u64 {
+        self.checkpoint.poll_ms()
+    }
+
+    /// The action NVS has not committed yet, None when nothing is owed.
+    pub fn owed(&self) -> Option<Write> {
+        self.owed
+    }
+
+    /// The NVS tallies since boot.
+    pub fn counters(&self) -> Counters {
+        self.counters
+    }
+
+    /// Carry a warm start's restored identity forward ([`Checkpoint::seed`]) and mark its crumb live, so the edge out
+    /// of the restored flight clears it.
+    pub fn seed(&mut self, identity: Identity) {
+        self.checkpoint.seed(identity);
+        self.crumb_live = true;
+    }
+
+    /// One poll: the schedule's step, then the owed NVS action, if any (the rules are the [`Keeper`]'s).
+    ///
+    /// Args: `nvs` the warm start's namespace; `flight` one load of the flight word; `now_us` the uptime in
+    /// microseconds; `fresh_elevation_m` the elevation above the zeroed pad, None when stale, which the pad latch
+    /// needs under its ceiling (with a ceiling, a stale one latches nothing); `live` this checkpoint's fresh
+    /// readings, whose altitude is also what SETTING latches as the pad; `freeze` the identity inputs, read only on
+    /// the pass that freezes; `stamp_s` the clock in seconds since 2000, read only on a pass that tries a crumb.
+    ///
+    /// Returns: the freeze, the row due, and the NVS action committed or refused.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one poll's inputs: the store, the flight, the clock, two readings and two lazy sources"
+    )]
+    pub fn pass(
+        &mut self,
+        nvs: &mut impl Nvs,
+        flight: Flight,
+        now_us: u64,
+        fresh_elevation_m: Option<f32>,
+        live: Live,
+        freeze: impl FnOnce() -> Freeze,
+        stamp_s: impl FnOnce() -> i64,
+    ) -> Pass {
+        let under_ceiling = self
+            .pad_ceiling_m
+            .is_none_or(|ceiling| fresh_elevation_m.is_some_and(|elevation| elevation < ceiling));
+        let latch_m = live.altitude_m.filter(|_altitude| under_ceiling);
+        let step = self.checkpoint.step(flight.stage, now_us, latch_m, freeze);
+        let earlier = self.owed;
+        self.owed = if flight.armed && flight.launched {
+            (step.checkpoint || earlier.is_some()).then_some(Write::Crumb)
+        } else {
+            self.crumb_live.then_some(Write::Clear)
+        };
+        let mut pass = Pass {
+            froze: step.froze,
+            row: step.checkpoint.then_some(flight.stage),
+            wrote: None,
+            failed: None,
+        };
+        let Some(action) = self.owed else {
+            return pass;
+        };
+        if earlier == Some(action) {
+            self.counters.retries = self.counters.retries.saturating_add(1);
+        }
+        let attempt = match action {
+            Write::Crumb => {
+                self.crumb_live = true;
+                let crumb = self.checkpoint.crumb(flight.stage, live, stamp_s());
+                try_save(nvs, i32::from(flight.stage as u8), &crumb.to_json())
+            }
+            Write::Clear => try_clear(nvs),
+        };
+        match attempt {
+            Ok(()) => {
+                match action {
+                    Write::Crumb => self.counters.saves = self.counters.saves.saturating_add(1),
+                    Write::Clear => self.crumb_live = false,
+                }
+                self.owed = None;
+                pass.wrote = Some(action);
+            }
+            Err(error) => {
+                self.counters.failures = self.counters.failures.saturating_add(1);
+                pass.failed = Some(error);
+            }
+        }
+        pass
     }
 }
 

@@ -3,7 +3,7 @@
   "kind": "exact"
  },
  "meta": {
-  "commit": "c18e14771f72ac9c54e6b326729ba74dd14aba02",
+  "commit": "c0a7d604cab148dc31cf990c78c77daf03ce1372",
   "generator": "sequencer_trace",
   "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",
@@ -1171,6 +1171,13 @@
      }
     },
     {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it and stays on the pad",
+      "out": {
+       "records": [],
+       "stage": "setting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 40650,
@@ -1652,6 +1659,13 @@
      }
     },
     {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it and stays on the pad",
+      "out": {
+       "records": [],
+       "stage": "setting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 2210,
@@ -1683,6 +1697,18 @@
      }
     },
     {
+     "divergence": {
+      "note": "plan B's BOOSTING reaches the port as a move from outside, recorded external; every later step is plan B's",
+      "out": {
+       "records": [
+        [
+         "boosting",
+         "external"
+        ]
+       ],
+       "stage": "boosting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 2220,
@@ -3604,6 +3630,13 @@
      }
     },
     {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it and stays on the pad",
+      "out": {
+       "records": [],
+       "stage": "setting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 80600,
@@ -4231,6 +4264,13 @@
      }
     },
     {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it and stays on the pad",
+      "out": {
+       "records": [],
+       "stage": "setting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 300,
@@ -4262,6 +4302,18 @@
      }
     },
     {
+     "divergence": {
+      "note": "plan B's BOOSTING reaches the port as a move from outside, recorded external; every later step is plan B's",
+      "out": {
+       "records": [
+        [
+         "boosting",
+         "external"
+        ]
+       ],
+       "stage": "boosting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 350,
@@ -8827,6 +8879,13 @@
      }
     },
     {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it and stays on the pad",
+      "out": {
+       "records": [],
+       "stage": "setting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 5100,
@@ -9947,6 +10006,18 @@
      }
     },
     {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it; its accel launch completes on the same tick",
+      "out": {
+       "records": [
+        [
+         "boosting",
+         "launch |a|=8.0g dwell=100ms"
+        ]
+       ],
+       "stage": "boosting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 100,
@@ -10160,6 +10231,13 @@
      }
     },
     {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it and stays on the pad",
+      "out": {
+       "records": [],
+       "stage": "setting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 2060,
@@ -10188,6 +10266,18 @@
      }
     },
     {
+     "divergence": {
+      "note": "plan B's BOOSTING reaches the port as a move from outside, recorded external; every later step is plan B's",
+      "out": {
+       "records": [
+        [
+         "boosting",
+         "external"
+        ]
+       ],
+       "stage": "boosting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 2100,
@@ -10271,6 +10361,13 @@
      }
     },
     {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it and stays on the pad",
+      "out": {
+       "records": [],
+       "stage": "setting"
+      }
+     },
      "in": {
       "manual": false,
       "now_ms": 3060,
@@ -10296,6 +10393,1271 @@
        [
         "boosting",
         "launch alt=0m dwell=100ms"
+       ]
+      ],
+      "stage": "boosting"
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "config": {
+     "apogee_arm_ms": 50,
+     "boost_timeout_ms": 500,
+     "ground_ms": 300,
+     "land_agl_m": 5.0,
+     "land_ms": 100,
+     "launch_g": 3.0,
+     "launch_ms": 100,
+     "still_g": 0.3
+    },
+    "settings": {
+     "apogee_arm_ms": 50,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 500,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 300,
+     "land_agl_m": 5.0,
+     "land_ms": 100,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 3.0,
+     "launch_ms": 100,
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    "stage": "setting"
+   },
+   "name": "a_fast_climb_off_the_pad",
+   "note": "Rate gate: the baro climbs 24 m/s off a 0 m pad, over launch_alt_m from 550 (10.8 m): plan B launches launch_ms later, and so does the port, the whole rise within its 1 s window of the pad held launch_ms.",
+   "steps": [
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 0,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 0.0
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [
+       [
+        "setting",
+        "external"
+       ]
+      ],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 50,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 0.0
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 100,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 0.0
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 150,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 1.2
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 200,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 2.4
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 250,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 3.6
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 300,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 4.8
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 350,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 6.0
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 400,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 7.2
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 450,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 8.4
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 500,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 9.6
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 550,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 10.8
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 600,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 12.0
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 650,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 13.2
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [
+       [
+        "boosting",
+        "launch alt=13m dwell=100ms"
+       ]
+      ],
+      "stage": "boosting"
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "config": {
+     "apogee_arm_ms": 50,
+     "boost_timeout_ms": 500,
+     "ground_ms": 300,
+     "land_agl_m": 5.0,
+     "land_ms": 100,
+     "launch_g": 3.0,
+     "launch_ms": 100,
+     "still_g": 0.3
+    },
+    "settings": {
+     "apogee_arm_ms": 50,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 500,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 300,
+     "land_agl_m": 5.0,
+     "land_ms": 100,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 3.0,
+     "launch_ms": 100,
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    "stage": "setting"
+   },
+   "name": "a_slow_climb_off_the_pad",
+   "note": "Rate gate: the baro climbs 8 m/s off a 0 m pad, over launch_alt_m from 1400 (10.32 m): plan B launches launch_ms later. It never rises 10 m within 1 s, so the port does not -- weather drift of this shape, only slower, launched TMS-7F unarmed on the bench overnight.",
+   "steps": [
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 0,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 0.0
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [
+       [
+        "setting",
+        "external"
+       ]
+      ],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 50,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 0.0
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 100,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 0.0
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 150,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 0.32
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 200,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 0.72
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 250,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 1.12
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 300,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 1.52
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 350,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 1.92
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 400,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 2.32
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 450,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 2.72
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 500,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 3.12
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 550,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 3.52
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 600,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 3.92
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 650,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 4.32
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 700,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 4.72
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 750,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 5.12
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 800,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 5.52
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 850,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 5.92
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 900,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 6.32
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 950,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 6.72
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1000,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 7.12
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1050,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 7.52
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1100,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 7.92
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1150,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 8.32
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1200,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 8.72
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1250,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 9.12
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1300,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 9.52
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1350,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 9.92
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1400,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 10.32
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1450,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 10.72
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "divergence": {
+      "note": "the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms before this altitude launch, so the port does not make it and stays on the pad",
+      "out": {
+       "records": [],
+       "stage": "setting"
+      }
+     },
+     "in": {
+      "manual": false,
+      "now_ms": 1500,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": {
+        "source": "baro",
+        "value": 11.12
+       }
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [
+       [
+        "boosting",
+        "launch alt=11m dwell=100ms"
        ]
       ],
       "stage": "boosting"

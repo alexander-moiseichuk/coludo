@@ -1,7 +1,8 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The typed view's M5 readers (the buses, the device directory, pins, `provides` and the setup attempts) over the
-//! boards' own documents, and each reader's refusals.
+//! boards' own documents, and each reader's refusals; and the M8 readers (the checkpoint, the warm start's toggle and
+//! the watchdog) over the same documents, whose refusals view.rs's own tests hold.
 //!
 //! Positive: the firmware's defaults (golden/config_default.json, plan B's config_default.py as the generator dumped
 //! it) and the committed launches files of the two boards M5 meets on hardware: TMS-7F (v1.x wiring: i2c:1 at
@@ -12,8 +13,8 @@
 //! Negative: each way a document names no bus, no pin, no source or no retry count, read as plan B reads it.
 
 use board_config::{
-    Entry, I2cSpecification, Provide, Section, SpiSpecification, directory, i2c_bus, pin, provides, setup_retries,
-    spi_bus,
+    Entry, I2cSpecification, Provide, Section, SpiSpecification, Watchdog, checkpoint, directory, i2c_bus, pin,
+    provides, setup_retries, spi_bus, warm_start, watchdog,
 };
 use serde_json::{Value, json};
 
@@ -721,4 +722,28 @@ fn entries_keep_the_disabled_ones_the_directory_drops() {
         .collect();
     assert_eq!(entries, ["imu_bno055", "baro", "cc"]);
     assert_eq!(directory, ["baro", "cc"]);
+}
+
+#[test]
+fn the_defaults_checkpoint_every_second_with_the_watchdog_off() {
+    let document = defaults();
+    assert_eq!(checkpoint(&document), Some(Ok(1.0)));
+    assert!(warm_start(&document));
+    // plan B ships the watchdog disabled: the task watchdog keeps IDF's warn-only default
+    assert_eq!(watchdog(&document), None);
+}
+
+#[test]
+fn the_boards_files_arm_the_watchdog_at_plan_bs_settings() {
+    let expected = Watchdog {
+        timeout_ms: 5000,
+        period_ms: 200,
+        stall_ms: 500.0,
+    };
+    for (board, text) in [("TMS-7F", TMS7F), ("TMS-7C", TMS7C)] {
+        let document = board_file(text);
+        assert_eq!(checkpoint(&document), Some(Ok(1.0)), "{board}");
+        assert!(warm_start(&document), "{board}");
+        assert_eq!(watchdog(&document), Some(Ok(expected)), "{board}");
+    }
 }

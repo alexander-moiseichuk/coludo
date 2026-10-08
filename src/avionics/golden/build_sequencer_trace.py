@@ -13,7 +13,9 @@ Each scenario is stateful, {name, note, init, steps}:
   * steps -- {in, out} per tick. `in` is what the tick sees: now_ms, the Controller's stage and manual flag
     (after the step's events), and the three reads. `out` is plan B's answer: the stage after the tick and the
     sequencer.csv rows the tick pushed, [stage, reason] each -- none, one, or two (an external move seen on the
-    same tick an own advance fires).
+    same tick an own advance fires). A step the port answers differently ON PURPOSE also carries a `divergence`,
+    {note, out}, the out the port owes instead: only the altitude launch's rate gate makes one (avionics-port.md
+    §6; the port's `launch_alt_window_ms`, which plan B does not have), pinned by _RATE_GATE.
 
 The stand-ins, none of which touches the stage machine's logic:
   * the Controller is plan B's own (controller.Controller): set_stage, and hold()/resume() for an operator
@@ -35,7 +37,8 @@ restore), then the regressions the plan names (a stale agl at apogee, GNSS eleva
 the warm-entry rebase, a manual hold) and the corners found while porting (the backstop from BOOSTING and a
 separation under an operator hold among them), then a scenario for each decision no
 other one pins (each comparison's strictness, the arming edge, each stage-entry reset, the launch reason text),
-then seeded noisy flights.
+then the rate gate's two climbs (one fast, which both launch on; one slow, which only plan B does), then seeded
+noisy flights.
 
 Cases stay off decision thresholds, where an f32 can answer differently from plan B's f64 (_Run.check,
 _Run.check_reasons, _watch_the_drop_line): no fresh reading within _MARGIN of a threshold it is compared with, no
@@ -847,6 +850,7 @@ def _scripted() -> list:
     scenarios += _on_the_lines()
     scenarios += _stage_entries()
     scenarios += _launch_reasons()
+    scenarios += _rate_gate()
     return scenarios
 
 
@@ -1088,6 +1092,120 @@ def _launch_reasons() -> list:
     ]
 
 
+def _climb(rate_m_per_ms: float, start_ms: int, end_ms: int) -> list:
+    """
+    A climb off the pad, one tick every _TICK_MS from 0 through end_ms: still, the baro at 0 m until start_ms, then
+    rising at rate_m_per_ms.
+
+    Args:
+        rate_m_per_ms - the climb rate, in m per ms.
+        start_ms - when the climb starts.
+        end_ms - the last tick.
+
+    Returns:
+        The steps, as _scenario takes them.
+    """
+    return [(now, (), {'accel': _STILL, 'elevation': _barometer(round(max(0.0, rate_m_per_ms * (now - start_ms)), 3))})
+            for now in _ticks(0, end_ms + 1)]
+
+
+def _rate_gate() -> list:
+    """
+    The altitude launch's rate gate, the port's (plan B has none): a climb off the pad fast enough for it, which plan
+    B and the port launch on alike, and a slow one, which only plan B launches on (a divergence, _RATE_GATE).
+
+    Returns:
+        The scenario documents.
+    """
+    return [
+        _scenario(
+            'a_fast_climb_off_the_pad',
+            'Rate gate: the baro climbs 24 m/s off a 0 m pad, over launch_alt_m from 550 (10.8 m): plan B launches '
+            'launch_ms later, and so does the port, the whole rise within its 1 s window of the pad held launch_ms.',
+            _SPEC, _climb(0.024, 100, 650)),
+        _scenario(
+            'a_slow_climb_off_the_pad',
+            'Rate gate: the baro climbs 8 m/s off a 0 m pad, over launch_alt_m from 1400 (10.32 m): plan B launches '
+            'launch_ms later. It never rises 10 m within 1 s, so the port does not -- weather drift of this shape, '
+            'only slower, launched TMS-7F unarmed on the bench overnight.',
+            _SPEC, _climb(0.008, 110, 1500)),
+    ]
+
+
+"""
+The altitude launches the port's rate gate removes, by scenario: the clock of each tick where plan B launches by
+altitude though its fresh baro elevation never rose launch_alt_m within the gate's default window (1 s) above a level
+it held for launch_ms, and the reason the port records on that tick instead -- None when it stays on the pad. Six read
+over the line from their first fresh baro sample, so no level below is seen at all; two rise from one low sample, no
+level (a glitched read on a drifted pad is one); and one is the slow climb. _pin_rate_gate makes them divergences.
+"""
+_RATE_GATE: dict = {
+    'stale_barometer_never_launches': {40650: None},
+    'barometer_launch_backup_then_apogee': {2210: None},
+    'gnss_elevation_on_the_pad': {80600: None},
+    'barometer_dropout': {300: None},
+    'setting_restarts_the_altitude_dwell': {5100: None},
+    'launch_altitude_wins_a_tie': {100: 'launch |a|=8.0g dwell=100ms'},
+    'a_backwards_clock_completes_a_launch': {2060: None, 3060: None},
+    'a_slow_climb_off_the_pad': {1500: None},
+}
+
+
+def _pin_rate_gate(scenario: dict) -> None:
+    """
+    Pin a scenario's rate-gate divergences (_RATE_GATE) on its steps, as the `divergence` the port owes there.
+
+    On a pinned tick the port makes no altitude launch: it records the accel launch's reason when that completes on
+    the same tick, and otherwise stays on the pad. On the tick after a launch it did not make, plan B's BOOSTING
+    reaches the port as a move from outside, recorded `external` before plan B's own rows; from there on, every
+    step is plan B's again.
+
+    Args:
+        scenario - the scenario document; its pinned steps gain a `divergence`.
+
+    Returns:
+        None.
+
+    Raises:
+        SystemExit - a pin no longer describes the scenario: its tick is missing or no plan B altitude launch, or
+            the tick after a launch the port did not make is held or back in SETTING (the move would go unseen).
+    """
+    name = scenario['name']
+    pins = dict(_RATE_GATE.get(name, {}))
+    steps = scenario['steps']
+    for index, step in enumerate(steps):
+        if step['in']['now_ms'] not in pins:
+            continue
+        reason = pins.pop(step['in']['now_ms'])
+        out = step['out']
+        kept = [row for row in out['records'] if not row[1].startswith('launch alt=')]
+        if len(kept) == len(out['records']):
+            raise SystemExit('sequencer_trace: %s at %d is no plan B altitude launch' % (name, step['in']['now_ms']))
+        if reason is not None:
+            step['divergence'] = {
+                'note': ('the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for '
+                         'launch_ms before this altitude launch, so the port does not make it; its accel launch '
+                         'completes on the same tick'),
+                'out': {'stage': out['stage'], 'records': kept + [[out['stage'], reason]]}}
+            continue
+        step['divergence'] = {
+            'note': ('the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms '
+                     'before this altitude launch, so the port does not make it and stays on the pad'),
+            'out': {'stage': step['in']['stage'], 'records': kept}}
+        if index + 1 < len(steps):
+            after = steps[index + 1]
+            if after['in']['manual'] or after['in']['stage'] == 'setting':
+                raise SystemExit('sequencer_trace: %s at %d: the port would not see plan B\'s launch'
+                                 % (name, after['in']['now_ms']))
+            after['divergence'] = {
+                'note': ("plan B's BOOSTING reaches the port as a move from outside, recorded external; every later "
+                         "step is plan B's"),
+                'out': {'stage': after['out']['stage'],
+                        'records': [[after['in']['stage'], 'external']] + after['out']['records']}}
+    if pins:
+        raise SystemExit('sequencer_trace: %s has no tick %r' % (name, sorted(pins)))
+
+
 def _shipped_config() -> dict:
     """The sequencer's entry in config_default (what a board without overrides runs), minus the keys not read."""
     for component in config_default.default()['components']:
@@ -1278,6 +1396,11 @@ def build() -> dict:
     except _NearThreshold as error:
         raise SystemExit('sequencer_trace: a scripted scenario sits on a threshold: %s' % error) from error
     scenarios += _seeded(random.Random(_SEED))
+    unknown = set(_RATE_GATE) - {scenario['name'] for scenario in scenarios}
+    if unknown:
+        raise SystemExit('sequencer_trace: _RATE_GATE pins scenarios there are not: %s' % sorted(unknown))
+    for scenario in scenarios:
+        _pin_rate_gate(scenario)
     return {
         'meta': {'source': 'src/glider/tasks/sequencer.py, src/glider/commons.py, src/glider/controller.py, '
                            'src/glider/drivers/separation.py'},

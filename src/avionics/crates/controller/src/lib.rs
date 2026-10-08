@@ -20,7 +20,9 @@
 //!    (module `streams`);
 //!  * [`readiness`] -- `verify`'s flight-readiness verdict, the config choices no probe can see (cc_client.py:47-107);
 //!  * [`ring_gate`] -- the flash ring's refusal of `arm` and `verify`, under plan B's recorder probe's words;
-//!  * [`stale_arm`] -- the refusal of an `arm` that waited on the board until the hub may have given up on it.
+//!  * [`stale_arm`] -- the refusal of an `arm` that waited on the board until the hub may have given up on it;
+//!  * [`Stall`] -- the supervisor's rule for a control thread that stopped ticking while the board controls a flight
+//!    (module `watchdog`).
 //!
 //! The device directory, its pins and its `provides` come from board_config's typed view, read from the post-layout
 //! document, as plan B's Controller reads the config layout.resolve has rewritten (main.py:97-101).
@@ -47,6 +49,7 @@ mod readiness;
 mod ring_gate;
 mod stale_arm;
 mod streams;
+mod watchdog;
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -59,7 +62,10 @@ use serde_json::Value;
 pub use readiness::readiness;
 pub use ring_gate::ring_gate;
 pub use stale_arm::stale_arm;
-pub use streams::{BAROMETER_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, stream};
+pub use streams::{
+    BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, stream,
+};
+pub use watchdog::Stall;
 
 /// The pause between two setup attempts of one device, in milliseconds: a flaky breadboard contact settles
 /// (controller.py:418 `asyncio.sleep_ms(200)`).

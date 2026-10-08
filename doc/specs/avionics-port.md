@@ -2563,6 +2563,16 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
   Plan B, with the same files: a text `launch_g` or `still_g` fails setup; a text `period_ms` or `launch_alt_m`
   crashes the task on the pad, so arm refuses there too; a text `launch_ms` passes arm and crashes at ignition; the
   other keys pass arm and crash in their stage's detector in flight; a fractional or negative `*_ms` flies.
+- **The altitude launch's rate gate** (operator, 2026-10-08; before M8): the baro launch backup also needs the
+  elevation to have risen more than `launch_alt_m` within `launch_alt_window_ms` above the lowest level it held for
+  `launch_ms`, through the whole `launch_ms` dwell. `launch_alt_window_ms` is a new sequencer key (default 1000; a
+  `*_ms` by the rules above, at most 2000). A level counts only once held as long as the climb must hold, so one low
+  or glitched read on a drifted pad is no pad to climb from; a window shorter than `launch_ms` turns the altitude
+  launch off. Plan B launches on the elevation over `launch_alt_m` alone, which weather drift (+10 m in 2.17 h)
+  satisfied on TMS-7F overnight, unarmed. The accel launch is unchanged. The history is a fixed ring of 81 slots of
+  25 ms (972 B in the stage machine, on the control thread's stack); faster steps share a slot, which only shortens
+  the window. sequencer_trace pins the plan B launches it removes as divergences: six whose elevation is over the
+  line from its first fresh baro reading, two that rose from one low reading, and one 8 m/s climb.
 - **Arm is checked again when it applies** (M7): on the control thread, SETTING and not held, else refused with the
   stage problem's text. Plan B awaits its probe sweep and then arms whatever the stage has become
   (`cc_client.py:567-576`).

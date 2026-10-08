@@ -1,19 +1,23 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! Unit tests of the warm start, positive and negative: the crumb serde, the NVS order, the gate with its boot rules
-//! and reset classes, the apply plan, the boot decision and the checkpoint schedule. The plan B comparison itself is
-//! tests/golden.rs.
+//! and reset classes, the apply plan, the boot decision, the checkpoint schedule and its keeper over NVS. The plan B
+//! comparison itself is tests/golden.rs.
 
 use super::{
-    ApplyPlan, BLOB_MAX, CRUMB_KEY, Checkpoint, Crumb, Freeze, Identity, Live, MAX_AGE_S, NO_STAGE, Nvs, NvsError,
-    Reason, ResetReason, Restore, STAGE_KEY, Step, clear, load, restore, save, should_restore,
+    ApplyPlan, BLOB_MAX, CRUMB_KEY, Checkpoint, Counters, Crumb, Freeze, Identity, Keeper, Live, MAX_AGE_S, NO_STAGE,
+    Nvs, NvsError, Pass, Reason, ResetReason, Restore, STAGE_KEY, Step, Write, clear, load, restore, save,
+    should_restore,
 };
 use control::navigation::Position;
-use sequencer::Stage;
+use sequencer::{Flight, FlightWord, Request, Stage, Transition};
 use serde_json::{Value, json};
 
 /// ESP_ERR_NVS_NOT_FOUND, what esp-idf answers for a key never written.
 const NOT_FOUND: NvsError = NvsError(0x1102);
+
+/// ESP_ERR_NVS_NOT_ENOUGH_SPACE, what the [`Memory`] budget answers once spent.
+const REFUSED: NvsError = NvsError(0x1105);
 
 /// An in-memory NVS namespace that records every write, and can be told to refuse writes from the nth on.
 #[derive(Default)]
@@ -41,7 +45,7 @@ impl Memory {
     /// Count one write against the budget: Err once it is spent.
     fn spend(&mut self) -> Result<(), NvsError> {
         match self.writes_left {
-            Some(0) => Err(NvsError(0x1105)),
+            Some(0) => Err(REFUSED),
             Some(left) => {
                 self.writes_left = Some(left - 1);
                 Ok(())
@@ -229,10 +233,10 @@ fn save_refuses_a_crumb_without_a_stage_and_reports_a_refused_write() {
 }
 
 #[test]
-fn clear_zeroes_the_stage_and_swallows_a_failure() {
+fn clear_zeroes_the_stage_and_reports_a_refusal() {
     let blob = glide().to_json();
     let mut nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
-    clear(&mut nvs);
+    assert!(clear(&mut nvs));
     assert_eq!(nvs.stage, Some(NO_STAGE));
     assert_eq!(nvs.writes, [("i32", "0".to_owned()), ("commit", String::new())]);
     assert_eq!(load(&mut nvs), None);
@@ -240,8 +244,14 @@ fn clear_zeroes_the_stage_and_swallows_a_failure() {
         writes_left: Some(0),
         ..Memory::holding(Some(3), Some(blob.as_bytes()))
     };
-    clear(&mut refusing);
+    assert!(!clear(&mut refusing));
     assert_eq!(refusing.stage, Some(3));
+    // the stage lands but the commit is refused: not committed, though the i32 changed
+    let mut uncommitted = Memory {
+        writes_left: Some(1),
+        ..Memory::holding(Some(3), Some(blob.as_bytes()))
+    };
+    assert!(!clear(&mut uncommitted));
 }
 
 #[test]
@@ -484,6 +494,60 @@ fn restore_clears_the_stage_when_disabled_or_refused() {
         restore(&mut done, true, true, ResetReason::Software, 1030, SENSORS),
         Restore::Refused(Reason::AfterDone)
     );
+}
+
+#[test]
+fn a_refused_clear_leaves_the_crumb_to_the_next_boot_s_gate() {
+    // restore ignores a refused clear, as plan B did: a lasting refusal refuses the crumb again on the next boot
+    let refusing = |crumb: Crumb| Memory {
+        writes_left: Some(0),
+        ..Memory::holding(crumb.stage, Some(crumb.to_json().as_bytes()))
+    };
+    let mut done = refusing(staged(5, 1000));
+    for now_s in [1030, 1060] {
+        assert_eq!(
+            restore(&mut done, true, true, ResetReason::Panic, now_s, SENSORS),
+            Restore::Refused(Reason::AfterDone)
+        );
+    }
+    // a power-on's refusal does not last: the crumb it failed to clear warm-starts on a reset within the age bound
+    let mut glided = refusing(glide());
+    assert_eq!(
+        restore(&mut glided, true, true, ResetReason::PowerOn, 1030, SENSORS),
+        Restore::Refused(Reason::PowerOn)
+    );
+    assert_eq!(glided.stage, Some(3));
+    assert!(restore(&mut glided, true, true, ResetReason::Panic, 1060, SENSORS).keeps_flight());
+}
+
+#[test]
+fn only_a_warm_start_keeps_the_recorder_s_flight_flag() {
+    let blob = glide().to_json();
+    // a stage i32 over a blob that does not read: Cold, with nothing cleared, and still the flag goes down
+    let mut torn = Memory::holding(Some(3), Some(&blob.as_bytes()[..40]));
+    let decision = restore(&mut torn, true, true, ResetReason::Panic, 1030, SENSORS);
+    assert_eq!(decision, Restore::Cold);
+    assert!(!decision.keeps_flight());
+    assert_eq!(torn.stage, Some(3), "the i32 stays for the next boot");
+    let refusals = [
+        (Memory::default(), true, ResetReason::Panic),
+        (
+            Memory::holding(Some(3), Some(blob.as_bytes())),
+            false,
+            ResetReason::Panic,
+        ),
+        (
+            Memory::holding(Some(3), Some(blob.as_bytes())),
+            true,
+            ResetReason::PowerOn,
+        ),
+    ];
+    for (mut nvs, warm_start, reset) in refusals {
+        let decision = restore(&mut nvs, warm_start, true, reset, 1030, SENSORS);
+        assert!(!decision.keeps_flight(), "{decision:?}");
+    }
+    let mut flying = Memory::holding(Some(3), Some(blob.as_bytes()));
+    assert!(restore(&mut flying, true, true, ResetReason::Panic, 1030, SENSORS).keeps_flight());
 }
 
 #[test]
@@ -735,4 +799,561 @@ fn a_checkpointed_crumb_restores_on_a_warm_boot() {
     };
     assert_eq!(plan.stage, Stage::Boosting);
     assert_eq!(plan.rebase.unwrap().ground_m, 100.0);
+}
+
+/// The pad of the keeper tests: 100 m above sea level, where the barometer was zeroed.
+const PAD_M: f32 = 100.0;
+
+/// A pass that did nothing: no freeze, no row, no NVS action.
+const NOTHING: Pass = Pass {
+    froze: false,
+    row: None,
+    wrote: None,
+    failed: None,
+};
+
+/// The stage machine's own advance into `stage`, with a reason it gives there; only the advance into BOOSTING (the
+/// launch) sets `launched`, and none clears it.
+fn advance(stage: Stage) -> Transition {
+    let reason = match stage {
+        Stage::Boosting => sequencer::Reason::LaunchAcceleration {
+            magnitude_g: 3.2,
+            dwell_ms: 100,
+        },
+        Stage::Gliding => sequencer::Reason::Apogee { peak_m: 300.0 },
+        Stage::Landing => sequencer::Reason::HeightAboveGround { height_m: 20.0 },
+        Stage::Setting | Stage::Done => sequencer::Reason::Stationary { magnitude_g: 1.0 },
+    };
+    Transition { to: stage, reason }
+}
+
+/// A keeper under test, with its NVS and a count of the stamps it read.
+struct Board {
+    /// The keeper.
+    keeper: Keeper,
+    /// Its NVS namespace.
+    nvs: Memory,
+    /// How many times a pass read its stamp.
+    stamps: u32,
+}
+
+impl Board {
+    /// A keeper at a 1 s cadence started at 0, under this pad ceiling, over an empty NVS.
+    fn new(pad_ceiling_m: Option<f32>) -> Board {
+        Board {
+            keeper: Keeper::new(1.0, 0, pad_ceiling_m),
+            nvs: Memory::default(),
+            stamps: 0,
+        }
+    }
+
+    /// One pass at `now_us` over `flight`, the board `elevation_m` above the pad: both readings fresh, the altitude
+    /// the pad's plus the elevation, [`pad`]'s mission frozen with that altitude, the stamp the whole second.
+    fn pass(&mut self, flight: Flight, now_us: u64, elevation_m: f32) -> Pass {
+        let altitude_m = Some(PAD_M + elevation_m);
+        let live = Live {
+            altitude_m,
+            speed_ms: None,
+            airspeed_ms: None,
+            ticks_ms: now_us / 1000,
+        };
+        let freeze = || Freeze {
+            fresh_altitude_m: altitude_m,
+            ..pad()
+        };
+        let stamps = &mut self.stamps;
+        let stamp_s = || {
+            *stamps += 1;
+            i64::try_from(now_us / 1_000_000).unwrap()
+        };
+        self.keeper
+            .pass(&mut self.nvs, flight, now_us, Some(elevation_m), live, freeze, stamp_s)
+    }
+
+    /// The crumb NVS holds now, None when the stage i32 says none. The blob's own stage must be the i32's: [`load`]
+    /// reads the i32 over it, so only this check sees a blob written for another stage.
+    fn crumb(&mut self) -> Option<Crumb> {
+        let crumb = load(&mut self.nvs)?;
+        let blob: Value = serde_json::from_slice(self.nvs.blob.as_ref()?).unwrap();
+        assert_eq!(blob["stage"], json!(crumb.stage), "the blob's stage");
+        Some(crumb)
+    }
+
+    /// How many clears NVS took: the stage i32 written as [`NO_STAGE`].
+    fn clears(&self) -> usize {
+        let cleared = ("i32", NO_STAGE.to_string());
+        self.nvs.writes.iter().filter(|write| **write == cleared).count()
+    }
+}
+
+/// The pass that saved the crumb at `stage`, its row due there.
+fn saved(stage: Stage) -> Pass {
+    Pass {
+        row: Some(stage),
+        wrote: Some(Write::Crumb),
+        ..NOTHING
+    }
+}
+
+/// The pass that only pushed a row at `stage`.
+fn row(stage: Stage) -> Pass {
+    Pass {
+        row: Some(stage),
+        ..NOTHING
+    }
+}
+
+/// `pass`, on the pass that froze the identity.
+fn frozen(pass: Pass) -> Pass {
+    Pass { froze: true, ..pass }
+}
+
+/// The pass that only committed a clear.
+fn cleared() -> Pass {
+    Pass {
+        wrote: Some(Write::Clear),
+        ..NOTHING
+    }
+}
+
+#[test]
+fn the_keeper_polls_on_the_schedule_s_period() {
+    assert_eq!(Keeper::new(1.0, 0, None).poll_ms(), 500);
+    assert_eq!(Keeper::new(0.2, 0, Some(5.0)).poll_ms(), 500, "floored at 1 s");
+    let fresh = Keeper::new(1.0, 0, None);
+    assert_eq!((fresh.owed(), fresh.counters()), (None, Counters::default()));
+}
+
+#[test]
+fn an_armed_launched_boost_saves_a_crumb_of_one_flight() {
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    // on the pad, disarmed then armed: the SETTING row, no crumb
+    assert_eq!(board.pass(writer.flight(), 0, 0.0), row(Stage::Setting));
+    writer.apply(Request::Arm).unwrap();
+    assert_eq!(board.pass(writer.flight(), 500_000, 0.0), NOTHING);
+    // the stage machine's launch: armed and launched in the one flight the pass reads
+    writer.advance(advance(Stage::Boosting));
+    let pass = board.pass(writer.flight(), 1_000_000, 12.0);
+    assert_eq!(pass, frozen(saved(Stage::Boosting)));
+    let crumb = board.crumb().unwrap();
+    assert_eq!((crumb.stage, crumb.armed, crumb.stamp_s), (Some(2), true, Some(1)));
+    assert_eq!(crumb.altitude_m, Some(112.0));
+    assert_eq!(crumb.identity.pad_altitude_m, Some(PAD_M), "the pad latched in SETTING");
+    assert_eq!(crumb.identity.launch, pad().launch_point);
+    // flying with nothing due: no row, no write, and no stamp read
+    assert_eq!(board.pass(writer.flight(), 1_500_000, 40.0), NOTHING);
+    assert_eq!(board.stamps, 1);
+    // the period aloft re-saves, re-stamped
+    assert_eq!(board.pass(writer.flight(), 2_000_000, 80.0), saved(Stage::Boosting));
+    assert_eq!(board.crumb().unwrap().stamp_s, Some(2));
+    let counters = Counters {
+        saves: 2,
+        ..Counters::default()
+    };
+    assert_eq!(board.keeper.counters(), counters);
+}
+
+#[test]
+fn an_armed_hold_saves_no_crumb_only_rows() {
+    // a bench `arm` then `stage gliding`: armed, but no launch, so a reset must never resume it
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    board.pass(writer.flight(), 0, 0.0);
+    writer.apply(Request::Hold(Stage::Gliding)).unwrap();
+    assert!(writer.flight().armed && !writer.flight().launched);
+    let mut passes = Vec::new();
+    for now_us in [500_000, 1_000_000, 1_500_000] {
+        passes.push(board.pass(writer.flight(), now_us, 0.0));
+    }
+    writer.apply(Request::Hold(Stage::Landing)).unwrap();
+    passes.push(board.pass(writer.flight(), 2_000_000, 0.0));
+    writer.apply(Request::Hold(Stage::Done)).unwrap();
+    passes.push(board.pass(writer.flight(), 2_500_000, 0.0));
+    assert_eq!(
+        passes,
+        [
+            row(Stage::Gliding),
+            NOTHING,
+            row(Stage::Gliding),
+            row(Stage::Landing),
+            row(Stage::Done)
+        ]
+    );
+    assert!(board.nvs.writes.is_empty(), "rows only");
+    assert_eq!((board.stamps, board.keeper.owed()), (0, None));
+}
+
+#[test]
+fn a_disarmed_walk_saves_no_crumb() {
+    // the machine's own launch with the board disarmed: launched, but a passive flight never warm-starts armed
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    board.pass(writer.flight(), 0, 0.0);
+    writer.advance(advance(Stage::Boosting));
+    assert_eq!(board.pass(writer.flight(), 500_000, 12.0), frozen(row(Stage::Boosting)));
+    writer.separate().unwrap();
+    assert_eq!(board.pass(writer.flight(), 1_000_000, 200.0), row(Stage::Gliding));
+    writer.advance(advance(Stage::Landing));
+    assert_eq!(board.pass(writer.flight(), 1_500_000, 20.0), row(Stage::Landing));
+    writer.advance(advance(Stage::Done));
+    assert_eq!(board.pass(writer.flight(), 2_000_000, 0.0), row(Stage::Done));
+    assert!(writer.flight().launched && !writer.flight().armed);
+    assert!(board.nvs.writes.is_empty());
+    assert_eq!(board.stamps, 0);
+}
+
+#[test]
+fn a_disarm_clears_the_crumb_exactly_once() {
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    assert_eq!(board.pass(writer.flight(), 0, 12.0).wrote, Some(Write::Crumb));
+    writer.separate().unwrap();
+    assert_eq!(board.pass(writer.flight(), 500_000, 200.0), saved(Stage::Gliding));
+    writer.apply(Request::Disarm).unwrap();
+    assert_eq!(board.pass(writer.flight(), 700_000, 190.0), cleared());
+    assert_eq!(board.crumb(), None);
+    // the glide goes on disarmed: rows, and no second clear
+    assert_eq!(board.pass(writer.flight(), 1_500_000, 150.0), row(Stage::Gliding));
+    writer.advance(advance(Stage::Landing));
+    assert_eq!(board.pass(writer.flight(), 2_000_000, 20.0), row(Stage::Landing));
+    assert_eq!(board.clears(), 1);
+    assert_eq!(board.stamps, 2);
+}
+
+#[test]
+fn a_hold_out_of_a_launched_flight_clears() {
+    // an operator hold is never the machine's flight: it clears `launched`, still armed, and the crumb goes
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    writer.separate().unwrap();
+    assert_eq!(board.pass(writer.flight(), 0, 200.0).wrote, Some(Write::Crumb));
+    writer.apply(Request::Hold(Stage::Gliding)).unwrap();
+    assert!(writer.flight().armed);
+    assert_eq!(board.pass(writer.flight(), 500_000, 190.0).wrote, Some(Write::Clear));
+    assert_eq!(board.crumb(), None);
+    assert_eq!(board.pass(writer.flight(), 1_000_000, 180.0), row(Stage::Gliding));
+    assert_eq!(board.clears(), 1);
+}
+
+#[test]
+fn re_arming_and_launching_saves_again() {
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    board.pass(writer.flight(), 0, 12.0);
+    // the false-launch recovery: disarm, back to the ground, re-arm
+    writer.apply(Request::Disarm).unwrap();
+    assert_eq!(board.pass(writer.flight(), 500_000, 12.0).wrote, Some(Write::Clear));
+    writer.apply(Request::Hold(Stage::Setting)).unwrap();
+    assert_eq!(board.pass(writer.flight(), 1_000_000, 1.0), row(Stage::Setting));
+    writer.apply(Request::Arm).unwrap();
+    assert_eq!(board.pass(writer.flight(), 1_500_000, 0.5), NOTHING);
+    writer.advance(advance(Stage::Boosting));
+    assert_eq!(
+        board.pass(writer.flight(), 2_000_000, 15.0),
+        frozen(saved(Stage::Boosting))
+    );
+    assert_eq!(
+        board.crumb().unwrap().identity.pad_altitude_m,
+        Some(PAD_M + 0.5),
+        "the new pad"
+    );
+    writer.separate().unwrap();
+    assert_eq!(board.pass(writer.flight(), 2_500_000, 200.0), saved(Stage::Gliding));
+    assert_eq!(board.crumb().unwrap().stage, Some(3));
+}
+
+#[test]
+fn a_seeded_flight_keeps_saving_until_a_disarm_clears_it() {
+    // the warm start restored an armed glide: its crumb is in NVS, and the keeper carries its identity on
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    let blob = glide().to_json();
+    board.nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
+    board.keeper.seed(glide().identity);
+    writer.restore(Stage::Gliding, true).unwrap();
+    assert_eq!(board.pass(writer.flight(), 0, 300.0), saved(Stage::Gliding));
+    assert_eq!(
+        board.crumb().unwrap().identity,
+        glide().identity,
+        "the seed, not a new freeze"
+    );
+    assert_eq!(board.pass(writer.flight(), 1_000_000, 290.0), saved(Stage::Gliding));
+    writer.apply(Request::Disarm).unwrap();
+    assert_eq!(board.pass(writer.flight(), 1_500_000, 280.0).wrote, Some(Write::Clear));
+    assert_eq!(board.crumb(), None);
+}
+
+#[test]
+fn a_seed_alone_makes_the_crumb_live() {
+    // seeded, then disarmed before the first pass: the restored crumb is cleared, never re-saved
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut seeded = Board::new(None);
+    let blob = glide().to_json();
+    seeded.nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
+    seeded.keeper.seed(glide().identity);
+    writer.restore(Stage::Gliding, true).unwrap();
+    writer.apply(Request::Disarm).unwrap();
+    let cleared_with_a_row = Pass {
+        row: Some(Stage::Gliding),
+        ..cleared()
+    };
+    assert_eq!(seeded.pass(writer.flight(), 0, 300.0), cleared_with_a_row);
+    assert_eq!(seeded.crumb(), None);
+    assert_eq!(seeded.stamps, 0);
+    // unseeded, the keeper knows of no crumb and leaves NVS alone
+    let mut unseeded = Board::new(None);
+    unseeded.nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
+    assert_eq!(unseeded.pass(writer.flight(), 0, 300.0), row(Stage::Gliding));
+    assert!(unseeded.nvs.writes.is_empty());
+}
+
+#[test]
+fn a_refused_done_crumb_lands_on_a_later_pass() {
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    board.pass(writer.flight(), 0, 12.0);
+    writer.separate().unwrap();
+    board.pass(writer.flight(), 500_000, 200.0);
+    writer.advance(advance(Stage::Landing));
+    assert_eq!(board.pass(writer.flight(), 1_000_000, 20.0), saved(Stage::Landing));
+    // NVS refuses through the landing
+    board.nvs.writes_left = Some(0);
+    writer.advance(advance(Stage::Done));
+    let refused = Pass {
+        row: Some(Stage::Done),
+        failed: Some(REFUSED),
+        ..NOTHING
+    };
+    assert_eq!(board.pass(writer.flight(), 1_500_000, 0.0), refused);
+    assert_eq!(board.keeper.owed(), Some(Write::Crumb));
+    assert_eq!(board.nvs.stage, Some(4), "the landing crumb is still the flag");
+    // DONE never re-checkpoints: only the owed crumb tries again
+    let again = Pass {
+        failed: Some(REFUSED),
+        ..NOTHING
+    };
+    assert_eq!(board.pass(writer.flight(), 2_000_000, 0.0), again);
+    board.nvs.writes_left = None;
+    let landed = Pass {
+        wrote: Some(Write::Crumb),
+        ..NOTHING
+    };
+    assert_eq!(board.pass(writer.flight(), 3_200_000, 0.0), landed);
+    let crumb = board.crumb().unwrap();
+    assert_eq!(crumb.stage, Some(5));
+    assert_eq!(
+        (crumb.stamp_s, crumb.ticks_ms),
+        (Some(3), Some(3200)),
+        "rebuilt from the pass that landed it"
+    );
+    assert_eq!(board.keeper.owed(), None);
+    assert_eq!(board.pass(writer.flight(), 4_000_000, 0.0), NOTHING);
+    let counters = Counters {
+        saves: 4,
+        failures: 2,
+        retries: 2,
+    };
+    assert_eq!(board.keeper.counters(), counters);
+    assert_eq!(board.stamps, 6, "one per attempt, refused ones included");
+}
+
+#[test]
+fn a_refused_clear_is_retried_until_it_lands() {
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    board.pass(writer.flight(), 0, 12.0);
+    board.nvs.writes_left = Some(0);
+    writer.apply(Request::Disarm).unwrap();
+    for now_us in [500_000, 700_000] {
+        let pass = board.pass(writer.flight(), now_us, 30.0);
+        assert_eq!((pass.wrote, pass.failed), (None, Some(REFUSED)));
+        assert_eq!(board.keeper.owed(), Some(Write::Clear));
+        assert_eq!(
+            board.nvs.stage,
+            Some(2),
+            "the crumb stays the flag until the clear lands"
+        );
+    }
+    board.nvs.writes_left = None;
+    assert_eq!(board.pass(writer.flight(), 900_000, 40.0).wrote, Some(Write::Clear));
+    assert_eq!(board.crumb(), None);
+    assert_eq!(board.pass(writer.flight(), 1_100_000, 50.0), row(Stage::Boosting));
+    assert_eq!(board.clears(), 1);
+    let counters = Counters {
+        saves: 1,
+        failures: 2,
+        retries: 2,
+    };
+    assert_eq!(board.keeper.counters(), counters);
+    assert_eq!(board.stamps, 1, "a clear reads no stamp");
+}
+
+#[test]
+fn a_clear_replaces_a_refused_crumb() {
+    // the flight's first crumb was refused, then it ended: a clear, never the crumb of a flight that is over
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    board.nvs.writes_left = Some(0);
+    assert_eq!(board.pass(writer.flight(), 0, 12.0).failed, Some(REFUSED));
+    writer.apply(Request::Disarm).unwrap();
+    board.nvs.writes_left = None;
+    assert_eq!(board.pass(writer.flight(), 500_000, 30.0).wrote, Some(Write::Clear));
+    assert_eq!(board.crumb(), None);
+    assert_eq!(board.nvs.writes.len(), 2, "the clear's i32 and commit, no crumb");
+    let counters = Counters {
+        saves: 0,
+        failures: 1,
+        retries: 0,
+    };
+    assert_eq!(board.keeper.counters(), counters);
+}
+
+#[test]
+fn a_crumb_replaces_an_owed_clear_once_flying_again() {
+    // a refused clear, then back to the ground, re-armed and launched between two polls: the pass sees the same
+    // BOOSTING with nothing due, and the new flight's crumb, never the old one, becomes the flag
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    board.pass(writer.flight(), 0, 12.0);
+    board.nvs.writes_left = Some(0);
+    writer.apply(Request::Disarm).unwrap();
+    assert_eq!(board.pass(writer.flight(), 500_000, 12.0).failed, Some(REFUSED));
+    assert_eq!(board.keeper.owed(), Some(Write::Clear));
+    board.nvs.writes_left = None;
+    writer.apply(Request::Hold(Stage::Setting)).unwrap();
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    let crumb_only = Pass {
+        wrote: Some(Write::Crumb),
+        ..NOTHING
+    };
+    assert_eq!(board.pass(writer.flight(), 700_000, 15.0), crumb_only);
+    assert_eq!(board.crumb().unwrap().ticks_ms, Some(700), "this pass's crumb");
+    assert_eq!(board.clears(), 0);
+    let counters = Counters {
+        saves: 2,
+        failures: 1,
+        retries: 0,
+    };
+    assert_eq!(
+        board.keeper.counters(),
+        counters,
+        "a crumb replacing a clear is no retry"
+    );
+}
+
+#[test]
+fn a_retry_on_a_due_checkpoint_still_counts() {
+    // the separation's crumb is refused, and its next attempt falls on the period, where a crumb is due anyway
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(None);
+    writer.apply(Request::Arm).unwrap();
+    writer.advance(advance(Stage::Boosting));
+    board.pass(writer.flight(), 0, 12.0);
+    board.nvs.writes_left = Some(0);
+    writer.separate().unwrap();
+    let refused = Pass {
+        row: Some(Stage::Gliding),
+        failed: Some(REFUSED),
+        ..NOTHING
+    };
+    assert_eq!(board.pass(writer.flight(), 500_000, 200.0), refused);
+    board.nvs.writes_left = None;
+    assert_eq!(board.pass(writer.flight(), 1_500_000, 190.0), saved(Stage::Gliding));
+    assert_eq!(board.crumb().unwrap().stage, Some(3));
+    let counters = Counters {
+        saves: 2,
+        failures: 1,
+        retries: 1,
+    };
+    assert_eq!(board.keeper.counters(), counters);
+}
+
+/// The pad a baro-detected launch freezes, walking SETTING up through the dwell under this ceiling.
+fn pad_after_a_baro_launch_dwell(pad_ceiling_m: Option<f32>) -> Option<f32> {
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut board = Board::new(pad_ceiling_m);
+    writer.apply(Request::Arm).unwrap();
+    // the accel trigger missed: SETTING lasts while the elevation climbs through the baro launch dwell
+    for (index, elevation_m) in [0.0, 3.0, 4.5, 5.0, 8.0, 12.0].into_iter().enumerate() {
+        board.pass(writer.flight(), index as u64 * 100_000, elevation_m);
+    }
+    writer.advance(advance(Stage::Boosting));
+    assert!(board.pass(writer.flight(), 600_000, 14.0).froze);
+    board.crumb().unwrap().identity.pad_altitude_m
+}
+
+#[test]
+fn the_pad_ceiling_stops_the_latch_on_a_baro_launch_dwell() {
+    assert_eq!(
+        pad_after_a_baro_launch_dwell(Some(5.0)),
+        Some(PAD_M + 4.5),
+        "the last reading under the ceiling; 5 m is on it"
+    );
+    assert_eq!(
+        pad_after_a_baro_launch_dwell(None),
+        Some(PAD_M + 12.0),
+        "plan B: the dwell's top"
+    );
+}
+
+/// The pad a launch freezes under this ceiling after a SETTING pass whose altitude is fresh at the pad but whose
+/// elevation is stale.
+fn pad_after_a_stale_elevation(pad_ceiling_m: Option<f32>) -> Option<f32> {
+    let word = FlightWord::new();
+    let mut writer = word.writer().unwrap();
+    let mut nvs = Memory::default();
+    let mut keeper = Keeper::new(1.0, 0, pad_ceiling_m);
+    let live = Live {
+        altitude_m: Some(PAD_M),
+        ..Live::default()
+    };
+    let never = || -> i64 { panic!("no stamp in SETTING") };
+    writer.apply(Request::Arm).unwrap();
+    assert_eq!(
+        keeper.pass(&mut nvs, writer.flight(), 0, None, live, pad, never),
+        row(Stage::Setting)
+    );
+    writer.advance(advance(Stage::Boosting));
+    let pass = keeper.pass(&mut nvs, writer.flight(), 500_000, None, live, pad, || 7);
+    assert_eq!(pass, frozen(saved(Stage::Boosting)));
+    load(&mut nvs).unwrap().identity.pad_altitude_m
+}
+
+#[test]
+fn a_stale_elevation_latches_a_pad_only_without_a_ceiling() {
+    // with a ceiling the latch cannot be checked, so the freeze falls back to its own reading
+    assert_eq!(pad_after_a_stale_elevation(Some(5.0)), pad().fresh_altitude_m);
+    // without one the elevation is never asked, and the fresh altitude latches as plan B's did
+    assert_eq!(pad_after_a_stale_elevation(None), Some(PAD_M));
 }
