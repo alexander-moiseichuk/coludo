@@ -128,8 +128,6 @@ enum Gate {
     Open,
     /// Only in SETTING: it changes the board -- moves fins, rewrites state the flight reads, or reboots.
     Setting,
-    /// Only in SETTING and disarmed: a bus diagnostic ([`diagnostic_refused`]).
-    Disarmed,
     /// A change to a named device: only in SETTING, and at DONE too when it re-zeroes a barometer ([`change_refused`]).
     /// The handler checks it, since it depends on the target (and `calibrate` with no target is a read).
     Rezero,
@@ -156,7 +154,9 @@ const TABLE: &[(&str, Gate, Handler)] = &[
     ("verify", Gate::Open, diagnostics::verify),
     ("calibrate", Gate::Rezero, diagnostics::calibrate),
     ("detect", Gate::Setting, diagnostics::detect),
-    ("bustune", Gate::Disarmed, diagnostics::bustune),
+    // only in SETTING; while armed only back to the bus's configured clock (diagnostics::bustune), so the CC's sweep
+    // can always undo its last rung
+    ("bustune", Gate::Setting, diagnostics::bustune),
     ("log", Gate::Open, streaming::log),
     ("tlm", Gate::Open, streaming::telemetry),
     ("reboot", Gate::Setting, system::reboot),
@@ -182,7 +182,6 @@ pub fn handle(line: &str, context: &mut Context, origin: Origin) -> Option<Strin
     };
     let refused = match gate {
         Gate::Setting => outside_setting(),
-        Gate::Disarmed => diagnostic_refused(),
         Gate::Open | Gate::Rezero => None,
     };
     if let Some(refusal) = refused {
@@ -205,7 +204,8 @@ pub fn outside_setting() -> Option<String> {
         .map(|refusal| refusal.to_string())
 }
 
-/// Why a bus diagnostic (`bustune`, `i2c touch`, `i2c read`, `i2c general-call`, `imu mute`) must not run now, or
+/// Why a bus diagnostic (`i2c touch`, `i2c read`, `i2c general-call`, `imu mute`; `bustune` but its way back) must not
+/// run now, or
 /// None in SETTING while disarmed: it holds a bus owner off its parts, so never in the last seconds on the pad (M9; plan
 /// B gates only on the stage).
 pub fn diagnostic_refused() -> Option<String> {

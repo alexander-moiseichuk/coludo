@@ -79,7 +79,7 @@
   "note": "diagnose(): one identity byte; the verdict text"
  },
  "meta": {
-  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "commit": "371b92b10feb935a44075682de864068f5ac755a",
   "generator": "drivers_bmp581",
   "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",
@@ -1115,6 +1115,159 @@
  "setup": {
   "cases": [
    {
+    "divergence": {
+     "note": "the port reads each ground-sample burst twice and believes it only when both agree (the garbage guard): every sample read appears twice; the answer and the ground are plan B's",
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      },
+      {
+       "address": 71,
+       "bytes": "3650",
+       "op": "write"
+      },
+      {
+       "address": 71,
+       "bytes": "37bd",
+       "op": "write"
+      },
+      {
+       "ms": 50,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -1226,6 +1379,159 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads each ground-sample burst twice and believes it only when both agree (the garbage guard): every sample read appears twice; the answer and the ground are plan B's",
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      },
+      {
+       "address": 71,
+       "bytes": "3650",
+       "op": "write"
+      },
+      {
+       "address": 71,
+       "bytes": "37bd",
+       "op": "write"
+      },
+      {
+       "ms": 50,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "97fb18edf562",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "97fb18edf562",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "b8f618cdf562",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "b8f618cdf562",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "c4071976f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "c4071976f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "cd0a1958f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "cd0a1958f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "86f718c7f562",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "86f718c7f562",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "63f81838f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "63f81838f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "110619b8f662",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "110619b8f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "8af7186cf562",
+       "write": "1d"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "8af7186cf562",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -1442,7 +1748,7 @@
    "kind": "abs",
    "tol": 0.01
   },
-  "note": "setup() over a scripted part: the transcript; output ok and the ground zero (m) it captured"
+  "note": "setup() over a scripted part: the transcript; output ok and the ground zero (m) it captured; a case with a divergence owes its script instead, with plan B's output"
  },
  "update": {
   "cases": [

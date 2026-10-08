@@ -42,8 +42,11 @@
 //! and the stale clock stay as they were, and the next tick reads again. A conversion that lands between the two
 //! bursts tears the pair too, about one read in 80 (one burst takes ~0.25 ms at i2c:0's 400 kHz, against the 20 ms
 //! period), so most torn pairs are that, not garbage; the next tick,
-//! 10 ms later, reads that conversion twice, so none is lost, only delayed by a tick. Setup's and a calibrate's
-//! averages read once, as plan B did.
+//! 10 ms later, reads that conversion twice, so none is lost, only delayed by a tick. The ground capture (setup, a
+//! calibrate, the DONE re-zero) takes each of its samples through the same guard, which a latched ground needs most:
+//! one garbage burst in plan B's single reads moved the 8-sample ground by about 1.1 km until the next re-zero. A
+//! sample whose pair is torn or implausible is read again, up to [`GROUND_TRIES`] pairs, and a capture that runs out
+//! fails ([`Fault::Garbage`]) and keeps the ground it had. The guard never touches the freshness judge.
 //!
 //! Units (decision D18): every value is f32, as plan B's float channels and telemetry columns are. The conversions
 //! are exact (power-of-two scales over 24-bit counts); the altitude is commons' ISA formula, one definition for every
@@ -108,6 +111,11 @@ pub const GROUND_SAMPLES: u32 = 8;
 
 /// The wait after each ground-zero reading: the part converts at 50 Hz, so each reading is a fresh conversion.
 pub const GROUND_SAMPLE_MS: u32 = 20;
+
+/// The pairs of bursts one ground sample may read before the capture fails ([`Fault::Garbage`]): a torn or
+/// implausible pair is read again at once. Garbage is about one burst in a thousand and a conversion tears about one
+/// pair in 80, so three in a row is a bus that has stopped answering the part.
+pub const GROUND_TRIES: u32 = 3;
 
 /// Pressure counts per Pa.
 pub const PRESSURE_COUNTS_PER_PASCAL: f32 = 64.0;
@@ -176,6 +184,16 @@ pub enum Outcome {
     /// Both bursts agree, but the reading lies outside [`PRESSURE_RANGE_PA`] or [`TEMPERATURE_RANGE_C`]: garbage
     /// that repeated. Not judged, as [`Outcome::Torn`]; the reading is carried for the firmware's log line only,
     /// never to publish.
+    Implausible(Reading),
+}
+
+/// One pair of bursts read back to back, before any judging: what the guard makes of it.
+enum Pair {
+    /// Both bursts alike and in the part's operating range: the burst and its reading.
+    Agreed([u8; FRAME_LENGTH], Reading),
+    /// The bursts differ.
+    Torn,
+    /// Both alike, outside the operating range: the reading.
     Implausible(Reading),
 }
 
@@ -263,6 +281,20 @@ impl Bmp581 {
     /// the transport's, and judges nothing. Setup's and a calibrate's own reads ([`Bmp581::read`]) do not touch the
     /// judge.
     pub fn read_fresh<Bus: I2c>(&mut self, bus: &mut Bus, now_us: u64) -> Result<Outcome, Fault<Bus::Error>> {
+        Ok(match self.read_pair(bus)? {
+            Pair::Torn => Outcome::Torn,
+            Pair::Implausible(reading) => Outcome::Implausible(reading),
+            Pair::Agreed(frame, reading) => match self.changes.judge(&frame, now_us, CONVERSION_PERIOD_US) {
+                Change::Fresh => Outcome::Fresh(reading),
+                Change::Unchanged => Outcome::Unchanged,
+                Change::Stale => Outcome::Stale,
+            },
+        })
+    }
+
+    /// The guard (see the module notes): the 6-byte burst twice back to back, believed only when both agree and the
+    /// reading lies in [`PRESSURE_RANGE_PA`] and [`TEMPERATURE_RANGE_C`]. Judges nothing.
+    fn read_pair<Bus: I2c>(&self, bus: &mut Bus) -> Result<Pair, Fault<Bus::Error>> {
         let mut first = [0u8; FRAME_LENGTH];
         bus.write_read(self.address, &[TEMP_DATA_XLSB], &mut first)
             .map_err(Fault::Bus)?;
@@ -270,22 +302,32 @@ impl Bmp581 {
         bus.write_read(self.address, &[TEMP_DATA_XLSB], &mut second)
             .map_err(Fault::Bus)?;
         if first != second {
-            return Ok(Outcome::Torn);
+            return Ok(Pair::Torn);
         }
         let reading = Reading::decode(&first);
         if !PRESSURE_RANGE_PA.contains(&reading.pressure) || !TEMPERATURE_RANGE_C.contains(&reading.temperature) {
-            return Ok(Outcome::Implausible(reading));
+            return Ok(Pair::Implausible(reading));
         }
-        Ok(match self.changes.judge(&first, now_us, CONVERSION_PERIOD_US) {
-            Change::Fresh => Outcome::Fresh(reading),
-            Change::Unchanged => Outcome::Unchanged,
-            Change::Stale => Outcome::Stale,
-        })
+        Ok(Pair::Agreed(first, reading))
+    }
+
+    /// One guarded ground sample: up to [`GROUND_TRIES`] pairs, the first that agrees in range taken;
+    /// [`Fault::Garbage`] when none does.
+    fn ground_sample<Bus: I2c>(&self, bus: &mut Bus) -> Result<Reading, Fault<Bus::Error>> {
+        for _ in 0..GROUND_TRIES {
+            if let Pair::Agreed(_, reading) = self.read_pair(bus)? {
+                return Ok(reading);
+            }
+        }
+        Err(Fault::Garbage)
     }
 
     /// Average [`GROUND_SAMPLES`] readings, [`GROUND_SAMPLE_MS`] apart, into the ground zero (bmp581._ground_zero,
-    /// which plan B called from setup only; the port's `calibrate` and DONE recovery too, D7). Nothing changes when
-    /// a read fails.
+    /// which plan B called from setup only; the port's `calibrate` and DONE recovery too, D7). Each sample goes through
+    /// the garbage guard, a torn or implausible pair read again up to [`GROUND_TRIES`] pairs (the module notes; plan B
+    /// read each sample once, the golden fixture's listed divergence). Nothing changes when a read fails or a sample
+    /// runs out of tries ([`Fault::Garbage`]): setup fails its attempt, a calibrate reports it, and the ground in force
+    /// stays. The freshness judge is not touched.
     pub fn capture_ground<Bus: I2c>(
         &mut self,
         bus: &mut Bus,
@@ -293,7 +335,7 @@ impl Bmp581 {
     ) -> Result<f32, Fault<Bus::Error>> {
         let mut total = 0.0;
         for _ in 0..GROUND_SAMPLES {
-            total += self.read(bus)?.altitude;
+            total += self.ground_sample(bus)?.altitude;
             delay.delay_ms(GROUND_SAMPLE_MS);
         }
         self.ground = total / GROUND_SAMPLES as f32;

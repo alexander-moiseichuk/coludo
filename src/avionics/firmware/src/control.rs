@@ -472,8 +472,9 @@ impl Imu {
         }
     }
 
-    /// `imu mute`: skips the reads for `duration_ms` from `now_us`, so the part goes stale, then unhealthy, and the
-    /// databoard hands its channels to the next fresh source; the reads resume by themselves at expiry.
+    /// `imu mute`: skips the reads for `duration_ms` from `now_us`, the part unhealthy from the first skipped read, so
+    /// the databoard hands its channels to the next fresh source; the reads resume by themselves at expiry, at `arm`,
+    /// or when the stage leaves SETTING.
     fn mute(&mut self, now_us: u64, duration_ms: u32) {
         self.muted_until_us = now_us + u64::from(duration_ms) * 1000;
         log::warn!("{} :: muted for {duration_ms} ms (imu mute)", self.name);
@@ -557,27 +558,36 @@ impl Imu {
         }
         // the next read a period on, or a period from now when the reads fell behind
         self.next_due_us = (self.next_due_us + self.period_us).max(now_us + self.period_us - slack_us);
-        let runs = INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
-        IRQ_RUNS_LAST.store(runs, Ordering::Relaxed);
-        if self.part.wake(runs) {
-            log::warn!("lsm6dso32 :: INT1 silent -- sampling on the tick, the line unproven");
-        }
-        INTERRUPT_SILENT.store(self.part.interrupt_silent(), Ordering::Relaxed);
         if self.muted_until_us != 0 {
-            if now_us < self.muted_until_us {
-                // a muted read is a read with no new conversion: STALE_LIMIT of them mark the part unhealthy
+            // a mute is a bench diagnostic: arming or leaving SETTING ends it at once
+            let flight = FLIGHT.load();
+            let ended_by_flight = flight.armed || flight.stage != Stage::Setting;
+            if now_us < self.muted_until_us && !ended_by_flight {
+                // a declared outage: unhealthy from its first read (no lapse is counted against a part known out),
+                // the INT1 edges taken but not judged (a muted part's latched line goes quiet by design)
                 IMU_MUTED.fetch_add(1, Ordering::Relaxed);
-                self.stale_run = self.stale_run.saturating_add(1);
-                if self.stale_run >= STALE_LIMIT && self.set_healthy(false) {
-                    log::warn!("lsm6dso32 :: muted -- stale");
+                INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
+                self.stale_run = STALE_LIMIT;
+                if self.set_healthy(false) {
+                    log::warn!("lsm6dso32 :: muted -- unhealthy");
                 }
                 return;
             }
             self.muted_until_us = 0;
             // the first read after the mute is judged by its flags alone
             self.part.forget();
-            log::info!("{} :: mute over: reading again", self.name);
+            if ended_by_flight {
+                log::warn!("{} :: mute ended by arm or a stage change: reading again", self.name);
+            } else {
+                log::info!("{} :: mute over: reading again", self.name);
+            }
         }
+        let runs = INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
+        IRQ_RUNS_LAST.store(runs, Ordering::Relaxed);
+        if self.part.wake(runs) {
+            log::warn!("lsm6dso32 :: INT1 silent -- sampling on the tick, the line unproven");
+        }
+        INTERRUPT_SILENT.store(self.part.interrupt_silent(), Ordering::Relaxed);
         let Some(handle) = self.handle.as_mut() else {
             return;
         };

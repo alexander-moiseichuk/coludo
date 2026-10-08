@@ -65,6 +65,9 @@ pub enum Fault<BusError> {
     Configuration,
     /// A control line the part needs (an XSHUT pin) refused to switch.
     Pin,
+    /// Every try at a sample read garbage: two reads of one burst that never agreed, or agreed outside the part's
+    /// operating range (the BMP581's ground capture, after its bounded retries). Nothing was taken from them.
+    Garbage,
 }
 
 impl<BusError: fmt::Debug> fmt::Display for Fault<BusError> {
@@ -77,6 +80,7 @@ impl<BusError: fmt::Debug> fmt::Display for Fault<BusError> {
             Fault::Timeout => write!(formatter, "not ready in time"),
             Fault::Configuration => write!(formatter, "configuration does not fit the part"),
             Fault::Pin => write!(formatter, "control pin refused"),
+            Fault::Garbage => write!(formatter, "garbage on every try"),
         }
     }
 }

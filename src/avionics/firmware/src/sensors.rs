@@ -11,7 +11,7 @@
 //! and the SPI LSM6DSO32's probe, which needs SPI2's owner (M6).
 
 use std::mem::ManuallyDrop;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, Ordering};
 
 use board_config::Entry;
 use control::change::Change;
@@ -552,6 +552,8 @@ static MAGNETOMETER_CALIBRATED: AtomicBool = AtomicBool::new(false);
 static MAGNETOMETER_COVERED: AtomicU32 = AtomicU32::new(0);
 /// How many samples it has seen since boot.
 static MAGNETOMETER_SEEN: AtomicU32 = AtomicU32::new(0);
+/// The extrema its evidence holds (x min, x max, y min, y max), once it has seen a sample.
+static MAGNETOMETER_SPAN: [AtomicI32; 4] = [const { AtomicI32::new(0) }; 4];
 
 /// The magnetometer's pending calibration, in plan B's words (bmm350.calibration()), from the run's atomics: the
 /// executor words it, so the owner never takes the calibrations' mutex on its tick (D9 of the M9 plan). None when no
@@ -567,17 +569,33 @@ pub fn magnetometer_instruction() -> Option<(&'static str, String)> {
 }
 
 /// What `inspect` shows of the magnetometer beyond its channel (plan B bmm350.py:382-387): whether it is calibrated,
-/// the octants its turn covered, the samples it has seen.
-pub fn magnetometer_inspection() -> (bool, u32, u32) {
+/// the extrema its evidence holds (x min, x max, y min, y max; None before a sample), the octants its turn covered,
+/// the samples it has seen.
+pub fn magnetometer_inspection() -> (bool, Option<[i32; 4]>, u32, u32) {
+    let seen = MAGNETOMETER_SEEN.load(Ordering::Relaxed);
     (
         MAGNETOMETER_CALIBRATED.load(Ordering::Relaxed),
+        (seen > 0).then(|| {
+            MAGNETOMETER_SPAN
+                .each_ref()
+                .map(|extreme| extreme.load(Ordering::Relaxed))
+        }),
         MAGNETOMETER_COVERED.load(Ordering::Relaxed),
-        MAGNETOMETER_SEEN.load(Ordering::Relaxed),
+        seen,
     )
 }
 
 /// Publishes the magnetometer's calibration state (its run's, and the executor's apply).
 fn note_magnetometer(magnetometer: &Bmm350) {
+    if let Some(span) = magnetometer.span() {
+        for (extreme, value) in
+            MAGNETOMETER_SPAN
+                .iter()
+                .zip([span.x_minimum, span.x_maximum, span.y_minimum, span.y_maximum])
+        {
+            extreme.store(value, Ordering::Relaxed);
+        }
+    }
     MAGNETOMETER_CALIBRATED.store(magnetometer.calibrated(), Ordering::Relaxed);
     MAGNETOMETER_COVERED.store(magnetometer.covered(), Ordering::Relaxed);
     MAGNETOMETER_SEEN.store(magnetometer.seen(), Ordering::Relaxed);

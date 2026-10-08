@@ -203,6 +203,30 @@ impl Topology {
         quantities
     }
 
+    /// Plan B's `stats databoard` (databoard.py:513-515): each quantity's sources, sorted by name as plan B's
+    /// `sources()` sorted them.
+    pub fn stats(&self) -> serde_json::Map<String, Value> {
+        let sources = |names: Vec<&'static str>| {
+            let mut names = names;
+            names.sort_unstable();
+            Value::from(names)
+        };
+        self.scalars
+            .iter()
+            .map(|parameter| (parameter.name().to_string(), sources(parameter.sources().collect())))
+            .chain(
+                self.vectors
+                    .iter()
+                    .map(|parameter| (parameter.name().to_string(), sources(parameter.sources().collect()))),
+            )
+            .chain(
+                self.positions
+                    .iter()
+                    .map(|parameter| (parameter.name().to_string(), sources(parameter.sources().collect()))),
+            )
+            .collect()
+    }
+
     /// The topology of the entries that came up, in setup order, with one log line per quantity: its sources in rank
     /// order with their priorities, and its shared window. M6 adds the readers.
     fn build(entries: &[Entry<'static>], table: &Table) -> Topology {

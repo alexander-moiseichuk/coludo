@@ -110,3 +110,33 @@ fn a_late_read_with_new_bytes_is_fresh_however_late() {
     // NEGATIVE: the same bytes after the same gap are a part that stopped
     assert_eq!(judge.judge(&[1, 2], 10_000_000, 80_000), Change::Stale);
 }
+
+#[test]
+fn a_held_read_is_never_judged_and_never_stored() {
+    // a "no data" pattern between two real conversions: not fresh, and the next real one is judged against the last
+    let mut judge = Changes::<2>::default();
+    assert_eq!(judge.judge(&[1, 2], 0, 80_000), Change::Fresh);
+    assert_eq!(judge.hold(40_000, 80_000), Change::Unchanged);
+    // NEGATIVE: the same bytes as before the held read are no change (the pattern was not stored in between)
+    assert_eq!(judge.judge(&[1, 2], 80_000, 80_000), Change::Unchanged);
+    assert_eq!(judge.judge(&[1, 3], 120_000, 80_000), Change::Fresh);
+}
+
+#[test]
+fn a_part_stuck_in_its_pattern_goes_stale_on_the_clock_of_its_last_change() {
+    // NEGATIVE: held reads from 0 on, after a real change at 0: Unchanged until three periods, then Stale
+    let mut judge = Changes::<2>::default();
+    judge.judge(&[1, 2], 0, 80_000);
+    assert_eq!(judge.hold(200_000, 80_000), Change::Unchanged);
+    assert_eq!(judge.hold(240_000, 80_000), Change::Stale);
+    // held reads do not restart the clock: still stale, and a real conversion ends it at once
+    assert_eq!(judge.hold(280_000, 80_000), Change::Stale);
+    assert_eq!(judge.judge(&[9, 9], 320_000, 80_000), Change::Fresh);
+    // a part that never produced a sample starts its clock at the first held read
+    let mut never = Changes::<2>::default();
+    assert_eq!(never.hold(5_000_000, 80_000), Change::Unchanged);
+    assert_eq!(never.hold(5_200_000, 80_000), Change::Unchanged);
+    assert_eq!(never.hold(5_240_000, 80_000), Change::Stale);
+    // and its first real conversion is fresh, judged against nothing
+    assert_eq!(never.judge(&[0x7F, 0x7E], 5_280_000, 80_000), Change::Fresh);
+}

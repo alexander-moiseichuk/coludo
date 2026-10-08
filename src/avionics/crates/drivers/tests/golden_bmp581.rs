@@ -5,7 +5,8 @@
 //! pressure EXACT, power-of-two scalings in both precisions; altitude within 5 mm, the f32 of commons.altitude_m),
 //! plan B's I2C transcripts replayed through the mock bus -- setup with its ground zero, the re-arm out of standby,
 //! the probe and the diagnosis -- and the operator's ground updates (one divergence: a word for a ground is refused
-//! in the port's words, where plan B's were the interpreter's).
+//! in the port's words, where plan B's were the interpreter's). Setup cases that read ground samples owe their
+//! `divergence`: each burst read twice by the garbage guard, plan B's answer and ground unchanged.
 
 mod transcript;
 
@@ -40,13 +41,30 @@ fn the_burst_converts_as_plan_b() {
 
 #[test]
 fn setup_makes_plan_b_s_transactions_and_ground_zero() {
-    check_cases(&part("setup"), "setup", |input| {
-        let mock = replay(&input["script"]);
+    // a case that reads a ground sample owes its divergence's script (each burst read twice, the garbage guard), and
+    // plan B's answer and ground all the same
+    let section = part("setup");
+    let compare = FieldCompare::from_section(&section);
+    let mut divergences = 0;
+    for case in section["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let script = match case.get("divergence") {
+            Some(divergence) => {
+                divergences += 1;
+                &divergence["script"]
+            }
+            None => &case["input"]["script"],
+        };
+        let mock = replay(script);
         let mut barometer = Bmp581::new(ADDRESS);
         let ok = barometer.setup(&mut mock.clone(), &mut mock.delay()).is_ok();
         mock.done();
-        json!({"ok": ok, "ground": ok.then(|| f64::from(barometer.ground()))})
-    });
+        let answer = json!({"ok": ok, "ground": ok.then(|| f64::from(barometer.ground()))});
+        compare
+            .check(name, &case["output"], &answer)
+            .unwrap_or_else(|failure| panic!("{failure}"));
+    }
+    assert_eq!(divergences, 2, "the healthy and the drifting pad read ground samples");
 }
 
 #[test]

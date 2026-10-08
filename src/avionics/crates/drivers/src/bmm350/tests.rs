@@ -10,8 +10,8 @@
 
 use super::{
     Bmm350, CALIBRATION_BYTES, CHIP_ID, CONFIGURATION, CONVERSION_PERIOD_US, Calibration, Change, Field, IDENTITY,
-    MAG_X_XLSB, NEEDED_SECTORS, PMU_CMD_AGGR_SET, POLL_PERIOD_MS, ProbeFailure, SECTORS, Step, format_instruction,
-    not_measuring,
+    MAG_X_XLSB, NEEDED_SECTORS, NO_DATA, PMU_CMD_AGGR_SET, POLL_PERIOD_MS, ProbeFailure, SECTORS, Step,
+    format_instruction, not_measuring,
 };
 use crate::axes::{Axes, AxesError};
 use crate::device::{Device, Fault};
@@ -455,10 +455,11 @@ fn the_probe_refuses_a_part_that_is_not_measuring() {
         Err(ProbeFailure::NotMeasuring(_))
     ));
     assert_eq!(magnetometer.probe(&mut mock.clone()), Ok([1200, -300, 700]));
+    // the probe's real sample feeds the evidence, as plan B's _read does; its 0x7F7F7F one does not (plan B's did)
+    assert_eq!(magnetometer.seen(), 1);
     assert_eq!(
-        magnetometer.seen(),
-        2,
-        "the probe's reads feed the evidence, as plan B's _read does"
+        magnetometer.span().map(|span| (span.x_maximum, span.y_maximum)),
+        Some((1200, -300))
     );
     assert!(matches!(
         magnetometer.probe(&mut mock.clone()),
@@ -679,4 +680,101 @@ fn a_suspended_part_goes_stale_after_three_conversion_periods() {
         poll(&mut magnetometer, 6_000_000, &[(1200, -300, 700), (1201, -300, 700)]),
         [Change::Stale, Change::Fresh]
     );
+}
+
+/// The burst a re-armed part answers until its first conversion lands: every axis at the "no sample" pattern.
+fn no_data() -> (i32, i32, i32) {
+    (NO_DATA, NO_DATA, NO_DATA)
+}
+
+#[test]
+fn the_no_data_pattern_after_a_rearm_is_neither_fresh_nor_observed() {
+    use Change::{Fresh, Unchanged};
+    // MEASURED on the board: after a re-arm the axes read 0x7F7F7F until the first conversion. Changed bytes alone
+    // called it fresh, and its observe put 8 355 711 into the span for the rest of the boot
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    let outcomes = poll(
+        &mut magnetometer,
+        0,
+        &[
+            (1200, -300, 700),
+            no_data(),
+            no_data(),
+            (1210, -300, 700),
+            (1210, -300, 700),
+        ],
+    );
+    assert_eq!(outcomes, [Fresh, Unchanged, Unchanged, Fresh, Unchanged]);
+    assert_eq!(magnetometer.seen(), 2, "only the two real conversions are evidence");
+    let span = magnetometer.span().unwrap();
+    assert_eq!((span.x_maximum, span.y_maximum), (1210, -300));
+    // NEGATIVE: the pattern was not stored, so the real sample from before it, read again, is no change
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    let outcomes = poll(&mut magnetometer, 0, &[(1200, -300, 700), no_data(), (1200, -300, 700)]);
+    assert_eq!(outcomes, [Fresh, Unchanged, Unchanged]);
+}
+
+#[test]
+fn a_field_that_is_no_sample_is_never_evidence() {
+    // NEGATIVE: observe() itself keeps them out, whoever calls it (the probe after a re-arm): x and y at the pattern,
+    // or all three axes zero; the published vector still comes back, for not_measuring's verdict
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    for field in [
+        Field {
+            x: NO_DATA,
+            y: NO_DATA,
+            z: NO_DATA,
+        },
+        Field {
+            x: NO_DATA,
+            y: NO_DATA,
+            z: 700,
+        },
+        Field::default(),
+    ] {
+        assert!(!field.measured(), "{field:?}");
+        assert_eq!(magnetometer.observe(&field), [field.x, field.y, field.z]);
+    }
+    assert_eq!(magnetometer.seen(), 0);
+    assert_eq!(magnetometer.span(), None);
+    assert_eq!(
+        magnetometer.instruction(),
+        "turn the airframe through a full circle, LEVEL, then calibrate (no field seen yet)"
+    );
+    // one axis at the pattern, or two axes zero, is a field: the rails of a strong field, a level board's x and y
+    for field in [Field { x: NO_DATA, y: 5, z: 0 }, Field { x: 0, y: 0, z: 700 }] {
+        assert!(field.measured(), "{field:?}");
+    }
+}
+
+#[test]
+fn a_part_stuck_at_no_data_goes_stale() {
+    // NEGATIVE: a re-arm that never brings the conversions back: Unchanged, then Stale three conversion periods
+    // (240 ms) after the last real change, where the firmware calls the part unhealthy; nothing is observed
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    let mut fields = vec![(1200, -300, 700)];
+    fields.extend([no_data(); 8]);
+    let outcomes = poll(&mut magnetometer, 0, &fields);
+    let first_stale = outcomes.iter().position(|change| *change == Change::Stale).unwrap();
+    assert_eq!(
+        u64::try_from(first_stale).unwrap() * u64::from(POLL_PERIOD_MS) * 1000,
+        3 * CONVERSION_PERIOD_US
+    );
+    assert!(
+        outcomes[1..first_stale]
+            .iter()
+            .all(|change| *change == Change::Unchanged)
+    );
+    assert!(outcomes[first_stale..].iter().all(|change| *change == Change::Stale));
+    assert_eq!(magnetometer.seen(), 1);
+    // the first real conversion after it is fresh at once
+    assert_eq!(
+        poll(&mut magnetometer, 1_000_000, &[(1201, -300, 700)]),
+        [Change::Fresh]
+    );
+    // a part that never produced a sample goes stale on the clock of its first read
+    let mut never = Bmm350::new(ADDRESS);
+    let outcomes = poll(&mut never, 0, &[no_data(); 7]);
+    assert_eq!(outcomes[..6], [Change::Unchanged; 6]);
+    assert_eq!(outcomes[6], Change::Stale);
 }

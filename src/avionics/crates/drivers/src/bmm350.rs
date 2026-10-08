@@ -49,6 +49,15 @@
 //! [`crate::freshness::STALE_PERIODS`] conversion periods the read is [`Change::Stale`], where the firmware calls it
 //! unhealthy. No register is written for it. Plan B's `period_ms` is unused.
 //!
+//! NO SAMPLE IS NOT A SAMPLE. MEASURED on the board (M9 stage 4): right after a re-arm the axes read [`NO_DATA`]
+//! until the first conversion lands. Changed bytes would call that pattern fresh (it differs from the last real
+//! sample), the run would observe it, and the span's x and y maximum would be 8 355 711 for the rest of the boot,
+//! refusing every calibration on coverage. So a field that is no sample ([`Field::measured`] false: raw x and y at
+//! [`NO_DATA`], or all three axes zero) is never judged and never stored: [`Bmm350::read_fresh`] answers it
+//! [`Change::Unchanged`], or [`Change::Stale`] once the stale clock of the last real change runs out, so a part stuck
+//! there still turns unhealthy. And [`Bmm350::observe`] never accounts one as evidence, whoever reads it (the probe
+//! observes too), a divergence from plan B, whose `_read` accounted every burst.
+//!
 //! THE AXES ([`crate::axes`], new in the port; plan B has none). The order against the calibration is fixed here, in
 //! the driver, because it is the one place it can go wrong: the evidence ([`Bmm350::observe`]), the calibration
 //! ([`Bmm350::calibrate`]) and the NVS blob are all in the SENSOR's own frame, and the map turns only the PUBLISHED
@@ -229,6 +238,13 @@ impl Field {
             y: axis(DUMMY_BYTES + 3),
             z: axis(DUMMY_BYTES + 6),
         }
+    }
+
+    /// Whether the burst is a sample at all (the raw burst, before any calibration): not x and y at [`NO_DATA`], the
+    /// part's own "no sample" (until its OTP is powered off, and after a re-arm until the first conversion), and not
+    /// all three axes zero (the field is never zero on Earth). [`not_measuring`]'s raw checks, without its reasons.
+    pub fn measured(&self) -> bool {
+        !(self.x == NO_DATA && self.y == NO_DATA) && *self != Field::default()
     }
 }
 
@@ -489,11 +505,24 @@ impl Bmm350 {
     /// Account one raw sample and return what the channel publishes (bmm350._read after the bus read): the raw
     /// counts while uncalibrated (so the channel works from the first boot and improves when the operator does the
     /// turn), the corrected ones once calibrated. On the run, only a [`Change::Fresh`] field is observed (the module
-    /// notes), so the evidence never counts one conversion twice.
+    /// notes), so the evidence never counts one conversion twice. A field that is no sample ([`Field::measured`]
+    /// false) is published as it reads, for the probe's [`not_measuring`] verdict, but never accounted.
     ///
     /// `field` is the burst as the SENSOR reads it ([`Field::decode`]), never a remapped one: the evidence and the
     /// calibration live in the sensor frame, and only the returned vector goes through [`Bmm350::mounted`]'s map.
     pub fn observe(&mut self, field: &Field) -> [i32; 3] {
+        if field.measured() {
+            self.account(field);
+        }
+        let published = match self.calibration {
+            None => [field.x, field.y, field.z],
+            Some(calibration) => calibration.correct(field),
+        };
+        self.axes.apply(published)
+    }
+
+    /// Add one sample to the evidence: the extrema, the count and the octant.
+    fn account(&mut self, field: &Field) {
         let span = match self.span {
             None => Span {
                 x_minimum: field.x,
@@ -511,11 +540,6 @@ impl Bmm350 {
         self.span = Some(span);
         self.seen = self.seen.saturating_add(1);
         self.cover(&span, field);
-        let published = match self.calibration {
-            None => [field.x, field.y, field.z],
-            Some(calibration) => calibration.correct(field),
-        };
-        self.axes.apply(published)
     }
 
     /// Record which octant of the circle this sample falls in, around the CURRENT centre estimate (bmm350._cover).
@@ -612,24 +636,27 @@ impl Bmm350 {
     }
 
     /// Read one burst's raw axes and whether they are a new conversion ([`Change`]): the same 14-byte burst as
-    /// [`Bmm350::read`], judged by whether its 9 axis bytes changed since the last `read_fresh`, at `now_us` on the
+    /// [`Bmm350::read`], judged by whether its 9 axis bytes changed since the last judged read, at `now_us` on the
     /// owner's clock. Only a [`Change::Fresh`] field is observed and published; at [`Change::Stale`] the firmware
-    /// calls the part unhealthy (a suspended part). The probe's read does not touch the judge.
+    /// calls the part unhealthy (a suspended part). A field that is no sample ([`Field::measured`] false, as after a
+    /// re-arm) is not judged and not stored: [`Change::Unchanged`], or [`Change::Stale`] once the last real change is
+    /// three conversion periods old. The probe's read does not touch the judge.
     pub fn read_fresh<Bus: I2c>(&mut self, bus: &mut Bus, now_us: u64) -> Result<(Change, Field), Fault<Bus::Error>> {
         let mut frame = [0u8; FRAME_LENGTH];
         bus.write_read(self.address, &[MAG_X_XLSB], &mut frame)
             .map_err(Fault::Bus)?;
+        let field = Field::decode(&frame);
+        if !field.measured() {
+            return Ok((self.changes.hold(now_us, CONVERSION_PERIOD_US), field));
+        }
         let mut axes = [0u8; AXIS_BYTES];
         axes.copy_from_slice(&frame[DUMMY_BYTES..DUMMY_BYTES + AXIS_BYTES]);
-        Ok((
-            self.changes.judge(&axes, now_us, CONVERSION_PERIOD_US),
-            Field::decode(&frame),
-        ))
+        Ok((self.changes.judge(&axes, now_us, CONVERSION_PERIOD_US), field))
     }
 
     /// The on-demand self-test (bmm350.probe): the identity reads back, then one sample is read, accounted (as
-    /// plan B's probe reads through `_read`, which feeds the calibration evidence) and checked with
-    /// [`not_measuring`]. Ok carries the published sample.
+    /// plan B's probe reads through `_read`, which feeds the calibration evidence; a field that is no sample is not
+    /// accounted, see [`Bmm350::observe`]) and checked with [`not_measuring`]. Ok carries the published sample.
     pub fn probe<Bus: I2c>(&mut self, bus: &mut Bus) -> Result<[i32; 3], ProbeFailure<Bus::Error>> {
         let read = self.identity(bus).map_err(ProbeFailure::Fault)?;
         if read != IDENTITY {

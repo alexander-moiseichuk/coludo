@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use super::{Code, Context, Fault, Reply};
+use crate::status::FLIGHT;
 
 /// The parts with a self-test, the one named or every one (plan B's `Inspector.probe_all` over its objects): the SPI
 /// IMU, the separation switch, the I2C parts on both ports' owners in port order, the bluetooth stubs and the
@@ -283,6 +284,20 @@ pub fn bustune(message: &Message, context: &mut Context) -> Reply {
         .is_some_and(|bus| bus.is_object());
     if !defined {
         return super::ok_json(&json!({"error": format!("bus {kind}:{id} not defined")}));
+    }
+    // armed, a rung would hold a bus owner off its parts in the last seconds on the pad (M9): only the way back to
+    // the configured clock runs, so an interrupted sweep can still be undone
+    let configured = context.config.document["buses"][kind.as_str()][id.as_str()]
+        [if kind == "spi" { "baud" } else { "freq" }]
+    .as_i64();
+    if FLIGHT.load().armed && configured != Some(freq) {
+        return Err(Fault::new(
+            Code::Unsafe,
+            format!(
+                "refused -- armed (bustune only back to the configured {} Hz)",
+                configured.map_or_else(|| "?".to_string(), |hz| hz.to_string())
+            ),
+        ));
     }
     if kind == "spi" {
         return bustune_spi(context, id, freq);

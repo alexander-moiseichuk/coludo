@@ -24,7 +24,7 @@ use crate::recorder::NAME as RECORDER;
 use crate::status::FLIGHT;
 
 /// The inspectable objects every board has, sorted (plan B `Inspector.names()`).
-const OBJECTS: [&str; 2] = ["controller", "mission"];
+const OBJECTS: [&str; 3] = ["controller", "databoard", "mission"];
 
 /// Each bluetooth stub by its entry's name, made from its config entry when first inspected or updated. Only the
 /// executor's commands reach it, one at a time, so the lock is never contended.
@@ -78,6 +78,7 @@ enum Own {
     /// port's own: its measured ODR (null before two conversions), its channels' lapses by quantity, and its raced
     /// and identical halves (accel, rate).
     Bmi323 {
+        addr: Option<String>,
         interrupt: bool,
         interrupt_silent: Option<bool>,
         accel_g: Option<[f32; 3]>,
@@ -99,6 +100,7 @@ enum Own {
     /// The BMP581 (M9): the barometer keys, and its double read's guard: the pairs that disagreed and the agreeing
     /// reads outside the part's operating range, since boot.
     Bmp581 {
+        addr: Option<String>,
         altitude_m: Option<f32>,
         temperature_c: Option<f32>,
         pressure_pa: Option<f32>,
@@ -110,10 +112,12 @@ enum Own {
     /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
     /// octants its turn covered and the samples it has seen.
     Magnetometer {
+        addr: Option<String>,
         mag_counts: Option<[f32; 3]>,
         calibrated: bool,
-        sectors: u32,
+        span: Option<[i32; 4]>,
         samples: u32,
+        sectors: u32,
     },
     /// The stage machine (M9): which source holds each slot, the sources past their class's slots, and the veto
     /// episode edges it reported.
@@ -165,6 +169,7 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
         "bmi323" => {
             let (interrupt_silent, irq_runs, odr_hz, raced, identical) = crate::sensors::bmi323_inspection();
             Own::Bmi323 {
+                addr: address(context, name),
                 interrupt: interrupt_silent.is_some(),
                 interrupt_silent,
                 accel_g: vector("accel"),
@@ -189,6 +194,7 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
         "bmp581" => {
             let (torn, implausible) = crate::sensors::bmp581_inspection();
             Own::Bmp581 {
+                addr: address(context, name),
                 altitude_m: scalar("altitude"),
                 temperature_c: scalar("temperature"),
                 pressure_pa: scalar("pressure"),
@@ -199,12 +205,14 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
             }
         }
         "bmm350" => {
-            let (calibrated, sectors, samples) = crate::sensors::magnetometer_inspection();
+            let (calibrated, span, sectors, samples) = crate::sensors::magnetometer_inspection();
             Own::Magnetometer {
+                addr: address(context, name),
                 mag_counts: vector("mag"),
                 calibrated,
-                sectors,
+                span,
                 samples,
+                sectors,
             }
         }
         "sequencer" => match crate::control::sequencer_inspection() {
@@ -287,7 +295,7 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
     let changed: Vec<&str> = match name.as_str() {
         "mission" => apply_mission(context, properties),
         RECORDER => apply_recorder(properties),
-        "controller" => Vec::new(), // nothing on it is writable
+        "controller" | "databoard" => Vec::new(), // nothing on them is writable
         device if is_bluetooth(context, device) => with_bluetooth(context, device, |stub| stub.update(properties)),
         // a device: the part on its owner (the barometer's ground and rezero); the others change nothing
         device => crate::owner::update(device, &Value::Object(properties.clone()))
@@ -377,11 +385,26 @@ pub fn stats(message: &Message, context: &mut Context) -> Reply {
     match name.as_str() {
         "controller" => super::ok_json(&json!({"stage": FLIGHT.load().stage.name(), "tasks": {}})),
         "mission" => super::ok_json(&json!({})),
+        // plan B's Databoard.stats: each quantity's sources
+        "databoard" => super::ok_json(&context.topology.stats()),
         RECORDER => super::ok_json(&crate::recorder::stats_report().ok_or_else(|| no_object(RECORDER))?),
         // a device: plan B's Inspectable.stats() default
         device if context.devices.find(device).is_some_and(|entry| entry.active()) => super::ok_json(&json!({})),
         other => Err(no_object(other)),
     }
+}
+
+/// An I2C device's address as plan B's inspect shows it (`hex(self._addr)`, "0x69"): its entry's `addr`, else its
+/// driver's datasheet default; None for a device not in the config.
+fn address(context: &Context, name: &str) -> Option<String> {
+    let entries = board_config::entries(&context.config.document);
+    let entry = entries.iter().find(|entry| entry.name == name)?;
+    let address = entry
+        .fields
+        .get("addr")
+        .and_then(Value::as_u64)
+        .or_else(|| crate::sensors::default_address(entry.implementation).map(u64::from))?;
+    Some(format!("{address:#x}"))
 }
 
 /// The answer for a name that is not an object.

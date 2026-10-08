@@ -14,7 +14,10 @@ Golden fixture drivers_bmp581.json: plan B's BMP581 barometer (src/glider/driver
                 -40..85 degrees C;
   * setup    -- setup()'s transcript: the identity, OSR_CONFIG 0x50 and ODR_CONFIG 0xBD, the first conversion's wait,
                 and the eight-reading ground zero; the failures included. abs 0.01 on the ground (an f32 average of
-                f32 altitudes);
+                f32 altitudes). Every case that reads a ground sample carries a `divergence`, the transcript the port
+                owes instead (avionics-port.md M9 stage 4, the garbage guard): each burst read TWICE back to back,
+                believed only when both agree, so each of plan B's sample reads appears twice; the answer and the
+                ground are plan B's (a burst that NAKs ends the capture at its first read, as plan B's did);
   * rearm    -- rearm()'s transcript: the mode written again, out of the STANDBY a reset leaves the part in; and
                 whether plan B logged a failure. Exact;
   * update   -- update(): a direct ground (a number, or what plan B's float() also takes: a numeral string, a bool),
@@ -168,11 +171,37 @@ def _setup(part) -> tuple:
     return driver, ok, bus
 
 
+def _guarded(transcript: list) -> list:
+    """
+    The transcript the port owes for plan B's: each ground-sample burst that answered read twice back to back (the
+    garbage guard); a refused one stays single, since the capture ends at its first read.
+
+    Args:
+        transcript - plan B's setup transcript.
+
+    Returns:
+        The port's.
+    """
+    owed = []
+    for step in transcript:
+        owed.append(step)
+        if step['op'] == 'write_read' and step['write'] == '%02x' % bmp581._REG_TEMP_DATA and not step.get('fails'):
+            owed.append(step)
+    return owed
+
+
 def _setup_case(name: str, part) -> dict:
-    """One setup case: the transcript, setup's answer and the ground zero it captured."""
+    """One setup case: the transcript, setup's answer and its ground zero, the guard's double reads a divergence."""
     driver, ok, bus = _setup(part)
-    return {'name': name, 'input': {'script': bus.transcript},
+    case = {'name': name, 'input': {'script': bus.transcript},
             'output': {'ok': ok, 'ground': driver._ground if ok else None}}
+    owed = _guarded(bus.transcript)
+    if owed != bus.transcript:
+        case['divergence'] = {'note': ('the port reads each ground-sample burst twice and believes it only when both '
+                                       'agree (the garbage guard): every sample read appears twice; the answer and '
+                                       "the ground are plan B's"),
+                              'script': owed}
+    return case
 
 
 def _setups() -> dict:
@@ -187,7 +216,8 @@ def _setups() -> dict:
              _setup_case('the_rate_naks', _part(refuse=(('write', bmp581._REG_ODR_CONFIG),))),
              _setup_case('a_read_naks_while_averaging', _part(refuse=(('read', bmp581._REG_TEMP_DATA),)))]
     return {'compare': {'kind': 'abs', 'tol': 0.01},
-            'note': 'setup() over a scripted part: the transcript; output ok and the ground zero (m) it captured',
+            'note': ('setup() over a scripted part: the transcript; output ok and the ground zero (m) it captured; a '
+                     "case with a divergence owes its script instead, with plan B's output"),
             'cases': cases}
 
 

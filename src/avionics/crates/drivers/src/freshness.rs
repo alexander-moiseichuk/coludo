@@ -153,22 +153,13 @@ pub enum Change {
 
 /// The changed-bytes judge of a part read without a data-ready flag (see the module notes): the last read's data
 /// bytes and when they last changed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Changes<const LENGTH: usize> {
-    /// The last read's data bytes; None before the first read.
+    /// The last judged read's data bytes; None before the first: the first read is fresh.
     last: Option<[u8; LENGTH]>,
-    /// When the bytes last changed (the first read counts), microseconds on the caller's clock.
-    changed_us: u64,
-}
-
-impl<const LENGTH: usize> Default for Changes<LENGTH> {
-    /// Nothing read yet: the first read is fresh.
-    fn default() -> Changes<LENGTH> {
-        Changes {
-            last: None,
-            changed_us: 0,
-        }
-    }
+    /// When the bytes last changed (the first judged read counts), or when the first held read came before any
+    /// judged one, microseconds on the caller's clock; None before either.
+    changed_us: Option<u64>,
 }
 
 impl<const LENGTH: usize> Changes<LENGTH> {
@@ -176,10 +167,26 @@ impl<const LENGTH: usize> Changes<LENGTH> {
     pub fn judge(&mut self, bytes: &[u8; LENGTH], now_us: u64, period_us: u64) -> Change {
         if self.last.as_ref() != Some(bytes) {
             self.last = Some(*bytes);
-            self.changed_us = now_us;
+            self.changed_us = Some(now_us);
             return Change::Fresh;
         }
-        if now_us.saturating_sub(self.changed_us) >= STALE_PERIODS * period_us {
+        self.since_change(now_us, period_us)
+    }
+
+    /// Answer a read that is no sample at all (a part's own "no data" pattern), taken at `now_us`, WITHOUT judging
+    /// it: nothing is stored, so the next real conversion is judged against the last real one. It is
+    /// [`Change::Unchanged`] until the stale clock runs out, then [`Change::Stale`], so a part that never leaves the
+    /// pattern still turns unhealthy. With nothing judged yet, the clock starts at the first such read.
+    pub fn hold(&mut self, now_us: u64, period_us: u64) -> Change {
+        self.changed_us.get_or_insert(now_us);
+        self.since_change(now_us, period_us)
+    }
+
+    /// [`Change::Stale`] once [`STALE_PERIODS`] conversion periods have passed since the last change, else
+    /// [`Change::Unchanged`].
+    fn since_change(&self, now_us: u64, period_us: u64) -> Change {
+        let changed_us = self.changed_us.unwrap_or(now_us);
+        if now_us.saturating_sub(changed_us) >= STALE_PERIODS * period_us {
             Change::Stale
         } else {
             Change::Unchanged

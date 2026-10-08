@@ -3,14 +3,15 @@
 //! The BMP581's unit tests: the conversion in both temperature signs (test_bmp581.py's frames), the bring-up with
 //! its ground zero and the re-arm over the scripted bus, the operator's ground updates, re-zero fresh-only, the
 //! calibrate's re-captured ground (M9 D7), freshness by changed bytes with a standby part going stale (D3), and the
-//! bus-garbage guard: a burst read twice and believed only when both agree and lie in the part's operating range.
+//! bus-garbage guard: a burst read twice and believed only when both agree and lie in the part's operating range,
+//! on the run and in every ground sample (bounded retries, then a fault that keeps the old ground).
 
 use control::commons::altitude_m;
 use serde_json::json;
 
 use super::{
     Bmp581, CHIP_ID, CONFIGURATION, CONVERSION_PERIOD_US, FIRST_CONVERSION_MS, GROUND_SAMPLE_MS, GROUND_SAMPLES,
-    IDENTITY, ODR_CONFIG, Outcome, REZERO_WINDOW_US, Reading, Refusal, TEMP_DATA_XLSB,
+    GROUND_TRIES, IDENTITY, ODR_CONFIG, Outcome, REZERO_WINDOW_US, Reading, Refusal, TEMP_DATA_XLSB,
 };
 use crate::device::{Device, Fault};
 use crate::mock::MockBus;
@@ -27,6 +28,15 @@ const COLD: [u8; 6] = [0x00, 0x00, 0xF6, 0x00, 0xF6, 0x62];
 /// A frame whose XLSB bytes are NOT zero: 25 + 1/65536 degrees C (0x190001) and 101336 + 1/64 Pa (0x62F601). Both
 /// of test_bmp581.py's frames carry 0x00 there, so a decode that drops the low byte would pass them.
 const FINE: [u8; 6] = [0x01, 0x00, 0x19, 0x01, 0xF6, 0x62];
+
+/// Script one guarded ground sample: each of `pairs` read as two bursts, then the wait after the sample.
+fn script_sample(mock: &MockBus, pairs: &[Pair]) {
+    for (first, second) in pairs {
+        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], first)
+            .expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], second);
+    }
+    mock.expect_delay_ms(GROUND_SAMPLE_MS);
+}
 
 /// Script the configuration writes.
 fn script_configure(mock: &MockBus) {
@@ -91,9 +101,9 @@ fn setup_configures_waits_and_averages_the_ground() {
     mock.expect_write_read(ADDRESS, &[CHIP_ID], &[IDENTITY]);
     script_configure(&mock);
     mock.expect_delay_ms(FIRST_CONVERSION_MS);
+    // each ground sample is a pair of bursts that agree (the garbage guard), then the wait
     for _ in 0..GROUND_SAMPLES {
-        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &WARM)
-            .expect_delay_ms(GROUND_SAMPLE_MS);
+        script_sample(&mock, &[twice(WARM)]);
     }
     let mut barometer = Bmp581::new(ADDRESS);
     barometer.setup(&mut mock.clone(), &mut mock.delay()).unwrap();
@@ -121,9 +131,9 @@ fn another_part_or_a_failed_read_fails_setup() {
     );
     mock.expect_write_read(ADDRESS, &[CHIP_ID], &[IDENTITY]);
     script_configure(&mock);
-    mock.expect_delay_ms(FIRST_CONVERSION_MS)
-        .expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &WARM)
-        .expect_delay_ms(GROUND_SAMPLE_MS)
+    mock.expect_delay_ms(FIRST_CONVERSION_MS);
+    script_sample(&mock, &[twice(WARM)]);
+    mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &WARM)
         .expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &WARM)
         .then_fail();
     assert!(matches!(
@@ -230,8 +240,7 @@ fn a_calibrate_re_captures_the_ground_from_fresh_readings() {
     let mut barometer = Bmp581::new(ADDRESS);
     barometer.update(&json!({"ground": 12.5}), None).unwrap();
     for _ in 0..GROUND_SAMPLES {
-        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &HIGHER)
-            .expect_delay_ms(GROUND_SAMPLE_MS);
+        script_sample(&mock, &[twice(HIGHER)]);
     }
     let ground = barometer.capture_ground(&mut mock.clone(), &mut mock.delay()).unwrap();
     mock.done();
@@ -486,4 +495,90 @@ fn a_failed_burst_is_a_bus_fault_and_judges_nothing() {
     ));
     mock.done();
     assert_eq!(poll(&mut barometer, 30_000, &[twice(WARM)]), [Outcome::Unchanged]);
+}
+
+/// Script a capture of [`GROUND_SAMPLES`] samples of `frame`, the sample at `garbled` read first as `garbage` pairs.
+fn script_capture(mock: &MockBus, frame: [u8; 6], garbled: u32, garbage: &[Pair]) {
+    for sample in 0..GROUND_SAMPLES {
+        let mut pairs = Vec::new();
+        if sample == garbled {
+            pairs.extend_from_slice(garbage);
+        }
+        pairs.push(twice(frame));
+        script_sample(mock, &pairs);
+    }
+}
+
+#[test]
+fn garbage_inside_a_capture_does_not_move_the_ground() {
+    // NEGATIVE: one all-ones burst (262 144 Pa, about -8.8 km) or one 0x1B1B1B pair (27 756 Pa, about +9.7 km) in
+    // plan B's single reads moved the 8-sample ground by about 1.1 km; here the sample is read again
+    let clean = altitude_m(101_336.0);
+    for garbage in [
+        vec![(WARM, ALL_ONES)],
+        vec![(ALL_ONES, WARM)],
+        vec![twice(REPEATED)],
+        vec![twice(ALL_ONES), (WARM, TEAR)],
+        vec![twice(COLD_AND_HIGH), twice(HOT)],
+    ] {
+        let mock = MockBus::new();
+        script_capture(&mock, WARM, 3, &garbage);
+        let mut barometer = Bmp581::new(ADDRESS);
+        let ground = barometer.capture_ground(&mut mock.clone(), &mut mock.delay()).unwrap();
+        mock.done();
+        assert!((ground - clean).abs() < 1e-3, "{garbage:02x?}: {ground}");
+    }
+}
+
+#[test]
+fn a_capture_that_runs_out_of_tries_faults_and_keeps_the_ground() {
+    // NEGATIVE: GROUND_TRIES torn pairs for one sample end the capture with Fault::Garbage; the ground in force stays
+    let mut barometer = Bmp581::new(ADDRESS);
+    barometer.update(&json!({"ground": 12.5}), None).unwrap();
+    let mock = MockBus::new();
+    script_sample(&mock, &[twice(HIGHER)]);
+    for _ in 0..GROUND_TRIES {
+        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &HIGHER)
+            .expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &ALL_ONES);
+    }
+    assert_eq!(
+        barometer.capture_ground(&mut mock.clone(), &mut mock.delay()),
+        Err(Fault::Garbage)
+    );
+    mock.done();
+    assert_eq!(barometer.ground(), 12.5);
+    assert_eq!(Fault::<()>::Garbage.to_string(), "garbage on every try");
+    // implausible pairs count against the same bound, and setup fails its attempt on it
+    let mock = MockBus::new();
+    mock.expect_write_read(ADDRESS, &[CHIP_ID], &[IDENTITY]);
+    script_configure(&mock);
+    mock.expect_delay_ms(FIRST_CONVERSION_MS);
+    for _ in 0..GROUND_TRIES {
+        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &REPEATED)
+            .expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &REPEATED);
+    }
+    assert_eq!(
+        barometer.setup(&mut mock.clone(), &mut mock.delay()),
+        Err(Fault::Garbage)
+    );
+    mock.done();
+    assert_eq!(barometer.ground(), 12.5);
+    // the last try is enough: two torn pairs, then an agreeing one, and the sample is taken
+    let mock = MockBus::new();
+    script_capture(&mock, WARM, 0, &[(WARM, ALL_ONES); 2]);
+    assert!(barometer.capture_ground(&mut mock.clone(), &mut mock.delay()).is_ok());
+    mock.done();
+}
+
+#[test]
+fn a_capture_leaves_the_freshness_judge_alone() {
+    // the capture's pairs are never judged: after a capture of HIGHER, the run's next read of WARM is Unchanged
+    // against the run's own last read, not Fresh against the capture's bytes
+    let mut barometer = Bmp581::new(ADDRESS);
+    poll(&mut barometer, 0, &[twice(WARM)]);
+    let mock = MockBus::new();
+    script_capture(&mock, HIGHER, 0, &[]);
+    barometer.capture_ground(&mut mock.clone(), &mut mock.delay()).unwrap();
+    mock.done();
+    assert_eq!(poll(&mut barometer, 10_000, &[twice(WARM)]), [Outcome::Unchanged]);
 }
