@@ -470,6 +470,20 @@ def _gps_device_resolve():
     assert auto is None or auto.startswith('/dev/ttyUSB'), auto
 
 
+def _render_keeps_named_params() -> None:
+    """A board reply's named params reach the operator, encoded as the protocol encodes them, and parse back."""
+    reply = cc.parse(cc.build('ok', ['control'], {'schedule_hz': 100, 'lapses': 'imu.accel:0,imu.rate:2'}))
+    line = server._render(reply)
+    assert line.startswith('ok control schedule_hz=100 lapses='), line
+    again = cc.parse(line)
+    assert again.args == ['control'] and again.named == {'schedule_hz': '100', 'lapses': 'imu.accel:0,imu.rate:2'}, again
+    spaced = server._render(cc.parse(cc.build('ok', ['video', 'stats'], {'note': 'two words', 'empty': ''})))
+    assert cc.parse(spaced).named == {'note': 'two words', 'empty': ''}, spaced
+    # a reply with no named params renders as before; JSON args stay plain
+    assert server._render(cc.parse(cc.build('ok', ['{"a": 1}']))) == 'ok {"a": 1}'
+    assert server._render(cc.parse('ok')) == 'ok'
+
+
 def _log_drops_are_reported():
     """
     A /logs listener that falls behind is TOLD how many lines it missed, once it has room again.
@@ -864,11 +878,13 @@ async def main():
     _gps_device_resolve()
     _glider_roster()
     _log_drops_are_reported()
+    _render_keeps_named_params()
     print('ok: server heartbeat polls health on health age + stops on a dead link '
           '+ accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
           '+ glider roster (persist, same-name-new-ip, absent hint) '
           '+ gps assist/compare + log streaming + gps auto-detect + oversized reply '
-          '+ clock sync on connect (unset + SETTING + CC clock valid; refused/garbled keep the board, silent drops it)')
+          '+ clock sync on connect (unset + SETTING + CC clock valid; refused/garbled keep the board, silent drops it) '
+          '+ replies keep their named params')
 
 
 asyncio.run(main())

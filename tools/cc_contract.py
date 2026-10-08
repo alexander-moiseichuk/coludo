@@ -18,7 +18,8 @@ BOARD is `fake` or a board id: through the hub (POST /api/cmd, --hub) unless --s
 By default the run only reads, plus `disarm` and `probe mission` (a data check that moves nothing, inside a
 log window). Everything that changes a board needs its flag, and nothing else is ever sent:
   --allow-active        arm, probe, verify, calibrate <device>, detect, bustune -- the probes sweep every fin
-                        over its full travel
+                        over its full travel; the barometers' ground round trips; while armed (a config whose
+                        verify passes), the bus diagnostics' refusals and a bustune off the IMU bus's clock
   --allow-stage         hold the stage at gliding (only a board seen disarmed: it then holds its fins
                         neutral), check the in-flight refusal, then return to setting
   --allow-launch-write  the launch-config round trip: the launch id is written and put back. NEVER on a plan

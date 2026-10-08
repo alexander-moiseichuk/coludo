@@ -390,6 +390,10 @@ pub fn stats(message: &Message, context: &mut Context) -> Reply {
         "mission" => super::ok_json(&json!({})),
         // plan B's Databoard.stats: each quantity's sources
         "databoard" => super::ok_json(&context.topology.stats()),
+        // plan B's Attitude.stats: the inspect snapshot
+        "attitude" if crate::control::attitude_inspection().is_some() => {
+            super::ok_json(&crate::control::attitude_inspection().unwrap_or_default())
+        }
         RECORDER => super::ok_json(&crate::recorder::stats_report().ok_or_else(|| no_object(RECORDER))?),
         // a device: plan B's Inspectable.stats() default
         device if context.devices.find(device).is_some_and(|entry| entry.active()) => super::ok_json(&json!({})),

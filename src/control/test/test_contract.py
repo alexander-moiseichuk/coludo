@@ -16,7 +16,10 @@ airborne or armed, nor -- with a flag -- to one whose ground state is unreadable
 that was not undone. An `ok` to reboot passes only when a new boot answers. A run that stops on an exception
 undoes its writes. A not-yet answer FAILs once the claimed milestone owes the case. The M7 gate: an arm while
 held is refused for the hold (and disarmed if it was not), verify's readiness names only plan B's checks -- the
-set read from plan B's own source -- and the bluetooth stub inspects in plan B's shape.
+set read from plan B's own source -- and the bluetooth stub inspects in plan B's shape. The M9 parts: the SEN0697
+snapshots, the attitude filter, the sequencer and the databoard in their shapes, the BMP581's ground round trip,
+the bus diagnostics refused armed and held, and the armed bustune only back to the configured clock -- each broken
+answer failing its own case, an arm that is refused skipping the armed checks.
 
 The hub and serial transports are tested without a hub or a board: the line a hub request must carry, the
 reply it rebuilds, a stub hub's HTTP errors and its dashboard rows (the hub tier), the console's log and ROM
@@ -45,10 +48,24 @@ from contract import cases, normalize, transports  # noqa: E402
 _PLAN_B: transports.Fake = transports.Fake()  # one plan B for the whole file (tools' own runs build theirs)
 _EPOCH_2020: int = 1577836800  # Unix seconds at 2020-01-01: any real host clock reads later
 # the cases plan B on CPython cannot run: no tee, no hub, and no device set up (the M6 parts' and bluetooth's cases)
-_BOARD_ONLY: set = {'log_tee_trigger', 'hub', 'inspect_imu', 'inspect_barometer', 'inspect_separation',
-                    'inspect_bluetooth', 'update_barometer_ground', 'update_barometer_text_ground',
-                    'update_barometer_rezero', 'calibrate_barometer', 'calibrate_imu', 'probe_devices',
-                    'bustune_imu_at_its_clock'}
+_M6_BOARD_ONLY: set = {'log_tee_trigger', 'hub', 'inspect_imu', 'inspect_barometer', 'inspect_separation',
+                       'inspect_bluetooth', 'update_barometer_ground', 'update_barometer_text_ground',
+                       'update_barometer_rezero', 'calibrate_barometer', 'calibrate_imu', 'probe_devices',
+                       'bustune_imu_at_its_clock'}
+# the M9 cases plan B on CPython runs: health, and the databoard it lists once a health read registered it
+_M9_ON_PLAN_B: set = {'health_names_its_disagreements', 'stats_databoard', 'inspect_databoard',
+                      'update_databoard_nothing', 'update_databoard_read_only'}
+# the M9 cases it cannot: no SEN0697 part, attitude filter or sequencer, and no part on a bus for the (Rust-only) bus
+# diagnostics
+_M9_BOARD_ONLY: set = {case.name for case in cases.CASES if case.milestone == 9} - _M9_ON_PLAN_B
+_BOARD_ONLY: set = _M6_BOARD_ONLY | _M9_BOARD_ONLY
+_M6_FITTED: tuple = ('baro_icp10111', 'bluetooth', 'imu_lsm6dso32', 'separation')  # the M6 parts and the BLE stub
+_M9_FITTED: tuple = ('attitude', 'baro_bmp581', 'databoard', 'imu_bmi323', 'mag_bmm350', 'sequencer')
+_BMP581_ALTITUDE: float = 22.1234  # the fitted BMP581's altitude, m AMSL
+_BMP581_GROUND: float = 22.1  # and the ground it boots with: elevation 0.0234 m
+_IMU_CLOCK: int = 5000000  # the default config's SPI 1 baud: the IMU bus's configured clock
+# the bus diagnostics' answers to the bare line while disarmed in SETTING
+_BUS_USAGE: dict = {line: usage for line, _part, usage in cases._BUS_DIAGNOSTICS}
 # the bluetooth stub's snapshot in plan B's no-BLE shape (drivers/bluetooth.py inspect): radio off, no BLE
 _BLUETOOTH_STUB: dict = {'name': 'bluetooth', 'ok': True, 'healthy': True, 'radio': False, 'active': None}
 _PROBE_LAUNCH: str = cc.build('set-config', ['launch', json.dumps({'launch_id': 'contract-probe'})])
@@ -110,7 +127,8 @@ def _fitted_answers() -> dict:
                                      'interrupt_silent': False, 'accel_g': [0.01, -0.02, 1.01],
                                      'rate_dps': [0.1, 0.0, -0.1]}),
         'inspect baro_icp10111': ok({'name': 'baro_icp10111', 'ok': True, 'healthy': True, 'altitude_m': 42.1,
-                                     'temperature_c': None, 'pressure_pa': 100810.5, 'elevation_m': 0.2}),
+                                     'temperature_c': None, 'pressure_pa': 100810.5, 'elevation_m': 0.2,
+                                     'change_m_s': 0.004}),
         'inspect separation': ok({'name': 'separation', 'ok': True, 'healthy': True, 'separated': False}),
         'inspect bluetooth': ok(_BLUETOOTH_STUB),
         update({'ground': 100}): ok({'changed': ['ground']}),
@@ -128,15 +146,16 @@ def _fitted_answers() -> dict:
 
 class _Fitted(_Tampered):
     """
-    Plan B with the parts fitted, which plan B on CPython never sets up: `objects` lists the default config's
-    imu_lsm6dso32, baro_icp10111, separation and bluetooth, and their requests get `answers` (request line -> reply
-    lines, or an exception to raise) instead of reaching plan B.
+    Plan B with the parts fitted, which plan B on CPython never sets up: `objects` lists `fitted` (by default the
+    default config's imu_lsm6dso32, baro_icp10111, separation and bluetooth), and the requests in `answers` get
+    their answer instead of plan B's: reply lines, an exception to raise, or a replacement of plan B's reply lines.
     """
 
-    def __init__(self, answers: dict) -> None:
-        """Answer through plan B, the M6 parts by `answers`."""
+    def __init__(self, answers: dict, fitted: tuple = _M6_FITTED) -> None:
+        """Answer through plan B, the fitted parts by `answers`."""
         super().__init__()
         self._answers: dict = answers
+        self._fitted: tuple = fitted
 
     def exchange(self, line: str) -> list:
         """Record the line; a part's request gets its answer, `objects` lists the parts, the rest is plan B's."""
@@ -145,13 +164,130 @@ class _Fitted(_Tampered):
             answer = self._answers[line]
             if isinstance(answer, BaseException):
                 raise answer
-            return answer
+            return answer(_PLAN_B.exchange(line)) if callable(answer) else answer
         lines = _PLAN_B.exchange(line)
         if line == 'objects':
             names = json.loads(cc.parse(lines[0]).args[0])
-            fitted = ['baro_icp10111', 'bluetooth', 'imu_lsm6dso32', 'separation']
-            return [cc.build('ok', [json.dumps(sorted(names + fitted))])]
+            return [cc.build('ok', [json.dumps(sorted(set(names) | set(self._fitted)))])]  # plan B lists databoard
         return lines
+
+
+def _ok(payload: object) -> list:
+    """The reply lines `ok <payload as JSON>`."""
+    return [cc.build('ok', [json.dumps(payload)])]
+
+
+def _refused(code: str, message: str) -> list:
+    """The reply lines `err <code> <message>`."""
+    return [cc.build('err', [code, message])]
+
+
+def _sen0697_answers() -> dict:
+    """
+    The healthy M6 and M9 parts' answers, by request line: the SEN0697's BMI323 and BMM350, the attitude filter, the
+    sequencer and the databoard as the Rust board answers them (the taster's, 2026-10-08), probes and calibrations
+    that pass, and a health that reports the taster's two IMUs apart. The BMP581 and the bus diagnostics answer by
+    state (_Sen0697).
+    """
+
+    def disagree(payload: dict) -> None:
+        """health with the taster's breadboard IMUs 94 degrees apart."""
+        payload['degraded'].append('sources-disagree: accel imu_lsm6dso32/imu_bmi323 94.0 deg')
+
+    answers = _fitted_answers()
+    answers.update({
+        'inspect imu_bmi323': _ok({'name': 'imu_bmi323', 'ok': True, 'healthy': True, 'addr': '0x69',
+                                   'interrupt': True, 'interrupt_silent': True, 'accel_g': [-0.71, 0.008, 0.69],
+                                   'rate_dps': [0.061, 0.061, -0.061], 'irq_runs': 0, 'odr_hz': 99.68,
+                                   'lapses': {'accel': 0, 'rate': 0}, 'raced': [0, 0], 'identical': [45, 266]}),
+        'inspect mag_bmm350': _ok({'name': 'mag_bmm350', 'ok': True, 'healthy': True, 'addr': '0x15',
+                                   'mag_counts': [15557.0, 3368.0, 8174.0], 'calibrated': False,
+                                   'span': [15441, 15608, 3277, 3436], 'samples': 3825, 'sectors': 0}),
+        'inspect attitude': _ok({'name': 'attitude', 'ok': True, 'healthy': True, 'blind': False,
+                                 'free_running': True, 'heading': '150.71', 'mag_known': False, 'mag_offset': '-6.49',
+                                 'pitch': '30.62', 'roll': '-59.44', 'seeded': False}),
+        'stats databoard': _ok({'accel': ['imu_bmi323', 'imu_lsm6dso32'], 'agl': ['laser_agl_l1x'],
+                                'altitude': ['baro_bmp581', 'baro_icp10111'], 'attitude': ['attitude']}),
+        'inspect databoard': _ok({
+            'accel': {'value': [0.52, -0.75, 0.45], 'source': 'imu_lsm6dso32', 'age_ms': 5, 'offsets': {}},
+            'agl': {'value': None, 'source': None, 'age_ms': None, 'offsets': {}},
+            'altitude': {'value': 32.41, 'source': 'baro_icp10111', 'age_ms': 114, 'offsets': {'baro_bmp581': 10.16}},
+            'attitude': {'value': [150.7, -59.4, 30.6], 'source': 'attitude', 'age_ms': 15, 'offsets': {}}}),
+        cc.build('update', ['databoard', '{}']): _ok({'changed': []}),
+        cc.build('update', ['databoard', json.dumps({'altitude': 0})]): _ok({'changed': []}),
+        'inspect sequencer': _ok({'name': 'sequencer', 'ok': True, 'healthy': True, 'ignored': [], 'veto_edges': 0,
+                                  'sources': 'accel [imu_lsm6dso32, imu_bmi323], barometers [baro_icp10111, '
+                                             'baro_bmp581], gnss []'}),
+        'health': _payload_edit(disagree),
+        'probe attitude': _ok({'attitude': None}),
+        'probe imu_bmi323': _ok({'imu_bmi323': None}),
+        'probe baro_bmp581': _ok({'baro_bmp581': None}),
+        'probe mag_bmm350': _ok({'mag_bmm350': None}),
+        'calibrate baro_bmp581': _ok({'baro_bmp581': None}),
+        'calibrate mag_bmm350': _ok({'mag_bmm350': 'no field change seen (x span 188, y span 178) -- is the '
+                                                   'magnetometer alive?'}),
+    })
+    return answers
+
+
+class _Sen0697(_Fitted):
+    """
+    Plan B with the M6 and the M9 parts fitted, answering as the Rust board does. Two answer by state: the BMP581
+    reads against the ground its updates set, and a bus diagnostic (and a rung off the IMU bus's clock) is refused
+    while held or armed, and wants its argument otherwise. An entry in `answers` wins over both.
+    """
+
+    def __init__(self, answers: dict) -> None:
+        """Answer through plan B, the fitted parts by `answers`, the BMP581 on its boot ground, disarmed, unheld."""
+        super().__init__(answers, _M6_FITTED + _M9_FITTED)
+        self.ground: float = _BMP581_GROUND
+        self._armed: bool = False
+        self._held: bool = False
+
+    def exchange(self, line: str) -> list:
+        """The answer (`answers`, else by state, else plan B's); the arm and the hold kept as they were answered."""
+        lines = None if line in self._answers else self._by_state(line)
+        if lines is None:
+            lines = super().exchange(line)
+        else:
+            self.sent.append(line)
+        if line == 'arm':
+            self._armed = lines[0].startswith('ok')
+        elif line == 'disarm':
+            self._armed = False
+        elif line in ('stage gliding', 'stage setting'):
+            self._held = line == 'stage gliding'
+        return lines
+
+    def _by_state(self, line: str) -> list | None:
+        """The BMP581's, the bus diagnostics' and the off-clock rung's answers; None for any other line."""
+        message = cc.parse(line)
+        if line == 'inspect baro_bmp581':
+            return _ok({'name': 'baro_bmp581', 'ok': True, 'healthy': True, 'addr': '0x47',
+                        'altitude_m': _BMP581_ALTITUDE, 'temperature_c': 27.65, 'pressure_pa': 101059.56,
+                        'elevation_m': _BMP581_ALTITUDE - self.ground, 'change_m_s': 0.083, 'torn': 490,
+                        'implausible': 0})
+        if message.command == 'update' and message.args[:1] == ['baro_bmp581']:
+            properties = json.loads(message.args[1])
+            if 'ground' in properties:
+                if type(properties['ground']) not in (int, float):
+                    return _refused('refused', 'ground must be a number')
+                self.ground = properties['ground']
+                return _ok({'changed': ['ground']})
+            if properties.get('rezero'):
+                self.ground = _BMP581_ALTITUDE
+                return _ok({'changed': ['ground']})
+            return _ok({'changed': []})
+        if line in _BUS_USAGE:
+            if self._held:
+                return _refused('unsafe', cases._REFUSED_OUTSIDE_SETTING)
+            return _refused('unsafe', cases._REFUSED_ARMED) if self._armed else _refused('badargs', _BUS_USAGE[line])
+        if line == 'bustune spi 1 %d' % (_IMU_CLOCK // 2):
+            if self._armed:
+                return _refused('unsafe', cases._BUSTUNE_ONLY_BACK % _IMU_CLOCK)
+            return _ok({'kind': 'spi', 'id': '1', 'freq': _IMU_CLOCK // 2, 'devices': {'imu_lsm6dso32': 'ok'},
+                        'all_ok': True})
+        return None
 
 
 class _Settling(_Tampered):
@@ -456,9 +592,10 @@ def test_the_m6_parts_are_held_to_plan_b_shapes() -> None:
     """
     tiers, allowed = ('config', 'inspect', 'diagnostics'), ('active',)
     results = cases.run(_Fitted(_fitted_answers()), tiers, allowed, None, milestone=7)
-    fitted = {result.name: result.outcome for result in results if result.name.split('[')[0] in _BOARD_ONLY}
+    assert not _failed(results), [(result.name, result.reason) for result in results if result.outcome == cases.FAIL]
+    fitted = {result.name: result.outcome for result in results if result.name.split('[')[0] in _M6_BOARD_ONLY}
     assert set(fitted.values()) == {cases.PASS}, fitted
-    assert {name.split('[')[0] for name in fitted} == _BOARD_ONLY - {'log_tee_trigger', 'hub'}, fitted
+    assert {name.split('[')[0] for name in fitted} == _M6_BOARD_ONLY - {'log_tee_trigger', 'hub'}, fitted
     assert len([name for name in fitted if name.startswith('probe_devices[')]) == 3, fitted
 
     def broken(request: str, payload: object, status: str = 'ok') -> dict:
@@ -472,8 +609,9 @@ def test_the_m6_parts_are_held_to_plan_b_shapes() -> None:
         (broken('inspect separation', {'name': 'separation', 'ok': True, 'healthy': True}),
          {'inspect_separation'}, "lacks key 'separated'"),
         (broken('inspect baro_icp10111', {'name': 'baro', 'ok': True, 'healthy': True, 'altitude_m': None,
-                                          'temperature_c': None, 'pressure_pa': None, 'elevation_m': None}),
-         {'inspect_barometer'}, "inspect baro_icp10111 names 'baro'"),
+                                          'temperature_c': None, 'pressure_pa': None, 'elevation_m': None,
+                                          'change_m_s': None}),
+         {'inspect_barometer', 'inspect_barometer_change'}, "inspect baro_icp10111 names 'baro'"),
         (broken(update({'ground': 100}), {'changed': []}), {'update_barometer_ground'}, 'expected [ground]'),
         (broken(update({'ground': 'high'}), {'changed': ['ground']}), {'update_barometer_text_ground'}, ''),
         (broken('calibrate baro_icp10111', {'baro_icp10111': 'ground zero: no fresh altitude'}),
@@ -611,6 +749,159 @@ def test_the_m7_gate_is_held_to_plan_b() -> None:
     bare = {result.name: result for result in cases.run(_PLAN_B, ('config', 'inspect'), (), None)}
     assert bare['inspect_bluetooth'].outcome == cases.SKIP and 'no bluetooth' in bare['inspect_bluetooth'].reason
     assert json.loads(cc.parse(_PLAN_B.exchange('stage')[0]).args[0]) == {'stage': 'setting', 'manual': False}
+    assert json.loads(cc.parse(_PLAN_B.exchange('health')[0]).args[0])['armed'] is False
+
+
+def test_the_m9_parts_are_held_to_their_shapes() -> None:
+    """
+    The M9 cases pass on the Rust board's healthy answers -- the SEN0697 parts, the attitude filter, the sequencer and
+    the databoard; the BMP581's ground round trip; the bus diagnostics refused armed and held, bare while disarmed;
+    the armed rung off the IMU bus's clock refused and the one back run -- and each broken answer fails exactly its
+    own case. Nothing changes without its flag, an arm that is refused skips the armed checks (and sends no rung off
+    the clock), a Rust-only diagnostic plan B lacks is not yet until M9, and a run that stops undoes the BMP581
+    ground and the off-clock rung.
+    """
+    tiers, allowed = ('config', 'inspect', 'control', 'diagnostics'), ('active', 'stage')
+    ground_line = lambda ground: cc.build('update', ['baro_bmp581', json.dumps({'ground': ground})])  # noqa: E731
+    stepped, original = ground_line(round(_BMP581_GROUND + cases._GROUND_STEP_M, 3)), ground_line(_BMP581_GROUND)
+    text_ground = ground_line('high')
+    off_clock, back = 'bustune spi 1 %d' % (_IMU_CLOCK // 2), 'bustune spi 1 %d' % _IMU_CLOCK
+    with _patched(cases, _CONVERSION_SETTLE_S=0.0):
+        board = _Sen0697(_sen0697_answers())
+        results = cases.run(board, tiers, allowed, None, milestone=9)
+        assert not _failed(results), [(result.name, result.reason) for result in results if result.outcome != 'pass']
+        outcomes = {result.name.split('[')[0]: result.outcome for result in results
+                    if result.name.split('[')[0] in _M9_BOARD_ONLY | _M9_ON_PLAN_B}
+        assert set(outcomes.values()) == {cases.PASS}, outcomes
+        assert set(outcomes) == _M9_BOARD_ONLY | _M9_ON_PLAN_B, outcomes
+        assert len([result for result in results if result.name.startswith('probe_sen0697[')]) == 3, results
+        armed = board.sent[board.sent.index('arm'):board.sent.index('disarm', board.sent.index('arm'))]
+        assert armed[1:] == list(_BUS_USAGE) + [off_clock, back], armed
+        assert board.sent.index(stepped) < board.sent.index(text_ground) < board.sent.index(original), board.sent
+        assert board.ground == _BMP581_GROUND, 'the round trip put the ground read back'
+
+        def broken(request: str, answer: object) -> list:
+            """A run on the healthy answers with one replaced (a payload: answered ok; lines: as they are)."""
+            answers = _sen0697_answers()
+            answers[request] = answer if isinstance(answer, list) or callable(answer) else _ok(answer)
+            return cases.run(_Sen0697(answers), tiers, allowed, None)
+
+        def edited(request: str, edit: typing.Callable) -> list:
+            """A run whose answer to `request` is the healthy one, edited."""
+            healthy = _sen0697_answers()[request]
+            payload = json.loads(cc.parse(healthy[0]).args[0])
+            edit(payload)
+            return broken(request, payload)
+
+        bmi323, bmm350, attitude = 'inspect imu_bmi323', 'inspect mag_bmm350', 'inspect attitude'
+        unchanged = _ok({'name': 'baro_bmp581', 'ok': True, 'healthy': True, 'addr': '0x47',
+                         'altitude_m': _BMP581_ALTITUDE, 'temperature_c': 27.65, 'pressure_pa': 101059.56,
+                         'elevation_m': _BMP581_ALTITUDE - _BMP581_GROUND, 'change_m_s': 0.083, 'torn': 490,
+                         'implausible': 0})
+        undone = _refused('badargs', _BUS_USAGE['imu mute'])  # an armed board with no gate: the disarmed answer
+        scenarios = (
+            (edited(bmi323, lambda payload: payload.update(interrupt_silent=None)), {'inspect_bmi323'},
+             'silent is null exactly when no INT1'),
+            (edited(bmi323, lambda payload: payload.update(lapses={'accel': 0})), {'inspect_bmi323'}, 'lapses is'),
+            (edited(bmi323, lambda payload: payload.update(addr='0x68')), {'inspect_bmi323'},
+             "addr is '0x68', but the config puts imu_bmi323 at 0x69"),
+            (edited(bmi323, lambda payload: payload.update(rate_dps=[0.1, 0.2])), {'inspect_bmi323'}, 'rate_dps is'),
+            (edited(bmi323, lambda payload: payload.update(rate_cds=payload.pop('rate_dps'))), {'inspect_bmi323'},
+             "lacks key 'rate_dps'"),
+            (edited('inspect baro_icp10111', lambda payload: payload.pop('change_m_s')), {'inspect_barometer_change'},
+             "lacks key 'change_m_s'"),
+            (edited(bmm350, lambda payload: payload.update(span=[10, 5, 0, 1])), {'inspect_bmm350'}, 'span is'),
+            (edited(bmm350, lambda payload: payload.update(sectors=9)), {'inspect_bmm350'}, 'outside 0..8'),
+            (edited(attitude, lambda payload: payload.update(roll=-59.44)), {'inspect_attitude'},
+             "key 'roll' is float, expected str"),
+            (edited(attitude, lambda payload: payload.update(roll='-59.4')), {'inspect_attitude'}, 'not a decimal'),
+            (edited('inspect databoard', lambda payload: payload['accel'].update(source='imu_ghost')),
+             {'inspect_databoard'}, 'which stats databoard does not list'),
+            (edited('inspect databoard', lambda payload: payload['agl'].update(value=3.0)), {'inspect_databoard'},
+             'no source'),
+            (edited('stats databoard', lambda payload: payload.update(accel=['imu_lsm6dso32', 'imu_bmi323'])),
+             {'stats_databoard'}, 'not sorted'),
+            (broken(cc.build('update', ['databoard', json.dumps({'altitude': 0})]), {'changed': ['altitude']}),
+             {'update_databoard_read_only'}, 'the databoard took'),
+            (edited('inspect sequencer', lambda payload: payload.update(ignored=['imu_ghost'])),
+             {'inspect_sequencer'}, "names ['imu_ghost'], which the board does not list"),
+            (broken('health', _payload_edit(lambda payload: payload['degraded'].append(
+                'sources-disagree: accel imu_lsm6dso32/imu_bmi323 5.0 deg'))),
+             {'health_names_its_disagreements'}, 'within 10 degrees agree'),
+            (broken('health', _payload_edit(lambda payload: payload['degraded'].append(
+                'sources-disagree: elevation baro_icp10111/baro_ghost 6.1 m'))),
+             {'health_names_its_disagreements'}, 'names a source the databoard does not list'),
+            (broken('inspect baro_bmp581', unchanged), {'bmp581_ground_moved'}, 'the ground reads 22.100 m'),
+            (broken(text_ground, {'changed': ['ground']}), {'update_bmp581_text_ground'}, 'expected err refused'),
+            (broken('calibrate mag_bmm350', {'mag_bmm350': None}), {'calibrate_bmm350_still'},
+             'a calibration from no turn'),
+            (broken('imu mute', undone), {'imu_mute_refused_armed'}, "expected 'unsafe'"),
+            (broken(off_clock, {'kind': 'spi', 'id': '1', 'freq': _IMU_CLOCK // 2, 'devices': {}, 'all_ok': True}),
+             {'bustune_off_clock_refused_armed'}, 'expected err unsafe <text>'),
+            (broken(off_clock, _refused('unsafe', cases._BUSTUNE_ONLY_BACK % 400000)),
+             {'bustune_off_clock_refused_armed'}, 'the refusal reads'),
+            (broken('probe attitude', {'attitude': 'attitude: no gyro rate -- attitude filter blind'}),
+             {'probe_attitude'}, "expected {'attitude': null}"),
+            (broken('calibrate baro_bmp581', {'baro_bmp581': 'ground zero: no fresh altitude'}),
+             {'calibrate_bmp581'}, "expected {'baro_bmp581': null}"),
+        )
+        for run, names, reason in scenarios:
+            failed = [result for result in run if result.outcome == cases.FAIL]
+            assert {result.name for result in failed} == names, [(result.name, result.reason) for result in failed]
+            assert all(reason in result.reason for result in failed), [result.reason for result in failed]
+
+        board = _Sen0697(_sen0697_answers())  # a gate that lets the rung run: the way back still follows it
+        board._answers[off_clock] = _ok({'kind': 'spi', 'id': '1', 'freq': 1, 'devices': {}, 'all_ok': True})
+        cases.run(board, tiers, allowed, None)
+        assert board.sent[board.sent.index(off_clock) + 1] == back, board.sent
+
+        quiet = _Sen0697(_sen0697_answers())  # no flag: reads only
+        results = cases.run(quiet, tiers, (), None)
+        assert not _failed(results), [(result.name, result.reason) for result in results if result.outcome == 'FAIL']
+        for line in quiet.sent:
+            assert not line.startswith(('update baro_', 'bustune', 'i2c', 'imu', 'arm', 'probe', 'calibrate ')), line
+        assert cc.build('update', ['databoard', '{}']) in quiet.sent and 'inspect databoard' in quiet.sent
+
+        refused = _Sen0697(_sen0697_answers())  # a board whose own config does not arm (no hold: no held arm)
+        refused._answers['arm'] = _refused('unsafe', json.dumps({'flight': 'flight -- not ported yet'}))
+        results = {result.name: result for result in cases.run(refused, tiers, ('active',), None, milestone=9)}
+        assert not _failed(results.values()), [(item.name, item.reason) for item in results.values()]
+        for name in ('i2c_read_refused_armed', 'imu_mute_refused_armed', 'bustune_off_clock_refused_armed'):
+            assert results[name].outcome == cases.SKIP and 'did not arm (flight)' in results[name].reason, results[name]
+        assert results['bustune_back_while_armed'].outcome == cases.SKIP and off_clock not in refused.sent
+        assert refused.sent[refused.sent.index('arm') + 1] == 'disarm', refused.sent
+
+        plan_b_answer = _refused('badcmd', 'i2c')  # plan B on a board: no such command
+        for milestone, outcome in ((None, cases.NOT_YET), (8, cases.NOT_YET), (9, cases.FAIL)):
+            answers = _sen0697_answers()
+            answers['i2c read'] = plan_b_answer
+            results = {result.name: result for result in cases.run(_Sen0697(answers), tiers, allowed, None,
+                                                                   milestone=milestone)}
+            for name in ('i2c_read_refused_armed', 'bus_diagnostic_while_held', 'i2c_read_without_arguments'):
+                assert results[name].outcome == outcome, (milestone, results[name])
+
+        answers = _sen0697_answers()
+        answers[text_ground] = RuntimeError('USB gone')  # right after the stepped ground went out
+        unplugged = _Sen0697(answers)
+        try:
+            cases.run(unplugged, tiers, allowed, None)
+        except cases.Aborted as error:
+            assert 'BMP581 ground restore: ok' in str(error), error
+        else:
+            raise AssertionError('a transport error did not abort the run')
+        assert unplugged.sent[-1] == original and unplugged.ground == _BMP581_GROUND, unplugged.sent[-3:]
+
+        answers = _sen0697_answers()
+        answers[off_clock] = KeyboardInterrupt()  # the operator's Ctrl-C while the off-clock rung is out
+        stopped = _Sen0697(answers)
+        try:
+            cases.run(stopped, tiers, allowed, None)
+        except cases.Aborted as error:
+            assert 'disarm: ok' in str(error) and 'IMU bus back to its clock: ok' in str(error), error
+        else:
+            raise AssertionError('Ctrl-C did not abort the run')
+        after = stopped.sent[stopped.sent.index(off_clock) + 1:]
+        assert after[0] == 'disarm' and after[-1] == back, after
     assert json.loads(cc.parse(_PLAN_B.exchange('health')[0]).args[0])['armed'] is False
 
 
@@ -1196,6 +1487,7 @@ test_violations_are_caught()
 test_invariants_beyond_the_core_are_checked()
 test_the_m6_parts_are_held_to_plan_b_shapes()
 test_the_m7_gate_is_held_to_plan_b()
+test_the_m9_parts_are_held_to_their_shapes()
 test_the_hold_needs_a_disarmed_board()
 test_not_yet_is_reported_not_failed()
 test_a_milestone_makes_its_cases_mandatory()
@@ -1216,6 +1508,7 @@ _PLAN_B.close()
 print('ok: cc contract -- plan B passes every case of every tier in its own process (board-only cases skip), '
       'round trips restore, nothing active without its flag, violations caught (status, keys, types, empty line, '
       'two replies, codes, every invariant), the M6 parts, the M7 gate (held arm, readiness keys, bluetooth), the '
+      'M9 parts (SEN0697, attitude, sequencer, databoard, BMP581 ground, armed bus diagnostics), the '
       'hold needs a disarmed board, preflight refusal, iam id, '
       'config_source gating, the reboot proof, the tee, milestones, aborted runs undo, --diff masking + known '
       'differences, hub line fidelity + HTTP errors + the hub tier, console log/ROM filter + no-reset open, '

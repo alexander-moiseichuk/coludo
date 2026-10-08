@@ -713,8 +713,8 @@ pub fn register_commands() {
                             ("configured_hz", &figures.configured_hz.to_string()),
                         ],
                     ),
-                    Ok(_) => cc_protocol::build("err", &["i2c", "the owner answered another request"], &[]),
-                    Err(error) => cc_protocol::build("err", &["i2c", &error], &[]),
+                    Ok(_) => cc_protocol::build("err", &["internal", "the owner answered another request"], &[]),
+                    Err(error) => cc_protocol::build("err", &["internal", &error], &[]),
                 }
             }),
         },
@@ -777,8 +777,8 @@ fn general_call_command() -> Command {
                     });
                     cc_protocol::build("ok", &[&reply.to_string()], &[])
                 }
-                Ok(_) => cc_protocol::build("err", &["i2c", "the owner answered another request"], &[]),
-                Err(error) => cc_protocol::build("err", &["i2c", &error], &[]),
+                Ok(_) => cc_protocol::build("err", &["internal", "the owner answered another request"], &[]),
+                Err(error) => cc_protocol::build("err", &["internal", &error], &[]),
             }
         }),
     }
@@ -851,8 +851,8 @@ fn read_command() -> Command {
                     let reply = serde_json::json!({"port": port, "reads": reads, "elapsed_us": elapsed_us});
                     cc_protocol::build("ok", &[&reply.to_string()], &[])
                 }
-                Ok(_) => cc_protocol::build("err", &["i2c", "the owner answered another request"], &[]),
-                Err(error) => cc_protocol::build("err", &["i2c", &error], &[]),
+                Ok(_) => cc_protocol::build("err", &["internal", "the owner answered another request"], &[]),
+                Err(error) => cc_protocol::build("err", &["internal", &error], &[]),
             }
         }),
     }

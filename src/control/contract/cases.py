@@ -78,6 +78,30 @@ _REFUSED_OUTSIDE_SETTING: str = 'refused -- stage is %s (changes only in setting
 # board carries verbatim
 _HELD_STAGE_PROBLEM: str = ('stage held at %s by an operator command -- `stage setting` to return to the ground'
                             % _HOLD_STAGE)
+# The Rust board's bus diagnostics (M9; plan B gates them on the stage only) run only in SETTING while disarmed: an
+# armed board refuses each with this text before it reads the arguments, and `bustune` but back to the bus's own clock
+_REFUSED_ARMED: str = 'refused -- armed (bus diagnostics only while disarmed)'
+_BUSTUNE_ONLY_BACK: str = 'refused -- armed (bustune only back to the configured %d Hz)'
+"""
+The BMP581 round trip's ground step. Well under half the sequencer's launch_alt_m (10 m by default), so neither the
+step nor the re-zero's way back reads as a launch's rise or raises `sources-disagree: elevation`, and far above the
+part's noise (sd 0.07 m): a ground that moved reads apart from one that did not by over 1 m.
+"""
+_GROUND_STEP_M: float = 2.0
+_GROUND_TOLERANCE_M: float = 0.5  # a ground read (altitude - elevation, two channels) against the one written
+_CONVERSION_SETTLE_S: float = 0.1  # five BMP581 conversions (50 Hz): its elevation reads a ground written before it
+_DECIMAL: re.Pattern = re.compile(r'-?\d+\.\d\d')  # plan B fixed.to_str: an angle in centidegrees as text, '-6.49'
+_ACCEL_DISAGREE_DEGREES: float = 10.0  # health's sources-disagree for two accelerometers at rest: past this
+# health's `sources-disagree: accel <a>/<b> <x.y> deg` and `... elevation <a>/<b> <x.y> m`
+_DISAGREEMENT: re.Pattern = re.compile(r'sources-disagree: (accel|elevation) (\S+)/(\S+) (\d+\.\d) (deg|m)')
+_DISAGREEMENT_UNIT: dict = {'accel': 'deg', 'elevation': 'm'}
+_BOUND: re.Pattern = re.compile(r'\[([^\]]*)\]')  # a slot's sources in `inspect sequencer`'s binding text
+"""
+`calibrate <BMM350>` on a board lying still: no field change seen (the span under the part's minimum), too few
+octants of a level turn covered, or -- fewer samples than the calibration needs -- the outstanding instruction.
+"""
+_STILL_REFUSAL: re.Pattern = re.compile(r'(no field change seen|refused -- only \d of 8 sectors covered|'
+                                        r'turn the airframe).*')
 _PROBE_LAUNCH_ID: str = 'contract-probe'  # the launch id the launch round trip writes, then puts back
 _SHOWN: int = 100  # characters of one reply argument a report line shows
 
@@ -668,12 +692,234 @@ def _rung_passed(reply: _Reply, context: dict) -> str | None:
     return None
 
 
+def _counts(value: object, length: int) -> bool:
+    """Whether a value is a list of `length` counts: integers from 0."""
+    return (isinstance(value, list) and len(value) == length
+            and all(_is_type(item, 'int') and item >= 0 for item in value))
+
+
+def _configured_address(reply: _Reply, context: dict) -> str | None:
+    """
+    A part's `addr` is its config entry's address as plan B prints it (hex(addr): '0x69'); an entry with none leaves
+    it to the driver's datasheet default, which the contract does not know.
+    """
+    name = reply.payload['name']
+    entries = context['running'].get('sensors', []) + context['running'].get('components', [])
+    entry = next((entry for entry in entries if entry.get('name') == name), {})
+    if not isinstance(entry.get('addr'), int):
+        return None
+    expected = hex(entry['addr'])
+    return None if reply.payload['addr'] == expected else 'addr is %r, but the config puts %s at %s' % (
+        reply.payload['addr'], name, expected)
+
+
+def _triples(*keys: str) -> typing.Callable:
+    """An invariant: each of the payload's `keys` is null (stale) or three numbers (x, y, z)."""
+
+    def check(reply: _Reply, context: dict) -> str | None:
+        """Every key named is null or [x, y, z] numbers."""
+        for key in keys:
+            value = reply.payload[key]
+            if value is not None and not (len(value) == 3 and all(_is_type(item, 'number') for item in value)):
+                return '%s is %r, expected null or [x, y, z] numbers' % (key, value)
+        return None
+
+    return check
+
+
+def _bmi323_evidence(reply: _Reply, context: dict) -> str | None:
+    """
+    The BMI323's evidence adds up: `interrupt_silent` is null exactly when no INT1 line is declared (`interrupt`
+    false), a measured ODR is a rate, and the counters count from 0 -- the INT1 runs, the lapses of each watched
+    channel ({accel, rate}), and the raced and identical halves ([accel, rate]).
+    """
+    imu = reply.payload
+    if imu['interrupt'] != (imu['interrupt_silent'] is not None):
+        return ('interrupt is %r but interrupt_silent is %r: silent is null exactly when no INT1 is declared'
+                % (imu['interrupt'], imu['interrupt_silent']))
+    if imu['odr_hz'] is not None and imu['odr_hz'] <= 0:
+        return 'odr_hz %r is no rate' % imu['odr_hz']
+    if imu['irq_runs'] < 0:
+        return 'irq_runs %d is negative' % imu['irq_runs']
+    lapses = imu['lapses']
+    if sorted(lapses) != ['accel', 'rate'] or not _counts(list(lapses.values()), 2):
+        return 'lapses is %r, expected {accel: count, rate: count}' % (lapses,)
+    for key in ('raced', 'identical'):
+        if not _counts(imu[key], 2):
+            return '%s is %r, expected [accel, rate] counts' % (key, imu[key])
+    return None
+
+
+def _bmp581_guard(reply: _Reply, context: dict) -> str | None:
+    """The BMP581's double-read guard counts from 0: the torn pairs and the implausible reads since boot."""
+    for key in ('torn', 'implausible'):
+        if reply.payload[key] < 0:
+            return '%s %d is negative' % (key, reply.payload[key])
+    return None
+
+
+def _bmm350_evidence(reply: _Reply, context: dict) -> str | None:
+    """
+    The BMM350's calibration evidence adds up: its span [x_min, x_max, y_min, y_max] in counts (null before any
+    field), ordered; 0 to 8 octants of the level turn covered; a sample count from 0.
+    """
+    magnetometer = reply.payload
+    span = magnetometer['span']
+    if span is not None and not (len(span) == 4 and all(_is_type(item, 'int') for item in span)
+                                 and span[0] <= span[1] and span[2] <= span[3]):
+        return 'span is %r, expected [x_min, x_max, y_min, y_max] counts' % (span,)
+    if not 0 <= magnetometer['sectors'] <= 8:
+        return 'sectors %d is outside 0..8' % magnetometer['sectors']
+    if magnetometer['samples'] < 0:
+        return 'samples %d is negative' % magnetometer['samples']
+    return None
+
+
+def _angles_are_decimals(reply: _Reply, context: dict) -> str | None:
+    """inspect attitude carries its angles and its magnetic offset as plan B's fixed.to_str text: '-6.49' degrees."""
+    for key in ('roll', 'pitch', 'heading', 'mag_offset'):
+        if not _DECIMAL.fullmatch(reply.payload[key]):
+            return '%s %r is not a decimal with two places' % (key, reply.payload[key])
+    return None
+
+
+def _databoard_sources(reply: _Reply, context: dict) -> str | None:
+    """stats databoard maps each quantity to its sources: distinct names, sorted (plan B Databoard.stats)."""
+    for quantity, sources in reply.payload.items():
+        if not isinstance(sources, list) or not all(isinstance(source, str) for source in sources):
+            return '%s is %r, expected a list of source names' % (quantity, sources)
+        if sources != sorted(set(sources)):
+            return '%s sources %s are not sorted and distinct' % (quantity, sources)
+    return None
+
+
+def _databoard_quantities(reply: _Reply, context: dict) -> str | None:
+    """
+    inspect databoard: each quantity {value, source, age_ms, offsets} (plan B Databoard.inspect). A fused value has
+    the source it came from and an age; none fresh reads value, source and age null. Where stats databoard was read,
+    the quantities are its own, and a source or an offset's key is one of that quantity's sources.
+    """
+    sources = context.get('databoard_sources')
+    for quantity, entry in reply.payload.items():
+        problem = _shape(_QUANTITY, entry, 1)
+        if problem is not None:
+            return '%s: %s' % (quantity, problem)
+        if entry['source'] is None and (entry['value'] is not None or entry['age_ms'] is not None):
+            return '%s has a value or an age but no source' % quantity
+        if entry['source'] is not None and not (_is_type(entry['age_ms'], 'int') and entry['age_ms'] >= 0):
+            return '%s from %s has no age (%r)' % (quantity, entry['source'], entry['age_ms'])
+        if sources is None:
+            continue
+        known = sources.get(quantity, [])
+        if entry['source'] is not None and entry['source'] not in known:
+            return '%s comes from %s, which stats databoard does not list (%s)' % (quantity, entry['source'], known)
+        if not set(entry['offsets']) <= set(known):
+            return '%s offsets %s name sources stats databoard does not list (%s)' % (
+                quantity, sorted(entry['offsets']), known)
+    if sources is not None and set(sources) != set(reply.payload):
+        return 'the quantities differ from stats databoard: %s' % sorted(set(sources) ^ set(reply.payload))
+    return None
+
+
+def _nothing_written(reply: _Reply, context: dict) -> str | None:
+    """The databoard is read-only: an update changes nothing (a fused value comes from its sources alone)."""
+    if reply.status != 'ok' or reply.payload['changed'] == []:
+        return None  # plan B raises at the update (err internal): nothing written either
+    return 'the databoard took %s' % reply.payload['changed']
+
+
+def _sequencer_binding(reply: _Reply, context: dict) -> str | None:
+    """inspect sequencer: its binding (`sources`) and its ignored sources name parts the board lists; edges from 0."""
+    snapshot = reply.payload
+    ignored = snapshot['ignored']
+    if not all(isinstance(name, str) for name in ignored):
+        return 'ignored holds a non-text item: %s' % ignored
+    bound = [name.strip() for group in _BOUND.findall(snapshot['sources']) for name in group.split(',')
+             if name.strip()]
+    unknown = sorted(set(bound + ignored) - set(context['objects']))
+    if unknown:
+        return 'the sequencer names %s, which the board does not list' % unknown
+    return None if snapshot['veto_edges'] >= 0 else 'veto_edges %d is negative' % snapshot['veto_edges']
+
+
+def _disagreements_named(reply: _Reply, context: dict) -> str | None:
+    """
+    health's M9 items name what they are about. `sources-disagree: accel <a>/<b> <x.y> deg` (two accelerometers at
+    rest more than 10 degrees apart) and `sources-disagree: elevation <a>/<b> <x.y> m` (two barometers' elevations
+    apart) name two different sources of that quantity -- the databoard's, where stats databoard was read.
+    `attitude-blind` comes only from a board that lists an attitude filter, `attitude-backup` only from one where
+    something provides attitude.
+    """
+    sources, objects = context.get('databoard_sources'), context.get('objects')
+    for item in reply.payload['degraded']:
+        if item.startswith('sources-disagree'):
+            match = _DISAGREEMENT.fullmatch(item)
+            if match is None:
+                return '%r is not `sources-disagree: <accel|elevation> <a>/<b> <x.y> <deg|m>`' % item
+            quantity, first, second, amount, unit = match.groups()
+            if unit != _DISAGREEMENT_UNIT[quantity]:
+                return '%r: %s apart is in %s' % (item, quantity, _DISAGREEMENT_UNIT[quantity])
+            if first == second:
+                return '%r names one source twice' % item
+            if sources is not None and not {first, second} <= set(sources.get(quantity, [])):
+                return '%r names a source the databoard does not list for %s (%s)' % (item, quantity,
+                                                                                      sources.get(quantity, []))
+            if quantity == 'accel' and float(amount) < _ACCEL_DISAGREE_DEGREES:
+                return '%r: accelerometers within %.0f degrees agree' % (item, _ACCEL_DISAGREE_DEGREES)
+        elif item == 'attitude-blind' and objects is not None and 'attitude' not in objects:
+            return 'attitude-blind from a board that lists no attitude filter'
+        elif item == 'attitude-backup' and sources is not None and 'attitude' not in sources:
+            return 'attitude-backup from a board where nothing provides attitude'
+    return None
+
+
+def _ground_reads(expected: typing.Callable) -> typing.Callable:
+    """An invariant: the snapshot's ground (altitude - elevation) reads expected(context), within the tolerance."""
+
+    def check(reply: _Reply, context: dict) -> str | None:
+        """altitude_m - elevation_m is expected(context) within _GROUND_TOLERANCE_M."""
+        altitude, elevation = reply.payload['altitude_m'], reply.payload['elevation_m']
+        if not (_is_type(altitude, 'number') and _is_type(elevation, 'number')):
+            return 'no fresh altitude and elevation to read the ground from'
+        ground, wanted = altitude - elevation, expected(context)
+        if abs(ground - wanted) <= _GROUND_TOLERANCE_M:
+            return None
+        return 'the ground reads %.3f m (altitude - elevation), expected %.3f m' % (ground, wanted)
+
+    return check
+
+
+def _still_board_refusal(reply: _Reply, context: dict) -> str | None:
+    """
+    A board lying still never calibrates its magnetometer: `calibrate <BMM350>` answers that one device with the
+    refusal or the outstanding instruction -- text, never null (which would mean a turn it never made was taken).
+    '' is plan B's instruction once a calibration is in force and too few samples came since boot.
+    """
+    target = cc.parse(reply.request).args[0]
+    answer = reply.values[0]
+    if sorted(answer) != [target]:
+        return 'calibrate %s answered for %s' % (target, sorted(answer))
+    verdict = answer[target]
+    if not isinstance(verdict, str):
+        return 'a still board answered %s: %r -- a calibration from no turn' % (target, verdict)
+    if verdict and not _STILL_REFUSAL.fullmatch(verdict):
+        return 'a still board answered %r: neither a refusal nor the instruction' % verdict
+    return None
+
+
+def _refused_back_to_its_clock(reply: _Reply, context: dict) -> str | None:
+    """An armed board refuses a rung off the IMU bus's clock, naming the one it would run: the configured clock."""
+    expected = _BUSTUNE_ONLY_BACK % _imu_bus(context)[1]
+    return None if reply.values[1] == expected else 'the refusal reads %r, expected %r' % (reply.values[1], expected)
+
+
 """Not-yet answers: legitimate for a board that has not grown the feature."""
 
 
 _PUSH_NOT_PORTED: _NotYet = _NotYet('err', 'badcmd', 'push-* is not ported: the Rust board answers badcmd until '
                                                      'the firmware OTA is redesigned')
 _SAVED_NOT_KNOWN: _NotYet = _NotYet('err', 'badargs', 'a firmware older than `get-config saved`')
+_NOT_IN_PLAN_B: _NotYet = _NotYet('err', 'badcmd', 'a Rust-only bus diagnostic (M9): plan B has no such command')
 
 """Request builders: lines that depend on an earlier answer, and the markers that make a round trip restore."""
 
@@ -762,16 +1008,16 @@ def _hold(context: dict) -> str:
     return 'stage ' + _HOLD_STAGE
 
 
-def _while_held(line: str) -> typing.Callable:
-    """A request sent only while the hold took."""
+def _while_held(request: object) -> typing.Callable:
+    """A request (a line, or a builder) sent only while the hold took."""
 
-    def request(context: dict) -> str:
-        """`line`, once the hold took."""
+    def gated(context: dict) -> str:
+        """The request, once the hold took."""
         if not context.get('held'):
             raise Blocked('the stage hold did not take')
-        return line
+        return request(context) if callable(request) else request
 
-    return request
+    return gated
 
 
 def _return_to_ground(context: dict) -> str:
@@ -782,10 +1028,40 @@ def _return_to_ground(context: dict) -> str:
 
 
 def _arm(context: dict) -> str:
-    """`arm`; marks it, so the disarm after it runs whatever it answered, and the board counts as armed till then."""
+    """
+    `arm`; marks it, so the disarm after it runs whatever it answered, and the board counts as armed till then.
+
+    Whether it took is _arm_outcome's to say: until then the armed checks are blocked.
+    """
     context['arm_sent'] = True
     context['disarmed'] = False
+    context['armed_now'] = False
+    context['arm_outcome'] = 'the arm answered outside the contract'
     return 'arm'
+
+
+def _arm_outcome(reply: _Reply, context: dict) -> None:
+    """
+    Remember whether the arm took: the armed checks run only while it holds. A refusal becomes the reason they are
+    skipped -- a board's own config with entries not ported yet does not arm; a bench copy without them does (M7).
+    """
+    if reply.status == 'ok':
+        context['armed_now'] = True
+        return
+    context['arm_outcome'] = ('the board did not arm (%s) -- the armed checks need a config whose verify passes, '
+                              'e.g. a bench copy without the not-ported entries' % ', '.join(sorted(reply.payload)))
+
+
+def _while_armed(request: object) -> typing.Callable:
+    """A request (a line, or a builder) sent only while the arm case's arm holds: it armed, and no disarm since."""
+
+    def gated(context: dict) -> str:
+        """The request, while the board is armed."""
+        if not context.get('armed_now') or context.get('disarmed'):
+            raise Blocked(context.get('arm_outcome', 'no arm was sent'))
+        return request(context) if callable(request) else request
+
+    return gated
 
 
 def _disarm_after_arm(context: dict) -> str:
@@ -875,9 +1151,69 @@ def _probe_devices(context: dict) -> list:
     return [cc.build('probe', [name]) for name in names]
 
 
-def _imu_bus_at_its_clock(context: dict) -> str:
+def _probe_sen0697(context: dict) -> list:
+    """`probe <device>` for each SEN0697 part (M9) that came up."""
+    names = []
+    for driver in _M9_DRIVERS:
+        try:
+            names.append(_device(context, driver))
+        except Blocked:
+            continue
+    if not names:
+        raise Blocked('none of %s came up (plan B on CPython sets none up)' % ', '.join(_M9_DRIVERS))
+    return [cc.build('probe', [name]) for name in names]
+
+
+def _on_object(command: str, name: str, properties: dict | None = None) -> typing.Callable:
+    """A request: `<command> <name>` (with its properties as JSON when given), once the board lists the object."""
+
+    def request(context: dict) -> str:
+        """The line, once `objects` named it."""
+        if name not in context['objects']:
+            raise Blocked('the board lists no %s (plan B on CPython sets none up)' % name)
+        arguments = [name] if properties is None else [name, json.dumps(properties)]
+        return cc.build(command, arguments)
+
+    return request
+
+
+def _i2c_part(context: dict) -> str:
     """
-    `bustune spi <id> <baud>`: the IMU's SPI bus run at its configured clock, a rung that changes nothing.
+    A part that came up on an I2C bus: the owner a bus diagnostic would hold off its parts.
+
+    Raises:
+        Blocked - none came up (plan B on CPython sets none up).
+    """
+    for entry in context['running'].get('sensors', []) + context['running'].get('components', []):
+        if entry.get('bus') == 'i2c' and entry.get('name') in context['objects']:
+            return entry['name']
+    raise Blocked('no part came up on an I2C bus (plan B on CPython sets none up)')
+
+
+def _spi_imu(context: dict) -> str:
+    """The SPI IMU that `imu mute` silences (raising Blocked when it did not come up)."""
+    return _device(context, 'lsm6dso32')
+
+
+def _with_part(line: str, part: typing.Callable) -> typing.Callable:
+    """
+    A request: `line`, once part(context) names the part it acts on.
+
+    The bus diagnostics go out bare: an armed or held board refuses them before it reads an argument, and a
+    disarmed one in SETTING refuses the missing one -- so the line touches no bus whatever the gate does.
+    """
+
+    def request(context: dict) -> str:
+        """The line, once the part came up."""
+        part(context)
+        return line
+
+    return request
+
+
+def _imu_bus(context: dict) -> tuple:
+    """
+    The IMU's SPI bus: (its id, its configured baud).
 
     Raises:
         Blocked - no IMU came up on an SPI bus with a configured clock.
@@ -887,7 +1223,82 @@ def _imu_bus_at_its_clock(context: dict) -> str:
     spec = context['running']['buses'].get('spi', {}).get(str(entry.get('id')), {})
     if entry.get('bus') != 'spi' or not isinstance(spec.get('baud'), int):
         raise Blocked('%s is not on an SPI bus with a configured baud' % imu)
-    return cc.build('bustune', ['spi', str(entry['id']), str(spec['baud'])])
+    return str(entry['id']), spec['baud']
+
+
+def _imu_bus_at_its_clock(context: dict) -> str:
+    """
+    `bustune spi <id> <baud>`: the IMU's SPI bus run at its configured clock, a rung that changes nothing.
+
+    Raises:
+        Blocked - no IMU came up on an SPI bus with a configured clock.
+    """
+    identity, baud = _imu_bus(context)
+    return cc.build('bustune', ['spi', identity, str(baud)])
+
+
+def _imu_bus_off_clock(context: dict) -> str:
+    """
+    `bustune spi <id> <half its baud>`: a rung off the IMU bus's clock, which an armed board refuses; marks it, so
+    the rung back to the configured clock follows it (or the undo) on a board whose gate let it run.
+    """
+    identity, baud = _imu_bus(context)
+    context['off_clock_sent'] = True
+    return cc.build('bustune', ['spi', identity, str(baud // 2)])
+
+
+def _bustune_back(context: dict) -> str:
+    """The IMU bus back at its configured clock: sent whenever the off-clock rung went out, whatever it answered."""
+    if not context.get('off_clock_sent'):
+        raise Blocked('nothing to put back: the off-clock rung was not sent')
+    return _imu_bus_at_its_clock(context)
+
+
+def _remember_ground(reply: _Reply, context: dict) -> None:
+    """context['bmp581_ground'] = the BMP581's ground (altitude - elevation, m AMSL, to the mm), when both read."""
+    altitude, elevation = reply.payload['altitude_m'], reply.payload['elevation_m']
+    if _is_type(altitude, 'number') and _is_type(elevation, 'number'):
+        context['bmp581_ground'] = round(altitude - elevation, 3)
+
+
+def _bmp581_ground_write(context: dict) -> str:
+    """
+    `update <BMP581> {"ground": <the ground read + _GROUND_STEP_M>}`; marks it, so the restore after it (or the
+    undo) puts the ground read back.
+    """
+    if 'bmp581_ground' not in context:
+        raise Blocked('the BMP581 read no fresh altitude and elevation: there would be no ground to restore')
+    line = _on_device('update', 'bmp581', {'ground': round(context['bmp581_ground'] + _GROUND_STEP_M, 3)})(context)
+    context['bmp581_ground_written'] = True
+    return line
+
+
+def _after_ground_write(request: typing.Callable) -> typing.Callable:
+    """A request sent only once the BMP581 ground write went out: the restore after it then puts back its change too."""
+
+    def gated(context: dict) -> str:
+        """The request, once the write went out."""
+        if not context.get('bmp581_ground_written'):
+            raise Blocked('the BMP581 ground write was not sent: nothing would restore the ground after this')
+        return request(context)
+
+    return gated
+
+
+def _bmp581_settled(context: dict) -> str:
+    """`inspect <BMP581>` once the ground write went out, _CONVERSION_SETTLE_S on: its conversions since read it."""
+    if not context.get('bmp581_ground_written'):
+        raise Blocked('the BMP581 ground write was not sent')
+    line = _on_device('inspect', 'bmp581')(context)
+    time.sleep(_CONVERSION_SETTLE_S)
+    return line
+
+
+def _bmp581_ground_restore(context: dict) -> str:
+    """`update <BMP581> {"ground": <the ground read>}`: sent whenever the write went out, whatever it answered."""
+    if not context.get('bmp581_ground_written'):
+        raise Blocked('nothing to restore: the BMP581 ground write was not sent')
+    return _on_device('update', 'bmp581', {'ground': context['bmp581_ground']})(context)
 
 
 def _remember(key: str) -> typing.Callable:
@@ -959,6 +1370,33 @@ _SEPARATION: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'separated'
 _BLUETOOTH: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'radio': 'bool', 'active': 'bool|null'}
 _BUSTUNE: dict = {'kind': 'str', 'id': 'str', 'freq': 'int', 'devices': 'object', 'all_ok': 'bool'}
 _M6_DRIVERS: tuple = ('lsm6dso32', 'icp10111', 'separation')
+"""
+The M9 parts' snapshots: plan B's drivers' keys (bmi323.py, bmp581.py, bmm350.py `inspect`; tasks/attitude.py) and
+the Rust board's evidence beside them. The BMI323 reports `rate_dps` (deg/s, as the LSM6DSO32) where plan B had
+`rate_cds`, a listed divergence; its INT1, measured ODR, lapses and raced/identical halves are the Rust board's. Every
+barometer gains its climb rate `change_m_s` (m/s, climb positive), and the BMP581 its double-read guard's counters.
+"""
+_BMI323: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'addr': 'str', 'interrupt': 'bool',
+                 'interrupt_silent': 'bool|null', 'accel_g': 'list|null', 'rate_dps': 'list|null', 'irq_runs': 'int',
+                 'odr_hz': 'number|null', 'lapses': 'object', 'raced': 'list', 'identical': 'list'}
+_BAROMETER_CHANGE: dict = {**_BAROMETER, 'change_m_s': 'number|null'}
+_BMP581: dict = {**_BAROMETER_CHANGE, 'addr': 'str', 'torn': 'int', 'implausible': 'int'}
+_BMM350: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'addr': 'str', 'mag_counts': 'list|null',
+                 'calibrated': 'bool', 'span': 'list|null', 'samples': 'int', 'sectors': 'int'}
+_ATTITUDE: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'free_running': 'bool', 'seeded': 'bool',
+                   'blind': 'bool', 'roll': 'str', 'pitch': 'str', 'heading': 'str', 'mag_offset': 'str',
+                   'mag_known': 'bool'}
+_SEQUENCER: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'sources': 'str', 'ignored': 'list',
+                    'veto_edges': 'int'}
+_QUANTITY: dict = {'value': 'any', 'source': 'str|null', 'age_ms': 'int|null', 'offsets': 'object'}  # databoard's
+_M9_DRIVERS: tuple = ('bmi323', 'bmp581', 'bmm350')
+# The bus diagnostics an armed board refuses (M9): the line, the part it needs up, its answer bare while disarmed
+_BUS_DIAGNOSTICS: tuple = (
+    ('i2c read', _i2c_part, 'i2c read needs port= (the I2C port)'),
+    ('i2c touch', _i2c_part, 'i2c touch needs port= (the I2C port)'),
+    ('i2c general-call', _i2c_part, 'i2c general-call needs port= (the I2C port)'),
+    ('imu mute', _spi_imu, 'imu mute needs ms= (how long, milliseconds)'),
+)
 
 
 def _bad_arguments(message: object = TEXT) -> tuple:
@@ -969,6 +1407,11 @@ def _bad_arguments(message: object = TEXT) -> tuple:
 def _core(name: str, request: str, replies: tuple, invariants: tuple = (), note: str = '') -> Case:
     """A core-tier case: it has no not-yet answer, because the core must pass from the first milestone on."""
     return Case('core', name, request, replies, invariants, not_yet=(), note=note)
+
+
+def _case_name(line: str) -> str:
+    """A bus diagnostic's line as a case name's stem: `i2c general-call` -> i2c_general_call."""
+    return line.replace(' ', '_').replace('-', '_')
 
 
 """The cases, tier by tier."""
@@ -1090,6 +1533,54 @@ _INSPECT: tuple = (
     Case('inspect', 'update_barometer_rezero', _on_device('update', 'icp10111', {'rezero': True}),
          (('ok', {'changed': 'list'}),), (_changed_ground,), allow=('active',), milestone=6,
          note='re-captures the ground from the live altitude, as setup did'),
+    Case('inspect', 'stats_databoard', _on_object('stats', 'databoard'), (('ok', _ANY_OBJECT),),
+         (_databoard_sources,), remember=_remember('databoard_sources'), milestone=9,
+         note='plan B Databoard.stats: each quantity\'s sources'),
+    Case('inspect', 'inspect_databoard', _on_object('inspect', 'databoard'), (('ok', _ANY_OBJECT),),
+         (_databoard_quantities,), milestone=9, note='plan B Databoard.inspect: each quantity\'s fused value'),
+    Case('inspect', 'update_databoard_nothing', _on_object('update', 'databoard', {}),
+         (('ok', {'changed': 'list'}), ('err', 'internal', TEXT)), (_nothing_written,), milestone=9,
+         note='plan B\'s Databoard has no update(): its dispatcher raises and answers err internal, writing nothing; '
+              'the Rust board answers changed []'),
+    Case('inspect', 'update_databoard_read_only', _on_object('update', 'databoard', {'altitude': 0}),
+         (('ok', {'changed': 'list'}), ('err', 'internal', TEXT)), (_nothing_written,), allow=('active',),
+         milestone=9, note='nothing on the databoard is writable: a board that took it would move the fused altitude. '
+                           'Plan B raises (err internal), as for the empty update'),
+    Case('inspect', 'inspect_bmi323', _on_device('inspect', 'bmi323'), (('ok', _BMI323),),
+         (_names_itself, _configured_address, _triples('accel_g', 'rate_dps'), _bmi323_evidence), milestone=9,
+         note='rate_dps where plan B had rate_cds (a listed divergence)'),
+    Case('inspect', 'inspect_bmp581', _on_device('inspect', 'bmp581'), (('ok', _BMP581),),
+         (_names_itself, _configured_address, _bmp581_guard), remember=_remember_ground, milestone=9),
+    Case('inspect', 'inspect_barometer_change', _on_device('inspect', 'icp10111'), (('ok', _BAROMETER_CHANGE),),
+         (_names_itself,), milestone=9, note='every barometer\'s climb rate, new beside plan B\'s four quantities'),
+    Case('inspect', 'inspect_bmm350', _on_device('inspect', 'bmm350'), (('ok', _BMM350),),
+         (_names_itself, _configured_address, _triples('mag_counts'), _bmm350_evidence), milestone=9),
+    Case('inspect', 'inspect_attitude', _on_object('inspect', 'attitude'), (('ok', _ATTITUDE),),
+         (_names_itself, _angles_are_decimals), milestone=9),
+    Case('inspect', 'inspect_sequencer', _on_object('inspect', 'sequencer'), (('ok', _SEQUENCER),),
+         (_names_itself, _sequencer_binding), milestone=9,
+         note='the multi-source stage machine\'s binding: plan B\'s sequencer had no snapshot of its own'),
+    Case('inspect', 'health_names_its_disagreements', 'health', (('ok', _HEALTH),), (_disagreements_named,),
+         milestone=9, note='sources-disagree is information for the reader, never an arm gate (the operator\'s Q5)'),
+    Case('inspect', 'update_bmp581_ground', _bmp581_ground_write, (('ok', {'changed': 'list'}),), (_changed_ground,),
+         allow=('active',), milestone=9,
+         note='sets the ground %.0f m above the one read; the restore below puts the read one back' % _GROUND_STEP_M),
+    Case('inspect', 'bmp581_ground_moved', _bmp581_settled, (('ok', _BMP581),),
+         (_ground_reads(lambda context: context['bmp581_ground'] + _GROUND_STEP_M),), allow=('active',), milestone=9,
+         note='its elevation reads against the ground written: an update that answers changed but applies nothing '
+              'fails here'),
+    Case('inspect', 'update_bmp581_text_ground',
+         _after_ground_write(_on_device('update', 'bmp581', {'ground': 'high'})),
+         (('err', 'refused', 'ground must be a number'),
+          ('err', 'refused', "could not convert string to float: 'high'")), allow=('active',), milestone=9,
+         note='the Rust board names the refusal; plan B\'s float() raises with the interpreter\'s text'),
+    Case('inspect', 'update_bmp581_rezero', _after_ground_write(_on_device('update', 'bmp581', {'rezero': True})),
+         (('ok', {'changed': 'list'}),), (_changed_ground,), allow=('active',), milestone=9,
+         note='re-captures the ground from its own fresh altitude'),
+    Case('inspect', 'update_bmp581_restore', _bmp581_ground_restore, (('ok', {'changed': 'list'}),),
+         (_changed_ground,), allow=('active',), milestone=9),
+    Case('inspect', 'bmp581_ground_restored', _bmp581_settled, (('ok', _BMP581),),
+         (_ground_reads(lambda context: context['bmp581_ground']),), allow=('active',), milestone=9),
 )
 
 _CONTROL: tuple = (
@@ -1097,8 +1588,18 @@ _CONTROL: tuple = (
     Case('control', 'report', 'report', (('ok', _REPORT),), (_known_stage,)),
     Case('control', 'disarm', 'disarm', (('ok', _ARMED),), (_armed_is(False),), remember=_mark('disarmed')),
     Case('control', 'arm', _arm, (('ok', _ARMED), ('err', 'unsafe', _ANY_OBJECT)), (_arm_answer,),
-         allow=('active',),
+         allow=('active',), remember=_arm_outcome,
          note='arm probes every device -- each servo sweeps its full travel -- before it answers'),
+    *(Case('control', '%s_refused_armed' % _case_name(line), _while_armed(_with_part(line, part)),
+           (('err', 'unsafe', _REFUSED_ARMED),), not_yet=(_UNSUPPORTED, _NOT_IN_PLAN_B), allow=('active',),
+           milestone=9, note='a bus diagnostic holds a bus owner off its parts: never in the last seconds on the pad')
+      for line, part, _usage in _BUS_DIAGNOSTICS),
+    Case('control', 'bustune_off_clock_refused_armed', _while_armed(_imu_bus_off_clock), (('err', 'unsafe', TEXT),),
+         (_refused_back_to_its_clock,), allow=('active',), milestone=9,
+         note='armed, only the rung back to the configured clock runs, so an interrupted sweep can still be undone'),
+    Case('control', 'bustune_back_while_armed', _bustune_back, (('ok', _BUSTUNE),), (_rung_passed,),
+         allow=('active',), milestone=9,
+         note='the way back runs armed; it also puts the bus back on a board whose gate let the rung above run'),
     Case('control', 'disarm_after_arm', _disarm_after_arm, (('ok', _ARMED),), (_armed_is(False),),
          allow=('active',), remember=_mark('disarmed')),
     Case('control', 'stage_unknown_name', 'stage nosuch', (_bad_arguments('no stage nosuch'),), allow=('stage',),
@@ -1120,6 +1621,9 @@ _CONTROL: tuple = (
          (('err', 'unsafe', _REFUSED_IN_FLIGHT), ('err', 'unsafe', _REFUSED_OUTSIDE_SETTING)), allow=('stage',),
          milestone=6,
          note='a baro calibrate mid-air re-zeroes elevation: both boards refuse before they look the name up'),
+    Case('control', 'bus_diagnostic_while_held', _while_held(_with_part('i2c read', _i2c_part)),
+         (('err', 'unsafe', _REFUSED_OUTSIDE_SETTING),), not_yet=(_UNSUPPORTED, _NOT_IN_PLAN_B), allow=('stage',),
+         milestone=9, note='every bus diagnostic runs only in SETTING, refused before its arguments are read'),
     Case('control', 'arm_while_held', _arm_while_held, (('err', 'unsafe', {'stage': 'str'}),),
          (_refused_for_the_hold,), allow=('stage', 'active'), milestone=7,
          note='a held board never arms: plan B refuses at its gate, the Rust board also when the arm applies. Held '
@@ -1164,6 +1668,22 @@ _DIAGNOSTICS: tuple = (
     Case('diagnostics', 'bustune_imu_at_its_clock', _imu_bus_at_its_clock, (('ok', _BUSTUNE),), (_rung_passed,),
          allow=('active',), milestone=6,
          note='the CC ladder\'s restore rung; plan B on CPython has no SPI (machine.SPI is a stub there)'),
+    *(Case('diagnostics', '%s_without_arguments' % _case_name(line), _with_part(line, part),
+           (_bad_arguments(usage),), not_yet=(_UNSUPPORTED, _NOT_IN_PLAN_B), allow=('active',), milestone=9,
+           note='disarmed in SETTING the gate is open: the bare line is refused for its missing argument')
+      for line, part, usage in _BUS_DIAGNOSTICS),
+    Case('diagnostics', 'probe_attitude', _on_object('probe', 'attitude'),
+         (('ok', _ANY_OBJECT), ('ok', _ANY_OBJECT, _ANY_OBJECT)), (_probe_maps, _names_its_target, _succeeded),
+         allow=('active',), milestone=9, note='plan B\'s probe: the gyro rate the filter steps on is fresh'),
+    Case('diagnostics', 'probe_sen0697', _probe_sen0697, (('ok', _ANY_OBJECT), ('ok', _ANY_OBJECT, _ANY_OBJECT)),
+         (_probe_maps, _names_its_target, _succeeded), allow=('active',), milestone=9),
+    Case('diagnostics', 'calibrate_bmp581', _on_device('calibrate', 'bmp581'), (('ok', _ANY_OBJECT),), (_succeeded,),
+         allow=('active',), milestone=9,
+         note='re-captures its ground from guarded reads: a divergence, plan B\'s BMP581 had no calibrate'),
+    Case('diagnostics', 'calibrate_bmm350_still', _on_device('calibrate', 'bmm350'), (('ok', _ANY_OBJECT),),
+         (_still_board_refusal,), allow=('active',), milestone=9,
+         note='a board lying still: the answer is the refusal, and nothing is persisted. Turned through a full level '
+              'circle since boot, the board would calibrate and persist it -- run it on a board at rest'),
 )
 
 _OTA: tuple = (
@@ -1283,8 +1803,8 @@ def _undo(transport: transports.Transport, context: dict) -> list:
 
     The cases undo their own writes whatever the write answered, but only if the run reaches them; an
     exception (a USB unplug, Ctrl-C during a 30 s probe) skips them, and could leave the board held at gliding,
-    carrying the probe launch id, or with its barometer's ground at 100 m AMSL. Every undo is idempotent, so one a
-    case already sent is merely repeated.
+    carrying the probe launch id, with its barometer's ground at 100 m AMSL or its BMP581's stepped, or its IMU bus
+    off its clock. Every undo is idempotent, so one a case already sent is merely repeated.
     The disarm goes first: an armed board is the one that can move a fin.
 
     Args:
@@ -1305,6 +1825,10 @@ def _undo(transport: transports.Transport, context: dict) -> list:
         undo.append(('reset-config', 'reset-config'))
     if context.get('ground_written'):
         undo.append(('barometer re-zero', _on_device('update', 'icp10111', {'rezero': True})(context)))
+    if context.get('bmp581_ground_written'):
+        undo.append(('BMP581 ground restore', _bmp581_ground_restore(context)))
+    if context.get('off_clock_sent'):
+        undo.append(('IMU bus back to its clock', _imu_bus_at_its_clock(context)))
     report = []
     for what, line in undo:
         try:

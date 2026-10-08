@@ -1718,17 +1718,17 @@ fn mute_command() -> Command {
         run: Box::new(|arguments| {
             let duration_ms = arguments.integer("ms") as u32;
             let Some(mailbox) = MAILBOX.get() else {
-                return cc_protocol::build("err", &["imu", "the control thread is not running"], &[]);
+                return cc_protocol::build("err", &["internal", "the control thread is not running"], &[]);
             };
             let (reply, answer) = sync_channel(1);
             if mailbox.try_send(Request::Mute { duration_ms, reply }).is_err() {
-                return cc_protocol::build("err", &["imu", "the control thread is busy"], &[]);
+                return cc_protocol::build("err", &["internal", "the control thread is busy"], &[]);
             }
             match answer.recv_timeout(PROBE_DEADLINE) {
                 Ok(Ok(true)) => cc_protocol::build("ok", &["imu", "mute"], &[("ms", &duration_ms.to_string())]),
-                Ok(Ok(false)) => cc_protocol::build("err", &["imu", "no SPI IMU on the control thread"], &[]),
+                Ok(Ok(false)) => cc_protocol::build("err", &["internal", "no SPI IMU on the control thread"], &[]),
                 Ok(Err(refusal)) => cc_protocol::build("err", &["unsafe", &refusal.to_string()], &[]),
-                Err(_) => cc_protocol::build("err", &["imu", "the control thread did not answer"], &[]),
+                Err(_) => cc_protocol::build("err", &["internal", "the control thread did not answer"], &[]),
             }
         }),
     }

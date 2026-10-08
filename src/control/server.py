@@ -17,6 +17,7 @@ import traceback
 import weakref
 
 import board
+import cc_protocol as cc
 import commands
 import web
 
@@ -45,19 +46,23 @@ _UTC_FORMAT: str = '%Y-%m-%dT%H:%M:%SZ'  # how the log shows a board / CC epoch
 
 def _render(resp) -> str:
     """
-    Render a board reply (_Msg) as a human-readable `status [args...]` line for the console.
+    Render a board reply (_Msg) as a human-readable `status [args...] [name=value...]` line for the console.
 
-    Args are already base64-decoded by cc.parse, so structured payloads show as plain JSON.
+    Args are already base64-decoded by cc.parse, so structured payloads show as plain JSON. Named params are kept,
+    each value encoded as the protocol encodes it (plain when simple, `base64:` otherwise), so a reader parses them
+    back: the Rust board's GCL commands (`control`, `heap`, `load`, `video stats`, ...) answer their figures as named
+    params, and dropping them hid every one of those figures from the hub.
 
     Args:
         resp - the parsed board reply (_Msg).
 
     Returns:
-        The rendered line: the status alone, or `status args...`.
+        The rendered line: the status alone, or with its args and named params.
     """
-    if not resp.args:
-        return resp.command
-    return '%s %s' % (resp.command, ' '.join(str(arg) for arg in resp.args))
+    parts = [resp.command]
+    parts.extend(str(arg) for arg in resp.args)
+    parts.extend('%s=%s' % (key, cc.encode(value)) for key, value in resp.named.items())
+    return ' '.join(parts)
 
 
 class Server:
