@@ -785,11 +785,12 @@ for these parts.
 - **Ring gate:** `arm` and `verify` also require the eraser to hold its reserve: at least ~1 % of the ring erased
   ahead of the writer (§3.7). No card is a `no-sd` warning, not a refusal: newest wins keeps the flight's
   blocks over the pad's.
-- **Wi-Fi policy** `auto`: the radio is **off** from the **detected** ignition (the stage machine's own
-  SETTING→BOOSTING transition) through LANDING and resumed at DONE for recovery (the beacon, M11b). This is a
-  deliberate divergence from plan B, which keeps the pad link up in flight (§6). An operator hold (`stage
-  boosting` from CC, manual) leaves the radio up: keying on a held stage would cut the very link the operator
-  holds it from, and the console would be the only way back.
+- **The link by stage (operator, 2026-10-07; replaces the radio-off policy):** the radio is never switched off. In
+  flight the glider leaves range and the link drops by itself; once the stage machine has detected the launch, the
+  link never rejoins, hunts or dials again, and a session still up runs until it drops. At DONE the recovery beacon's
+  AP (M11b) is the only network. An operator hold (`stage gliding` from CC on the bench) is no launch and keeps the
+  normal reconnects. This avoids stopping and restarting Wi-Fi through esp_hosted on the C6, an unproven path that can
+  park the link until a reboot. Plan B keeps hunting on the pad link through the flight (it only pauses) (§6).
 - **Video by stage:** recording starts when the glider stands **vertical on the rod** (attitude-based, from
   M9; until then arm is the trigger) at 1920×1080@25, 8 Mbit/s, and stops at DONE (M11b). The console default
   is 25 fps (GCL `video start`, done).
