@@ -54,6 +54,8 @@ pub enum Kind {
     Separation,
     /// The stage machine: its settings read from the entry, its steps on the control thread.
     Sequencer,
+    /// The attitude filter: its settings read from the entry, its steps on the control thread (M9).
+    Attitude,
     /// The checkpoint: its cadence read from the entry, its passes on the supervisor (crate::warm).
     Checkpoint,
     /// The watchdog: its settings read from the entry, the task watchdog and the stall check on the supervisor.
@@ -72,11 +74,10 @@ pub enum Kind {
 const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "bluetooth"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 12] = [
+const NOT_PORTED: [&str; 11] = [
     "adxl375",
     "bno055",
     "bmp280",
-    "attitude",
     "atgm336h",
     "neo6mv2",
     "gnss_calib",
@@ -98,6 +99,7 @@ pub fn classify(entry: &Entry) -> Kind {
         },
         "separation" => Kind::Separation,
         "sequencer" => Kind::Sequencer,
+        "attitude" => Kind::Attitude,
         "checkpoint" => Kind::Checkpoint,
         "watchdog" => Kind::Watchdog,
         implementation if NATIVE.contains(&implementation) => Kind::Native,

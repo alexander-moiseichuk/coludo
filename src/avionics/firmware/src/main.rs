@@ -186,6 +186,7 @@ fn main() -> anyhow::Result<()> {
         spi_bus,
         separation,
         sequencer,
+        attitude,
         checkpoint,
         watchdog,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
@@ -230,6 +231,7 @@ fn main() -> anyhow::Result<()> {
         spi,
         separation,
         sequencer,
+        attitude,
         topology,
         table,
         writer,

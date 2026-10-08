@@ -56,6 +56,8 @@ fn probe_parts(
             }
         }
     }
+    // the attitude filter: its gyro rate fresh (plan B tasks/attitude.py probe)
+    verdicts.extend(crate::control::probe_attitude(name));
     // the bluetooth stubs: plan B's probe on a board with no BLE radio, which passes (bluetooth.py:20-31)
     for entry in table.entries().iter().filter(|entry| {
         entry.active() && entry.implementation == "bluetooth" && name.is_none_or(|name| name == entry.name)

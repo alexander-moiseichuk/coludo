@@ -126,6 +126,8 @@ enum Own {
         ignored: Vec<String>,
         veto_edges: u32,
     },
+    /// The attitude filter (plan B tasks/attitude.py `inspect`): its flags, angles and magnetic reference.
+    Attitude(Value),
     /// The separation switch: its debounced latch.
     Separation { separated: bool },
     /// The checkpoint: the crumb in NVS, this boot's gate, the NVS action owed, and its tallies (crate::warm).
@@ -215,6 +217,7 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 sectors,
             }
         }
+        "attitude" => crate::control::attitude_inspection().map_or(Own::None {}, Own::Attitude),
         "sequencer" => match crate::control::sequencer_inspection() {
             Some((sources, ignored, veto_edges)) => Own::Sequencer {
                 sources,

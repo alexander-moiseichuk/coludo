@@ -88,6 +88,14 @@ pub struct SequencerMember {
     pub settings: sequencer::Settings,
 }
 
+/// The attitude filter once its entry came up: the control thread steps it (crate::control, M9).
+pub struct AttitudeMember {
+    /// The entry's name: the databoard source of `attitude`, its log lines' and its stream's.
+    pub name: &'static str,
+    /// Its knobs (crates/control `attitude::Settings`), its rank among them.
+    pub settings: control::attitude::Settings,
+}
+
 /// The checkpoint once its entry came up: the supervisor runs it (crate::warm::Keeping).
 #[derive(Clone, Copy)]
 pub struct CheckpointMember {
@@ -361,6 +369,8 @@ pub struct Devices {
     pub separation: Option<SeparationMember>,
     /// The stage machine, when its entry came up.
     pub sequencer: Option<SequencerMember>,
+    /// The attitude filter, when its entry came up.
+    pub attitude: Option<AttitudeMember>,
     /// The checkpoint, when its entry came up.
     pub checkpoint: Option<CheckpointMember>,
     /// The watchdog, when its entry came up.
@@ -387,6 +397,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut spi = Vec::new();
     let mut separation = None;
     let mut sequencer = None;
+    let mut attitude = None;
     let mut checkpoint = None;
     let mut first_checkpoint = None;
     let mut watchdog = None;
@@ -431,6 +442,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::Spi => set_up_spi(document, entry, attempts, spi_bus.as_ref(), &mut spi, &mut delay),
             Kind::Separation => set_up_separation(document, entry, attempts, &mut separation),
             Kind::Sequencer => set_up_sequencer(entry, &mut sequencer),
+            Kind::Attitude => set_up_attitude(entry, &mut attitude),
             Kind::Checkpoint => {
                 let (outcome, came_up) =
                     set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
@@ -470,6 +482,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         spi_bus,
         separation,
         sequencer,
+        attitude,
         checkpoint,
         watchdog,
     }
@@ -553,6 +566,39 @@ fn set_up_sequencer(entry: &Entry<'static>, sequencer: &mut Option<SequencerMemb
                 *sequencer = Some(SequencerMember {
                     name: entry.name,
                     settings: *settings,
+                });
+                Attempt::Up
+            }
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    )
+}
+
+/// The attitude filter's bring-up (plan B tasks/attitude.py setup): its settings from the entry; it fails without an
+/// `attitude` it provides (plan B's setup raised: there would be nothing to publish into), and a second filter
+/// fails (one control thread steps one).
+fn set_up_attitude(entry: &Entry<'static>, attitude: &mut Option<AttitudeMember>) -> Result<(), String> {
+    let fields = Value::Object(entry.fields.clone());
+    let provides = fields.pointer("/provides/attitude").is_some();
+    let running = attitude.as_ref().map(|member| member.name);
+    controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| match (provides, running) {
+            (false, _) => Attempt::Raised {
+                error: "no `provides.attitude`: nothing to publish into".to_string(),
+                diagnosis: None,
+            },
+            (true, Some(running)) => Attempt::Raised {
+                error: format!("one attitude filter only: '{running}' runs it"),
+                diagnosis: None,
+            },
+            (true, None) => {
+                *attitude = Some(AttitudeMember {
+                    name: entry.name,
+                    settings: control::attitude::Settings::from_json(&fields),
                 });
                 Attempt::Up
             }

@@ -167,6 +167,18 @@ fn degraded(context: &Context, flight: Flight) -> Vec<String> {
     }
     // the flash ring: ring-unformatted, ring-low, ring-full, saver-behind (crate::recorder::degraded)
     degraded.extend(crate::recorder::degraded().into_iter().map(String::from));
+    // the attitude flags, in plan B's place (cc_client `_degraded`): flying on a backup's attitude, and blind
+    if let Some(attitude) = context.topology.vector("attitude") {
+        // SAFETY: a plain read of the monotonic timer.
+        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let winner = attitude.read(now_us).map(|reading| reading.source);
+        if control::attitude::on_backup(&context.config.document, "attitude", winner) {
+            degraded.push("attitude-backup".into());
+        }
+    }
+    if crate::control::attitude_blind() {
+        degraded.push("attitude-blind".into());
+    }
     if flight.manual {
         degraded.push("STAGE HELD".into()); // an operator hold suppresses every stage detector
     }

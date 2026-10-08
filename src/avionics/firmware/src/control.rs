@@ -49,11 +49,12 @@
 //! the tick's work time (from the wake to the end of its work), whether the flight word holds the machine's launch,
 //! and what the thrust gate has seen.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, Ordering};
 use std::sync::OnceLock;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::time::Duration;
 
+use control::attitude::{Attitude, Pace, Quantities, assemble};
 use controller::{DeviceEntry, Table};
 use databoard::{Parameter, Writer};
 use drivers::axes::Axes;
@@ -71,7 +72,7 @@ use sequencer::{
     VetoEdge,
 };
 
-use crate::devices::{SeparationMember, SequencerMember, SpiMember, Topology};
+use crate::devices::{AttitudeMember, SeparationMember, SequencerMember, SpiMember, Topology};
 use crate::logging::CONSOLE_ONLY;
 use crate::recorder::Producer;
 use crate::status::FLIGHT;
@@ -890,6 +891,155 @@ impl Sequencer {
     }
 }
 
+/// The attitude filter's latest row ([`Attitude::row`]: heading, roll, pitch in centidegrees, free, mag_known, the
+/// magnetic offset), published after each step for the executor (M9): integers, so the flight core makes no text.
+static ATTITUDE_ROW: [AtomicI32; 6] = [const { AtomicI32::new(0) }; 6];
+/// Whether a source that outranks the filter has ever been mirrored (plan B's `_seeded`).
+static ATTITUDE_SEEDED: AtomicBool = AtomicBool::new(false);
+/// Whether the filter is blind (no fresh gyro for its blind window).
+static ATTITUDE_BLIND: AtomicBool = AtomicBool::new(false);
+/// The filter's entry name and the `rate` quantity it reads, once it runs (its probe's gyro check).
+static ATTITUDE_NAME: OnceLock<(&'static str, Option<&'static Parameter<[f32; 3]>>)> = OnceLock::new();
+
+/// The attitude filter as the control thread steps it (plan B tasks/attitude.py, M9): paced on its `period_ms`,
+/// reading the fused `rate`, `accel` and `mag` through the marks map (crates/control `attitude::assemble`), its
+/// attitude pushed and recorded on every publish.
+struct Filter {
+    /// The entry's name: the source of `attitude`, its log lines' and its stream's.
+    name: &'static str,
+    /// The filter, boxed on the internal heap at the thread's start.
+    attitude: Box<Attitude>,
+    /// The quantities it reads and publishes into.
+    quantities: Quantities<'static>,
+    /// Which ticks step it.
+    pace: Pace,
+    /// The rank it publishes at (its `provides.attitude.priority`).
+    rank: i32,
+    /// The `attitude` writer.
+    writer: Option<Writer<'static, [f32; 3]>>,
+    /// attitude.csv, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// A row was refused and none written since: one log line per run.
+    overflowing: bool,
+}
+
+impl Filter {
+    /// The filter of `member` on a control tick of `tick_us`, its quantities found in `topology`; None (logged) when
+    /// no `attitude` quantity came up to publish into.
+    fn new(member: AttitudeMember, topology: &'static Topology, tick_us: u64) -> Option<Filter> {
+        let Some(attitude) = topology.vector("attitude") else {
+            log::warn!(
+                "{} :: no attitude quantity on the databoard: the filter does not run",
+                member.name
+            );
+            return None;
+        };
+        let _ = ATTITUDE_NAME.set((member.name, topology.vector("rate")));
+        // SAFETY: a plain read of the monotonic timer.
+        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        log::info!(
+            "{} :: every {} ms at rank {}, reading rate, accel and mag",
+            member.name,
+            member.settings.period_ms,
+            member.settings.rank
+        );
+        Some(Filter {
+            name: member.name,
+            attitude: Box::new(Attitude::new(member.settings, now_us)),
+            quantities: Quantities {
+                rate: topology.vector("rate"),
+                acceleration: topology.vector("accel"),
+                magnetic: topology.vector("mag"),
+                attitude,
+            },
+            pace: Pace::new(member.settings.period_ms, tick_us),
+            rank: member.settings.rank,
+            writer: attitude.writer(member.name),
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(member.name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            overflowing: false,
+        })
+    }
+
+    /// One control tick that woke at `now_us`: when its pace is due, one filter step on the readings fresh now, its
+    /// transition line logged (a constant), its state published for the executor, and what it publishes pushed and
+    /// recorded.
+    fn tick(&mut self, now_us: u64) {
+        if !self.pace.due(now_us) {
+            return;
+        }
+        // after this tick's IMU push: the databoard refuses a stamp from the future
+        // SAFETY: a plain read of the monotonic timer.
+        let read_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let readings = assemble(&self.quantities, self.rank, read_us);
+        let step = self.attitude.tick(read_us, &readings);
+        if let Some(line) = step.log {
+            log::warn!("{} :: {line}", self.name);
+        }
+        let row = self.attitude.row();
+        for (published, value) in ATTITUDE_ROW.iter().zip(row) {
+            published.store(value, Ordering::Relaxed);
+        }
+        ATTITUDE_SEEDED.store(self.attitude.seeded(), Ordering::Relaxed);
+        ATTITUDE_BLIND.store(self.attitude.blind(), Ordering::Relaxed);
+        let Some(orientation) = step.published else {
+            return;
+        };
+        if let Some(writer) = &mut self.writer {
+            writer.push(orientation.to_sample(), read_us);
+        }
+        let Some(telemetry) = &mut self.telemetry else {
+            return;
+        };
+        match telemetry.push(read_us, &row.map(Cell::I32)) {
+            Ok(()) => self.overflowing = false,
+            Err(overflow) => {
+                if !self.overflowing {
+                    log::warn!("{} :: telemetry {overflow}", self.name);
+                    self.overflowing = true;
+                }
+            }
+        }
+    }
+}
+
+/// What `inspect` shows of the attitude filter (plan B tasks/attitude.py `inspect`): its flags, angles and magnetic
+/// reference as the filter last published them; None when no filter runs.
+pub fn attitude_inspection() -> Option<serde_json::Value> {
+    ATTITUDE_NAME.get()?;
+    Some(control::attitude::inspection(
+        ATTITUDE_ROW.each_ref().map(|value| value.load(Ordering::Relaxed)),
+        ATTITUDE_SEEDED.load(Ordering::Relaxed),
+        ATTITUDE_BLIND.load(Ordering::Relaxed),
+    ))
+}
+
+/// The attitude filter's probe (plan B tasks/attitude.py `probe`), on the executor: its name and verdict, the gyro
+/// `rate` fresh now (None healthy, else plan B's text), logged in plan B's shape; None when no filter runs or
+/// `only` names another object.
+pub fn probe_attitude(only: Option<&str>) -> Option<(&'static str, Option<String>)> {
+    let (name, rate) = *ATTITUDE_NAME.get()?;
+    if only.is_some_and(|only| only != name) {
+        return None;
+    }
+    log::info!("{name} :: probe: gyro rate ...");
+    // SAFETY: a plain read of the monotonic timer.
+    let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+    let fresh = rate.is_some_and(|rate| rate.read(now_us).is_some());
+    let verdict = Attitude::probe(fresh).err().map(str::to_string);
+    match &verdict {
+        None => log::info!("{name} :: probe: gyro rate ok"),
+        Some(why) => log::warn!("{name} :: probe FAILED: {why}"),
+    }
+    Some((name, verdict))
+}
+
+/// Whether the attitude filter is blind (`attitude-blind`, plan B cc_client): no fresh gyro for its blind window.
+pub fn attitude_blind() -> bool {
+    ATTITUDE_BLIND.load(Ordering::Relaxed)
+}
+
 /// One source's own reading of `parameter` at `now_us`, as the multi-source machine takes it: its channel's latest
 /// value when fresh in the quantity's shared window (plan B's `read()` freshness, health not consulted), else None.
 fn own_reading<T: databoard::Sample>(parameter: Option<&Parameter<T>>, source: &str, now_us: u64) -> Option<T> {
@@ -1024,6 +1174,7 @@ pub fn start(
     spi: Vec<SpiMember>,
     separation: Option<SeparationMember>,
     sequencer: Option<SequencerMember>,
+    attitude: Option<AttitudeMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
     writer: FlightWriter<'static>,
@@ -1032,6 +1183,7 @@ pub fn start(
         spi.first().map(|member| member.name),
         separation.as_ref().map(|member| member.name),
         sequencer.as_ref().map(|member| member.name),
+        attitude.as_ref().map(|member| member.name),
     ];
     let spawned = ThreadSpawnConfiguration {
         name: Some(c"control"),
@@ -1052,6 +1204,7 @@ pub fn start(
                     spi,
                     separation,
                     sequencer,
+                    attitude,
                     topology,
                     table,
                     writer,
@@ -1077,6 +1230,7 @@ fn run(
     spi: Vec<SpiMember>,
     separation: Option<SeparationMember>,
     sequencer: Option<SequencerMember>,
+    attitude: Option<AttitudeMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
     mut writer: FlightWriter<'static>,
@@ -1133,6 +1287,7 @@ fn run(
         }
         Sequencer::new(member, topology)
     });
+    let mut filter = attitude.and_then(|member| Filter::new(member, topology, period_us as u64));
     let mut tasks = [core::ptr::null_mut(); 3];
     // SAFETY: a plain read of this task's own handle.
     tasks[0] = unsafe { sys::xTaskGetCurrentTaskHandle() };
@@ -1149,6 +1304,7 @@ fn run(
             imu.as_ref().map(|imu| imu.name),
             SWITCH.get().map(|(name, _)| *name),
             machine.as_ref().map(|machine| machine.name),
+            filter.as_ref().map(|filter| filter.name),
         ];
         crate::devices::crash(table, driven, NOT_STARTED);
         return;
@@ -1207,6 +1363,10 @@ fn run(
         let read_us = unsafe { sys::esp_timer_get_time() } as u64;
         for watch in &watches {
             watch.look(read_us);
+        }
+        // the attitude after the requests and before the stage machine (D11 of the M9 plan)
+        if let Some(filter) = &mut filter {
+            filter.tick(now_us as u64);
         }
         if let Some(machine) = &mut machine {
             machine.tick(now_us as u64, period_us as u64 / 2, &mut writer);

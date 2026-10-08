@@ -410,6 +410,26 @@ fn signed_centidegrees(degrees: f32) -> i32 {
     (centidegrees(degrees) + 18_000).rem_euclid(36_000) - 18_000
 }
 
+/// The operator-facing snapshot ([`Attitude::inspect`]) from a published [`Attitude::row`] and the two flags the row
+/// does not carry: the firmware's executor makes it from what the control thread publishes as integers, so the
+/// flight core formats no text.
+pub fn inspection(
+    [heading, roll, pitch, free, magnetic_known, magnetic_offset]: [i32; 6],
+    seeded: bool,
+    blind: bool,
+) -> Value {
+    json!({
+        "free_running": free != 0,
+        "seeded": seeded,
+        "blind": blind,
+        "roll": decimal_text(roll),
+        "pitch": decimal_text(pitch),
+        "heading": decimal_text(heading),
+        "mag_known": magnetic_known != 0,
+        "mag_offset": decimal_text(magnetic_offset),
+    })
+}
+
 /// A centidegree value as plan B's `fixed.to_str` prints it: '12.34', '-0.05', the sign kept and no float rounding.
 fn decimal_text(centidegrees: i32) -> String {
     let sign = if centidegrees < 0 { "-" } else { "" };
@@ -759,16 +779,7 @@ impl Attitude {
     /// reference, which is otherwise invisible -- whether the offset has been LEARNED (the magnetometer steers
     /// nothing until it has) and what it converged to.
     pub fn inspect(&self) -> Value {
-        json!({
-            "free_running": self.free,
-            "seeded": self.seeded,
-            "blind": self.blind,
-            "roll": decimal_text(signed_centidegrees(self.roll)),
-            "pitch": decimal_text(signed_centidegrees(self.pitch)),
-            "heading": decimal_text(heading_centidegrees(self.yaw)),
-            "mag_known": self.magnetic.known,
-            "mag_offset": decimal_text(heading_centidegrees(self.magnetic.offset)),
-        })
+        inspection(self.row(), self.seeded, self.blind)
     }
 
     /// The diagnostics (`stats attitude`): the same snapshot as [`Attitude::inspect`], as in plan B.
