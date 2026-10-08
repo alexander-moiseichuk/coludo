@@ -1026,6 +1026,15 @@ proven once. Neither is on the HITL path.
 
 ### M8. Warm start, checkpoint, supervisor watchdog (1-2 days)
 
+**Before M8 -- the altitude launch's rate gate (operator, 2026-10-08):** TMS-7F false-launched on the bench overnight,
+unarmed: weather drift moved the barometer's elevation +10 m in 2.17 h and the altitude launch fired (plan B's rule:
+elevation above `launch_alt_m` for `launch_ms`). The altitude launch now needs the rise to come fast: `launch_alt_m`
+gained within a window the sequencer entry configures, by default 1 s or faster -- a rocket clears 10 m in a fraction
+of a second, drift takes hours. The accel launch is unchanged. A plan B divergence (§6).
+**The stage machine's sources (operator, the same day):** the stage machine must decide from several sources -- the
+pitot (SDP810), both barometers (ICP-10111, BMP581), the IMU and the accelerometer -- not one quantity per detector.
+The design lands with the sources: M9 (BMP581, the attitude IMU) and M10 (the pitot).
+
 **Scope**
 - `crates/warmstart` plus `warm.rs`. Restore runs **before** any thread spawns: stage, armed, ground for all
   baros, pitot tare, governor seed, checkpoint identity, sequencer timeout base.
