@@ -1037,6 +1037,9 @@ The design lands with the sources: M9 (BMP581, the attitude IMU) and M10 (the pi
 **Every barometer's quantities (operator, the same day):** temperature, pressure, altitude above sea level, elevation
 above the zeroed ground, and **change** -- the elevation's rate in m/s, climb positive -- new beside plan B's four. It is
 each barometer's climb rate for the multi-source detectors, and the launch rate gate's natural source once it exists.
+**Measured -> reported (operator, the same day):** every sample a part measures is a telemetry row -- device streams
+are never decimated, and plan B's `telemetry_ms` thinning (its MicroPython-era economy) is dropped (§6). The barometer
+row is altitude;temperature;pressure;elevation;change.
 **Measured before M8 (R7):** the wall clock survives a panic reset but returns off by the drift since boot -- +25.3 s
 on the taster and -22.6 s on TMS-7F after ~9.7 h (~700 ppm, the RTC slow clock).
 
