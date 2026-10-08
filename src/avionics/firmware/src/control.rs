@@ -674,11 +674,9 @@ impl Watch {
                 continue;
             };
             for source in parameter.sources() {
-                let (Some(channel), Some(entry), Some(lapses)) = (
-                    parameter.channel(source),
-                    table.find(source),
-                    LAPSES.get(watches.len()),
-                ) else {
+                let (Some(channel), Some(entry), Some(lapses)) =
+                    (parameter.channel(source), table.find(source), LAPSES.get(watches.len()))
+                else {
                     continue;
                 };
                 names.push(format!("{source}.{quantity}"));
@@ -1344,10 +1342,12 @@ fn start_timer(period_us: u64, wakers: &'static Wakers) -> Result<(), sys::EspEr
 
 /// The control thread's console command (the Glider Command Language): `control`, the tick's figures.
 pub fn register_commands() {
-    gcl::register(vec![mute_command(), Command {
-        owner: "control",
-        words: "control",
-        about: "the control tick: its rate, ticks, overruns (ticks the thread missed), lateness (the latest, the \
+    gcl::register(vec![
+        mute_command(),
+        Command {
+            owner: "control",
+            words: "control",
+            about: "the control tick: its rate, ticks, overruns (ticks the thread missed), lateness (the latest, the \
                 largest, and how many ticks passed the 200 us budget) and work (the latest and the largest, from the \
                 wake to the end of the tick's work); whether the flight word holds the stage machine's launch; the \
                 IMU's reads, failures, reads with no new conversion, halves pushed raced and flagged over identical \
@@ -1355,57 +1355,58 @@ pub fn register_commands() {
                 silent; the IMU's SPI clock; the separation latch, whether its pin is polled, the events it \
                 recorded (blips among them), whether a separation is pending, and what the thrust gate has seen since \
                 boosting began (none, seen, ended); flight-core log lines the console queue dropped",
-        gate: Gate::Open,
-        reach: Reach::Everywhere,
-        parameters: &[],
-        bare_words: &[],
-        run: Box::new(|_| {
-            cc_protocol::build(
-                "ok",
-                &["control"],
-                &[
-                    ("schedule_hz", &SCHEDULE_HZ.load(Ordering::Relaxed).to_string()),
-                    ("ticks", &TICKS.load(Ordering::Relaxed).to_string()),
-                    ("overruns", &OVERRUNS.load(Ordering::Relaxed).to_string()),
-                    ("late_last_us", &LATE_LAST_US.load(Ordering::Relaxed).to_string()),
-                    ("late_max_us", &LATE_MAX_US.load(Ordering::Relaxed).to_string()),
-                    (
-                        "late_over_budget",
-                        &LATE_OVER_BUDGET.load(Ordering::Relaxed).to_string(),
-                    ),
-                    ("work_last_us", &WORK_LAST_US.load(Ordering::Relaxed).to_string()),
-                    ("work_max_us", &WORK_MAX_US.load(Ordering::Relaxed).to_string()),
-                    ("launched", &FLIGHT.load().launched.to_string()),
-                    ("imu_reads", &IMU_READS.load(Ordering::Relaxed).to_string()),
-                    ("imu_failures", &IMU_FAILURES.load(Ordering::Relaxed).to_string()),
-                    ("imu_stale", &IMU_STALE.load(Ordering::Relaxed).to_string()),
-                    ("imu_raced", &pair(&IMU_RACED)),
-                    ("imu_identical", &pair(&IMU_IDENTICAL)),
-                    ("lapses", &lapses()),
-                    ("imu_muted", &IMU_MUTED.load(Ordering::Relaxed).to_string()),
-                    ("irq_runs_last", &IRQ_RUNS_LAST.load(Ordering::Relaxed).to_string()),
-                    ("int1_silent", &INTERRUPT_SILENT.load(Ordering::Relaxed).to_string()),
-                    ("separated", &SEPARATED.load(Ordering::Relaxed).to_string()),
-                    (
-                        "separation_polled",
-                        &SEPARATION_POLLED.load(Ordering::Relaxed).to_string(),
-                    ),
-                    (
-                        "separation_events",
-                        &SEPARATION_EVENTS.load(Ordering::Relaxed).to_string(),
-                    ),
-                    (
-                        "separation_blips",
-                        &SEPARATION_BLIPS.load(Ordering::Relaxed).to_string(),
-                    ),
-                    ("pending", &SEPARATION_PENDING.load(Ordering::Relaxed).to_string()),
-                    ("thrust", THRUSTS[usize::from(THRUST.load(Ordering::Relaxed))].name()),
-                    ("console_dropped", &crate::logging::console_dropped().to_string()),
-                    ("spi_clock_hz", &SPI_CLOCK_HZ.load(Ordering::Relaxed).to_string()),
-                ],
-            )
-        }),
-    }]);
+            gate: Gate::Open,
+            reach: Reach::Everywhere,
+            parameters: &[],
+            bare_words: &[],
+            run: Box::new(|_| {
+                cc_protocol::build(
+                    "ok",
+                    &["control"],
+                    &[
+                        ("schedule_hz", &SCHEDULE_HZ.load(Ordering::Relaxed).to_string()),
+                        ("ticks", &TICKS.load(Ordering::Relaxed).to_string()),
+                        ("overruns", &OVERRUNS.load(Ordering::Relaxed).to_string()),
+                        ("late_last_us", &LATE_LAST_US.load(Ordering::Relaxed).to_string()),
+                        ("late_max_us", &LATE_MAX_US.load(Ordering::Relaxed).to_string()),
+                        (
+                            "late_over_budget",
+                            &LATE_OVER_BUDGET.load(Ordering::Relaxed).to_string(),
+                        ),
+                        ("work_last_us", &WORK_LAST_US.load(Ordering::Relaxed).to_string()),
+                        ("work_max_us", &WORK_MAX_US.load(Ordering::Relaxed).to_string()),
+                        ("launched", &FLIGHT.load().launched.to_string()),
+                        ("imu_reads", &IMU_READS.load(Ordering::Relaxed).to_string()),
+                        ("imu_failures", &IMU_FAILURES.load(Ordering::Relaxed).to_string()),
+                        ("imu_stale", &IMU_STALE.load(Ordering::Relaxed).to_string()),
+                        ("imu_raced", &pair(&IMU_RACED)),
+                        ("imu_identical", &pair(&IMU_IDENTICAL)),
+                        ("lapses", &lapses()),
+                        ("imu_muted", &IMU_MUTED.load(Ordering::Relaxed).to_string()),
+                        ("irq_runs_last", &IRQ_RUNS_LAST.load(Ordering::Relaxed).to_string()),
+                        ("int1_silent", &INTERRUPT_SILENT.load(Ordering::Relaxed).to_string()),
+                        ("separated", &SEPARATED.load(Ordering::Relaxed).to_string()),
+                        (
+                            "separation_polled",
+                            &SEPARATION_POLLED.load(Ordering::Relaxed).to_string(),
+                        ),
+                        (
+                            "separation_events",
+                            &SEPARATION_EVENTS.load(Ordering::Relaxed).to_string(),
+                        ),
+                        (
+                            "separation_blips",
+                            &SEPARATION_BLIPS.load(Ordering::Relaxed).to_string(),
+                        ),
+                        ("pending", &SEPARATION_PENDING.load(Ordering::Relaxed).to_string()),
+                        ("thrust", THRUSTS[usize::from(THRUST.load(Ordering::Relaxed))].name()),
+                        ("console_dropped", &crate::logging::console_dropped().to_string()),
+                        ("spi_clock_hz", &SPI_CLOCK_HZ.load(Ordering::Relaxed).to_string()),
+                    ],
+                )
+            }),
+        },
+    ]);
 }
 
 /// A per-half counter pair as `accel/rate`.

@@ -2,14 +2,15 @@
 //!
 //! The BMP581's unit tests: the conversion in both temperature signs (test_bmp581.py's frames), the bring-up with
 //! its ground zero and the re-arm over the scripted bus, the operator's ground updates, re-zero fresh-only, the
-//! calibrate's re-captured ground (M9 D7), and freshness by changed bytes with a standby part going stale (D3).
+//! calibrate's re-captured ground (M9 D7), freshness by changed bytes with a standby part going stale (D3), and the
+//! bus-garbage guard: a burst read twice and believed only when both agree and lie in the part's operating range.
 
 use control::commons::altitude_m;
 use serde_json::json;
 
 use super::{
-    Bmp581, CHIP_ID, CONFIGURATION, CONVERSION_PERIOD_US, Change, FIRST_CONVERSION_MS, GROUND_SAMPLE_MS,
-    GROUND_SAMPLES, IDENTITY, ODR_CONFIG, REZERO_WINDOW_US, Reading, Refusal, TEMP_DATA_XLSB,
+    Bmp581, CHIP_ID, CONFIGURATION, CONVERSION_PERIOD_US, FIRST_CONVERSION_MS, GROUND_SAMPLE_MS, GROUND_SAMPLES,
+    IDENTITY, ODR_CONFIG, Outcome, REZERO_WINDOW_US, Reading, Refusal, TEMP_DATA_XLSB,
 };
 use crate::device::{Device, Fault};
 use crate::mock::MockBus;
@@ -247,38 +248,72 @@ fn a_calibrate_re_captures_the_ground_from_fresh_readings() {
     mock.done();
 }
 
-/// Read the part on a 10 ms tick from `start_us`, answering each read with the next of `frames`; the verdicts.
-fn poll(barometer: &mut Bmp581, start_us: u64, frames: &[[u8; 6]]) -> Vec<Change> {
+/// One double read's two bursts.
+type Pair = ([u8; 6], [u8; 6]);
+
+/// A pair of bursts that agree.
+const fn twice(frame: [u8; 6]) -> Pair {
+    (frame, frame)
+}
+
+/// Read the part on a 10 ms tick from `start_us`, answering each read's two bursts with the next of `pairs`; the
+/// outcomes.
+fn poll(barometer: &mut Bmp581, start_us: u64, pairs: &[Pair]) -> Vec<Outcome> {
     let mock = MockBus::new();
-    for frame in frames {
-        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], frame);
+    for (first, second) in pairs {
+        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], first)
+            .expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], second);
     }
-    let verdicts = (0u64..)
-        .zip(frames)
+    let outcomes = (0u64..)
+        .zip(pairs)
         .map(|(tick, _)| {
-            let (change, _) = barometer
+            barometer
                 .read_fresh(&mut mock.clone(), start_us + tick * 10_000)
-                .unwrap();
-            change
+                .unwrap()
         })
         .collect();
     mock.done();
-    verdicts
+    outcomes
+}
+
+/// Whether an outcome is a fresh reading.
+fn fresh(outcome: &Outcome) -> bool {
+    matches!(outcome, Outcome::Fresh(_))
 }
 
 #[test]
 fn each_conversion_is_fresh_once_on_a_tick_twice_as_fast() {
-    use Change::{Fresh, Unchanged};
     // polled every 10 ms, a 50 Hz part shows each conversion on two reads: published on the first only
     let mut barometer = Bmp581::new(ADDRESS);
-    let verdicts = poll(&mut barometer, 0, &[WARM, WARM, HIGHER, HIGHER, FINE, FINE]);
-    assert_eq!(verdicts, [Fresh, Unchanged, Fresh, Unchanged, Fresh, Unchanged]);
-    // the reading comes back decoded either way: freshness is the bytes', not the decode's
-    let mock = MockBus::new();
-    mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &COLD);
-    let (change, reading) = barometer.read_fresh(&mut mock.clone(), 60_000).unwrap();
-    mock.done();
-    assert_eq!((change, reading.temperature), (Fresh, -10.0));
+    let outcomes = poll(
+        &mut barometer,
+        0,
+        &[
+            twice(WARM),
+            twice(WARM),
+            twice(HIGHER),
+            twice(HIGHER),
+            twice(FINE),
+            twice(FINE),
+        ],
+    );
+    assert_eq!(
+        outcomes,
+        [
+            Outcome::Fresh(Reading::decode(&WARM)),
+            Outcome::Unchanged,
+            Outcome::Fresh(Reading::decode(&HIGHER)),
+            Outcome::Unchanged,
+            Outcome::Fresh(Reading::decode(&FINE)),
+            Outcome::Unchanged
+        ]
+    );
+    // a sub-zero temperature is in range, decoded as it always was
+    let cold = poll(&mut barometer, 60_000, &[twice(COLD)]);
+    assert!(
+        matches!(cold[..], [Outcome::Fresh(reading)] if reading.temperature == -10.0),
+        "{cold:?}"
+    );
 }
 
 #[test]
@@ -286,33 +321,169 @@ fn a_standby_part_goes_stale_after_three_conversion_periods() {
     // NEGATIVE: a part a reset left in standby returns its last sample forever; the firmware calls it unhealthy at
     // Stale, three conversion periods (60 ms) after the bytes last changed
     let mut barometer = Bmp581::new(ADDRESS);
-    let verdicts = poll(&mut barometer, 1_000_000, &[WARM; 9]);
-    let first_stale = verdicts.iter().position(|change| *change == Change::Stale).unwrap();
-    assert_eq!(first_stale, 6, "{verdicts:?}");
-    assert!(verdicts[1..6].iter().all(|change| *change == Change::Unchanged));
-    assert!(verdicts[6..].iter().all(|change| *change == Change::Stale));
+    let outcomes = poll(&mut barometer, 1_000_000, &[twice(WARM); 9]);
+    let first_stale = outcomes.iter().position(|outcome| *outcome == Outcome::Stale).unwrap();
+    assert_eq!(first_stale, 6, "{outcomes:?}");
+    assert!(outcomes[1..6].iter().all(|outcome| *outcome == Outcome::Unchanged));
+    assert!(outcomes[6..].iter().all(|outcome| *outcome == Outcome::Stale));
     // the re-arm writes the mode again and the first new conversion is fresh at once
     let mock = MockBus::new();
     script_configure(&mock);
     barometer.rearm(&mut mock.clone(), &mut mock.delay()).unwrap();
     mock.done();
-    assert_eq!(
-        poll(&mut barometer, 1_100_000, &[WARM, HIGHER]),
-        [Change::Stale, Change::Fresh]
-    );
+    let outcomes = poll(&mut barometer, 1_100_000, &[twice(WARM), twice(HIGHER)]);
+    assert_eq!(outcomes[0], Outcome::Stale);
+    assert!(fresh(&outcomes[1]));
 }
 
 #[test]
-fn a_failed_read_is_a_bus_fault_and_judges_nothing() {
-    // NEGATIVE: a NAK is the transport's fault, never an unchanged or a stale sample
+fn a_torn_pair_between_unchanged_reads_neither_resets_nor_advances_the_stale_clock() {
+    // the bytes last changed at 0; the torn pair at 20 ms carries other bytes, which are not stored: the next read
+    // of the part's own bytes is still Unchanged (not Fresh against the garbage), and Stale comes at 60 ms exactly as
+    // with no torn pair at all
     let mut barometer = Bmp581::new(ADDRESS);
-    poll(&mut barometer, 0, &[WARM]);
+    let outcomes = poll(
+        &mut barometer,
+        0,
+        &[
+            twice(WARM),
+            twice(WARM),
+            (WARM, HIGHER),
+            twice(WARM),
+            twice(WARM),
+            twice(WARM),
+            twice(WARM),
+        ],
+    );
+    assert!(fresh(&outcomes[0]));
+    assert_eq!(
+        outcomes[1..],
+        [
+            Outcome::Unchanged,
+            Outcome::Torn,
+            Outcome::Unchanged,
+            Outcome::Unchanged,
+            Outcome::Unchanged,
+            Outcome::Stale
+        ]
+    );
+    // torn pairs all the way: the clock still runs from the last judged change, so the first agreeing pair of the
+    // part's old bytes after them is Stale at once, and a new conversion is Fresh at once
+    let mut barometer = Bmp581::new(ADDRESS);
+    let outcomes = poll(
+        &mut barometer,
+        0,
+        &[twice(WARM), (WARM, HIGHER), (HIGHER, WARM), (FINE, WARM), (WARM, FINE)],
+    );
+    assert!(
+        outcomes[1..].iter().all(|outcome| *outcome == Outcome::Torn),
+        "{outcomes:?}"
+    );
+    assert_eq!(poll(&mut barometer, 60_000, &[twice(WARM)]), [Outcome::Stale]);
+    assert!(fresh(&poll(&mut barometer, 70_000, &[twice(HIGHER)])[0]));
+}
+
+#[test]
+fn a_conversion_between_the_two_bursts_is_read_on_the_next_tick() {
+    // the pair straddles a conversion (old bytes, then new): torn, and the next tick reads the new one twice
+    let mut barometer = Bmp581::new(ADDRESS);
+    let outcomes = poll(&mut barometer, 0, &[twice(WARM), (WARM, HIGHER), twice(HIGHER)]);
+    assert_eq!(outcomes[1], Outcome::Torn);
+    assert_eq!(outcomes[2], Outcome::Fresh(Reading::decode(&HIGHER)));
+}
+
+/// 0xFFFFFF in both counts: 262 143.98 Pa at -1/65536 degrees C (the measured all-ones transfer).
+const ALL_ONES: [u8; 6] = [0xFF; 6];
+
+/// One byte repeated in the pressure: 0x1B1B1B, 27 756.4 Pa, at 25 degrees C.
+const REPEATED: [u8; 6] = [0x00, 0x00, 0x19, 0x1B, 0x1B, 0x1B];
+
+/// A plausible-looking tear: 94 577 Pa at 27.7 degrees C, in range, so only the second burst can catch it.
+const TEAR: [u8; 6] = [0x33, 0xB3, 0x1B, 0x40, 0x5C, 0x5C];
+
+/// A tear at -44 degrees C and 192 100 Pa.
+const COLD_AND_HIGH: [u8; 6] = [0x00, 0x00, 0xD4, 0x00, 0x99, 0xBB];
+
+/// A tear at 101 degrees C and 103 829 Pa.
+const HOT: [u8; 6] = [0x00, 0x00, 0x65, 0x40, 0x65, 0x65];
+
+/// 29 999 Pa at 25 degrees C: one pascal below the operating range.
+const BELOW_RANGE: [u8; 6] = [0x00, 0x00, 0x19, 0xC0, 0x4B, 0x1D];
+
+#[test]
+fn bursts_that_differ_are_torn() {
+    // NEGATIVE: one byte apart, the measured all-ones transfer, a plausible tear, either way round
+    for pair in [
+        (WARM, [0x00, 0x00, 0x19, 0x00, 0xF6, 0x63]),
+        (WARM, ALL_ONES),
+        (ALL_ONES, WARM),
+        (TEAR, WARM),
+        (WARM, TEAR),
+        (WARM, [0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF]),
+    ] {
+        let mut barometer = Bmp581::new(ADDRESS);
+        assert_eq!(poll(&mut barometer, 0, &[pair]), [Outcome::Torn], "{pair:02x?}");
+        // nothing was judged: the first agreeing pair is the first read the judge sees, fresh
+        assert!(fresh(&poll(&mut barometer, 10_000, &[twice(WARM)])[0]));
+    }
+}
+
+#[test]
+fn garbage_that_repeats_is_implausible() {
+    // NEGATIVE: both bursts alike, outside 30 000..=125 000 Pa or -40..=85 degrees C
+    for frame in [ALL_ONES, REPEATED, COLD_AND_HIGH, HOT, BELOW_RANGE] {
+        let mut barometer = Bmp581::new(ADDRESS);
+        poll(&mut barometer, 0, &[twice(WARM)]);
+        assert_eq!(
+            poll(&mut barometer, 10_000, &[twice(frame)]),
+            [Outcome::Implausible(Reading::decode(&frame))],
+            "{frame:02x?}"
+        );
+        // never judged, never stored: the part's own bytes next are Unchanged, not Fresh against the garbage
+        assert_eq!(poll(&mut barometer, 20_000, &[twice(WARM)]), [Outcome::Unchanged]);
+    }
+    assert_eq!(Reading::decode(&ALL_ONES).pressure, 262_143.98);
+    assert_eq!(Reading::decode(&REPEATED).pressure, 27_756.422);
+    assert_eq!(Reading::decode(&BELOW_RANGE).pressure, 29_999.0);
+    // a plausible tear that repeats is not caught by the range: the double read is what catches it
+    assert!(fresh(&poll(&mut Bmp581::new(ADDRESS), 0, &[twice(TEAR)])[0]));
+}
+
+#[test]
+fn the_operating_range_is_inclusive_at_both_ends() {
+    let edges = [
+        ([0x00, 0x00, 0x19, 0x00, 0x4C, 0x1D], true),  // 30 000 Pa
+        ([0x00, 0x00, 0x19, 0x00, 0x12, 0x7A], true),  // 125 000 Pa
+        ([0x00, 0x00, 0x19, 0x01, 0x12, 0x7A], false), // 125 000 + 1/64 Pa
+        ([0x00, 0x00, 0xD8, 0x00, 0xF6, 0x62], true),  // -40 degrees C
+        ([0x00, 0x00, 0x55, 0x00, 0xF6, 0x62], true),  // 85 degrees C
+        ([0x01, 0x00, 0x55, 0x00, 0xF6, 0x62], false), // 85 + 1/65536 degrees C
+        ([0xFF, 0xFF, 0xD7, 0x00, 0xF6, 0x62], false), // -40 - 1/65536 degrees C
+    ];
+    for (frame, plausible) in edges {
+        let outcome = poll(&mut Bmp581::new(ADDRESS), 0, &[twice(frame)]);
+        assert_eq!(fresh(&outcome[0]), plausible, "{frame:02x?}: {outcome:?}");
+    }
+}
+
+#[test]
+fn a_failed_burst_is_a_bus_fault_and_judges_nothing() {
+    // NEGATIVE: a NAK on either burst is the transport's fault, never a torn, unchanged or stale sample
+    let mut barometer = Bmp581::new(ADDRESS);
+    poll(&mut barometer, 0, &[twice(WARM)]);
     let mock = MockBus::new();
     mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &HIGHER).then_fail();
     assert!(matches!(
         barometer.read_fresh(&mut mock.clone(), 10_000),
         Err(Fault::Bus(_))
     ));
+    mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &HIGHER)
+        .expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &HIGHER)
+        .then_fail();
+    assert!(matches!(
+        barometer.read_fresh(&mut mock.clone(), 20_000),
+        Err(Fault::Bus(_))
+    ));
     mock.done();
-    assert_eq!(poll(&mut barometer, 20_000, &[WARM]), [Change::Unchanged]);
+    assert_eq!(poll(&mut barometer, 30_000, &[twice(WARM)]), [Outcome::Unchanged]);
 }

@@ -88,12 +88,32 @@ enum Own {
         raced: [u32; 2],
         identical: [u32; 2],
     },
-    /// The ICP-10111: its own channels' latest values.
+    /// A barometer, the ICP-10111 or the BMP581: its own channels' latest values, and its climb rate (m/s, M9).
     Barometer {
         altitude_m: Option<f32>,
         temperature_c: Option<f32>,
         pressure_pa: Option<f32>,
         elevation_m: Option<f32>,
+        change_m_s: Option<f32>,
+    },
+    /// The BMP581 (M9): the barometer keys, and its double read's guard: the pairs that disagreed and the agreeing
+    /// reads outside the part's operating range, since boot.
+    Bmp581 {
+        altitude_m: Option<f32>,
+        temperature_c: Option<f32>,
+        pressure_pa: Option<f32>,
+        elevation_m: Option<f32>,
+        change_m_s: Option<f32>,
+        torn: u32,
+        implausible: u32,
+    },
+    /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
+    /// octants its turn covered and the samples it has seen.
+    Magnetometer {
+        mag_counts: Option<[f32; 3]>,
+        calibrated: bool,
+        sectors: u32,
+        samples: u32,
     },
     /// The separation switch: its debounced latch.
     Separation { separated: bool },
@@ -157,7 +177,30 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
             temperature_c: scalar("temperature"),
             pressure_pa: scalar("pressure"),
             elevation_m: scalar("elevation"),
+            change_m_s: scalar("change"),
         },
+        "bmp581" => {
+            let (torn, implausible) = crate::sensors::bmp581_inspection();
+            Own::Bmp581 {
+                altitude_m: scalar("altitude"),
+                temperature_c: scalar("temperature"),
+                pressure_pa: scalar("pressure"),
+                // on its row, not yet the databoard's (M9 stage 6): null until then
+                elevation_m: scalar("elevation"),
+                change_m_s: scalar("change"),
+                torn,
+                implausible,
+            }
+        }
+        "bmm350" => {
+            let (calibrated, sectors, samples) = crate::sensors::magnetometer_inspection();
+            Own::Magnetometer {
+                mag_counts: vector("mag"),
+                calibrated,
+                sectors,
+                samples,
+            }
+        }
         "separation" => Own::Separation {
             separated: crate::control::separated(),
         },

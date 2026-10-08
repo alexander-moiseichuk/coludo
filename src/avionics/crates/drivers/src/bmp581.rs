@@ -9,8 +9,9 @@
 //! sweep answered Task's no-op success for it and never re-zeroed the backup barometer, so the two barometers' zeros
 //! split at the first re-zero. The port gives it the ICP-10111's surface, and the firmware runs it wherever it runs
 //! the ICP's: `calibrate` re-captures the ground from [`GROUND_SAMPLES`] new readings ([`Bmp581::capture_ground`],
-//! setup's own average), and so does the DONE recovery; `update {"ground": <m>}` sets it (M8's warm start rebases it to the crumb's pad); `update
-//! {"rezero": true}` takes the channel's own altitude when fresher than [`REZERO_WINDOW_US`].
+//! setup's own average), and so does the DONE recovery; `update {"ground": <m>}` sets it (M8's warm start rebases it
+//! to the crumb's pad); `update {"rezero": true}` takes the channel's own altitude when fresher than
+//! [`REZERO_WINDOW_US`].
 //!
 //! Simpler than the BMP280 in the way that matters: the part outputs COMPENSATED values, so there is no factory
 //! calibration to read and no compensation polynomial to carry. Pressure is a 24-bit unsigned count of 1/64 Pa;
@@ -29,7 +30,20 @@
 //! changed, which every conversion does (its noise is tens of counts), so each 50 Hz conversion is published once.
 //! No data-ready register is read: the BMP581's needs INT_SOURCE written, a register plan B never wrote. A part in
 //! standby repeats its bytes, and once it has for [`crate::freshness::STALE_PERIODS`] conversion periods the read
-//! is [`Change::Stale`], where the firmware calls it unhealthy. Plan B's `period_ms` is unused.
+//! is [`Outcome::Stale`], where the firmware calls it unhealthy. Plan B's `period_ms` is unused.
+//!
+//! BUS GARBAGE (measured on the taster and 7F, M9 stage 4): about 0.1 % of the 6-byte bursts at 50 Hz on every tick
+//! are isolated single transfers that are not the part's sample -- all 0xFF (262 144 Pa), one byte repeated
+//! (0x1B1B1B, 27 756 Pa), or tears that look plausible (94 577 Pa at a normal 27.7 C; 103 829 Pa at 101 C; 192 100
+//! Pa at -44 C); a direct probe read `fffffffeffff` once in 2560. Changed bytes call every one of them fresh, and
+//! each became a +-9000 m elevation spike and a +-5000 m/s `change`. So `read_fresh` reads the burst TWICE back to
+//! back and believes it only when both are byte-identical ([`Outcome::Torn`] otherwise), then only inside the part's
+//! operating range ([`Outcome::Implausible`] otherwise, for garbage that repeats). Neither is judged: the stored bytes
+//! and the stale clock stay as they were, and the next tick reads again. A conversion that lands between the two
+//! bursts tears the pair too, about one read in 80 (one burst takes ~0.25 ms at i2c:0's 400 kHz, against the 20 ms
+//! period), so most torn pairs are that, not garbage; the next tick,
+//! 10 ms later, reads that conversion twice, so none is lost, only delayed by a tick. Setup's and a calibrate's
+//! averages read once, as plan B did.
 //!
 //! Units (decision D18): every value is f32, as plan B's float channels and telemetry columns are. The conversions
 //! are exact (power-of-two scales over 24-bit counts); the altitude is commons' ISA formula, one definition for every
@@ -38,6 +52,8 @@
 //! Not here (firmware glue): the channel push, the telemetry stream, the freshness of the altitude a re-zero takes
 //! (the firmware passes it in), the probe's log lines and the inspect JSON.
 
+use core::ops::RangeInclusive;
+
 use control::commons::altitude_m;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::I2c;
@@ -45,8 +61,7 @@ use serde_json::Value;
 
 use crate::commons::{id_classify, python_float};
 use crate::device::{Device, Fault};
-pub use crate::freshness::Change;
-use crate::freshness::{Changes, STALE_PERIODS};
+use crate::freshness::{Change, Changes, STALE_PERIODS};
 
 /// The default I2C address (0x46 when the address pin is pulled the other way).
 pub const ADDRESS: u8 = 0x47;
@@ -100,6 +115,13 @@ pub const PRESSURE_COUNTS_PER_PASCAL: f32 = 64.0;
 /// Temperature counts per degree C.
 pub const TEMPERATURE_COUNTS_PER_DEGREE: f32 = 65536.0;
 
+/// The part's operating pressure range, Pa (datasheet: 300 to 1250 hPa): a burst read twice alike outside it is
+/// garbage that repeated, never a sample ([`Outcome::Implausible`]).
+pub const PRESSURE_RANGE_PA: RangeInclusive<f32> = 30_000.0..=125_000.0;
+
+/// The part's operating temperature range, degrees C (datasheet: -40 to 85 C), as [`PRESSURE_RANGE_PA`].
+pub const TEMPERATURE_RANGE_C: RangeInclusive<f32> = -40.0..=85.0;
+
 /// The sign bit of a 24-bit two's-complement count.
 const SIGN_24: i32 = 0x80_0000;
 
@@ -133,6 +155,28 @@ impl Reading {
             pressure,
         }
     }
+}
+
+/// What one [`Bmp581::read_fresh`] yields: the double burst's verdict, with the reading when there is one to use.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Outcome {
+    /// Both bursts agree, the reading is in range and its bytes changed since the last judged read: a new
+    /// conversion, publish it.
+    Fresh(Reading),
+    /// Both bursts agree, in range, and repeat the last judged read's bytes: no conversion since, normal on a part
+    /// polled twice a conversion.
+    Unchanged,
+    /// Both bursts agree, in range, and have repeated the last judged bytes for
+    /// [`crate::freshness::STALE_PERIODS`] conversion periods or longer: a part in standby. The firmware calls the
+    /// part unhealthy.
+    Stale,
+    /// The two bursts differ: bus garbage in one of them, or a conversion that landed between them. Not judged:
+    /// the stored bytes and the stale clock are untouched, and the next tick reads again.
+    Torn,
+    /// Both bursts agree, but the reading lies outside [`PRESSURE_RANGE_PA`] or [`TEMPERATURE_RANGE_C`]: garbage
+    /// that repeated. Not judged, as [`Outcome::Torn`]; the reading is carried for the firmware's log line only,
+    /// never to publish.
+    Implausible(Reading),
 }
 
 /// Why an operator `update` was refused; nothing has changed when it is.
@@ -211,18 +255,32 @@ impl Bmp581 {
         Ok(Reading::decode(&frame))
     }
 
-    /// Read one conversion and whether it is new ([`Change`]): the 6-byte burst, judged by whether its bytes changed
-    /// since the last `read_fresh`, at `now_us` on the owner's clock. Only a [`Change::Fresh`] reading is published;
-    /// at [`Change::Stale`] the firmware calls the part unhealthy (a part in standby). Setup's and a calibrate's own
-    /// reads ([`Bmp581::read`]) do not touch the judge.
-    pub fn read_fresh<Bus: I2c>(&mut self, bus: &mut Bus, now_us: u64) -> Result<(Change, Reading), Fault<Bus::Error>> {
-        let mut frame = [0u8; FRAME_LENGTH];
-        bus.write_read(self.address, &[TEMP_DATA_XLSB], &mut frame)
+    /// Read one conversion and what it is ([`Outcome`]): the 6-byte burst TWICE back to back (see the module notes).
+    /// Two bursts that differ are [`Outcome::Torn`]; two alike outside the operating range are
+    /// [`Outcome::Implausible`]; neither is judged. Otherwise the bytes are judged by whether they changed since the
+    /// last judged read, at `now_us` on the owner's clock: only an [`Outcome::Fresh`] reading is published, and at
+    /// [`Outcome::Stale`] the firmware calls the part unhealthy (a part in standby). A bus fault on either burst is
+    /// the transport's, and judges nothing. Setup's and a calibrate's own reads ([`Bmp581::read`]) do not touch the
+    /// judge.
+    pub fn read_fresh<Bus: I2c>(&mut self, bus: &mut Bus, now_us: u64) -> Result<Outcome, Fault<Bus::Error>> {
+        let mut first = [0u8; FRAME_LENGTH];
+        bus.write_read(self.address, &[TEMP_DATA_XLSB], &mut first)
             .map_err(Fault::Bus)?;
-        Ok((
-            self.changes.judge(&frame, now_us, CONVERSION_PERIOD_US),
-            Reading::decode(&frame),
-        ))
+        let mut second = [0u8; FRAME_LENGTH];
+        bus.write_read(self.address, &[TEMP_DATA_XLSB], &mut second)
+            .map_err(Fault::Bus)?;
+        if first != second {
+            return Ok(Outcome::Torn);
+        }
+        let reading = Reading::decode(&first);
+        if !PRESSURE_RANGE_PA.contains(&reading.pressure) || !TEMPERATURE_RANGE_C.contains(&reading.temperature) {
+            return Ok(Outcome::Implausible(reading));
+        }
+        Ok(match self.changes.judge(&first, now_us, CONVERSION_PERIOD_US) {
+            Change::Fresh => Outcome::Fresh(reading),
+            Change::Unchanged => Outcome::Unchanged,
+            Change::Stale => Outcome::Stale,
+        })
     }
 
     /// Average [`GROUND_SAMPLES`] readings, [`GROUND_SAMPLE_MS`] apart, into the ground zero (bmp581._ground_zero,

@@ -90,7 +90,7 @@ struct Health<'a> {
     /// The calibrations the devices wait for, {name: instruction}; absent when none is pending (plan B
     /// cc_client.py:443-514).
     #[serde(skip_serializing_if = "Option::is_none")]
-    calibration: Option<BTreeMap<&'static str, &'static str>>,
+    calibration: Option<BTreeMap<&'static str, String>>,
     degraded: Vec<String>,
 }
 

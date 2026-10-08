@@ -31,7 +31,7 @@ use layout::Addresses;
 use sequencer::ChangeRefused;
 
 use crate::devices::{Member, Topology};
-use crate::sensors::{Event, Run};
+use crate::sensors::{Calibrated, Event, Run};
 
 /// The owners' priorities, by port: the bus owners sit below the control thread (§4.2).
 const PRIORITIES: [u8; 2] = [18, 17];
@@ -99,6 +99,11 @@ pub enum Request {
     },
     /// Run the part `name`'s calibration (CC `calibrate <name>`).
     Calibrate { name: String },
+    /// Put the calibration `blob` the executor persisted in force on the part `name` (D9 of the M9 plan).
+    ApplyCalibration {
+        name: String,
+        blob: [u8; drivers::bmm350::CALIBRATION_BYTES],
+    },
 }
 
 /// A part's probe verdict: None when healthy, else why (plan B's `probe()`).
@@ -131,8 +136,9 @@ pub enum Answer {
     },
     /// None when no part of that name is on this port; else the changed properties, or the refusal.
     Updated(Option<Result<Vec<&'static str>, String>>),
-    /// None when no part of that name is on this port; else plan B's calibrate answer (None success, else why).
-    Calibrated(Option<Option<String>>),
+    /// None when no part of that name is on this port; else its calibrate answer: plan B's (None success, else
+    /// why), or a calibration to persist before it is applied.
+    Calibrated(Option<Calibrated>),
     /// Not served in this stage ([`refusal`]): a value, so the owner makes no text off the pad. [`ask`] answers its
     /// text as its error.
     Refused(ChangeRefused),
@@ -151,14 +157,17 @@ fn note_calibration(member: &Member) {
     };
 }
 
-/// Every part's pending calibration, by name, sorted: empty when nothing is pending.
-pub fn calibrations() -> Vec<(&'static str, &'static str)> {
-    CALIBRATIONS
+/// Every part's pending calibration, by name, sorted: empty when nothing is pending. The magnetometer's is worded
+/// here, on the executor, from its run's atomics (crate::sensors::magnetometer_instruction).
+pub fn calibrations() -> Vec<(&'static str, String)> {
+    let mut calibrations: BTreeMap<&'static str, String> = CALIBRATIONS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .iter()
-        .map(|(name, text)| (*name, *text))
-        .collect()
+        .map(|(name, text)| (*name, (*text).to_string()))
+        .collect();
+    calibrations.extend(crate::sensors::magnetometer_instruction());
+    calibrations.into_iter().collect()
 }
 
 /// A request and where its answer goes.
@@ -339,7 +348,7 @@ fn probe(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay) -> Vec<V
 /// it changes nothing here, and its answer says so, so the part's own owner decides.
 fn refusal(request: &Request, members: &[Member]) -> Option<ChangeRefused> {
     let rezero = match request {
-        Request::Update { name, .. } | Request::Calibrate { name } => {
+        Request::Update { name, .. } | Request::Calibrate { name } | Request::ApplyCalibration { name, .. } => {
             members.iter().find(|member| member.name == name)?.part.rezeroes()
         }
         _ => false,
@@ -425,6 +434,12 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
                 result
             }))
         }
+        Request::ApplyCalibration { name, blob } => Answer::Calibrated(
+            members
+                .iter_mut()
+                .find(|member| member.name == name)
+                .map(|member| Calibrated::Done(member.part.apply_calibration(member.name, &blob))),
+        ),
         Request::GeneralCall { rearm } => {
             let acknowledged = port.general_call_reset().is_ok();
             let _ = port.take_general_call();
@@ -580,19 +595,39 @@ pub fn update(name: &str, properties: &serde_json::Value) -> Result<Option<Resul
     Ok(None)
 }
 
-/// The part `name`'s calibration, on whichever owner holds it (CC `calibrate <name>`): None when no owner holds it;
-/// else plan B's answer (None success, else why).
+/// The part `name`'s calibration on its owner (CC `calibrate <name>`): None when no owner holds such a part, else
+/// plan B's answer (None success, else why). A calibration computed but not in force (the BMM350's) is handed to
+/// `persist` (NVS, on this executor thread) and only then applied on the owner (D9 of the M9 plan: plan B's order); a
+/// calibration that would not persist is not applied.
 ///
 /// Errors: the owner did not answer in time.
-pub fn calibrate(name: &str) -> Result<Option<Option<String>>, String> {
+pub fn calibrate(
+    name: &str,
+    persist: impl Fn(&'static str, &[u8]) -> Result<(), String>,
+) -> Result<Option<Option<String>>, String> {
     for port in 0..2 {
         if MAILBOXES[usize::from(port)].get().is_none() {
             continue;
         }
         let request = Request::Calibrate { name: name.to_string() };
-        if let Answer::Calibrated(Some(result)) = ask(port, request, ANSWER_DEADLINE)? {
-            return Ok(Some(result));
+        let Answer::Calibrated(Some(answer)) = ask(port, request, ANSWER_DEADLINE)? else {
+            continue;
+        };
+        let (key, blob) = match answer {
+            Calibrated::Done(result) => return Ok(Some(result)),
+            Calibrated::Persist { key, blob } => (key, blob),
+        };
+        if let Err(error) = persist(key, &blob) {
+            return Ok(Some(Some(format!("calibration computed but not persisted: {error}"))));
         }
+        let request = Request::ApplyCalibration {
+            name: name.to_string(),
+            blob,
+        };
+        return match ask(port, request, ANSWER_DEADLINE)? {
+            Answer::Calibrated(Some(Calibrated::Done(result))) => Ok(Some(result)),
+            _ => Err(format!("i2c port {port}'s owner answered another request")),
+        };
     }
     Ok(None)
 }

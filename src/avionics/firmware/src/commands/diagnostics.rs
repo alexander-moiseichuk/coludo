@@ -221,7 +221,15 @@ pub fn calibrate(message: &Message, context: &mut Context) -> Reply {
     if !context.devices.find(target).is_some_and(|entry| entry.active()) {
         return Err(Fault::new(Code::BadArguments, format!("no calibrate for {target}")));
     }
-    let result = crate::owner::calibrate(target)
+    // a calibration the owner computed but holds back (the BMM350's) is persisted here, then applied (D9 of the M9 plan)
+    let persist = |key: &'static str, blob: &[u8]| {
+        use warmstart::Nvs;
+        let mut nvs = crate::warm::ColudoNvs::open(&context.nvs).map_err(|error| error.to_string())?;
+        let nvs_error = |error: warmstart::NvsError| format!("NVS error {:#x}", error.0);
+        nvs.set_blob(key, blob).map_err(nvs_error)?;
+        nvs.commit().map_err(nvs_error)
+    };
+    let result = crate::owner::calibrate(target, persist)
         .map_err(|error| Fault::new(Code::Internal, error))?
         .unwrap_or(None);
     super::ok_json(&json!({ target.as_str(): result }))

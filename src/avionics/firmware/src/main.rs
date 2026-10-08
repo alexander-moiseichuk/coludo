@@ -209,6 +209,8 @@ fn main() -> anyhow::Result<()> {
     );
     // the zone and the launch point the checkpoint freezes at BOOSTING entry; the executor republishes them from here
     warm::publish_mission(&mission);
+    // the magnetometer's hard/soft-iron calibration, as plan B's setup restored it
+    sensors::restore_calibrations(&partition, &mut members);
     for (parked, port) in lent {
         let id = port.id();
         let parts = std::mem::take(&mut members[usize::from(id)]);

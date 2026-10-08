@@ -11,7 +11,7 @@
 //! and the SPI LSM6DSO32's probe, which needs SPI2's owner (M6).
 
 use std::mem::ManuallyDrop;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use board_config::Entry;
 use control::change::Change;
@@ -20,8 +20,10 @@ use databoard::Writer;
 use drivers::axes::Axes;
 use drivers::bmi323::Bmi323;
 use drivers::bmm350::Bmm350;
+use drivers::bmp581;
 use drivers::bmp581::Bmp581;
 use drivers::device::Device;
+use drivers::freshness;
 use drivers::icp10111::{Icp10111, Poll, Reading};
 use drivers::ina226::Ina226;
 use drivers::lsm6dso32::{Lsm6dso32, OverI2c};
@@ -104,10 +106,11 @@ pub fn classify(entry: &Entry) -> Kind {
     }
 }
 
-/// Whether the implementation re-zeroes a barometer's ground: the ICP-10111, whose `calibrate` and `update` (`ground`,
-/// `rezero`) also run at DONE, the way back from a false launch ([`Part::rezeroes`] says it of a built part).
+/// Whether the implementation re-zeroes a barometer's ground: the ICP-10111 and the BMP581 (M9), whose `calibrate`
+/// and `update` (`ground`, `rezero`) also run at DONE, the way back from a false launch ([`Part::rezeroes`] says it
+/// of a built part).
 pub fn rezeroes(implementation: &str) -> bool {
-    implementation == "icp10111"
+    matches!(implementation, "icp10111" | "bmp581")
 }
 
 /// The `axes` of an IMU entry (drivers::axes, M9): the identity when absent.
@@ -139,6 +142,8 @@ pub enum Run {
     Barometer(Box<Barometer>),
     /// The second IMU's channels and stream.
     Imu(Box<Inertial>),
+    /// The magnetometer's channel and stream.
+    Magnetometer(Box<Magnetometer>),
 }
 
 impl Run {
@@ -152,6 +157,15 @@ impl Run {
         let name = member.name;
         match &member.part {
             Part::Icp10111(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
+            Part::Bmp581(_) => {
+                let mut outputs = Barometer::new(name, topology, entry);
+                // its row carries the elevation, the databoard not yet: the fused single-source machine would read an
+                // ICP -> BMP581 handover's offset as a climb, until the multi-source machine reads each barometer
+                // against itself (M9 stage 6)
+                outputs.elevation = None;
+                Some(Run::Barometer(Box::new(outputs)))
+            }
+            Part::Bmm350(_) => Some(Run::Magnetometer(Box::new(Magnetometer::new(name, topology, entry)))),
             Part::Bmi323(_) => Some(Run::Imu(Box::new(Inertial::new(
                 name,
                 member.axes,
@@ -174,6 +188,55 @@ pub enum Event {
     Rearm,
 }
 
+/// The BMP581's read pairs that disagreed (drivers::bmp581::Outcome::Torn): mostly a conversion landing between the
+/// two bursts (about 1 read in 80), the rest the bus garbage the double read exists for (M9).
+static BMP581_TORN: AtomicU32 = AtomicU32::new(0);
+/// Its agreeing pairs outside the part's operating range (drivers::bmp581::Outcome::Implausible): bus garbage read
+/// twice alike.
+static BMP581_IMPLAUSIBLE: AtomicU32 = AtomicU32::new(0);
+/// How many BMP581 reads in a row may go unjudged (torn or implausible) before the part is unhealthy: 60 ms, three
+/// conversion periods, as its stale rule.
+const UNJUDGED_LIMIT: u32 = 6;
+
+/// What `inspect` shows of the BMP581's guard: its torn pairs and its implausible reads since boot.
+pub fn bmp581_inspection() -> (u32, u32) {
+    (
+        BMP581_TORN.load(Ordering::Relaxed),
+        BMP581_IMPLAUSIBLE.load(Ordering::Relaxed),
+    )
+}
+
+/// One barometer conversion, whichever part made it.
+#[derive(Clone, Copy)]
+struct Conversion {
+    /// m AMSL.
+    altitude: f32,
+    /// Degrees C.
+    temperature: f32,
+    /// Pa.
+    pressure: f32,
+}
+
+impl From<&Reading> for Conversion {
+    fn from(reading: &Reading) -> Conversion {
+        Conversion {
+            altitude: reading.altitude,
+            temperature: reading.temperature,
+            pressure: reading.pressure,
+        }
+    }
+}
+
+impl From<&drivers::bmp581::Reading> for Conversion {
+    fn from(reading: &drivers::bmp581::Reading) -> Conversion {
+        Conversion {
+            altitude: reading.altitude,
+            temperature: reading.temperature,
+            pressure: reading.pressure,
+        }
+    }
+}
+
 /// A barometer's outputs: its five databoard channels (plan B's four in its push order, then `change`) and its stream.
 pub struct Barometer {
     /// The `altitude` writer (m AMSL), when the quantity is on the databoard.
@@ -194,6 +257,10 @@ pub struct Barometer {
     entry: Option<&'static DeviceEntry<'static>>,
     /// A read failed and none succeeded since: one log line per run (plan B's `note`).
     failing: bool,
+    /// The part read stale (the BMP581's unchanged bytes for three conversions) and nothing fresh since: one line.
+    stale: bool,
+    /// The BMP581's reads in a row that were neither judged nor published (torn pairs, implausible values).
+    unjudged_run: u32,
     /// A row was refused and none written since: one log line per run.
     overflowing: bool,
 }
@@ -214,7 +281,27 @@ impl Barometer {
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
             entry,
             failing: false,
+            stale: false,
+            unjudged_run: 0,
             overflowing: false,
+        }
+    }
+
+    /// A read that failed: unhealthy, one line per run.
+    fn fail(&mut self, name: &str, fault: &dyn std::fmt::Display) {
+        self.set_healthy(false);
+        if !self.failing {
+            log::warn!("{name} :: read {fault}");
+            self.failing = true;
+        }
+    }
+
+    /// A part that stopped converting (its bytes unchanged for three conversion periods): unhealthy, one line.
+    fn freeze(&mut self, name: &str) {
+        self.set_healthy(false);
+        if !self.stale {
+            log::warn!("{name} :: no new conversion -- stale");
+            self.stale = true;
         }
     }
 
@@ -228,8 +315,9 @@ impl Barometer {
     /// Publishes a reading (plan B icp10111.py:346-362): altitude, temperature, pressure, then the elevation above
     /// the ground, then the climb rate once its window holds enough (M9), and the row -- one for every conversion,
     /// never decimated (measured -> reported, the operator).
-    fn publish(&mut self, name: &str, elevation: Option<f32>, reading: &Reading, now_us: u64) {
+    fn publish(&mut self, name: &str, elevation: Option<f32>, reading: Conversion, now_us: u64) {
         self.failing = false;
+        self.stale = false;
         self.set_healthy(true);
         let change = self.climb.push(reading.altitude, now_us);
         for (writer, value) in [
@@ -373,7 +461,11 @@ impl Inertial {
                 Err(error) => log::warn!("{name} :: INT1 GPIO{gpio} not armed ({error}): no edges counted"),
             }
         }
-        let runs = if self.armed { crate::control::take_second_edges() } else { 0 };
+        let runs = if self.armed {
+            crate::control::take_second_edges()
+        } else {
+            0
+        };
         BMI323_IRQ_RUNS.store(runs, Ordering::Relaxed);
         if self.armed && imu.wake(runs) {
             log::warn!("{name} :: INT1 silent -- sampling on the tick, the line unproven");
@@ -454,6 +546,191 @@ impl Inertial {
                 }
             }
         }
+    }
+}
+
+/// The magnetometer's run name, once its run is built: whose calibration [`magnetometer_instruction`] words.
+static MAGNETOMETER: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+/// Whether the magnetometer's hard/soft-iron calibration is in force.
+static MAGNETOMETER_CALIBRATED: AtomicBool = AtomicBool::new(false);
+/// How many of the eight octants its turn has covered.
+static MAGNETOMETER_COVERED: AtomicU32 = AtomicU32::new(0);
+/// How many samples it has seen since boot.
+static MAGNETOMETER_SEEN: AtomicU32 = AtomicU32::new(0);
+
+/// The magnetometer's pending calibration, in plan B's words (bmm350.calibration()), from the run's atomics: the
+/// executor words it, so the owner never takes the calibrations' mutex on its tick (D9 of the M9 plan). None when no
+/// magnetometer runs or it is calibrated.
+pub fn magnetometer_instruction() -> Option<(&'static str, String)> {
+    let name = *MAGNETOMETER.get()?;
+    let text = drivers::bmm350::format_instruction(
+        MAGNETOMETER_CALIBRATED.load(Ordering::Relaxed),
+        MAGNETOMETER_COVERED.load(Ordering::Relaxed),
+        MAGNETOMETER_SEEN.load(Ordering::Relaxed),
+    );
+    (!text.is_empty()).then_some((name, text))
+}
+
+/// What `inspect` shows of the magnetometer beyond its channel (plan B bmm350.py:382-387): whether it is calibrated,
+/// the octants its turn covered, the samples it has seen.
+pub fn magnetometer_inspection() -> (bool, u32, u32) {
+    (
+        MAGNETOMETER_CALIBRATED.load(Ordering::Relaxed),
+        MAGNETOMETER_COVERED.load(Ordering::Relaxed),
+        MAGNETOMETER_SEEN.load(Ordering::Relaxed),
+    )
+}
+
+/// Publishes the magnetometer's calibration state (its run's, and the executor's apply).
+fn note_magnetometer(magnetometer: &Bmm350) {
+    MAGNETOMETER_CALIBRATED.store(magnetometer.calibrated(), Ordering::Relaxed);
+    MAGNETOMETER_COVERED.store(magnetometer.covered(), Ordering::Relaxed);
+    MAGNETOMETER_SEEN.store(magnetometer.seen(), Ordering::Relaxed);
+}
+
+/// The BMM350's outputs (M9): its `mag` channel and stream, read every [`drivers::bmm350::POLL_PERIOD_MS`] (twice a
+/// conversion at 12.5 Hz), each fresh conversion observed once for the calibration's evidence (plan B bmm350.run).
+pub struct Magnetometer {
+    /// The `mag` writer (counts: raw, or centred and normalised once calibrated).
+    mag: Option<Writer<'static, [f32; 3]>>,
+    /// Its stream, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// Its table entry, whose `healthy` the run writes.
+    entry: Option<&'static DeviceEntry<'static>>,
+    /// When the next read is due, microseconds.
+    next_due_us: u64,
+    /// A read failed and none succeeded since: one log line per run.
+    failing: bool,
+    /// The part read stale and nothing fresh since: one log line.
+    stale: bool,
+    /// A row was refused and none written since: one log line per run.
+    overflowing: bool,
+}
+
+impl Magnetometer {
+    /// The outputs of source `name`, writing the health of `entry`.
+    fn new(
+        name: &'static str,
+        topology: &'static Topology,
+        entry: Option<&'static DeviceEntry<'static>>,
+    ) -> Magnetometer {
+        let _ = MAGNETOMETER.set(name);
+        Magnetometer {
+            mag: topology.vector("mag").and_then(|parameter| parameter.writer(name)),
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            entry,
+            next_due_us: 0,
+            failing: false,
+            stale: false,
+            overflowing: false,
+        }
+    }
+
+    /// Records the latest read's outcome in the table entry.
+    fn set_healthy(&self, healthy: bool) {
+        if let Some(entry) = self.entry {
+            entry.set_healthy(healthy);
+        }
+    }
+
+    /// One owner wake for the part named `name`: when due, the read; a fresh conversion observed, pushed and rowed.
+    fn tick(&mut self, name: &str, magnetometer: &mut Bmm350, port: &mut I2cPort, now_us: u64) {
+        if now_us < self.next_due_us {
+            return;
+        }
+        let period_us = u64::from(drivers::bmm350::POLL_PERIOD_MS) * 1000;
+        self.next_due_us = (self.next_due_us + period_us).max(now_us + period_us / 2);
+        let field = match magnetometer.read_fresh(port, now_us) {
+            Ok((freshness::Change::Fresh, field)) => field,
+            Ok((freshness::Change::Unchanged, _)) => return,
+            Ok((freshness::Change::Stale, _)) => {
+                self.set_healthy(false);
+                if !self.stale {
+                    log::warn!("{name} :: no new conversion -- stale");
+                    self.stale = true;
+                }
+                return;
+            }
+            Err(fault) => {
+                self.set_healthy(false);
+                if !self.failing {
+                    log::warn!("bmm350 :: read {fault}");
+                    self.failing = true;
+                }
+                return;
+            }
+        };
+        self.failing = false;
+        self.stale = false;
+        self.set_healthy(true);
+        let [x, y, z] = magnetometer.observe(&field);
+        note_magnetometer(magnetometer);
+        if let Some(writer) = &mut self.mag {
+            writer.push([x as f32, y as f32, z as f32], now_us);
+        }
+        let Some(telemetry) = &mut self.telemetry else {
+            return;
+        };
+        match telemetry.push(now_us, &[Cell::I32(x), Cell::I32(y), Cell::I32(z)]) {
+            Ok(()) => self.overflowing = false,
+            Err(overflow) => {
+                if !self.overflowing {
+                    log::warn!("{name} :: telemetry {overflow}");
+                    self.overflowing = true;
+                }
+            }
+        }
+    }
+}
+
+/// What a part's `calibrate` answers on its owner.
+pub enum Calibrated {
+    /// Plan B's answer: None success, else why.
+    Done(Option<String>),
+    /// A calibration computed but not in force: the executor persists `blob` under NVS `key`, then has the owner apply
+    /// it (D9 of the M9 plan: persist, then apply, as plan B; no flash work on the flight core).
+    Persist {
+        key: &'static str,
+        blob: [u8; drivers::bmm350::CALIBRATION_BYTES],
+    },
+}
+
+/// Restores each magnetometer's hard/soft-iron calibration from NVS after its setup (plan B bmm350._restore), so a
+/// power cycle does not cost the operator a turn: once at bring-up, on main, before the owners run.
+pub fn restore_calibrations(
+    partition: &esp_idf_svc::nvs::EspDefaultNvsPartition,
+    members: &mut [Vec<crate::devices::Member>; 2],
+) {
+    use warmstart::Nvs;
+    let magnetometers = members
+        .iter_mut()
+        .flatten()
+        .filter_map(|member| match &mut member.part {
+            Part::Bmm350(magnetometer) => Some((member.name, magnetometer)),
+            _ => None,
+        });
+    for (name, magnetometer) in magnetometers {
+        let mut blob = [0u8; drivers::bmm350::CALIBRATION_BYTES];
+        let read = crate::warm::ColudoNvs::open(partition)
+            .map_err(|error| error.to_string())
+            .and_then(|mut nvs| {
+                nvs.get_blob(drivers::bmm350::NVS_KEY, &mut blob)
+                    .map_err(|error| format!("NVS error {:#x}", error.0))
+            });
+        match read.map(|length| magnetometer.restore(&blob[..length])) {
+            Ok(Some(calibration)) => log::info!(
+                "{name} :: calibration restored: centre ({}, {}) radii ({}, {})",
+                calibration.centre_x,
+                calibration.centre_y,
+                calibration.radius_x,
+                calibration.radius_y
+            ),
+            Ok(None) => log::warn!("{name} :: the saved calibration is no calibration (wrong length): axes raw"),
+            Err(why) => log::info!("{name} :: no saved calibration ({why}): axes raw until the operator's turn"),
+        }
+        note_magnetometer(magnetometer);
     }
 }
 
@@ -684,7 +961,7 @@ impl Part {
             (Part::Icp10111(barometer), Run::Barometer(outputs)) => match barometer.poll(port, now_us) {
                 Poll::Waiting | Poll::Issued | Poll::GeneralCall => None,
                 Poll::Reading(reading) => {
-                    outputs.publish(name, barometer.elevation(&reading), &reading, now_us);
+                    outputs.publish(name, barometer.elevation(&reading), Conversion::from(&reading), now_us);
                     None
                 }
                 Poll::Failed { fault, .. } => {
@@ -701,6 +978,42 @@ impl Part {
                 outputs.tick(name, imu, port, now_us);
                 None
             }
+            (Part::Bmp581(barometer), Run::Barometer(outputs)) => {
+                let unjudged = match barometer.read_fresh(port, now_us) {
+                    Ok(bmp581::Outcome::Fresh(reading)) => {
+                        let elevation = barometer.elevation(&reading);
+                        outputs.publish(name, Some(elevation), Conversion::from(&reading), now_us);
+                        false
+                    }
+                    Ok(bmp581::Outcome::Unchanged) => false,
+                    Ok(bmp581::Outcome::Stale) => {
+                        outputs.freeze(name);
+                        false
+                    }
+                    Ok(bmp581::Outcome::Torn) => {
+                        BMP581_TORN.fetch_add(1, Ordering::Relaxed);
+                        true
+                    }
+                    Ok(bmp581::Outcome::Implausible(_)) => {
+                        BMP581_IMPLAUSIBLE.fetch_add(1, Ordering::Relaxed);
+                        true
+                    }
+                    Err(fault) => {
+                        outputs.fail(name, &fault);
+                        false
+                    }
+                };
+                // a part that answers only garbage is never judged stale: unhealthy after a run of it all the same
+                outputs.unjudged_run = if unjudged { outputs.unjudged_run + 1 } else { 0 };
+                if outputs.unjudged_run >= UNJUDGED_LIMIT {
+                    outputs.freeze(name);
+                }
+                None
+            }
+            (Part::Bmm350(magnetometer), Run::Magnetometer(outputs)) => {
+                outputs.tick(name, magnetometer, port, now_us);
+                None
+            }
             _ => None,
         }
     }
@@ -712,8 +1025,8 @@ impl Part {
     }
 
     /// The calibration the part waits for, in plan B's words (`calibration()`); empty when none. The ICP-10111 asks
-    /// for its ground until it holds one (setup captures it, so an up ICP never asks); the other parts' calibrations
-    /// come with their milestones (M9, M10).
+    /// for its ground until it holds one (setup captures it, so an up ICP never asks); the BMM350's is worded on the
+    /// executor from its run's atomics ([`magnetometer_instruction`]); the others' come with their milestones (M10).
     pub fn calibration(&self) -> &'static str {
         match self {
             Part::Icp10111(barometer) => barometer.instruction(),
@@ -724,8 +1037,12 @@ impl Part {
     /// Plan B's `calibrate()`: None on success, else why. The ICP-10111 captures its ground again from fresh
     /// conversions (plan B icp10111.py:337-344); a part with nothing to calibrate succeeds when nothing is pending
     /// (plan B's default `calibration() or None`).
-    pub fn calibrate(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Option<String> {
-        match self {
+    ///
+    /// The BMP581 captures its ground the same way (M9). The BMM350's calibration is computed from the evidence its
+    /// run gathered and handed back NOT in force ([`Calibrated::Persist`]): the executor persists it, then applies it
+    /// ([`Part::apply_calibration`]); a calibration it refuses answers its instruction.
+    pub fn calibrate(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Calibrated {
+        Calibrated::Done(match self {
             Part::Icp10111(barometer) => match barometer.capture_ground(port, delay) {
                 Ok(ground) => {
                     log::info!("{name} :: calibrated: ground {ground:.1} m AMSL");
@@ -733,8 +1050,44 @@ impl Part {
                 }
                 Err(fault) => Some(format!("ground zero: {fault}")),
             },
+            Part::Bmp581(barometer) => match barometer.capture_ground(port, delay) {
+                Ok(ground) => {
+                    log::info!("{name} :: calibrated: ground {ground:.1} m AMSL");
+                    None
+                }
+                Err(fault) => Some(format!("ground zero: {fault}")),
+            },
+            Part::Bmm350(magnetometer) => match magnetometer.calibrate() {
+                Ok(calibration) => {
+                    return Calibrated::Persist {
+                        key: drivers::bmm350::NVS_KEY,
+                        blob: calibration.to_bytes(),
+                    };
+                }
+                Err(why) => Some(why),
+            },
             other => Some(other.calibration().to_string()).filter(|pending| !pending.is_empty()),
-        }
+        })
+    }
+
+    /// Puts the calibration `blob` in force once the executor persisted it (D9 of the M9 plan): the BMM350's, logged
+    /// in plan B's words. None on success, else why.
+    pub fn apply_calibration(&mut self, name: &str, blob: &[u8]) -> Option<String> {
+        let Part::Bmm350(magnetometer) = self else {
+            return Some(format!("{name} takes no calibration blob"));
+        };
+        let Some(calibration) = magnetometer.restore(blob) else {
+            return Some("the calibration blob is no calibration".to_string());
+        };
+        note_magnetometer(magnetometer);
+        log::info!(
+            "{name} :: calibrated: centre ({}, {}) radii ({}, {})",
+            calibration.centre_x,
+            calibration.centre_y,
+            calibration.radius_x,
+            calibration.radius_y
+        );
+        None
     }
 
     /// Plan B's `update()`: the changed properties. The ICP-10111 takes `ground`, and `rezero` from its own altitude
@@ -750,7 +1103,19 @@ impl Part {
                         .altitude
                         .as_ref()
                         .and_then(|writer| writer.recent(window_us, now_us)),
-                    Some(Run::Imu(_)) | None => None,
+                    Some(Run::Imu(_) | Run::Magnetometer(_)) | None => None,
+                };
+                barometer
+                    .update(properties, fresh)
+                    .map_err(|refusal| refusal.to_string())
+            }
+            Part::Bmp581(barometer) => {
+                let fresh = match run {
+                    Some(Run::Barometer(outputs)) => outputs
+                        .altitude
+                        .as_ref()
+                        .and_then(|writer| writer.recent(drivers::bmp581::REZERO_WINDOW_US as u32, now_us)),
+                    _ => None,
                 };
                 barometer
                     .update(properties, fresh)
@@ -763,7 +1128,7 @@ impl Part {
     /// Whether the part re-zeroes a barometer's ground, as [`rezeroes`] says of its implementation: its `update` and
     /// `calibrate` also run at DONE.
     pub fn rezeroes(&self) -> bool {
-        matches!(self, Part::Icp10111(_))
+        matches!(self, Part::Icp10111(_) | Part::Bmp581(_))
     }
 
     /// Whether the part sent a general call since the last ask: only the ICP-10111 sends one, to free itself.

@@ -181,10 +181,16 @@ impl Topology {
     pub fn inspect(&self, now_us: u64) -> serde_json::Map<String, Value> {
         let mut quantities = serde_json::Map::new();
         for parameter in &self.scalars {
-            quantities.insert(parameter.name().to_string(), fused(parameter, now_us, |value| value.into()));
+            quantities.insert(
+                parameter.name().to_string(),
+                fused(parameter, now_us, |value| value.into()),
+            );
         }
         for parameter in &self.vectors {
-            quantities.insert(parameter.name().to_string(), fused(parameter, now_us, |value| value.to_vec().into()));
+            quantities.insert(
+                parameter.name().to_string(),
+                fused(parameter, now_us, |value| value.to_vec().into()),
+            );
         }
         for parameter in &self.positions {
             quantities.insert(
