@@ -765,7 +765,7 @@ choice ends it. M9's optional `axes` key then reaches the gate's +x as well.
 **Operator gains.** Real attitude-grade IMU and baro data in the telemetry pane. Probe all and calibrate work
 for these parts.
 
-### M7. Stage machine and a real arm/verify gate (2 days)
+### M7. Stage machine and a real arm/verify gate (2 days; DONE 2026-10-08 on the taster and TMS-7F)
 
 **Scope**
 - **`crates/sequencer`** (the stage machine joins the existing `Stage`) in the control thread, every `period_ms`
@@ -945,6 +945,40 @@ for these parts.
   `002ff9a`: `firmware/src/sensors.rs:61`), so `arm` and `verify` never count it as a failed device, which plan B
   does (§6).
 - `cc.py`'s exit codes 0/1/3 are host-tested (`tools/cc.py:102-133`, `src/control/test/test_tools.py:224-248`).
+
+**Proof (2026-10-07/08, as measured):**
+- Host: the sequencer crate (the flight word, its one writer and the request slot, the claim/withdraw race over
+  10^5 threaded rounds; plan B's settings parsing), the golden sequencer trace with the two M7 scenarios, readiness
+  against plan B over the shipped configs, the ring gate's three refusals, the stale-arm rule, the bluetooth stub,
+  and the separation's thrust gate (seen then ended on +x, the pending separation, the backstop, an early separation
+  opening the gate, a wrong axis or sign and no IMU failing safe; every release waits for a quiet episode, swept
+  over 2,610 phase cases). The gate's hand proof on the taster was dropped (its breadboard is too fragile for pin
+  work): the first flight's separation row is its live evidence.
+- The single writer (TMS-7F): holds log `controller :: stage -> X` on the console only, then `(held)`/`(auto)`
+  recorded; at DONE the barometer re-zeroes while every other change is refused (the false-launch recovery);
+  recorder.log carries no `controller :: stage ->`.
+- The stage machine, hands-free on TMS-7F (the barometer's ground shifted -15 m; a bench copy with land_agl_m 20,
+  since the landing reads the baro until M10): sequencer.csv `setting;external`, `boosting;launch alt=15m
+  dwell=100ms`, `gliding;burnout timeout (no separation)` at +12.05 s, `landing;agl 14.8m` (+0.35 s),
+  `done;stationary 1.0g` (+3.05 s), then after `stage done`, `calibrate baro_icp10111`, `stage setting`:
+  `setting;external`, 30 s still with no row. Tick lateness at most 19 us, work at most 421 us across transitions,
+  the control stack's peak 3.1 KB of 6 KB.
+- Arm and verify: on their own configs both boards' verify and arm name exactly the not-ported entries; on a bench
+  copy the taster's verify passes (ready false: watchdog, flight) and arm answers `ok {"armed":true}`; arm while held
+  is refused with plan B's stage text; the ring probe logs plan B's three lines (6,141 blocks erased ahead, the
+  reserve 61); an arm queued 26 s behind other work was answered at 26.1 s, `the request waited 26.1 s: send it
+  again`, inside the hub's 30 s.
+- The link, armed on the taster: after the altitude launch the hub was restarted under it -- one `launch detected
+  -- no more joins or dials`, no dial for 65 s with the hub up; `stage done` brought the dial back 0.33 s later. A
+  dead hub address times each dial out at 3.0 s.
+- Video: the flight recording started 0.34 s after `controller :: armed`, ran through BOOSTING to DONE, and stopped
+  0.13 s after DONE; it decoded at 25.01 delivered fps throughout (3,027 frames over 121.0 s, no gap over 60 ms);
+  `stage setting` while armed started it again; an operator recording is replaced at arm and stopped at DONE;
+  `video stop` is refused in the air.
+- `cc_contract --milestone M7 --allow-active --allow-stage`: 0 violations on the taster's bench config and on
+  TMS-7F.
+- The taster's sensors latched up after the operator's power-up pin test (every bus and the SPI IMU silent); a full
+  power cycle brought every part back. If all buses fail together, power-cycle before suspecting wiring.
 
 **Operator gains.** The pre-flight gate is real: verify, arm, and readiness from the dashboard. A dummy flight
 (drop or throw test) produces staged data and video.
