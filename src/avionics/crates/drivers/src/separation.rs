@@ -19,15 +19,17 @@
 //! starts separated, and assembling it concludes `nested` (with the interrupt, or by the tick's own read when no edge
 //! came): the latch ends at 1.
 //!
-//! THE THRUST GATE ([`ThrustGate`], the operator's): in BOOSTING a separation counts only once the booster has stopped
-//! pushing the glider, so vibration under thrust can never deploy. The gate reads the glider's own axial specific
-//! force, a_x on the body frame's +x (the nose; +y left, +z up), from a fresh `accel` every tick. Thrust is SEEN when
-//! a_x holds above the sequencer's `launch_g` for its `launch_ms` of net time (the launch detector's leaky dwell,
-//! sequencer::commons::dwell_step), and has ENDED when a_x then holds below 0 g for 20 ms of net time: the drag
-//! deceleration the glider feels the moment nothing pushes it, by burnout or by an early aerodynamic separation of a
-//! destabilized stack, which so opens the gate itself. Both start afresh at each BOOSTING entry. A missing a_x drains
-//! a dwell like a sample that misses. A wrong axis or sign, no IMU, or a bench hold never sees thrust, so the gate
-//! stays shut and only the backstop decides: a mis-mounted IMU can never open the gate under thrust.
+//! THE THRUST GATE ([`ThrustGate`], the operator's; it lives in crates/sequencer, module `thrust`, where the stage
+//! machine keeps one per accelerometer, and is re-exported here): in BOOSTING a separation counts only once the
+//! booster has stopped pushing the glider, so vibration under thrust can never deploy. The gate reads the glider's own
+//! axial specific force, a_x on the body frame's +x (the nose; +y left, +z up), from a fresh `accel` every tick.
+//! Thrust is SEEN when a_x holds above the sequencer's `launch_g` for its `launch_ms` of net time (the launch
+//! detector's leaky dwell, sequencer::commons::dwell_step), and has ENDED when a_x then holds below 0 g for 20 ms of
+//! net time: the drag deceleration the glider feels the moment nothing pushes it, by burnout or by an early
+//! aerodynamic separation of a destabilized stack, which so opens the gate itself. Both start afresh at each BOOSTING
+//! entry. A missing a_x drains a dwell like a sample that misses. A wrong axis or sign, no IMU, or a bench hold never
+//! sees thrust, so the gate stays shut and only the backstop decides: a mis-mounted IMU can never open the gate under
+//! thrust.
 //!
 //! THE PENDING SEPARATION ([`Separation::tick`]): a separation concluded in BOOSTING while the gate is shut moves
 //! nothing and writes no row: it is pending. It counts (GLIDING, the row `separated;gliding`, dated by its episode's
@@ -88,7 +90,7 @@
 //! moment rebuilt on the uptime column's clock, the duration in µs) and the log line.
 
 use sequencer::Stage;
-use sequencer::commons::{Dwell, dwell_step};
+pub use sequencer::thrust::{Thrust, ThrustGate};
 use serde_json::Value;
 
 use crate::debounce::{Episode, StampPair, elapsed_us};
@@ -100,13 +102,6 @@ pub const DEFAULT_DEBOUNCE_MS: u32 = 10;
 
 /// Microseconds in a millisecond: `debounce_ms` to the quiet's clock.
 const MICROSECONDS_PER_MILLISECOND: u32 = 1000;
-
-/// The thrust's end, g: a_x below it is no push but drag (see the module notes, THE THRUST GATE).
-const THRUST_END_G: f32 = 0.0;
-
-/// How long a_x must hold below [`THRUST_END_G`] for the thrust to have ended, ms of net time: two ticks of the
-/// default schedule, long enough that one sample of vibration under thrust does not end it.
-const THRUST_END_MS: u32 = 20;
 
 /// The backstop, µs: a pending separation counts once the pin has held LOW this long after its last edge, whatever
 /// the gate says (100 ms: far beyond the contact's wobble of about 7 ms and any blip).
@@ -302,108 +297,6 @@ impl Separation {
             moment_us: pending.start_us,
             duration_us: pending.duration_us(),
         })
-    }
-}
-
-/// What the thrust gate has seen of the boost since BOOSTING entry: `control`'s `thrust`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Thrust {
-    /// Not seen (`none`): a_x has not yet held above `launch_g` for `launch_ms`. The gate is shut.
-    Unseen,
-    /// Seen and not ended: the booster pushes. The gate is shut.
-    Seen,
-    /// Seen, then ended: nothing pushes the glider any more. The gate is open.
-    Ended,
-}
-
-impl Thrust {
-    /// The name `control` shows: `none`, `seen` or `ended`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Thrust::Unseen => "none",
-            Thrust::Seen => "seen",
-            Thrust::Ended => "ended",
-        }
-    }
-}
-
-/// The separation's thrust gate (see the module notes, THE THRUST GATE): stepped every tick with the glider's fresh
-/// a_x, open once the boost was seen and then ended, both afresh at each BOOSTING entry.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ThrustGate {
-    /// The thrust's level, g: the sequencer's `launch_g`.
-    launch_g: f32,
-    /// How long a_x must hold above it, ms of net time: the sequencer's `launch_ms`.
-    launch_ms: u32,
-    /// What it has seen since BOOSTING entry.
-    thrust: Thrust,
-    /// The running leaky dwell: the thrust's while it is unseen, its end's once seen.
-    dwell: Dwell,
-    /// Whether the previous step was in BOOSTING: a step in BOOSTING after one elsewhere (or none) is an entry.
-    boosting: bool,
-}
-
-impl ThrustGate {
-    /// A shut gate on the sequencer's `launch_g` and `launch_ms`: `settings` are the sequencer entry's, or
-    /// sequencer::Settings::default() (plan B's) for a board without one.
-    pub fn new(settings: &sequencer::Settings) -> ThrustGate {
-        ThrustGate {
-            launch_g: settings.launch_g,
-            launch_ms: settings.launch_ms,
-            thrust: Thrust::Unseen,
-            dwell: Dwell::default(),
-            boosting: false,
-        }
-    }
-
-    /// One tick at `now_ms` in `stage`, with `axial_g`, the glider's a_x in g from a fresh `accel` (None when no
-    /// source is fresh). A BOOSTING entry starts the gate afresh, shut. In BOOSTING the sample feeds the dwell of what
-    /// the gate waits for: a_x above `launch_g` for the thrust, then below 0 g for its end, each a leaky dwell that a
-    /// missing or contrary sample drains. Anywhere else the gate keeps what it saw.
-    ///
-    /// `now_ms` is the stage machine's clock: the uptime's ms as a wrapping u32. Never the stamps' wrapping µs divided
-    /// down: that clock jumps back at its wrap, and a step backwards FEEDS a leaky dwell that misses
-    /// (sequencer::commons::dwell_step).
-    pub fn step(&mut self, now_ms: u32, stage: Stage, axial_g: Option<f32>) {
-        let boosting = stage == Stage::Boosting;
-        if boosting && !self.boosting {
-            self.thrust = Thrust::Unseen;
-            self.dwell = Dwell::default();
-        }
-        self.boosting = boosting;
-        if !boosting {
-            return;
-        }
-        // NaN compares false: no thrust and no end
-        let (active, threshold_ms, next) = match self.thrust {
-            Thrust::Unseen => (
-                axial_g.is_some_and(|axial| axial > self.launch_g),
-                self.launch_ms,
-                Thrust::Seen,
-            ),
-            Thrust::Seen => (
-                axial_g.is_some_and(|axial| axial < THRUST_END_G),
-                THRUST_END_MS,
-                Thrust::Ended,
-            ),
-            Thrust::Ended => return,
-        };
-        let (dwell, held) = dwell_step(active, now_ms, self.dwell, threshold_ms);
-        self.dwell = dwell;
-        if held {
-            self.thrust = next;
-            self.dwell = Dwell::default();
-        }
-    }
-
-    /// What the gate has seen since BOOSTING entry (or of the last BOOSTING, outside it).
-    pub fn thrust(&self) -> Thrust {
-        self.thrust
-    }
-
-    /// Whether the gate is open: the thrust seen and then ended.
-    pub fn open(&self) -> bool {
-        self.thrust == Thrust::Ended
     }
 }
 

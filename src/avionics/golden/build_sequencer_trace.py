@@ -14,8 +14,20 @@ Each scenario is stateful, {name, note, init, steps}:
     (after the step's events), and the three reads. `out` is plan B's answer: the stage after the tick and the
     sequencer.csv rows the tick pushed, [stage, reason] each -- none, one, or two (an external move seen on the
     same tick an own advance fires). A step the port answers differently ON PURPOSE also carries a `divergence`,
-    {note, out}, the out the port owes instead: only the altitude launch's rate gate makes one (avionics-port.md
-    §6; the port's `launch_alt_window_ms`, which plan B does not have), pinned by _RATE_GATE.
+    {cause, note, out}, the out the port owes instead. Three causes make one (avionics-port.md, "What is deliberately
+    not ported, or changed"):
+      - `rate_gate`: the altitude launch's rate gate (the port's `launch_alt_window_ms`, which plan B does not
+        have), pinned by _RATE_GATE;
+      - `physics_veto`: the fusion rule's physics vetoes -- the altitude launch held while every live accel has
+        read at rest for the rate gate's window, the apogee held while every live accel's thrust gate still sees
+        the boost -- pinned by _pin_physics_vetoes from a model of them;
+      - `source_history`: the fusion rule compares each source only with itself, so a GNSS standing in for a stale
+        barometer in BOOSTING tracks the apogee on its own readings alone where plan B's one tracker smoothed both
+        into one series -- pinned by _pin_source_histories from a model of the port's per-source trackers. The
+        fixture shows the GNSS only where plan B's fused read fell through to it, so its tracker here sees nothing
+        between the dropouts, which a board's continuously published GNSS does not suffer.
+    The port takes each step's fused read as one source per class: the accel in its first accelerometer slot, the
+    elevation in its first barometer slot (the GNSS slot when the GNSS vouches for it), the agl in its laser slot.
 
 The stand-ins, none of which touches the stage machine's logic:
   * the Controller is plan B's own (controller.Controller): set_stage, and hold()/resume() for an operator
@@ -55,6 +67,7 @@ import asyncio
 import math
 import random
 import struct
+from collections.abc import Callable
 from fractions import Fraction
 
 import commons
@@ -67,6 +80,9 @@ _SEED: int = 20261006  # the seeded flights' random.Random seed: the fixture is 
 _MARGIN: float = 1e-03  # how far a compared or printed value keeps from its threshold (see the module notes)
 _DRAWS: int = 200  # a seeded flight is drawn at most this many times before the build gives up
 _TICK_MS: int = 50  # the sequencer's period on the board (config period_ms 50, 20 Hz)
+_LAUNCH_ALTITUDE_WINDOW_MS: int = 1000  # the port's default rate-gate window, plan B has none (Settings::default)
+_THRUST_END_MS: int = 20  # the port's thrust gate: a_x below 0 g this long ends the boost (crates/sequencer thrust.rs)
+_APOGEE_STEP: Callable = commons.apogee_step  # plan B's tracker, unwatched (_watch_the_drop_line wraps the module's)
 _GRAVITY: float = 9.81  # m/s^2: the seeded flights' simple vertical kinematics
 _LASER_RANGE_M: float = 4.0  # the laser publishes only below this (the VL53 reaches about 4 m)
 
@@ -851,6 +867,7 @@ def _scripted() -> list:
     scenarios += _stage_entries()
     scenarios += _launch_reasons()
     scenarios += _rate_gate()
+    scenarios += _fusion()
     return scenarios
 
 
@@ -1132,6 +1149,69 @@ def _rate_gate() -> list:
     ]
 
 
+def _fusion() -> list:
+    """
+    The fusion rule on plan B's one source per class: a handover plan B makes exactly as the port (the laser coming
+    into range mid baro landing dwell), and the physics vetoes, where plan B fires and the port holds (divergences,
+    _pin_physics_vetoes): one scenario per veto, and the at-rest veto through an accel dropout.
+
+    Returns:
+        The scenario documents.
+    """
+    return [
+        _scenario(
+            'the_laser_arrives_mid_barometer_landing_dwell',
+            'Handover: the baro fallback reads 3 m and starts the landing dwell; the laser comes into range low too '
+            'and decides from then on. The one dwell carries on across the handover, so LANDING comes land_ms after '
+            'the baro first read low, as in plan B.',
+            _SPEC, [
+                (0, (), {'accel': _STILL, 'elevation': _barometer(20.0)}),
+                (50, (), {'elevation': _barometer(3.0)}),
+                (100, (), {'agl': _laser(2.0)}),
+                (150, (), {}),
+                (200, (), {}),
+            ], stage='gliding'),
+        _scenario(
+            'a_drifted_pad_at_rest_then_a_fast_climb',
+            'Physics veto: the pad drifted to 4 m, the accel at rest 1 g; then the baro reads 17 m, a 13 m rise in one '
+            'step, fast enough for the rate gate. Plan B launches launch_ms later; the port holds the altitude launch '
+            'while every live accel has read at rest for the rate gate window, and stays on the pad.',
+            _SPEC,
+            [(now, (), {'accel': _STILL, 'elevation': _barometer(4.0)}) for now in _ticks(0, 1550)] + [
+                (1550, (), {'elevation': _barometer(17.0)}),
+                (1600, (), {}),
+                (1650, (), {}),
+                (1700, (), {}),
+            ]),
+        _scenario(
+            'a_dropout_on_a_pad_at_rest_then_a_fast_climb',
+            'Physics veto: the drifted pad and the accel at rest as above, but the accel reads nothing on the step '
+            'before the climb. A dropout is no movement: the accel\'s run at rest goes on through it, so the port '
+            'holds the altitude launch plan B makes, as on the pad without the dropout.',
+            _SPEC,
+            [(now, (), {'accel': _STILL, 'elevation': _barometer(4.0)}) for now in _ticks(0, 1500)] + [
+                (1500, (), {'accel': None}),
+                (1550, (), {'accel': _STILL, 'elevation': _barometer(17.0)}),
+                (1600, (), {}),
+                (1650, (), {}),
+                (1700, (), {}),
+            ]),
+        _scenario(
+            'a_sustained_boost_with_the_elevation_falling',
+            'Physics veto: warm into BOOSTING under a sustained 8 g on +x while the baro falls from 200 m to 150 m '
+            '(a pressure wave in the airframe). Plan B calls apogee launch_ms after the smoothed fall crosses the '
+            'drop line; the port holds the apogee while every live accel\'s thrust gate still sees the boost.',
+            _SPEC, [
+                (0, (), {'accel': _imu(8.0, 0.0, 0.0), 'elevation': _barometer(200.0)}),
+                (50, (), {}),
+                (100, (), {'elevation': _barometer(150.0)}),
+                (150, (), {}),
+                (200, (), {}),
+                (250, (), {}),
+            ], stage='boosting'),
+    ]
+
+
 """
 The altitude launches the port's rate gate removes, by scenario: the clock of each tick where plan B launches by
 altitude though its fresh baro elevation never rose launch_alt_m within the gate's default window (1 s) above a level
@@ -1183,12 +1263,14 @@ def _pin_rate_gate(scenario: dict) -> None:
             raise SystemExit('sequencer_trace: %s at %d is no plan B altitude launch' % (name, step['in']['now_ms']))
         if reason is not None:
             step['divergence'] = {
+                'cause': 'rate_gate',
                 'note': ('the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for '
                          'launch_ms before this altitude launch, so the port does not make it; its accel launch '
                          'completes on the same tick'),
                 'out': {'stage': out['stage'], 'records': kept + [[out['stage'], reason]]}}
             continue
         step['divergence'] = {
+            'cause': 'rate_gate',
             'note': ('the rate gate: the baro never rose launch_alt_m within 1 s above a level it held for launch_ms '
                      'before this altitude launch, so the port does not make it and stays on the pad'),
             'out': {'stage': step['in']['stage'], 'records': kept}}
@@ -1198,12 +1280,279 @@ def _pin_rate_gate(scenario: dict) -> None:
                 raise SystemExit('sequencer_trace: %s at %d: the port would not see plan B\'s launch'
                                  % (name, after['in']['now_ms']))
             after['divergence'] = {
+                'cause': 'rate_gate',
                 'note': ("plan B's BOOSTING reaches the port as a move from outside, recorded external; every later "
                          "step is plan B's"),
                 'out': {'stage': after['out']['stage'],
                         'records': [[after['in']['stage'], 'external']] + after['out']['records']}}
     if pins:
         raise SystemExit('sequencer_trace: %s has no tick %r' % (name, sorted(pins)))
+
+
+def _accelerometer_states(scenario: dict) -> list:
+    """
+    A model of the port's one accelerometer slot over a scenario (crates/sequencer: StageMachine's slot, the
+    thrust gate of thrust.rs), stepped on every step but a held one with the fresh accel: its run of readings inside
+    the still band, which only a reading outside it ends (a step without one keeps it), and its thrust gate on +x --
+    a_x above launch_g for launch_ms of net time, then below 0 g for _THRUST_END_MS, each a leaky dwell (plan B's own
+    dwell_step), afresh at each BOOSTING entry.
+
+    Args:
+        scenario - the scenario document.
+
+    Returns:
+        Per step (at_rest, under_thrust): whether the accel, fresh, has read inside the band for the whole rate-gate
+        window (the altitude launch's physics veto), and whether, fresh, its gate has seen the boost and not its end
+        (the apogee's). (False, False) on a held step.
+    """
+    settings = scenario['init']['settings']
+    window_ms = scenario['init']['config'].get('launch_alt_window_ms', _LAUNCH_ALTITUDE_WINDOW_MS)
+    still_g = settings['still_g']
+    low_squared = (1 - still_g) ** 2 if still_g < 1 else 0.0
+    high_squared = (1 + still_g) ** 2
+    at_rest_since = None
+    thrust, credit, last, boosting = 'unseen', 0, None, False
+    states = []
+    for step in scenario['steps']:
+        step_in = step['in']
+        if step_in['manual']:
+            states.append((False, False))  # a hold observes nothing
+            continue
+        now = step_in['now_ms']
+        accel = step_in['reads']['accel']
+        vector = accel['value'] if accel is not None and accel['source'] is not None else None
+        entering = step_in['stage'] == 'boosting' and not boosting
+        boosting = step_in['stage'] == 'boosting'
+        if entering:
+            thrust, credit, last = 'unseen', 0, None
+        if boosting and thrust != 'ended':
+            axial = vector[0] if vector is not None else None
+            if thrust == 'unseen':
+                active, threshold = axial is not None and axial > settings['launch_g'], settings['launch_ms']
+            else:
+                active, threshold = axial is not None and axial < 0.0, _THRUST_END_MS
+            credit, last, held = commons.dwell_step(active, now, credit, last, threshold)
+            if held:
+                thrust, credit, last = ('seen' if thrust == 'unseen' else 'ended'), 0, None
+        still = vector is not None and low_squared < commons.magnitude_sq(*vector) < high_squared
+        if vector is not None:
+            at_rest_since = (now if at_rest_since is None else at_rest_since) if still else None
+        states.append((still and now - at_rest_since >= window_ms, vector is not None and thrust == 'seen'))
+    return states
+
+
+def _port_apogees(scenario: dict, states: list, thrust_veto: bool) -> dict:
+    """
+    A model of the port's apogee over a scenario: each source's own tracker (plan B's apogee_step, unwatched) -- the
+    barometer's on the barometer readings, the GNSS's on the GNSS readings -- reset at each BOOSTING entry and blind
+    for apogee_arm_ms. Each is current from the first armed step on; a source back from more than launch_ms without
+    a reading (or first read that long after arming) while the other was read after it joins: its smoothing restarts
+    on the reading, its peak kept, and for launch_ms it does not decide (nor does anything else: plan B's read has one
+    elevation per step, and one barometer has no unbroken peer to defer to). The deciding source's tracker below its
+    own line starts the one dwell, which launch_ms later calls apogee with its peak; a step under the thrust veto (when
+    `thrust_veto`) restarts it.
+
+    Args:
+        scenario - the scenario document.
+        states - _accelerometer_states(scenario).
+        thrust_veto - whether the apogee's physics veto applies.
+
+    Returns:
+        {step index: the port's apogee reason} for every step it would call one, plan B's stage given.
+    """
+    settings = scenario['init']['settings']
+    launch_ms = settings['launch_ms']
+    seen = entry = since = None
+    trackers = {}
+    calls = {}
+    for index, step in enumerate(scenario['steps']):
+        step_in = step['in']
+        if step_in['manual']:
+            continue
+        now, stage = step_in['now_ms'], step_in['stage']
+        if stage != seen:
+            seen = stage
+            if stage == 'boosting':
+                trackers = {source: {'apogee': (None, None, None), 'current': None, 'joined': None}
+                            for source in ('barometer', 'gnss')}
+                entry, since = now, None
+        if stage != 'boosting' or now - entry < settings['apogee_arm_ms']:
+            continue
+        for tracker in trackers.values():
+            tracker['current'] = now if tracker['current'] is None else tracker['current']
+        elevation = step_in['reads']['elevation']
+        if elevation is None or elevation['source'] is None:
+            continue  # no decider: the dwell holds
+        tracker = trackers['gnss' if elevation['source'] == sequencer._GNSS_SOURCE else 'barometer']
+        own = tracker['current']
+        if any(other['current'] > own for other in trackers.values()) and now - own > launch_ms:
+            peak, below_since, _smooth = tracker['apogee']
+            tracker['apogee'], tracker['joined'] = (peak, below_since, None), now
+        peak, below_since, smooth, _fired = _APOGEE_STEP(elevation['value'], now, *tracker['apogee'],
+                                                         settings['apogee_drop_m'], launch_ms)
+        tracker['apogee'], tracker['current'] = (peak, below_since, smooth), now
+        if tracker['joined'] is not None and now - tracker['joined'] < launch_ms:
+            continue  # joining: no decider, the dwell holds
+        if below_since is None or (thrust_veto and states[index][1]):
+            since = None
+            continue
+        since = now if since is None else since
+        if now - since >= settings['launch_ms']:
+            _check_printed('the port\'s apogee peak', peak, 0)
+            calls[index] = 'apogee %.0fm' % peak
+    return calls
+
+
+def _remove_event(scenario: dict, index: int, prefix: str, cause: str, note: str) -> None:
+    """
+    Pin a plan B event the port does not make: on its step the port records plan B's rows but the event's and stays
+    in the stage plan B left; on the next, plan B's new stage reaches the port as a move from outside, recorded
+    external before plan B's own rows, and every later step is plan B's again (the stage entry's bookkeeping runs on
+    the step that first sees the stage, for plan B's own advance as for an external one).
+
+    Args:
+        scenario - the scenario document.
+        index - the event's step.
+        prefix - the event row's reason prefix.
+        cause - the divergence's cause.
+        note - what holds the event, for a reader of the fixture.
+
+    Raises:
+        SystemExit - the step already carries a divergence, has no such row, or the next step is held or back in
+            the stage the port stayed in (the move would go unseen).
+    """
+    name = scenario['name']
+    steps = scenario['steps']
+    step = steps[index]
+    out = step['out']
+    kept = [row for row in out['records'] if not row[1].startswith(prefix)]
+    if 'divergence' in step or len(kept) == len(out['records']):
+        raise SystemExit('sequencer_trace: %s at %d: no plan B %r row to remove alone' % (
+            name, step['in']['now_ms'], prefix))
+    step['divergence'] = {'cause': cause, 'note': note, 'out': {'stage': step['in']['stage'], 'records': kept}}
+    if index + 1 == len(steps):
+        return
+    after = steps[index + 1]
+    if 'divergence' in after or after['in']['manual'] or after['in']['stage'] == step['in']['stage']:
+        raise SystemExit('sequencer_trace: %s at %d: the port would not see plan B\'s %s' % (
+            name, after['in']['now_ms'], out['stage']))
+    after['divergence'] = {
+        'cause': cause,
+        'note': ("plan B's %s reaches the port as a move from outside, recorded external; every later step is "
+                 "plan B's" % out['stage']),
+        'out': {'stage': after['out']['stage'],
+                'records': [[after['in']['stage'], 'external']] + after['out']['records']}}
+
+
+def _pin_physics_vetoes(scenario: dict) -> None:
+    """
+    Pin the plan B events the fusion rule's physics vetoes remove, from a model of them (_accelerometer_states).
+
+    The altitude launch: a step TOUCHED is one in SETTING where plan B's condition holds (a fresh barometer over
+    launch_alt_m) while the at-rest veto does. A touched step matters only to the plan B altitude launch that ends
+    its time in SETTING; with none, the veto, which only ever holds, changes nothing. When the rate gate already
+    removes that launch, the veto is moot: the port's leaky dwell, which did not complete, holds no more credit with an
+    active sample made inactive on a step the clock runs forward, so it completes even less (on a step back an
+    inactive sample FEEDS a running dwell: such a touched step is refused). Otherwise every step where the condition
+    holds, from the first touched one through the launch, must be touched, the clock never stepping back: the port's
+    dwell then only drains and the launch is removed. The apogee: plan B's apogee is removed where the port's tracker
+    calls it on that step without the thrust veto and not with it (_port_apogees).
+
+    Args:
+        scenario - the scenario document; its pinned steps gain a `divergence`.
+
+    Returns:
+        None.
+
+    Raises:
+        SystemExit - a touched launch the model cannot settle, or the thrust veto moving an apogee to another step.
+    """
+    name = scenario['name']
+    steps = scenario['steps']
+    settings = scenario['init']['settings']
+    states = _accelerometer_states(scenario)
+
+    def holds(step: dict) -> bool:
+        """Plan B's altitude-launch condition on a step of SETTING the machine looks at."""
+        elevation = step['in']['reads']['elevation']
+        return (not step['in']['manual'] and step['in']['stage'] == 'setting' and elevation is not None
+                and elevation['source'] not in (None, sequencer._GNSS_SOURCE)
+                and elevation['value'] > settings['launch_alt_m'])
+
+    def launch_after(index: int) -> int | None:
+        """The step of the plan B altitude launch ending SETTING from `index` on, None when SETTING ends without."""
+        for later in range(index, len(steps)):
+            step = steps[later]
+            if not step['in']['manual'] and step['in']['stage'] != 'setting':
+                return None
+            if any(row[1].startswith('launch alt=') for row in step['out']['records']):
+                return later
+        return None
+
+    def backwards(index: int) -> bool:
+        """Whether the clock steps back at `index` from the step before it the machine looked at."""
+        looked = [earlier for earlier in range(index) if not steps[earlier]['in']['manual']]
+        return bool(looked) and steps[index]['in']['now_ms'] < steps[looked[-1]]['in']['now_ms']
+
+    touched = [index for index, step in enumerate(steps) if holds(step) and states[index][0]]
+    if any(backwards(index) for index in touched):
+        raise SystemExit('sequencer_trace: %s: the at-rest veto on a step the clock steps back' % name)
+    for launch in sorted({launch_after(index) for index in touched} - {None}):
+        if steps[launch].get('divergence', {}).get('cause') == 'rate_gate':
+            continue  # moot: the rate gate removes the launch already
+        first = min(index for index in touched if launch_after(index) == launch)
+        span = range(first, launch + 1)
+        if any(backwards(index) or (holds(steps[index]) and index not in touched) for index in span):
+            raise SystemExit('sequencer_trace: %s: the at-rest veto does not cover the launch dwell' % name)
+        _remove_event(scenario, launch, 'launch alt=', 'physics_veto',
+                      'the at-rest veto: every live accel has read inside the still band for the rate gate window on '
+                      'every step the altitude launch held its condition, so the port does not make it and stays on '
+                      'the pad')
+    unvetoed = _port_apogees(scenario, states, thrust_veto=False)
+    vetoed = _port_apogees(scenario, states, thrust_veto=True)
+    for index, reason in sorted(unvetoed.items()):
+        if vetoed.get(index) == reason:
+            continue
+        if index in vetoed:
+            raise SystemExit('sequencer_trace: %s at %d: the thrust veto moves an apogee' % (
+                name, steps[index]['in']['now_ms']))
+        _remove_event(scenario, index, 'apogee ', 'physics_veto',
+                      "the thrust veto: every live accel's thrust gate still sees the boost on every step the "
+                      'apogee held its condition, so the port does not call it and stays in BOOSTING')
+
+
+def _pin_source_histories(scenario: dict) -> None:
+    """
+    Pin the plan B apogees the port's per-source trackers move (_port_apogees without the thrust veto, which
+    _pin_physics_vetoes pins): the port calls none on a step where plan B does, or plan B's on that step alone.
+    Plan B's one tracker smooths every source's readings into one series; the port's compare each source with
+    itself, and a source back to a flight that moved on joins afresh. None moves in this fixture (the GNSS standing
+    in at the top of flight_dropouts_gnss_rocking joins and calls plan B's apogee on plan B's step); the check keeps
+    a scenario that does from going unpinned.
+
+    Args:
+        scenario - the scenario document; its pinned steps gain a `divergence`.
+
+    Returns:
+        None.
+
+    Raises:
+        SystemExit - the port calling an apogee on a step plan B does not, or another on plan B's step.
+    """
+    name = scenario['name']
+    steps = scenario['steps']
+    calls = _port_apogees(scenario, _accelerometer_states(scenario), thrust_veto=False)
+    for index, step in enumerate(steps):
+        rows = [row for row in step['out']['records'] if row[1].startswith('apogee ')]
+        call = calls.get(index)
+        if call is not None and [row[1] for row in rows] != [call]:
+            raise SystemExit('sequencer_trace: %s at %d: the port calls %r, plan B %r' % (
+                name, step['in']['now_ms'], call, rows))
+        if rows and call is None:
+            _remove_event(scenario, index, 'apogee ', 'source_history',
+                          "per-source history: the deciding source's own tracker, where plan B's one tracker "
+                          "smoothed every source's readings, is not yet launch_ms below its own line, so the port "
+                          'does not call apogee')
 
 
 def _shipped_config() -> dict:
@@ -1401,6 +1750,8 @@ def build() -> dict:
         raise SystemExit('sequencer_trace: _RATE_GATE pins scenarios there are not: %s' % sorted(unknown))
     for scenario in scenarios:
         _pin_rate_gate(scenario)
+        _pin_source_histories(scenario)
+        _pin_physics_vetoes(scenario)
     return {
         'meta': {'source': 'src/glider/tasks/sequencer.py, src/glider/commons.py, src/glider/controller.py, '
                            'src/glider/drivers/separation.py'},

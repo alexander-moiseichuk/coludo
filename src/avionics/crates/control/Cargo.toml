@@ -7,6 +7,8 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+board_config.workspace = true  # attitude::on_backup walks the enabled providers as the bring-up reads them
+databoard.workspace = true  # attitude::assemble reads the filter's inputs from the fused quantities
 sequencer.workspace = true  # guidance dispatches its law on the flight Stage
 serde_json.workspace = true  # guidance, wind, mixer and governor read their config blocks; wind answers inspect/update/stats
 

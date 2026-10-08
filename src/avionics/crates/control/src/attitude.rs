@@ -60,11 +60,15 @@
 //!
 //! The databoard, the log and attitude.csv are the caller's, as in crates/sequencer: [`Attitude::tick`] reads no
 //! channel and no clock, and answers what to publish and what to log in a [`Tick`]. The caller pushes
-//! `published`, logs `log`, and writes [`Attitude::row`] to attitude.csv when the stream is due and the tick
-//! published (plan B records only what it publishes).
+//! `published`, logs `log`, and writes [`Attitude::row`] to attitude.csv on every tick that published, undecimated
+//! (plan B records only what it publishes). What the caller reads and when are pure helpers here too:
+//! [`assemble`] builds a tick's [`Readings`] from the databoard, [`Pace`] says which control ticks step the filter,
+//! and [`on_backup`] answers the health flag `attitude-backup`.
 //!
-//! Deliberate differences from plan B, the mounting map above and otherwise its fixed-point arithmetic or a crash it
-//! cannot avoid:
+//! Deliberate differences from plan B, besides the mounting map above:
+//!  * attitude.csv takes a row on every publish: `telemetry_ms` is read but thins nothing. Plan B decimated the
+//!    stream to it (10 rows a second at its default), a MicroPython-era economy; here every measured sample is reported
+//!    (doc/specs/avionics-port.md, "Measured -> reported");
 //!  * plan B's integer error is gone: its pulls are right shifts, which floor, so a pull approaching its target from
 //!    below stalls up to 2^shift - 1 centidegrees short for good (0.15 degree at corr_shift 4, 0.31 at course_shift
 //!    and mag_offset_shift 5, 0.63 at mag_shift 6); its gyro delta floors up to a centidegree a tick and never
@@ -87,7 +91,11 @@
 //! sweeping through wings-level instead of moving 20 degrees. It is pinned by the golden fixture and a unit test, and
 //! raised with the operator as a plan B defect; wrapping it would be a deliberate, documented deviation.
 
+mod integration;
+
 use serde_json::{Value, json};
+
+pub use integration::{Pace, Quantities, assemble, on_backup};
 
 /// Consecutive ticks with no fresh gyro before the filter is BLIND: 100 ms at the 20 ms period. One or two gyro-less
 /// ticks follow every GC pause or stall, and holding the last attitude through those is right; five in a row means
@@ -165,12 +173,16 @@ pub struct Settings {
     pub gravity_low: f32,
     /// `grav_high_g`: the top of the gravity band in g, 1.3.
     pub gravity_high: f32,
-    /// `telemetry_ms`: the attitude.csv decimation in ms, 100, which the caller gives the stream.
+    /// `telemetry_ms`: plan B's attitude.csv decimation in ms, 100. Read as plan B reads it, but it decimates
+    /// nothing: the caller writes a row on every publish (see the module notes).
     pub telemetry_ms: u32,
     /// `provides.attitude.priority`: the rank the filter publishes at, 1 in config_default. A fused winner ranked
-    /// LOWER (a smaller number) outranks the filter and is mirrored. Plan B registers a missing priority at 0; a
-    /// component with no `attitude` entry at all fails plan B's setup, and reads 0 here.
-    pub rank: u8,
+    /// LOWER (a smaller number) outranks the filter and is mirrored. Read by the rule the databoard registration
+    /// reads it with (crates/board_config `provides`), so it is the rank the filter's own channel holds, which is what
+    /// plan B compares (`self._attitude.rank`): Python's int, a bool 0 or 1, saturating at i32; anything else, a float
+    /// included, and a missing one, 0. A component with no `attitude` entry at all fails plan B's setup, and reads 0
+    /// here.
+    pub rank: i32,
 }
 
 impl Default for Settings {
@@ -212,11 +224,14 @@ impl Settings {
                 .and_then(Value::as_f64)
                 .map_or(default, |value| value as f32)
         };
-        let rank = config
-            .pointer("/provides/attitude/priority")
-            .and_then(Value::as_u64)
-            .and_then(|value| u8::try_from(value).ok())
-            .unwrap_or(defaults.rank);
+        let rank = match config.pointer("/provides/attitude/priority") {
+            Some(Value::Bool(flag)) => i32::from(*flag),
+            // an integer past i64 is past i32 too
+            Some(Value::Number(number)) if !number.is_f64() => number.as_i64().map_or(i32::MAX, |priority| {
+                priority.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+            }),
+            _ => defaults.rank,
+        };
         Settings {
             period_ms: whole("period_ms", defaults.period_ms),
             acceleration_period_ms: whole("accel_period_ms", defaults.acceleration_period_ms),
@@ -247,14 +262,26 @@ pub struct Orientation {
     pub pitch: f32,
 }
 
+impl Orientation {
+    /// The attitude a sample of the `attitude` channel carries: (heading, roll, pitch), plan B's order.
+    pub fn from_sample([heading, roll, pitch]: [f32; 3]) -> Orientation {
+        Orientation { heading, roll, pitch }
+    }
+
+    /// This attitude as a sample of the `attitude` channel, for the push: (heading, roll, pitch), plan B's order.
+    pub fn to_sample(self) -> [f32; 3] {
+        [self.heading, self.roll, self.pitch]
+    }
+}
+
 /// The fused `attitude` parameter's FRESH winner this tick, as the caller's databoard read answers it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fused {
     /// The winner's attitude.
     pub orientation: Orientation,
-    /// The rank its source registered at: lower is preferred, and only a winner ranked below the filter's own
-    /// number (the HITL sim at 0) is mirrored.
-    pub rank: u8,
+    /// The rank its source registered at (crates/databoard `Parameter::rank`): lower is preferred, and only a winner
+    /// ranked below the filter's own number (the HITL sim at 0) is mirrored.
+    pub rank: i32,
 }
 
 /// What one tick may read, each present only when a FRESH source vouches for it (see the module notes).

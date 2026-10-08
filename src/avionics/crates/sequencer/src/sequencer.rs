@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The flight-stage machine, from src/glider tasks/sequencer.py (`Sequencer._tick` and its detectors): the
-//! guarded, forward-only stage automation the control loop gates on.
+//! guarded, forward-only stage automation the control loop gates on, deciding from every source of each quantity.
 //!
 //! - SETTING -> BOOSTING: |accel| over `launch_g` for `launch_ms` of net time (motor ignition), OR the baro
 //!   climbing past `launch_alt_m` for as long (an independent, threshold-robust backup), having risen
@@ -17,9 +17,46 @@
 //!   timeout.
 //! - Any airborne stage -> DONE: the RSO flight timeout, `flight_timeout_ms` after BOOSTING entry.
 //!
+//! **Every source decides in its turn (the operator's, not plan B's).** Plan B decided on one fused reading per
+//! quantity. Here every source the databoard registers for a quantity holds a fixed slot, bound by rank at bring-up
+//! ([`Binding`]): four accelerometers, two barometers plus the GNSS (by name, never a voter), one laser. A slot keeps
+//! only the history that compares its source with itself (a barometer's climb and apogee tracker, an accelerometer's
+//! thrust gate and its run at rest), so the offset between two barometers never reads as a rise or a drop, and no
+//! reconcile offset is ever applied. A source is LIVE at a step when it is fresh in its quantity's shared window and
+//! its value is finite: plan B's `read()`, which never consults health.
+//!
+//! Each detector keeps ONE dwell, plan B's own, stepped every step with the condition of its DECIDER: the
+//! highest-ranked live source of the class (for the launch; for the apogee the top live barometer, else the GNSS; for
+//! the landing the laser, else the top live barometer, else the GNSS). A lower source never decides while a higher one
+//! is live, and after a handover the dwell carries on only while the new decider's own condition holds too. With no
+//! decider the dwell sees no reading, as in plan B. One exception, for the apogee: a source back from a gap the flight
+//! went on through without it JOINS afresh ([`Tracker`]): its smoothing restarts, it sits out `launch_ms`, and it
+//! decides only while no barometer with an unbroken record is live, since its own record may lack the top.
+//!
+//! With one source per class this is plan B step for step (golden sequencer_trace.json) but for three things: the
+//! physics vetoes below (pinned in the fixture where they change a plan B event); a NaN reading, which is no reading
+//! here and poisoned plan B's apogee tracker; and a GNSS standing in for the barometer, which plan B's one apogee
+//! tracker smoothed into the barometer's series and the port keeps apart, the GNSS joining on its return (no fixture
+//! event moves).
+//!
+//! On a step where the decider's condition holds, a VETO makes it an inactive sample (a leaky dwell drains, a
+//! contiguous one restarts): a held event must earn its whole dwell again unvetoed, and a peer that misses one step
+//! cannot release it.
+//! - The PEER veto: at least half of the live voting sources, the decider among them, are contrary ([`Detector`] says
+//!   when a peer is). A missing reading is never contrary; the GNSS never counts and never votes.
+//! - The PHYSICS vetoes, across classes, each on EVERY live accelerometer (none live, no veto), so one faulty but live
+//!   part can never block a launch path alone: the altitude launch is held while every live accelerometer has read
+//!   inside the still band for the whole `launch_alt_window_ms` (a boost leaves the band within a step, a coast passes
+//!   through it in about 0.4 s; a step without a reading keeps an accelerometer's run, so a dropout never releases the
+//!   veto); the apogee is held while every live accelerometer's thrust gate ([`crate::thrust`], on its own +x) still
+//!   sees the boost.
+//!
+//! The backstops (burnout, flight and landing timeouts) run on machine clocks from stage entry and are never vetoed.
+//! [`Step`] reports where each veto episode begins and ends, for vetoes.csv.
+//!
 //! [`StageMachine::step`] is `_tick`, pure: the caller passes the time, the stage and the hold the flight word
-//! holds, and the fresh readings, and gets back what to record and where to go. It reads no clock and no channel,
-//! allocates nothing, and the caller commits the advance through the flight word's writer
+//! holds, and every source's fresh reading, and gets back what to record and where to go. It reads no clock and no
+//! channel, allocates nothing, and the caller commits the advance through the flight word's writer
 //! ([`crate::FlightWriter::advance`]) before the next step (plan B's `_advance` set the Controller's stage on the
 //! spot).
 //!
@@ -31,7 +68,7 @@
 //! last two samples without bound, and production consumers used it: the laser only reaches about 4 m, so for
 //! all but the last seconds of a flight the agl channel is stale, and its projection across a whole boost is a
 //! noise-signed number -- `landing; agl -9.6m` fired 0.38 s after `gliding; apogee 274m`, ending the flight at
-//! apogee. Every detector here takes a [`Reading`] only when a source vouches for it (plan B's `read()` with a
+//! apogee. Every detector here takes a reading only when its source vouches for it (plan B's `read()` with a
 //! non-None source); the Rust databoard has no extrapolation at all, so a stale channel is simply None.
 //!
 //! Plan B's GC policy (compact and disable at BOOSTING, re-enable at DONE) is not ported: Rust has no
@@ -43,6 +80,7 @@ use serde_json::Value;
 
 use crate::commons::{self, Apogee, Dwell};
 use crate::controller::Stage;
+use crate::thrust::{Thrust, ThrustGate};
 
 /// The sequencer's board-config keys, each field named after its key (the contract): the step period and the
 /// stage machine's thresholds, read by [`Settings::from_config`] with plan B's `Sequencer.setup()` defaults for a
@@ -68,7 +106,8 @@ pub struct Settings {
     /// Not plan B's (operator, 2026-10-08): TMS-7F launched unarmed on the bench overnight when weather drift carried
     /// its elevation +10 m in 2.17 h past `launch_alt_m`. A rocket gains 10 m within about a second of ignition even
     /// on the slowest v2 stack (2.84 g), drift takes hours. A window shorter than `launch_ms` holds no level that
-    /// long, so the altitude launch never fires. At most [`LONGEST_LAUNCH_ALTITUDE_WINDOW_MS`].
+    /// long, so the altitude launch never fires. At most [`LONGEST_LAUNCH_ALTITUDE_WINDOW_MS`]. It is also how long
+    /// every live accelerometer must have read at rest to hold the altitude launch (see the module notes).
     pub launch_alt_window_ms: u32,
     /// The burnout fallback in ms after BOOSTING entry, for a flat or absent baro. Plan B's setup() default is
     /// 6000 while config_default ships 12000 (past the slowest v2 apogee, ~11 s), so it never pre-empts the
@@ -89,7 +128,8 @@ pub struct Settings {
     pub land_agl_m: f32,
     /// How long the height must stay below `land_agl_m`, in ms: one low sample never flares.
     pub land_ms: u32,
-    /// The stillness tolerance around 1 g, in g (always under 1: a tolerance, not a level).
+    /// The stillness tolerance around 1 g, in g (always under 1: a tolerance, not a level). Every shipped config
+    /// keeps `launch_g` above 1 + `still_g`, so a boost is never at rest and never a contrary peer of a boost.
     pub still_g: f32,
     /// How long |accel| must stay still to be on the ground, in ms.
     pub ground_ms: u32,
@@ -183,10 +223,10 @@ fn real(config: &Value, key: &'static str, default: f32) -> Result<f32, Settings
 /// backstop off. Every `*_ms` key plan B has takes the same bound, `period_ms` included.
 const LONGEST_MS: u32 = i32::MAX as u32;
 
-/// The longest `launch_alt_window_ms`, twice the operator's 1 s: the machine keeps the elevation history for it in a
-/// fixed array of 81 slots, 25 ms apart, 12 bytes each (972 B, in the machine on the control thread's stack), and
-/// allocates nothing. A sluggish 1.5 g boost is 10 m up 2.0 s after ignition: a 2 s window
-/// passes it then, the default 1 s about 0.5 s later.
+/// The longest `launch_alt_window_ms`, twice the operator's 1 s: the machine keeps each barometer slot's elevation
+/// history for it in a fixed array of 81 slots, 25 ms apart, 12 bytes each (972 B, two of them, 1944 B), boxed when the
+/// machine is built so they live on the heap and not on the control thread's stack; stepping allocates nothing. A
+/// sluggish 1.5 g boost is 10 m up 2.0 s after ignition: a 2 s window passes it then, the default 1 s about 0.5 s later.
 pub const LONGEST_LAUNCH_ALTITUDE_WINDOW_MS: u32 = 2000;
 
 /// A `*_ms` key of `config`: a whole number of ms up to `longest`, an integer or a float with no fraction;
@@ -277,7 +317,22 @@ impl fmt::Display for SettingsError {
     }
 }
 
-/// Who vouches for a fresh reading. Plan B's `read()` names the device; the stage machine asks one question of
+/// The device name the GNSS publishes `elevation` under (plan B tasks/sequencer.py `_GNSS_SOURCE`): [`Binding`] gives
+/// it the elevation class's GNSS slot, which never starts a flight and never votes.
+pub const GNSS_SOURCE: &str = "gnss";
+
+/// The accel class's voting slots: the LSM6DSO32 and the BMI323 on a SEN0697 board, and room for the ADXL375 and the
+/// BNO055 once they are ported.
+pub const ACCELEROMETER_SLOTS: usize = 4;
+
+/// The elevation class's voting slots: the barometers (the ICP-10111 and the BMP581; the BMP280 on TMS-7C). The GNSS
+/// has a slot of its own besides them, by name.
+pub const BAROMETER_SLOTS: usize = 2;
+
+/// The `agl` class's slots: the laser. The pitot's `airspeed` class comes with the pitot.
+const LASER_SLOTS: usize = 1;
+
+/// Who vouches for a fresh fused reading. Plan B's `read()` names the device; the one-source form asks one question of
 /// it: is this the GNSS?
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
@@ -291,7 +346,7 @@ pub enum Source {
     Other,
 }
 
-/// One fresh channel value, as plan B's `read()` answers it with a non-None source.
+/// One fresh fused channel value, as plan B's `read()` answers it with a non-None source.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reading<T> {
     /// The value.
@@ -300,11 +355,12 @@ pub struct Reading<T> {
     pub source: Source,
 }
 
-/// The channels the stage machine reads, each None when no source is fresh.
-///
-/// None is not a low reading and not a still one: a detector without its reading does not advance (and the
-/// height dwell resets). In plan B a fresh source always carries a value (a channel is born stale), so
-/// "fresh" and "has a value" are one fact here.
+/// The fused read: one reading per quantity, each None when no source is fresh -- the one-source form the control
+/// thread steps the machine with until it assembles [`SourceReadings`] from its [`Binding`]. It converts as plan B's
+/// fused read would sit in the slots: the accel in the first accelerometer slot, the elevation in the first barometer
+/// slot (the GNSS slot when the GNSS vouches for it), the agl in the laser slot. Stepped so, the machine is plan B's
+/// but for the fusion rule's own (see the module notes): the physics vetoes read the fused accel, so a board lying
+/// still holds an altitude launch, and only a bench copy with no accelerometer entry launches by altitude hands-free.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Readings {
     /// The `accel` channel: (x, y, z) specific force in g.
@@ -313,6 +369,283 @@ pub struct Readings {
     pub elevation: Option<Reading<f32>>,
     /// The `agl` channel: the laser's height above the ground in metres.
     pub height_above_ground: Option<Reading<f32>>,
+}
+
+/// Every bound source's fresh reading at one step, by its slot in the [`Binding`]: None where the source is not fresh
+/// in its quantity's shared window, or no source holds the slot.
+///
+/// None is not a low reading and not a still one: a detector whose decider has no reading does not advance (and the
+/// contiguous dwells restart). A value that is not finite (a NaN, an infinity, in any axis of a vector) is no reading
+/// either: the machine checks.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SourceReadings {
+    /// The `accel` sources in rank order: (x, y, z) specific force in g, on the body frame (+x the nose).
+    pub accelerations: [Option<[f32; 3]>; ACCELEROMETER_SLOTS],
+    /// The barometers' `elevation` in rank order: metres above the pad each zeroed its own.
+    pub elevations: [Option<f32>; BAROMETER_SLOTS],
+    /// The GNSS's `elevation`: metres above its first fix.
+    pub gnss_elevation: Option<f32>,
+    /// The laser's `agl`: the height above the ground in metres.
+    pub height_above_ground: Option<f32>,
+}
+
+impl SourceReadings {
+    /// The live readings: every value that is not finite taken out.
+    fn live(self) -> SourceReadings {
+        SourceReadings {
+            accelerations: self
+                .accelerations
+                .map(|reading| reading.filter(|vector| vector.iter().all(|axis| axis.is_finite()))),
+            elevations: self
+                .elevations
+                .map(|reading| reading.filter(|metres| metres.is_finite())),
+            gnss_elevation: self.gnss_elevation.filter(|metres| metres.is_finite()),
+            height_above_ground: self.height_above_ground.filter(|metres| metres.is_finite()),
+        }
+    }
+}
+
+impl From<&Readings> for SourceReadings {
+    /// Plan B's fused read in each class's first slot, the GNSS's elevation in the GNSS slot.
+    fn from(readings: &Readings) -> SourceReadings {
+        let mut sources = SourceReadings::default();
+        sources.accelerations[0] = readings.acceleration.map(|reading| reading.value);
+        match readings.elevation {
+            Some(Reading {
+                value,
+                source: Source::Gnss,
+            }) => sources.gnss_elevation = Some(value),
+            Some(Reading {
+                value,
+                source: Source::Other,
+            }) => sources.elevations[0] = Some(value),
+            None => {}
+        }
+        sources.height_above_ground = readings.height_above_ground.map(|reading| reading.value);
+        sources
+    }
+}
+
+/// Which slots the registered sources hold: bound once at bring-up, in rank order per quantity (the databoard's
+/// `sources()`), so a slot always belongs to the same source and one source's history never passes to another.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Binding {
+    /// The `accel` sources, by slot.
+    accelerometers: [Option<&'static str>; ACCELEROMETER_SLOTS],
+    /// The `elevation` sources but the GNSS, by slot.
+    barometers: [Option<&'static str>; BAROMETER_SLOTS],
+    /// The GNSS, when it publishes `elevation`.
+    gnss: Option<&'static str>,
+    /// The `agl` sources, by slot.
+    lasers: [Option<&'static str>; LASER_SLOTS],
+    /// The sources past their class's slots, in the order they came.
+    ignored: Vec<Ignored>,
+}
+
+/// A source past its class's slots: the detectors never read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ignored {
+    /// The quantity it publishes.
+    pub quantity: &'static str,
+    /// Its device name.
+    pub source: &'static str,
+    /// How many sources the class reads.
+    pub slots: usize,
+}
+
+impl fmt::Display for Ignored {
+    /// The bring-up log line's text: `<source> ignored: the stage machine's <quantity> slots are full (<slots>)`.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} ignored: the stage machine's {} slots are full ({})",
+            self.source, self.quantity, self.slots
+        )
+    }
+}
+
+impl Binding {
+    /// Bind each quantity's registered sources, given in rank order, to its class's slots: the first `accel` sources
+    /// to the accelerometers, the first `elevation` sources but [`GNSS_SOURCE`] to the barometers and the GNSS to its
+    /// own slot, the first `agl` source to the laser. The rest are [`Binding::ignored`].
+    pub fn new(
+        accelerations: impl IntoIterator<Item = &'static str>,
+        elevations: impl IntoIterator<Item = &'static str>,
+        heights_above_ground: impl IntoIterator<Item = &'static str>,
+    ) -> Binding {
+        let mut binding = Binding::default();
+        let (gnss, barometers): (Vec<&'static str>, Vec<&'static str>) =
+            elevations.into_iter().partition(|source| *source == GNSS_SOURCE);
+        binding.gnss = gnss.first().copied();
+        binding.accelerometers = bind("accel", accelerations, &mut binding.ignored);
+        binding.barometers = bind("elevation", barometers, &mut binding.ignored);
+        binding.lasers = bind("agl", heights_above_ground, &mut binding.ignored);
+        binding
+    }
+
+    /// The sources past their class's slots, for the bring-up log and `inspect`.
+    pub fn ignored(&self) -> &[Ignored] {
+        &self.ignored
+    }
+
+    /// The source holding `decider`'s slot; None for an empty slot.
+    pub fn source(&self, decider: Decider) -> Option<&'static str> {
+        match decider {
+            Decider::Accelerometer(slot) => self.accelerometers.get(slot).copied().flatten(),
+            Decider::Barometer(slot) => self.barometers.get(slot).copied().flatten(),
+            Decider::Gnss => self.gnss,
+        }
+    }
+
+    /// One step's readings, by slot: each bound source's reading through the reader of its quantity, called with its
+    /// device name -- the firmware reads that source's channel, fresh in the quantity's shared window or None. An
+    /// ignored source is never read.
+    pub fn readings(
+        &self,
+        acceleration: impl Fn(&'static str) -> Option<[f32; 3]>,
+        elevation: impl Fn(&'static str) -> Option<f32>,
+        height_above_ground: impl Fn(&'static str) -> Option<f32>,
+    ) -> SourceReadings {
+        let [laser] = self.lasers;
+        SourceReadings {
+            accelerations: self.accelerometers.map(|source| source.and_then(&acceleration)),
+            elevations: self.barometers.map(|source| source.and_then(&elevation)),
+            gnss_elevation: self.gnss.and_then(&elevation),
+            height_above_ground: laser.and_then(height_above_ground),
+        }
+    }
+}
+
+/// `sources` of `quantity`, in rank order, into `SLOTS` slots; the rest pushed to `ignored`.
+fn bind<const SLOTS: usize>(
+    quantity: &'static str,
+    sources: impl IntoIterator<Item = &'static str>,
+    ignored: &mut Vec<Ignored>,
+) -> [Option<&'static str>; SLOTS] {
+    let mut slots = [None; SLOTS];
+    for (rank, source) in sources.into_iter().enumerate() {
+        match slots.get_mut(rank) {
+            Some(slot) => *slot = Some(source),
+            None => ignored.push(Ignored {
+                quantity,
+                source,
+                slots: SLOTS,
+            }),
+        }
+    }
+    slots
+}
+
+/// The slot a detector's decider holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decider {
+    /// An accelerometer, by slot.
+    Accelerometer(usize),
+    /// A barometer, by slot.
+    Barometer(usize),
+    /// The GNSS.
+    Gnss,
+}
+
+/// How many detectors a veto can hold: [`Detector`]'s variants.
+const DETECTORS: usize = 4;
+
+/// A detector a veto can hold, and when a live peer of its decider is contrary. The landing has no veto: the drift
+/// between two barometers is unmeasured, and the pitot's vetoes come with the pitot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Detector {
+    /// The altitude launch: a peer barometer that has confirmed a level and risen less than `launch_alt_m`/2 from it is
+    /// contrary. Its physics veto: every live accelerometer at rest.
+    LaunchAltitude,
+    /// The accel launch: a peer accelerometer reading inside the still band is contrary.
+    LaunchAcceleration,
+    /// The apogee: a peer barometer whose own tracker raised its smoothed peak on this step is contrary (one joining
+    /// the flight afresh does not vote yet). Its physics veto: every live accelerometer still under thrust.
+    Apogee,
+    /// The stillness on the ground: a peer accelerometer reading outside the still band is contrary.
+    Stillness,
+}
+
+impl Detector {
+    /// The detector's name, vetoes.csv's `detector` cell.
+    pub fn name(self) -> &'static str {
+        match self {
+            Detector::LaunchAltitude => "launch_altitude",
+            Detector::LaunchAcceleration => "launch_acceleration",
+            Detector::Apogee => "apogee",
+            Detector::Stillness => "stillness",
+        }
+    }
+}
+
+/// The physics veto that held a detector (see the module notes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Physics {
+    /// Every live accelerometer at rest for the rate gate's window: the altitude launch is held.
+    AtRest,
+    /// Every live accelerometer's thrust gate still sees the boost: the apogee is held.
+    UnderThrust,
+}
+
+/// One vetoed step of a detector: who decided, which vetoes held it, the vote, and the decider's value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Veto {
+    /// The detector held.
+    pub detector: Detector,
+    /// Its decider's slot ([`Binding::source`] names it).
+    pub decider: Decider,
+    /// Whether the peers' quorum held it.
+    pub peer: bool,
+    /// The physics veto that held it, if one did.
+    pub physics: Option<Physics>,
+    /// How many of the decider's live peers were contrary.
+    pub contrary: u8,
+    /// How many voting sources were live, the decider included.
+    pub live: u8,
+    /// The decider's value: |accel| in g for the launch's accel and the stillness, the elevation in metres for the
+    /// altitude launch and the apogee.
+    pub value: f32,
+}
+
+impl Veto {
+    /// The vetoes that held it, vetoes.csv's `kinds` cell: `peer`, `at_rest` or `thrust`, two joined by `+`.
+    pub fn kinds(&self) -> &'static str {
+        match (self.peer, self.physics) {
+            (true, None) => "peer",
+            (false, Some(Physics::AtRest)) => "at_rest",
+            (false, Some(Physics::UnderThrust)) => "thrust",
+            (true, Some(Physics::AtRest)) => "peer+at_rest",
+            (true, Some(Physics::UnderThrust)) => "peer+thrust",
+            (false, None) => "none", // never a veto: the machine makes none without a kind
+        }
+    }
+}
+
+/// Where a veto episode -- a detector vetoed on consecutive steps -- begins and ends: the two rows vetoes.csv records.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VetoEdge {
+    /// The episode's first vetoed step.
+    Begin(Veto),
+    /// The first step its detector is not vetoed (it ran unvetoed, its condition failed, or its stage ended), carrying
+    /// the episode's last vetoed step.
+    End(Veto),
+}
+
+impl VetoEdge {
+    /// `begin` or `end`: vetoes.csv's `edge` cell.
+    pub fn name(&self) -> &'static str {
+        match self {
+            VetoEdge::Begin(_) => "begin",
+            VetoEdge::End(_) => "end",
+        }
+    }
+
+    /// The vetoed step the edge carries.
+    pub fn veto(&self) -> &Veto {
+        match self {
+            VetoEdge::Begin(veto) | VetoEdge::End(veto) => veto,
+        }
+    }
 }
 
 /// Why a stage changed: the reason column of sequencer.csv. [`fmt::Display`] writes plan B's text exactly,
@@ -325,23 +658,23 @@ pub enum Reason {
     External,
     /// The baro launch backup: `launch alt=<elevation, 0 decimals>m dwell=<credit>ms`.
     LaunchAltitude {
-        /// The elevation that completed the dwell.
+        /// The deciding barometer's elevation on the step that completed the dwell (0.0 with none live).
         elevation_m: f32,
         /// The dwell's credit, capped at `launch_ms`.
         dwell_ms: u32,
     },
     /// The accel launch: `launch |a|=<magnitude, 1 decimal>g dwell=<credit>ms`. The magnitude is 0.0 when the
-    /// sample that completed the dwell had no fresh accel (an inactive sample can complete it when the clock
+    /// sample that completed the dwell had no live accel (an inactive sample can complete it when the clock
     /// steps backwards; plan B prints 0.0 rather than taking the root of nothing).
     LaunchAcceleration {
-        /// |accel| of the sample that completed the dwell, in g.
+        /// The deciding accelerometer's |accel| on the step that completed the dwell, in g.
         magnitude_g: f32,
         /// The dwell's credit, capped at `launch_ms`.
         dwell_ms: u32,
     },
     /// Apogee: `apogee <smoothed peak, 0 decimals>m`.
     Apogee {
-        /// The smoothed peak elevation.
+        /// The deciding source's smoothed peak elevation.
         peak_m: f32,
     },
     /// The burnout fallback: `burnout timeout (no separation)`.
@@ -359,7 +692,7 @@ pub enum Reason {
     },
     /// Still on the ground: `stationary <|accel|, 1 decimal>g`.
     Stationary {
-        /// |accel| of the sample that completed the dwell, in g.
+        /// The deciding accelerometer's |accel| on the step that completed the dwell, in g.
         magnitude_g: f32,
     },
     /// The RSO backstop: `flight timeout`.
@@ -404,9 +737,10 @@ impl Transition {
     }
 }
 
-/// What one step reports: up to two sequencer.csv rows, in the order plan B pushes them.
+/// What one step reports: up to two sequencer.csv rows, in the order plan B pushes them, and the veto episodes that
+/// begin or end on it.
 ///
-/// Two, because `_tick` first notices a move made from outside since the last tick and only then runs the
+/// Two rows, because `_tick` first notices a move made from outside since the last tick and only then runs the
 /// detectors, and both can record on one tick: an operator releases a hold that outlasted the flight timeout,
 /// and the backstop fires on the very tick the held stage is first seen.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -416,12 +750,20 @@ pub struct Step {
     /// The stage this step advances to. The caller commits it ([`crate::FlightWriter::advance`]) before the next
     /// step.
     pub advance: Option<Transition>,
+    /// Each detector's episode edge on this step, if one begins or ends, by [`Detector`] (both launch detectors
+    /// can hold episodes at once).
+    vetoes: [Option<VetoEdge>; DETECTORS],
 }
 
 impl Step {
     /// The rows to record, in order.
     pub fn transitions(&self) -> impl Iterator<Item = Transition> {
         self.external.into_iter().chain(self.advance)
+    }
+
+    /// The veto episodes that begin or end on this step, in [`Detector`] order: vetoes.csv's rows.
+    pub fn vetoes(&self) -> impl Iterator<Item = VetoEdge> + '_ {
+        self.vetoes.iter().flatten().copied()
     }
 }
 
@@ -447,7 +789,7 @@ struct Slot {
     held_m: f32,
 }
 
-/// The fresh barometer elevations of the last `launch_alt_window_ms`, for the altitude launch's rate gate: how far
+/// One barometer's fresh elevations of the last `launch_alt_window_ms`, for the altitude launch's rate gate: how far
 /// the elevation has risen above the lowest level it held for `launch_ms` within the window. A level counts only
 /// once held as long as the launch itself must be, so one low or glitched read is no pad to climb from, as one high
 /// read is no climb. A fixed ring of [`CLIMB_SLOTS`] slots, so stepping it allocates nothing.
@@ -492,12 +834,13 @@ impl Climb {
     /// readings holding the last one. With no slot begun that long ago, none is confirmed: right after the history
     /// starts, after a gap longer than the window, and always for a `held_ms` longer than the window.
     ///
-    /// Args: `now_ms` the step clock; `elevation_m` the fresh elevation; `window_ms` `launch_alt_window_ms`;
+    /// Args: `now_ms` the step clock; `elevation_m` the fresh elevation (finite); `window_ms` `launch_alt_window_ms`;
     /// `held_ms` `launch_ms`.
     ///
-    /// Returns: the rise in metres: the elevation minus the lowest level confirmed within the window, or 0.0 when
-    /// none lies below it (NaN for a NaN elevation, which no comparison passes).
-    fn rise(&mut self, now_ms: u32, elevation_m: f32, window_ms: u32, held_ms: u32) -> f32 {
+    /// Returns: the rise in metres: the elevation minus the lowest level confirmed within the window (negative when
+    /// all lie above it); None while no level within the window is confirmed, so a source back from a gap longer than
+    /// the window, or new on the pad, confirms nothing.
+    fn rise(&mut self, now_ms: u32, elevation_m: f32, window_ms: u32, held_ms: u32) -> Option<f32> {
         let window_ms = window_ms.min(LONGEST_LAUNCH_ALTITUDE_WINDOW_MS);
         let within = |start_ms: u32| {
             u32::try_from(commons::elapsed_ms(now_ms, start_ms)).is_ok_and(|age_ms| age_ms <= window_ms)
@@ -529,8 +872,8 @@ impl Climb {
         }
         let lowest_m = (0..self.count)
             .map(|offset| self.slot(offset).held_m)
-            .fold(elevation_m, f32::min);
-        elevation_m - lowest_m
+            .fold(f32::INFINITY, f32::min);
+        lowest_m.is_finite().then_some(elevation_m - lowest_m)
     }
 
     /// The slot `offset` places after the oldest.
@@ -544,7 +887,86 @@ impl Climb {
     }
 }
 
-/// The stage machine: plan B's `Sequencer` state, stepped by [`StageMachine::step`].
+/// One accelerometer slot's history: what the machine compares that source with, and only it.
+#[derive(Clone, Copy, Debug)]
+struct Accelerometer {
+    /// Its thrust gate on its own +x: what it has seen of the boost since BOOSTING entry.
+    thrust: ThrustGate,
+    /// The first step of its current run of readings inside the still band: None before its first reading inside the
+    /// band and after one outside it. A step without a reading keeps the run, so a dropout never releases the at-rest
+    /// veto; the source then simply is not live, and the veto asks only the live ones.
+    at_rest_since_ms: Option<u32>,
+}
+
+/// One elevation source's apogee history (a barometer's or the GNSS's), reset at every BOOSTING entry: its tracker,
+/// and how current it is, for the return rule.
+///
+/// A tracker holds through a missing reading, as plan B's does, while nothing fresher exists. But a source back from
+/// more than `launch_ms` without a reading (or first read that long after arming), while another elevation source was
+/// read after it, comes back to a flight that moved on: its smoothing would crawl from where it left off, raising its
+/// peak step after step, so as the decider it would hold the apogee off (or never call it) and as a peer it would vote
+/// against it. So it JOINS:
+/// - its smoothing restarts on the fresh reading (its peak stays its own);
+/// - for `launch_ms` it neither decides nor votes;
+/// - for the rest of the flight it decides only while no barometer with an unbroken record is live: its own record
+///   may lack the top, and a peak without the top calls the apogee late.
+#[derive(Clone, Copy, Debug, Default)]
+struct Tracker {
+    /// Its apogee tracker. Only its smoothed elevation and peak count: the apogee dwell is the machine's own.
+    apogee: Apogee,
+    /// The step clock its history is current to: the first armed step, then each reading's. None before arming.
+    current_ms: Option<u32>,
+    /// The step clock it last joined on: it decides and votes again `launch_ms` later. None while its record is
+    /// unbroken.
+    joined_ms: Option<u32>,
+}
+
+impl Tracker {
+    /// Take a fresh elevation, armed: join first when the source comes back to a flight that moved on (see the type
+    /// notes).
+    ///
+    /// Args: `now_ms` the step clock; `metres` the fresh elevation (finite); `current` every elevation source's
+    /// `current_ms` before this step's readings, this one's included; `drop_m` `apogee_drop_m`; `launch_ms` the apogee
+    /// dwell, how long a source may miss before it joins, and how long it then sits out.
+    ///
+    /// Returns: whether the reading raised the smoothed peak (a seed raises nothing: a peak that did not exist was not
+    /// raised).
+    fn feed(&mut self, now_ms: u32, metres: f32, current: &[Option<u32>], drop_m: f32, launch_ms: u32) -> bool {
+        if let Some(own_ms) = self.current_ms {
+            let overtaken = current
+                .iter()
+                .flatten()
+                .any(|&peer_ms| commons::elapsed_ms(peer_ms, own_ms) > 0);
+            if overtaken && i64::from(commons::elapsed_ms(now_ms, own_ms)) > i64::from(launch_ms) {
+                self.apogee.smooth = None; // the smoothing restarts on this reading
+                self.joined_ms = Some(now_ms);
+            }
+        }
+        let peak = self.apogee.peak;
+        (self.apogee, _) = commons::apogee_step(Some(metres), now_ms, self.apogee, drop_m, launch_ms);
+        self.current_ms = Some(now_ms);
+        peak.zip(self.apogee.peak).is_some_and(|(before, after)| after > before)
+    }
+
+    /// Whether it sits out at `now_ms`: less than `launch_ms` since it joined.
+    fn joining(&self, now_ms: u32, launch_ms: u32) -> bool {
+        self.joined_ms
+            .is_some_and(|joined_ms| !commons::reached(now_ms, joined_ms, launch_ms))
+    }
+}
+
+/// One barometer slot's history: what the machine compares that source with, and only it.
+#[derive(Clone, Debug)]
+struct Barometer {
+    /// Its elevations on the pad, for the altitude launch's rate gate: boxed, so the 972 B of history live on the heap
+    /// and the machine on the control thread's stack stays small.
+    climb: Box<Climb>,
+    /// Its apogee history.
+    tracker: Tracker,
+}
+
+/// The stage machine: plan B's `Sequencer` state, one dwell per detector, and each slot's own history, stepped by
+/// [`StageMachine::step`].
 #[derive(Clone, Debug)]
 pub struct StageMachine {
     /// The thresholds.
@@ -555,7 +977,8 @@ pub struct StageMachine {
     still_low_squared: f32,
     /// The still band's upper edge squared: (1 + `still_g`)^2.
     still_high_squared: f32,
-    /// The start of the current sustained condition (the burnout, landing and stillness dwells), or None.
+    /// The start of the current sustained condition, or None: the burnout dwell in BOOSTING, the landing dwell in
+    /// GLIDING, the stillness dwell in LANDING (plan B's `_since`, each detector's in its own stage).
     since_ms: Option<u32>,
     /// The stage the last step saw, None before the first: any change resets the dwells, so a separation-driven
     /// hop starts clean.
@@ -563,24 +986,60 @@ pub struct StageMachine {
     /// The stage this machine itself advanced to, until the next step sees it: tells its own moves from
     /// external ones.
     advanced_to: Option<Stage>,
-    /// The apogee tracker, reset at every BOOSTING entry.
-    apogee: Apogee,
+    /// The apogee dwell: when the decider's smoothed elevation fell below its own peak by `apogee_drop_m`, or None
+    /// while it is not below (plan B's tracker `since`), reset at every BOOSTING entry.
+    apogee_since_ms: Option<u32>,
     /// The leaky launch dwell on |accel|.
     launch_dwell: Dwell,
     /// The leaky launch dwell on the baro elevation.
     altitude_dwell: Dwell,
-    /// The baro elevations of the rate gate's window, recorded on the pad.
-    climb: Climb,
     /// The step clock of BOOSTING entry: arms the apogee detector and bases the flight timeout. Re-based on the
     /// first step of an airborne stage entered without BOOSTING (a warm start, an operator move).
     boost_entry_ms: Option<u32>,
     /// The step clock of LANDING entry: bases the landing timeout.
     landing_entry_ms: Option<u32>,
+    /// The accelerometer slots' histories.
+    accelerometers: [Accelerometer; ACCELEROMETER_SLOTS],
+    /// The barometer slots' histories.
+    barometers: [Barometer; BAROMETER_SLOTS],
+    /// The GNSS slot's apogee history.
+    gnss: Tracker,
+    /// Each detector's open veto episode, by [`Detector`]: its latest vetoed step.
+    episodes: [Option<Veto>; DETECTORS],
+}
+
+/// The decider of a class: the first live slot, with its value.
+fn decider<T: Copy>(readings: &[Option<T>]) -> Option<(usize, T)> {
+    readings
+        .iter()
+        .enumerate()
+        .find_map(|(slot, reading)| reading.map(|value| (slot, value)))
+}
+
+/// The peer vote on a step where the decider in `decider_slot` holds its condition: how many of its live peers in
+/// `readings` are `contrary`, and how many voting sources are live, the decider included.
+fn vote<T: Copy>(readings: &[Option<T>], decider_slot: usize, contrary: impl Fn(usize, T) -> bool) -> (u8, u8) {
+    readings
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, reading)| reading.map(|value| (slot, value)))
+        .fold((0, 0), |(against, live), (slot, value)| {
+            (
+                against + u8::from(slot != decider_slot && contrary(slot, value)),
+                live + 1,
+            )
+        })
+}
+
+/// Whether the peers' vote holds the decider: at least half of the live voting sources contrary, one at least.
+fn quorum(contrary: u8, live: u8) -> bool {
+    contrary > 0 && 2 * u16::from(contrary) >= u16::from(live)
 }
 
 impl StageMachine {
     /// A machine that has seen nothing yet: its first step records the stage it finds as external (plan B starts
-    /// with no stage seen, so even a cold boot's SETTING opens sequencer.csv as `setting,external`).
+    /// with no stage seen, so even a cold boot's SETTING opens sequencer.csv as `setting,external`). The one
+    /// allocation it ever makes is here: the barometers' climb histories, boxed.
     pub fn new(settings: Settings) -> StageMachine {
         // the still band 1 +/- still_g compares squared; still_g is a tolerance around 1 g, so always under 1
         let still_low = 1.0 - settings.still_g;
@@ -596,12 +1055,21 @@ impl StageMachine {
             since_ms: None,
             stage_seen: None,
             advanced_to: None,
-            apogee: Apogee::default(),
+            apogee_since_ms: None,
             launch_dwell: Dwell::default(),
             altitude_dwell: Dwell::default(),
-            climb: Climb::new(),
             boost_entry_ms: None,
             landing_entry_ms: None,
+            accelerometers: [Accelerometer {
+                thrust: ThrustGate::new(&settings),
+                at_rest_since_ms: None,
+            }; ACCELEROMETER_SLOTS],
+            barometers: core::array::from_fn(|_| Barometer {
+                climb: Box::new(Climb::new()),
+                tracker: Tracker::default(),
+            }),
+            gnss: Tracker::default(),
+            episodes: [None; DETECTORS],
         }
     }
 
@@ -610,17 +1078,17 @@ impl StageMachine {
         &self.settings
     }
 
-    /// One stage-machine step: plan B's `Sequencer._tick`, exactly.
+    /// One stage-machine step: plan B's `Sequencer._tick`, on every source.
     ///
-    /// An operator hold (`manual`) suspends everything, the change detection included, so a held stage is first
-    /// seen -- and recorded as external -- on the step after `stage auto`. Otherwise a stage different from the
-    /// last one seen restarts the dwells and records an external move unless this machine made it; entering
-    /// SETTING forgets the last flight's timers (else the backstop fired from SETTING on the pad one flight
-    /// timeout after an operator's `stage gliding` / `stage setting`), entering LANDING starts the landing
-    /// timeout, entering BOOSTING resets the apogee tracker and bases the arming window and the flight timeout,
-    /// and entering GLIDING or LANDING without ever having seen BOOSTING re-bases the flight timeout there: the
-    /// backstop re-bases, it never disappears. Then the RSO backstop, then the stage's own detector; each
-    /// advances at most once.
+    /// An operator hold (`manual`) suspends everything, the change detection and every slot's history included, so
+    /// a held stage is first seen -- and recorded as external -- on the step after `stage auto`. Otherwise a stage
+    /// different from the last one seen restarts the dwells and records an external move unless this machine made it;
+    /// entering SETTING forgets the last flight's timers and the pad's climbs (else the backstop fired from SETTING on
+    /// the pad one flight timeout after an operator's `stage gliding` / `stage setting`), entering LANDING starts the
+    /// landing timeout, entering BOOSTING resets the apogee trackers and bases the arming window and the flight
+    /// timeout, and entering GLIDING or LANDING without ever having seen BOOSTING re-bases the flight timeout there:
+    /// the backstop re-bases, it never disappears. Then every accelerometer's thrust gate and run at rest take its
+    /// reading, then the RSO backstop, then the stage's own detector; each advances at most once.
     ///
     /// Only a stage that differs from the last one SEEN is a change, and a hold sees nothing. So a hold that
     /// ends where the machine last looked -- `stage gliding` for a fin check on the pad, then `stage setting` --
@@ -631,12 +1099,16 @@ impl StageMachine {
     /// same holds for a move back to the seen stage between an advance and the next step: it goes unrecorded.
     ///
     /// Args: `now_ms` the caller's monotonic clock; `stage` the stage the flight word holds now (with the
-    /// previous step's advance applied); `readings` the fresh channels; `manual` the operator hold.
-    pub fn step(&mut self, now_ms: u32, stage: Stage, readings: &Readings, manual: bool) -> Step {
+    /// previous step's advance applied); `readings` every bound source's fresh reading ([`SourceReadings`], or the
+    /// fused [`Readings`] in the first slots); `manual` the operator hold.
+    ///
+    /// Returns: the rows to record and the veto episodes' edges.
+    pub fn step(&mut self, now_ms: u32, stage: Stage, readings: impl Into<SourceReadings>, manual: bool) -> Step {
         let mut step = Step::default();
         if manual {
             return step; // the operator holds the stage: no auto-advance, nothing observed
         }
+        let readings = readings.into().live();
         if self.stage_seen != Some(stage) {
             self.since_ms = None;
             self.stage_seen = Some(stage);
@@ -649,20 +1121,10 @@ impl StageMachine {
             self.advanced_to = None;
             self.enter(now_ms, stage);
         }
-        if stage.airborne()
-            && let Some(entry_ms) = self.boost_entry_ms
-            && commons::reached(now_ms, entry_ms, self.settings.flight_timeout_ms)
-        {
-            step.advance = Some(self.advance(Stage::Done, Reason::FlightTimeout));
-            return step;
-        }
-        step.advance = match stage {
-            Stage::Setting => self.detect_launch(now_ms, readings),
-            Stage::Boosting => self.detect_apogee(now_ms, readings),
-            Stage::Gliding => self.detect_landing(now_ms, readings),
-            Stage::Landing => self.detect_stationary(now_ms, readings),
-            Stage::Done => None,
-        };
+        self.observe(now_ms, stage, &readings);
+        let mut vetoes = [None; DETECTORS];
+        step.advance = self.detect(now_ms, stage, &readings, &mut vetoes);
+        step.vetoes = self.edges(vetoes);
         step
     }
 
@@ -674,17 +1136,82 @@ impl StageMachine {
             self.landing_entry_ms = None;
             self.launch_dwell = Dwell::default();
             self.altitude_dwell = Dwell::default();
-            self.climb.clear(); // the pad's elevation is measured afresh (after a re-zero, from the new ground)
+            // the pad's elevation is measured afresh (after a re-zero, from the new ground)
+            for barometer in &mut self.barometers {
+                barometer.climb.clear();
+            }
         }
         if stage == Stage::Landing {
             self.landing_entry_ms = Some(now_ms); // starts the landing timeout (a warm start into LANDING too)
         }
         if stage == Stage::Boosting {
-            self.apogee = Apogee::default(); // peak tracking starts fresh for this flight
+            // peak tracking starts fresh for this flight
+            for barometer in &mut self.barometers {
+                barometer.tracker = Tracker::default();
+            }
+            self.gnss = Tracker::default();
+            self.apogee_since_ms = None;
             self.boost_entry_ms = Some(now_ms); // arms the apogee detector, starts the flight timeout
         } else if self.boost_entry_ms.is_none() && matches!(stage, Stage::Gliding | Stage::Landing) {
             self.boost_entry_ms = Some(now_ms); // airborne without BOOSTING seen: re-base the backstop here
         }
+    }
+
+    /// Every accelerometer's own history takes its reading: its thrust gate on its +x (which starts afresh at a
+    /// BOOSTING entry, and which a missing reading drains), and its run at rest, which only a reading outside the still
+    /// band ends.
+    fn observe(&mut self, now_ms: u32, stage: Stage, readings: &SourceReadings) {
+        let still = readings
+            .accelerations
+            .map(|reading| reading.map(|vector| self.still(commons::magnitude_squared(vector))));
+        for ((accelerometer, reading), still) in self.accelerometers.iter_mut().zip(readings.accelerations).zip(still) {
+            accelerometer
+                .thrust
+                .step(now_ms, stage, reading.map(|[axial_g, _, _]| axial_g));
+            match still {
+                Some(true) => _ = accelerometer.at_rest_since_ms.get_or_insert(now_ms),
+                Some(false) => accelerometer.at_rest_since_ms = None,
+                None => {} // no reading: the run goes on
+            }
+        }
+    }
+
+    /// The RSO backstop, then the stage's own detector, each vetoed step written to `vetoes` by its detector.
+    fn detect(
+        &mut self,
+        now_ms: u32,
+        stage: Stage,
+        readings: &SourceReadings,
+        vetoes: &mut [Option<Veto>; DETECTORS],
+    ) -> Option<Transition> {
+        if stage.airborne()
+            && let Some(entry_ms) = self.boost_entry_ms
+            && commons::reached(now_ms, entry_ms, self.settings.flight_timeout_ms)
+        {
+            return Some(self.advance(Stage::Done, Reason::FlightTimeout));
+        }
+        match stage {
+            Stage::Setting => self.detect_launch(now_ms, readings, vetoes),
+            Stage::Boosting => self.detect_apogee(now_ms, readings, vetoes),
+            Stage::Gliding => self.detect_landing(now_ms, readings),
+            Stage::Landing => self.detect_stationary(now_ms, readings, vetoes),
+            Stage::Done => None,
+        }
+    }
+
+    /// Each detector's episode edge from this step's `vetoes`: a begin where an episode opens, an end (with its last
+    /// vetoed step) where one closes; the open episodes move on.
+    fn edges(&mut self, vetoes: [Option<Veto>; DETECTORS]) -> [Option<VetoEdge>; DETECTORS] {
+        let mut edges = [None; DETECTORS];
+        for ((edge, episode), veto) in edges.iter_mut().zip(&mut self.episodes).zip(vetoes) {
+            *edge = match (*episode, veto) {
+                (None, Some(veto)) => Some(VetoEdge::Begin(veto)),
+                (Some(last), None) => Some(VetoEdge::End(last)),
+                (Some(_), Some(_)) | (None, None) => None,
+            };
+            *episode = veto;
+        }
+        edges
     }
 
     /// Advance to `to` (plan B `_advance`, minus the Controller write the caller makes): the dwell restarts, and
@@ -695,12 +1222,45 @@ impl StageMachine {
         Transition { to, reason }
     }
 
-    /// The contiguous dwell shared by the burnout, landing and stillness detectors (plan B `_sustained`): starts
-    /// on the first call after a reset, then reports whether `threshold_ms` has passed. Callers clear
-    /// `since_ms` when their condition lapses.
+    /// The contiguous dwell of the burnout, landing and stillness detectors (plan B `_sustained`): starts on the first
+    /// call after a reset, then reports whether `threshold_ms` has passed. Callers clear `since_ms` when their
+    /// condition lapses or is vetoed.
     fn sustained(&mut self, now_ms: u32, threshold_ms: u32) -> bool {
         let since_ms = *self.since_ms.get_or_insert(now_ms);
         commons::reached(now_ms, since_ms, threshold_ms)
+    }
+
+    /// Whether |accel| squared lies inside the still band 1 +/- `still_g` (open at both edges).
+    fn still(&self, squared: f32) -> bool {
+        self.still_low_squared < squared && squared < self.still_high_squared
+    }
+
+    /// Whether `holds` for every live accelerometer, one at least: a physics veto's quorum, so one faulty but live part
+    /// never holds a detector alone, and with none live nothing is held.
+    fn every_live_accelerometer(&self, readings: &SourceReadings, holds: impl Fn(&Accelerometer) -> bool) -> bool {
+        let mut live = self
+            .accelerometers
+            .iter()
+            .zip(readings.accelerations)
+            .filter_map(|(accelerometer, reading)| reading.map(|_| accelerometer))
+            .peekable();
+        live.peek().is_some() && live.all(holds)
+    }
+
+    /// The altitude launch's physics veto: every live accelerometer has read inside the still band for the whole
+    /// `launch_alt_window_ms`.
+    fn at_rest(&self, now_ms: u32, readings: &SourceReadings) -> bool {
+        let window_ms = self.settings.launch_alt_window_ms;
+        self.every_live_accelerometer(readings, |accelerometer| {
+            accelerometer
+                .at_rest_since_ms
+                .is_some_and(|since_ms| commons::reached(now_ms, since_ms, window_ms))
+        })
+    }
+
+    /// The apogee's physics veto: every live accelerometer's thrust gate still sees the boost.
+    fn under_thrust(&self, readings: &SourceReadings) -> bool {
+        self.every_live_accelerometer(readings, |accelerometer| accelerometer.thrust.thrust() == Thrust::Seen)
     }
 
     /// SETTING -> BOOSTING: the baro backup first, then the accel (plan B `_detect_launch`).
@@ -711,51 +1271,99 @@ impl StageMachine {
     /// also ends the link's reconnects (they key on the detected launch). A stale baro extrapolates past
     /// `launch_alt_m` the same way (the ICP-10111 read timeouts on the bench), and it must hold `launch_ms`
     /// through the same leaky dwell as the accel: one sample over the line was enough once, which a single spike
-    /// or a glitched read could satisfy. And the GNSS elevation is no baro (see [`Source::Gnss`]).
+    /// or a glitched read could satisfy. And the GNSS elevation is no baro (see [`Source::Gnss`]): it has its own
+    /// slot, which no launch reads.
     ///
-    /// The baro sample counts for the dwell only when the elevation has also RISEN more than `launch_alt_m` within
-    /// `launch_alt_window_ms` (the rate gate, not plan B's): a rocket gains it within a second, weather drift over
-    /// hours, and a pad drifted past `launch_alt_m` launched TMS-7F unarmed overnight under plan B's rule alone. The
-    /// rise is measured from a level the elevation HELD for `launch_ms`, as the climb must hold: one low or glitched
-    /// read on a drifted pad would otherwise stand in for the pad for the whole window. So an elevation already over
-    /// the line on the pad's first readings (no rise seen) is no launch either.
-    fn detect_launch(&mut self, now_ms: u32, readings: &Readings) -> Option<Transition> {
-        let elevation = readings
-            .elevation
-            .filter(|reading| reading.source != Source::Gnss)
-            .map(|reading| reading.value);
-        let magnitude_squared = readings
-            .acceleration
-            .map(|reading| commons::magnitude_squared(reading.value));
+    /// Every live barometer records its own climb. The deciding barometer's sample counts for the dwell only when its
+    /// elevation is over `launch_alt_m` and has also RISEN more than `launch_alt_m` within `launch_alt_window_ms` (the
+    /// rate gate, not plan B's): a rocket gains it within a second, weather drift over hours, and a pad drifted past
+    /// `launch_alt_m` launched TMS-7F unarmed overnight under plan B's rule alone. The rise is measured from a level
+    /// its own elevation HELD for `launch_ms`, as the climb must hold: one low or glitched read on a drifted pad would
+    /// otherwise stand in for the pad for the whole window. So an elevation already over the line on a barometer's
+    /// first readings (no rise seen) is no launch either. A held altitude launch counts as not fired, so the accel
+    /// dwell steps on, as in plan B's else-branch.
+    fn detect_launch(
+        &mut self,
+        now_ms: u32,
+        readings: &SourceReadings,
+        vetoes: &mut [Option<Veto>; DETECTORS],
+    ) -> Option<Transition> {
         let Settings {
             launch_alt_m: line_m,
             launch_alt_window_ms: window_ms,
             launch_ms,
             ..
         } = self.settings;
-        let climbed_now = elevation.is_some_and(|metres| {
-            let rise_m = self.climb.rise(now_ms, metres, window_ms, launch_ms);
-            metres > line_m && rise_m > line_m
+        let mut rises = [None; BAROMETER_SLOTS];
+        for ((barometer, reading), rise) in self.barometers.iter_mut().zip(readings.elevations).zip(&mut rises) {
+            if let Some(metres) = reading {
+                *rise = barometer.climb.rise(now_ms, metres, window_ms, launch_ms);
+            }
+        }
+        let barometer = decider(&readings.elevations);
+        let climbed_now = barometer
+            .is_some_and(|(slot, metres)| metres > line_m && rises[slot].is_some_and(|rise_m| rise_m > line_m));
+        let altitude_veto = barometer.filter(|_| climbed_now).and_then(|(slot, metres)| {
+            let (contrary, live) = vote(&readings.elevations, slot, |peer, _| {
+                rises[peer].is_some_and(|rise_m| rise_m < line_m / 2.0)
+            });
+            let peer = quorum(contrary, live);
+            let physics = self.at_rest(now_ms, readings).then_some(Physics::AtRest);
+            (peer || physics.is_some()).then_some(Veto {
+                detector: Detector::LaunchAltitude,
+                decider: Decider::Barometer(slot),
+                peer,
+                physics,
+                contrary,
+                live,
+                value: metres,
+            })
         });
-        let (altitude_dwell, climbed) =
-            commons::dwell_step(climbed_now, now_ms, self.altitude_dwell, self.settings.launch_ms);
+        vetoes[Detector::LaunchAltitude as usize] = altitude_veto;
+        let (altitude_dwell, climbed) = commons::dwell_step(
+            climbed_now && altitude_veto.is_none(),
+            now_ms,
+            self.altitude_dwell,
+            launch_ms,
+        );
         self.altitude_dwell = altitude_dwell;
         if climbed {
             let reason = Reason::LaunchAltitude {
-                elevation_m: elevation.unwrap_or(0.0),
+                elevation_m: barometer.map_or(0.0, |(_, metres)| metres),
                 dwell_ms: altitude_dwell.credit_ms,
             };
             return Some(self.advance(Stage::Boosting, reason));
         }
-        let boosting_now = magnitude_squared.is_some_and(|squared| squared > self.launch_g_squared);
-        let (launch_dwell, fired) =
-            commons::dwell_step(boosting_now, now_ms, self.launch_dwell, self.settings.launch_ms);
+        let accelerometer =
+            decider(&readings.accelerations).map(|(slot, vector)| (slot, commons::magnitude_squared(vector)));
+        let boosting_now = accelerometer.is_some_and(|(_, squared)| squared > self.launch_g_squared);
+        let acceleration_veto = accelerometer.filter(|_| boosting_now).and_then(|(slot, squared)| {
+            let (contrary, live) = vote(&readings.accelerations, slot, |_, vector| {
+                self.still(commons::magnitude_squared(vector))
+            });
+            quorum(contrary, live).then_some(Veto {
+                detector: Detector::LaunchAcceleration,
+                decider: Decider::Accelerometer(slot),
+                peer: true,
+                physics: None,
+                contrary,
+                live,
+                value: squared.sqrt(),
+            })
+        });
+        vetoes[Detector::LaunchAcceleration as usize] = acceleration_veto;
+        let (launch_dwell, fired) = commons::dwell_step(
+            boosting_now && acceleration_veto.is_none(),
+            now_ms,
+            self.launch_dwell,
+            launch_ms,
+        );
         self.launch_dwell = launch_dwell;
         if !fired {
             return None;
         }
         let reason = Reason::LaunchAcceleration {
-            magnitude_g: magnitude_squared.map_or(0.0, f32::sqrt),
+            magnitude_g: accelerometer.map_or(0.0, |(_, squared)| squared.sqrt()),
             dwell_ms: launch_dwell.credit_ms,
         };
         Some(self.advance(Stage::Boosting, reason))
@@ -763,24 +1371,94 @@ impl StageMachine {
 
     /// BOOSTING -> GLIDING: apogee, else the burnout timeout (plan B `_detect_apogee`).
     ///
-    /// The apogee tracker sees the fresh elevation (the GNSS's included) only once armed, `apogee_arm_ms` past
-    /// BOOSTING entry; an extrapolated sample would feed the PEAK, and a peak is latched. The dwell is
-    /// `launch_ms`, plan B's reuse. The burnout timeout runs from BOOSTING entry regardless of arming.
-    fn detect_apogee(&mut self, now_ms: u32, readings: &Readings) -> Option<Transition> {
+    /// Each barometer's tracker and the GNSS's see their own fresh elevation only once armed, `apogee_arm_ms` past
+    /// BOOSTING entry; an extrapolated sample would feed the PEAK, and a peak is latched. A tracker holds through a
+    /// missing reading, as plan B's does, but a source back to a flight that moved on joins ([`Tracker`]). The decider
+    /// is the top live barometer with an unbroken record, else the top live one past its joining, else the GNSS; its
+    /// condition is its own smoothed elevation below its own peak by `apogee_drop_m`, and the dwell on it is
+    /// `launch_ms`, plan B's reuse. With no decider (blind, or none live) the dwell holds, as plan B's tracker does
+    /// through None. The burnout timeout runs from BOOSTING entry regardless of arming, and no veto holds it.
+    fn detect_apogee(
+        &mut self,
+        now_ms: u32,
+        readings: &SourceReadings,
+        vetoes: &mut [Option<Veto>; DETECTORS],
+    ) -> Option<Transition> {
         let armed = self
             .boost_entry_ms
             .is_some_and(|entry_ms| commons::reached(now_ms, entry_ms, self.settings.apogee_arm_ms));
-        let elevation = readings.elevation.filter(|_| armed).map(|reading| reading.value);
-        let (apogee, fired) = commons::apogee_step(
-            elevation,
-            now_ms,
-            self.apogee,
-            self.settings.apogee_drop_m,
-            self.settings.launch_ms,
-        );
-        self.apogee = apogee;
-        if fired && let Some(peak_m) = apogee.peak {
-            return Some(self.advance(Stage::Gliding, Reason::Apogee { peak_m }));
+        let Settings {
+            apogee_drop_m: drop_m,
+            launch_ms,
+            ..
+        } = self.settings;
+        // the barometers that vote (live, armed and not joining), those of them with an unbroken record, whether each
+        // raised its peak, and the GNSS's elevation when it may decide
+        let mut voting = [None; BAROMETER_SLOTS];
+        let mut unbroken = [None; BAROMETER_SLOTS];
+        let mut raised = [false; BAROMETER_SLOTS];
+        let mut gnss = None;
+        if armed {
+            let trackers = self.barometers.iter_mut().map(|barometer| &mut barometer.tracker);
+            for tracker in trackers.chain([&mut self.gnss]) {
+                tracker.current_ms.get_or_insert(now_ms); // current from the first armed step on
+            }
+            let current: [Option<u32>; BAROMETER_SLOTS + 1] =
+                core::array::from_fn(|slot| match self.barometers.get(slot) {
+                    Some(barometer) => barometer.tracker.current_ms,
+                    None => self.gnss.current_ms,
+                });
+            let slots = self.barometers.iter_mut().zip(readings.elevations);
+            let marks = voting.iter_mut().zip(&mut unbroken).zip(&mut raised);
+            for ((barometer, reading), ((voting, unbroken), raised)) in slots.zip(marks) {
+                if let Some(metres) = reading {
+                    let tracker = &mut barometer.tracker;
+                    *raised = tracker.feed(now_ms, metres, &current, drop_m, launch_ms);
+                    *voting = (!tracker.joining(now_ms, launch_ms)).then_some(metres);
+                    *unbroken = voting.filter(|_| tracker.joined_ms.is_none());
+                }
+            }
+            if let Some(metres) = readings.gnss_elevation {
+                self.gnss.feed(now_ms, metres, &current, drop_m, launch_ms);
+                gnss = (!self.gnss.joining(now_ms, launch_ms)).then_some(metres);
+            }
+        }
+        // the decider (its barometer slot, None for the GNSS) and its tracker, just stepped: below its own line when it
+        // holds a dwell start
+        let decided = decider(&unbroken)
+            .or_else(|| decider(&voting))
+            .map(|(slot, metres)| (Some(slot), metres, self.barometers[slot].tracker.apogee))
+            .or_else(|| gnss.map(|metres| (None, metres, self.gnss.apogee)));
+        if let Some((slot, metres, apogee)) = decided {
+            let below = apogee.since_ms.is_some();
+            let veto = below
+                .then(|| {
+                    // the GNSS has no peers: no barometer votes when it decides
+                    let (contrary, live) = slot.map_or((0, 0), |slot| vote(&voting, slot, |peer, _| raised[peer]));
+                    let peer = quorum(contrary, live);
+                    let physics = self.under_thrust(readings).then_some(Physics::UnderThrust);
+                    (peer || physics.is_some()).then_some(Veto {
+                        detector: Detector::Apogee,
+                        decider: slot.map_or(Decider::Gnss, Decider::Barometer),
+                        peer,
+                        physics,
+                        contrary,
+                        live,
+                        value: metres,
+                    })
+                })
+                .flatten();
+            vetoes[Detector::Apogee as usize] = veto;
+            if below && veto.is_none() {
+                let since_ms = *self.apogee_since_ms.get_or_insert(now_ms);
+                if commons::reached(now_ms, since_ms, launch_ms)
+                    && let Some(peak_m) = apogee.peak
+                {
+                    return Some(self.advance(Stage::Gliding, Reason::Apogee { peak_m }));
+                }
+            } else {
+                self.apogee_since_ms = None; // back inside the band, or held: the fall must hold afresh
+            }
         }
         if self.sustained(now_ms, self.settings.boost_timeout_ms) {
             return Some(self.advance(Stage::Gliding, Reason::BurnoutTimeout));
@@ -790,15 +1468,16 @@ impl StageMachine {
 
     /// GLIDING -> LANDING: the height below `land_agl_m`, sustained `land_ms` (plan B `_detect_landing`).
     ///
-    /// The fresh laser is primary; with no fresh laser the fresh elevation is the fallback. BOTH are
+    /// The fresh laser decides; with no fresh laser the top live barometer's elevation, else the GNSS's. ALL are
     /// source-gated: gating only the laser just moved where the invented number came from (a dead baro behind an
-    /// out-of-range laser handed the landing trigger an extrapolated height). With neither fresh there is no
-    /// height and the dwell resets: no reading is not a low reading.
-    fn detect_landing(&mut self, now_ms: u32, readings: &Readings) -> Option<Transition> {
+    /// out-of-range laser handed the landing trigger an extrapolated height). With none fresh there is no height
+    /// and the dwell resets: no reading is not a low reading. A handover carries the dwell on while the new
+    /// decider is low too (the laser coming into range mid-dwell). No veto holds the landing.
+    fn detect_landing(&mut self, now_ms: u32, readings: &SourceReadings) -> Option<Transition> {
         let height = readings
             .height_above_ground
-            .or(readings.elevation)
-            .map(|reading| reading.value);
+            .or_else(|| decider(&readings.elevations).map(|(_, metres)| metres))
+            .or(readings.gnss_elevation);
         if let Some(height_m) = height
             && height_m < self.settings.land_agl_m
         {
@@ -815,8 +1494,14 @@ impl StageMachine {
     /// `_detect_stationary`).
     ///
     /// The accel is gated for the mirror reason of the launch: an extrapolated accel settles toward a plausible
-    /// ~1 g, exactly the still band, so a dead accel would read as landed while still flying.
-    fn detect_stationary(&mut self, now_ms: u32, readings: &Readings) -> Option<Transition> {
+    /// ~1 g, exactly the still band, so a dead accel would read as landed while still flying. The top live
+    /// accelerometer decides, and the landing timeout fires whatever the vote.
+    fn detect_stationary(
+        &mut self,
+        now_ms: u32,
+        readings: &SourceReadings,
+        vetoes: &mut [Option<Veto>; DETECTORS],
+    ) -> Option<Transition> {
         if let Some(entry_ms) = self.landing_entry_ms
             && commons::reached(now_ms, entry_ms, self.settings.land_timeout_ms)
         {
@@ -825,12 +1510,26 @@ impl StageMachine {
             };
             return Some(self.advance(Stage::Done, reason));
         }
-        let magnitude_squared = readings
-            .acceleration
-            .map(|reading| commons::magnitude_squared(reading.value));
-        if let Some(squared) = magnitude_squared
-            && self.still_low_squared < squared
-            && squared < self.still_high_squared
+        let accelerometer = decider(&readings.accelerations)
+            .map(|(slot, vector)| (slot, commons::magnitude_squared(vector)))
+            .filter(|(_, squared)| self.still(*squared));
+        let veto = accelerometer.and_then(|(slot, squared)| {
+            let (contrary, live) = vote(&readings.accelerations, slot, |_, vector| {
+                !self.still(commons::magnitude_squared(vector))
+            });
+            quorum(contrary, live).then_some(Veto {
+                detector: Detector::Stillness,
+                decider: Decider::Accelerometer(slot),
+                peer: true,
+                physics: None,
+                contrary,
+                live,
+                value: squared.sqrt(),
+            })
+        });
+        vetoes[Detector::Stillness as usize] = veto;
+        if let Some((_, squared)) = accelerometer
+            && veto.is_none()
         {
             if self.sustained(now_ms, self.settings.ground_ms) {
                 let reason = Reason::Stationary {
@@ -850,8 +1549,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        CLIMB_SLOTS, LONGEST_LAUNCH_ALTITUDE_WINDOW_MS, Reading, Readings, Reason, Settings, SettingsProblem, Source,
-        Stage, StageMachine, Step, Transition,
+        Apogee, BAROMETER_SLOTS, CLIMB_SLOTS, Climb, Decider, Detector, LONGEST_LAUNCH_ALTITUDE_WINDOW_MS, Physics,
+        Reading, Readings, Reason, Settings, SettingsProblem, Source, SourceReadings, Stage, StageMachine, Step,
+        Thrust, Tracker, Transition, Veto, VetoEdge,
     };
 
     /// test_sequencer.py's SPEC: small thresholds for fast cases.
@@ -866,22 +1566,25 @@ mod tests {
         }
     }
 
-    /// A fresh accel reading.
-    fn acceleration(z: f32) -> Readings {
-        Readings {
-            acceleration: Some(Reading {
-                value: [0.0, 0.0, z],
-                source: Source::Other,
-            }),
-            ..Readings::default()
-        }
+    /// A fresh accel reading from the first accelerometer.
+    fn acceleration(z: f32) -> SourceReadings {
+        let mut readings = SourceReadings::default();
+        readings.accelerations[0] = Some([0.0, 0.0, z]);
+        readings
     }
 
-    /// A fresh elevation reading from `source`.
-    fn elevation(metres: f32, source: Source) -> Readings {
-        Readings {
-            elevation: Some(Reading { value: metres, source }),
-            ..Readings::default()
+    /// A fresh elevation from the first barometer.
+    fn barometer(metres: f32) -> SourceReadings {
+        let mut readings = SourceReadings::default();
+        readings.elevations[0] = Some(metres);
+        readings
+    }
+
+    /// A fresh elevation from the GNSS.
+    fn gnss(metres: f32) -> SourceReadings {
+        SourceReadings {
+            gnss_elevation: Some(metres),
+            ..SourceReadings::default()
         }
     }
 
@@ -893,9 +1596,9 @@ mod tests {
     }
 
     /// Step a machine through `ticks`, applying each advance as the caller does; returns the stage at the end.
-    fn run(machine: &mut StageMachine, mut stage: Stage, ticks: &[(u32, Readings)]) -> Stage {
+    fn run(machine: &mut StageMachine, mut stage: Stage, ticks: &[(u32, SourceReadings)]) -> Stage {
         for (now_ms, readings) in ticks {
-            if let Some(advance) = machine.step(*now_ms, stage, readings, false).advance {
+            if let Some(advance) = machine.step(*now_ms, stage, *readings, false).advance {
                 stage = advance.to;
             }
         }
@@ -957,10 +1660,10 @@ mod tests {
     #[test]
     fn the_first_step_records_the_stage_it_finds() {
         let mut machine = StageMachine::new(spec());
-        let step = machine.step(0, Stage::Setting, &acceleration(1.0), false);
+        let step = machine.step(0, Stage::Setting, acceleration(1.0), false);
         assert_eq!(rows(step), [(Stage::Setting, "external".to_string())]);
         assert_eq!(
-            machine.step(50, Stage::Setting, &acceleration(1.0), false),
+            machine.step(50, Stage::Setting, acceleration(1.0), false),
             Step::default()
         );
     }
@@ -968,18 +1671,18 @@ mod tests {
     #[test]
     fn a_sustained_boost_launches_and_is_not_recorded_twice() {
         let mut machine = StageMachine::new(spec());
-        machine.step(1000, Stage::Setting, &acceleration(8.0), false);
+        machine.step(1000, Stage::Setting, acceleration(8.0), false);
         assert_eq!(
-            machine.step(1050, Stage::Setting, &acceleration(8.0), false).advance,
+            machine.step(1050, Stage::Setting, acceleration(8.0), false).advance,
             None
         );
-        let step = machine.step(1100, Stage::Setting, &acceleration(8.0), false);
+        let step = machine.step(1100, Stage::Setting, acceleration(8.0), false);
         assert_eq!(
             rows(step),
             [(Stage::Boosting, "launch |a|=8.0g dwell=100ms".to_string())]
         );
         assert_eq!(
-            machine.step(1110, Stage::Boosting, &acceleration(8.0), false),
+            machine.step(1110, Stage::Boosting, acceleration(8.0), false),
             Step::default()
         );
     }
@@ -987,14 +1690,14 @@ mod tests {
     #[test]
     fn a_stale_or_gnss_input_never_launches() {
         let mut machine = StageMachine::new(spec());
-        let gnss = elevation(15.0, Source::Gnss);
-        let nothing = Readings::default();
-        let ticks: Vec<(u32, Readings)> = (0..20)
-            .map(|tick| (tick * 50, if tick % 2 == 0 { gnss } else { nothing }))
+        let fifteen = gnss(15.0);
+        let nothing = SourceReadings::default();
+        let ticks: Vec<(u32, SourceReadings)> = (0..20)
+            .map(|tick| (tick * 50, if tick % 2 == 0 { fifteen } else { nothing }))
             .collect();
         assert_eq!(run(&mut machine, Stage::Setting, &ticks), Stage::Setting);
         // the same 15 m from a barometer, risen from the pad it held, is a launch
-        let (pad, baro) = (elevation(0.0, Source::Other), elevation(15.0, Source::Other));
+        let (pad, baro) = (barometer(0.0), barometer(15.0));
         let ticks = [(1850, pad), (1900, pad), (1950, pad), (2000, baro), (2100, baro)];
         assert_eq!(run(&mut machine, Stage::Setting, &ticks), Stage::Boosting);
     }
@@ -1003,33 +1706,33 @@ mod tests {
     fn the_gnss_elevation_is_no_pad_to_climb_from() {
         // the baro drifted to 10.5 m; both baros go stale for 200 ms and the databoard falls through to the GNSS,
         // zeroed at its first fix and reading -1 m; then the baro is back at 10.5 m, which never rose from the GNSS
-        let flown = |low: Source| {
-            let ticks: Vec<(u32, Readings)> = (0..=3000)
+        let flown = |low: fn(f32) -> SourceReadings| {
+            let ticks: Vec<(u32, SourceReadings)> = (0..=3000)
                 .step_by(50)
                 .map(|now_ms| match now_ms {
-                    1000..1200 => (now_ms, elevation(-1.0, low)),
-                    _ => (now_ms, elevation(10.5, Source::Other)),
+                    1000..1200 => (now_ms, low(-1.0)),
+                    _ => (now_ms, barometer(10.5)),
                 })
                 .collect();
             run(&mut gated(1000), Stage::Setting, &ticks)
         };
-        assert_eq!(flown(Source::Gnss), Stage::Setting);
+        assert_eq!(flown(gnss), Stage::Setting);
         // the same -1 m from a barometer is a pad the 10.5 m rose 11.5 m from
-        assert_eq!(flown(Source::Other), Stage::Boosting);
+        assert_eq!(flown(barometer), Stage::Boosting);
     }
 
     #[test]
     fn an_operator_hold_suspends_everything() {
         let mut machine = StageMachine::new(spec());
-        machine.step(0, Stage::Setting, &acceleration(1.0), false);
+        machine.step(0, Stage::Setting, acceleration(1.0), false);
         for now_ms in [50, 100, 500] {
             assert_eq!(
-                machine.step(now_ms, Stage::Gliding, &acceleration(8.0), true),
+                machine.step(now_ms, Stage::Gliding, acceleration(8.0), true),
                 Step::default()
             );
         }
         // released: the held stage is seen now, as external
-        let step = machine.step(550, Stage::Gliding, &Readings::default(), false);
+        let step = machine.step(550, Stage::Gliding, SourceReadings::default(), false);
         assert_eq!(rows(step), [(Stage::Gliding, "external".to_string())]);
     }
 
@@ -1049,9 +1752,9 @@ mod tests {
             ],
         );
         assert_eq!(stage, Stage::Boosting);
-        machine.step(150, Stage::Boosting, &acceleration(8.0), false);
-        machine.step(200, Stage::Gliding, &acceleration(1.0), true);
-        let step = machine.step(1550, Stage::Gliding, &acceleration(1.0), false);
+        machine.step(150, Stage::Boosting, acceleration(8.0), false);
+        machine.step(200, Stage::Gliding, acceleration(1.0), true);
+        let step = machine.step(1550, Stage::Gliding, acceleration(1.0), false);
         assert_eq!(
             rows(step),
             [
@@ -1067,12 +1770,12 @@ mod tests {
             flight_timeout_ms: 2000,
             ..spec()
         });
-        let high = elevation(80.0, Source::Other);
+        let high = barometer(80.0);
         assert_eq!(
             run(&mut machine, Stage::Gliding, &[(10_000, high), (11_999, high)]),
             Stage::Gliding
         );
-        let step = machine.step(12_000, Stage::Gliding, &high, false);
+        let step = machine.step(12_000, Stage::Gliding, high, false);
         assert_eq!(rows(step), [(Stage::Done, "flight timeout".to_string())]);
     }
 
@@ -1082,10 +1785,10 @@ mod tests {
             flight_timeout_ms: 1000,
             ..spec()
         });
-        machine.step(0, Stage::Gliding, &Readings::default(), false);
-        machine.step(100, Stage::Setting, &acceleration(1.0), false);
+        machine.step(0, Stage::Gliding, SourceReadings::default(), false);
+        machine.step(100, Stage::Setting, acceleration(1.0), false);
         assert_eq!(
-            machine.step(5000, Stage::Setting, &acceleration(1.0), false),
+            machine.step(5000, Stage::Setting, acceleration(1.0), false),
             Step::default()
         );
     }
@@ -1094,7 +1797,7 @@ mod tests {
     fn a_stale_laser_never_lands_the_glider_at_altitude() {
         let mut machine = StageMachine::new(spec());
         // the laser is out of range (None), the baro says 274 m: no landing however long
-        let apogee = elevation(274.0, Source::Other);
+        let apogee = barometer(274.0);
         assert_eq!(
             run(
                 &mut machine,
@@ -1104,30 +1807,27 @@ mod tests {
             Stage::Gliding
         );
         // a fresh laser low reading lands it, and wins over the baro
-        let low = Readings {
-            height_above_ground: Some(Reading {
-                value: 2.0,
-                source: Source::Other,
-            }),
+        let low = SourceReadings {
+            height_above_ground: Some(2.0),
             ..apogee
         };
-        machine.step(30_050, Stage::Gliding, &low, false);
-        let step = machine.step(30_150, Stage::Gliding, &low, false);
+        machine.step(30_050, Stage::Gliding, low, false);
+        let step = machine.step(30_150, Stage::Gliding, low, false);
         assert_eq!(rows(step), [(Stage::Landing, "agl 2.0m".to_string())]);
     }
 
     #[test]
     fn a_lost_height_resets_the_landing_dwell() {
         let mut machine = StageMachine::new(spec());
-        let low = elevation(3.0, Source::Other);
-        machine.step(0, Stage::Gliding, &low, false);
-        machine.step(90, Stage::Gliding, &Readings::default(), false);
+        let low = barometer(3.0);
+        machine.step(0, Stage::Gliding, low, false);
+        machine.step(90, Stage::Gliding, SourceReadings::default(), false);
         assert_eq!(
-            machine.step(100, Stage::Gliding, &low, false).advance,
+            machine.step(100, Stage::Gliding, low, false).advance,
             None,
             "the dwell restarted at 100"
         );
-        assert!(machine.step(200, Stage::Gliding, &low, false).advance.is_some());
+        assert!(machine.step(200, Stage::Gliding, low, false).advance.is_some());
     }
 
     #[test]
@@ -1136,7 +1836,7 @@ mod tests {
             land_timeout_ms: 1000,
             ..spec()
         });
-        let nothing = Readings::default();
+        let nothing = SourceReadings::default();
         assert_eq!(
             run(
                 &mut machine,
@@ -1145,32 +1845,29 @@ mod tests {
             ),
             Stage::Landing
         );
-        let step = machine.step(1000, Stage::Landing, &nothing, false);
+        let step = machine.step(1000, Stage::Landing, nothing, false);
         assert_eq!(rows(step), [(Stage::Done, "landing timeout 1 s".to_string())]);
     }
 
     #[test]
     fn stillness_lands_and_the_band_is_open() {
         let mut machine = StageMachine::new(spec());
-        machine.step(0, Stage::Landing, &acceleration(0.69), false);
-        machine.step(100, Stage::Landing, &acceleration(1.31), false);
-        machine.step(200, Stage::Landing, &acceleration(0.71), false);
+        machine.step(0, Stage::Landing, acceleration(0.69), false);
+        machine.step(100, Stage::Landing, acceleration(1.31), false);
+        machine.step(200, Stage::Landing, acceleration(0.71), false);
         assert_eq!(
-            machine.step(499, Stage::Landing, &acceleration(1.29), false).advance,
+            machine.step(499, Stage::Landing, acceleration(1.29), false).advance,
             None
         );
-        let step = machine.step(500, Stage::Landing, &acceleration(1.0), false);
+        let step = machine.step(500, Stage::Landing, acceleration(1.0), false);
         assert_eq!(rows(step), [(Stage::Done, "stationary 1.0g".to_string())]);
     }
 
     /// A fresh laser reading.
-    fn laser(metres: f32) -> Readings {
-        Readings {
-            height_above_ground: Some(Reading {
-                value: metres,
-                source: Source::Other,
-            }),
-            ..Readings::default()
+    fn laser(metres: f32) -> SourceReadings {
+        SourceReadings {
+            height_above_ground: Some(metres),
+            ..SourceReadings::default()
         }
     }
 
@@ -1179,23 +1876,20 @@ mod tests {
     fn repeat(
         machine: &mut StageMachine,
         stage: Stage,
-        readings: Readings,
+        readings: SourceReadings,
         from_ms: u32,
         to_ms: u32,
     ) -> Option<Transition> {
         (from_ms..=to_ms)
             .step_by(50)
-            .filter_map(|now_ms| machine.step(now_ms, stage, &readings, false).advance)
+            .filter_map(|now_ms| machine.step(now_ms, stage, readings, false).advance)
             .last()
     }
 
     /// A machine on `spec()` that has read a pad of `pad_m`, from 0 through 100 ms: a level held `launch_ms`.
     fn on_a_pad(pad_m: f32) -> StageMachine {
         let mut machine = StageMachine::new(spec());
-        assert_eq!(
-            repeat(&mut machine, Stage::Setting, elevation(pad_m, Source::Other), 0, 100),
-            None
-        );
+        assert_eq!(repeat(&mut machine, Stage::Setting, barometer(pad_m), 0, 100), None);
         machine
     }
 
@@ -1205,10 +1899,7 @@ mod tests {
         // both exactly
         let mut machine = on_a_pad(0.0);
         assert_eq!(repeat(&mut machine, Stage::Setting, acceleration(3.0), 150, 450), None);
-        assert_eq!(
-            repeat(&mut machine, Stage::Setting, elevation(10.0, Source::Other), 500, 800),
-            None
-        );
+        assert_eq!(repeat(&mut machine, Stage::Setting, barometer(10.0), 500, 800), None);
         // clearly over either line, it launches
         let launch = repeat(&mut machine, Stage::Setting, acceleration(3.5), 850, 950);
         assert_eq!(
@@ -1217,7 +1908,7 @@ mod tests {
         );
         // from a pad of pad_m to metres, held
         let climb = |pad_m: f32, metres: f32| {
-            let high = elevation(metres, Source::Other);
+            let high = barometer(metres);
             repeat(&mut on_a_pad(pad_m), Stage::Setting, high, 150, 1050).map(|step| step.to)
         };
         assert_eq!(climb(0.0, 10.5), Some(Stage::Boosting));
@@ -1230,10 +1921,7 @@ mod tests {
     #[test]
     fn the_landing_height_is_strict() {
         let mut machine = StageMachine::new(spec());
-        assert_eq!(
-            repeat(&mut machine, Stage::Gliding, elevation(5.0, Source::Other), 0, 200),
-            None
-        );
+        assert_eq!(repeat(&mut machine, Stage::Gliding, barometer(5.0), 0, 200), None);
         assert_eq!(repeat(&mut machine, Stage::Gliding, laser(5.0), 250, 450), None);
         let landing = repeat(&mut machine, Stage::Gliding, laser(4.5), 500, 600);
         assert_eq!(
@@ -1265,48 +1953,51 @@ mod tests {
 
     #[test]
     fn the_apogee_detector_arms_exactly_apogee_arm_ms_after_entry() {
-        let mut machine = StageMachine::new(Settings {
-            apogee_arm_ms: 100,
-            boost_timeout_ms: 5000,
-            ..spec()
-        });
-        let ticks = [
-            (0, Readings::default()),
-            (99, elevation(300.0, Source::Other)), // a millisecond early: ignored, or the peak would be 300 m
-            (100, elevation(210.0, Source::Other)), // armed on the dot: seeds the peak
-            (150, elevation(200.0, Source::Other)),
-            (200, elevation(200.0, Source::Other)),
-            (250, elevation(170.0, Source::Other)),
-            (300, elevation(170.0, Source::Other)),
-        ];
-        assert_eq!(run(&mut machine, Stage::Boosting, &ticks), Stage::Boosting);
-        let step = machine.step(350, Stage::Boosting, &elevation(170.0, Source::Other), false);
-        assert_eq!(rows(step), [(Stage::Gliding, "apogee 210m".to_string())]);
+        // a barometer's tracker and the GNSS's alike
+        for source in [barometer, gnss] {
+            let mut machine = StageMachine::new(Settings {
+                apogee_arm_ms: 100,
+                boost_timeout_ms: 5000,
+                ..spec()
+            });
+            let ticks = [
+                (0, SourceReadings::default()),
+                (99, source(300.0)),  // a millisecond early: ignored, or the peak would be 300 m
+                (100, source(210.0)), // armed on the dot: seeds the peak
+                (150, source(200.0)),
+                (200, source(200.0)),
+                (250, source(170.0)),
+                (300, source(170.0)),
+            ];
+            assert_eq!(run(&mut machine, Stage::Boosting, &ticks), Stage::Boosting);
+            let step = machine.step(350, Stage::Boosting, source(170.0), false);
+            assert_eq!(rows(step), [(Stage::Gliding, "apogee 210m".to_string())]);
+        }
     }
 
     #[test]
     fn entering_setting_restarts_the_launch_dwells() {
         let (still, boost) = (acceleration(1.0), acceleration(8.0));
         let mut machine = StageMachine::new(spec());
-        machine.step(0, Stage::Setting, &still, false);
-        machine.step(50, Stage::Setting, &boost, false);
-        machine.step(100, Stage::Setting, &boost, false);
-        machine.step(110, Stage::Gliding, &boost, false);
+        machine.step(0, Stage::Setting, still, false);
+        machine.step(50, Stage::Setting, boost, false);
+        machine.step(100, Stage::Setting, boost, false);
+        machine.step(110, Stage::Gliding, boost, false);
         // back on the pad 30 ms later: a kept half credit would only drain to 20 and launch at 230; restarted, the
         // dwell needs launch_ms afresh
-        let step = machine.step(130, Stage::Setting, &still, false);
+        let step = machine.step(130, Stage::Setting, still, false);
         assert_eq!(rows(step), [(Stage::Setting, "external".to_string())]);
-        assert_eq!(machine.step(180, Stage::Setting, &boost, false).advance, None);
-        assert_eq!(machine.step(230, Stage::Setting, &boost, false).advance, None);
-        assert!(machine.step(280, Stage::Setting, &boost, false).advance.is_some());
+        assert_eq!(machine.step(180, Stage::Setting, boost, false).advance, None);
+        assert_eq!(machine.step(230, Stage::Setting, boost, false).advance, None);
+        assert!(machine.step(280, Stage::Setting, boost, false).advance.is_some());
         // the altitude dwell: the pad must hold launch_ms afresh first, which drains any credit kept, so only a clock
         // stepping back shows one. It feeds an inactive dwell: a kept half credit would complete on the pad's reading
-        let (pad, high) = (elevation(0.0, Source::Other), elevation(15.0, Source::Other));
+        let (pad, high) = (barometer(0.0), barometer(15.0));
         let mut machine = on_a_pad(0.0);
-        machine.step(150, Stage::Setting, &high, false);
-        machine.step(200, Stage::Setting, &high, false);
-        machine.step(210, Stage::Gliding, &high, false);
-        let step = machine.step(110, Stage::Setting, &pad, false);
+        machine.step(150, Stage::Setting, high, false);
+        machine.step(200, Stage::Setting, high, false);
+        machine.step(210, Stage::Gliding, high, false);
+        let step = machine.step(110, Stage::Setting, pad, false);
         assert_eq!(rows(step), [(Stage::Setting, "external".to_string())]);
         // restarted, the pad holds from 110 to 210, and launch_ms of the climb after it launches
         assert_eq!(repeat(&mut machine, Stage::Setting, pad, 160, 210), None);
@@ -1319,20 +2010,20 @@ mod tests {
 
     #[test]
     fn entering_boosting_restarts_the_apogee_tracker() {
-        let mut machine = StageMachine::new(Settings {
-            apogee_arm_ms: 0,
-            boost_timeout_ms: 5000,
-            ..spec()
-        });
-        let ticks = [
-            (0, elevation(240.0, Source::Other)),
-            (50, elevation(240.0, Source::Other)),
-        ];
-        assert_eq!(run(&mut machine, Stage::Boosting, &ticks), Stage::Boosting);
-        machine.step(100, Stage::Setting, &elevation(0.5, Source::Other), false);
-        // a second flight at 100 m: a kept 240 m peak would call apogee within launch_ms
-        let low = elevation(100.0, Source::Other);
-        assert_eq!(repeat(&mut machine, Stage::Boosting, low, 200, 400), None);
+        // a barometer's tracker and the GNSS's alike
+        for source in [barometer, gnss] {
+            let mut machine = StageMachine::new(Settings {
+                apogee_arm_ms: 0,
+                boost_timeout_ms: 5000,
+                ..spec()
+            });
+            let ticks = [(0, source(240.0)), (50, source(240.0))];
+            assert_eq!(run(&mut machine, Stage::Boosting, &ticks), Stage::Boosting);
+            machine.step(100, Stage::Setting, barometer(0.5), false);
+            // a second flight at 100 m: a kept 240 m peak would call apogee within launch_ms
+            let low = source(100.0);
+            assert_eq!(repeat(&mut machine, Stage::Boosting, low, 200, 400), None);
+        }
     }
 
     #[test]
@@ -1347,19 +2038,19 @@ mod tests {
             run(&mut machine, Stage::Landing, &[(0, carried), (499, carried)]),
             Stage::Landing
         );
-        let step = machine.step(500, Stage::Landing, &carried, false);
+        let step = machine.step(500, Stage::Landing, carried, false);
         assert_eq!(rows(step), [(Stage::Done, "flight timeout".to_string())]);
     }
 
     #[test]
     fn a_hold_ending_where_the_machine_looked_is_no_change() {
         let mut machine = StageMachine::new(spec());
-        machine.step(0, Stage::Setting, &acceleration(8.0), false);
-        machine.step(50, Stage::Setting, &acceleration(8.0), false);
-        machine.step(60, Stage::Gliding, &acceleration(8.0), true);
+        machine.step(0, Stage::Setting, acceleration(8.0), false);
+        machine.step(50, Stage::Setting, acceleration(8.0), false);
+        machine.step(60, Stage::Gliding, acceleration(8.0), true);
         // `stage setting` ends the hold on the stage last seen: no external row, and the kept half credit plus
         // the 4950 ms gap launch on this one sample
-        let step = machine.step(5000, Stage::Setting, &acceleration(8.0), false);
+        let step = machine.step(5000, Stage::Setting, acceleration(8.0), false);
         assert_eq!(
             rows(step),
             [(Stage::Boosting, "launch |a|=8.0g dwell=100ms".to_string())]
@@ -1369,11 +2060,8 @@ mod tests {
     #[test]
     fn the_launch_reasons_plan_b_prints() {
         // both dwells complete on one tick, the elevation risen from the pad: the baro backup is checked first
-        let both = Readings {
-            elevation: Some(Reading {
-                value: 15.0,
-                source: Source::Other,
-            }),
+        let both = SourceReadings {
+            elevations: [Some(15.0), None],
             ..acceleration(8.0)
         };
         let launch = repeat(&mut on_a_pad(0.0), Stage::Setting, both, 150, 250);
@@ -1384,17 +2072,13 @@ mod tests {
         // a clock stepping back onto a sample with no reading feeds the dwell to full: plan B prints 0
         for (pad, readings, text) in [
             (acceleration(1.0), acceleration(8.0), "launch |a|=0.0g dwell=100ms"),
-            (
-                elevation(0.0, Source::Other),
-                elevation(15.0, Source::Other),
-                "launch alt=0m dwell=100ms",
-            ),
+            (barometer(0.0), barometer(15.0), "launch alt=0m dwell=100ms"),
         ] {
             let mut machine = StageMachine::new(spec());
             assert_eq!(repeat(&mut machine, Stage::Setting, pad, 850, 950), None);
-            machine.step(1000, Stage::Setting, &readings, false);
-            machine.step(1080, Stage::Setting, &readings, false);
-            let step = machine.step(1060, Stage::Setting, &Readings::default(), false);
+            machine.step(1000, Stage::Setting, readings, false);
+            machine.step(1080, Stage::Setting, readings, false);
+            let step = machine.step(1060, Stage::Setting, SourceReadings::default(), false);
             assert_eq!(rows(step), [(Stage::Boosting, text.to_string())]);
         }
     }
@@ -1405,10 +2089,10 @@ mod tests {
             flight_timeout_ms: 100,
             ..spec()
         });
-        machine.step(0, Stage::Boosting, &Readings::default(), false);
-        machine.step(10, Stage::Done, &acceleration(1.0), false);
+        machine.step(0, Stage::Boosting, SourceReadings::default(), false);
+        machine.step(10, Stage::Done, acceleration(1.0), false);
         assert_eq!(
-            machine.step(10_000, Stage::Done, &acceleration(8.0), false),
+            machine.step(10_000, Stage::Done, acceleration(8.0), false),
             Step::default()
         );
     }
@@ -1420,12 +2104,22 @@ mod tests {
             ..spec()
         });
         let start = u32::MAX - 400;
-        machine.step(start, Stage::Gliding, &Readings::default(), false);
+        machine.step(start, Stage::Gliding, SourceReadings::default(), false);
         assert_eq!(
-            machine.step(start.wrapping_add(999), Stage::Gliding, &Readings::default(), false),
+            machine.step(
+                start.wrapping_add(999),
+                Stage::Gliding,
+                SourceReadings::default(),
+                false
+            ),
             Step::default()
         );
-        let step = machine.step(start.wrapping_add(1000), Stage::Gliding, &Readings::default(), false);
+        let step = machine.step(
+            start.wrapping_add(1000),
+            Stage::Gliding,
+            SourceReadings::default(),
+            false,
+        );
         assert_eq!(rows(step), [(Stage::Done, "flight timeout".to_string())]);
     }
 
@@ -1575,22 +2269,22 @@ mod tests {
     fn the_longest_ms_it_takes_is_one_the_machine_reaches() {
         let settings = Settings::from_config(&json!({"flight_timeout_ms": 2_147_483_647})).unwrap();
         let mut machine = StageMachine::new(settings);
-        machine.step(0, Stage::Gliding, &Readings::default(), false);
+        machine.step(0, Stage::Gliding, SourceReadings::default(), false);
         assert_eq!(
-            machine.step(2_147_483_646, Stage::Gliding, &Readings::default(), false),
+            machine.step(2_147_483_646, Stage::Gliding, SourceReadings::default(), false),
             Step::default()
         );
-        let step = machine.step(2_147_483_647, Stage::Gliding, &Readings::default(), false);
+        let step = machine.step(2_147_483_647, Stage::Gliding, SourceReadings::default(), false);
         assert_eq!(rows(step), [(Stage::Done, "flight timeout".to_string())]);
         // one ms longer, which it refuses: the signed elapsed time turns negative first, so the backstop never fires
         let mut machine = StageMachine::new(Settings {
             flight_timeout_ms: 2_147_483_648,
             ..settings
         });
-        machine.step(0, Stage::Gliding, &Readings::default(), false);
+        machine.step(0, Stage::Gliding, SourceReadings::default(), false);
         for now_ms in [2_147_483_647, 2_147_483_648, u32::MAX] {
             assert_eq!(
-                machine.step(now_ms, Stage::Gliding, &Readings::default(), false),
+                machine.step(now_ms, Stage::Gliding, SourceReadings::default(), false),
                 Step::default(),
                 "{now_ms}"
             );
@@ -1662,8 +2356,8 @@ mod tests {
         elevation_m: impl Fn(u32) -> f32,
     ) -> Option<(u32, String)> {
         (from_ms..=to_ms).step_by(period_ms).find_map(|now_ms| {
-            let readings = elevation(elevation_m(now_ms), Source::Other);
-            let advance = machine.step(now_ms, Stage::Setting, &readings, false).advance;
+            let readings = barometer(elevation_m(now_ms));
+            let advance = machine.step(now_ms, Stage::Setting, readings, false).advance;
             advance.map(|advance| (now_ms, advance.reason.to_string()))
         })
     }
@@ -1753,12 +2447,12 @@ mod tests {
         // the pad's level only. On time, the dwell completes with that level confirmed exactly 1000 ms before, still
         // in the window; a millisecond later it is out
         for (late_ms, launched) in [(0, true), (1, false)] {
-            let ticks: Vec<(u32, Readings)> = (0..=1100)
+            let ticks: Vec<(u32, SourceReadings)> = (0..=1100)
                 .step_by(50)
                 .map(|now_ms| match now_ms {
-                    0..=100 => (now_ms, elevation(0.0, Source::Other)),
-                    150..1000 => (now_ms, elevation(5.0, Source::Other)),
-                    _ => (now_ms + late_ms, elevation(11.0, Source::Other)),
+                    0..=100 => (now_ms, barometer(0.0)),
+                    150..1000 => (now_ms, barometer(5.0)),
+                    _ => (now_ms + late_ms, barometer(11.0)),
                 })
                 .collect();
             let stage = run(&mut gated(1000), Stage::Setting, &ticks);
@@ -1796,7 +2490,7 @@ mod tests {
             first_launch(&mut machine, 0, 3000, 25, shape),
             Some((2100, "launch alt=11m dwell=100ms".to_string()))
         );
-        assert_eq!(machine.climb.count, CLIMB_SLOTS);
+        assert_eq!(machine.barometers[0].climb.count, CLIMB_SLOTS);
     }
 
     #[test]
@@ -1830,7 +2524,7 @@ mod tests {
             first_launch(&mut machine, 0, 3000, 24, shape),
             Some((2088, "launch alt=11m dwell=100ms".to_string()))
         );
-        assert_eq!(machine.climb.count, 42);
+        assert_eq!(machine.barometers[0].climb.count, 42);
     }
 
     #[test]
@@ -1846,18 +2540,16 @@ mod tests {
         // a second on the pad at 0 m, then no fresh baro for 2^31 ms (24.8 days): the signed elapsed time reads the
         // pad's readings as being from the future, so they are dropped, and 11 m is no rise
         let resumed_ms = 1000 + (1_u32 << 31);
-        let mut ticks: Vec<(u32, Readings)> = (0..=1000)
-            .step_by(50)
-            .map(|now_ms| (now_ms, elevation(0.0, Source::Other)))
-            .collect();
-        ticks.extend((0..20).map(|tick| (resumed_ms + tick * 50, elevation(11.0, Source::Other))));
+        let mut ticks: Vec<(u32, SourceReadings)> =
+            (0..=1000).step_by(50).map(|now_ms| (now_ms, barometer(0.0))).collect();
+        ticks.extend((0..20).map(|tick| (resumed_ms + tick * 50, barometer(11.0))));
         assert_eq!(run(&mut gated(1000), Stage::Setting, &ticks), Stage::Setting);
         // the same climb across the clock's wrap, read every 50 ms, launches
         let start = u32::MAX - 1000;
-        let ticks: Vec<(u32, Readings)> = (0..40)
+        let ticks: Vec<(u32, SourceReadings)> = (0..40)
             .map(|tick: u32| {
                 let metres = if tick < 25 { 0.0 } else { 11.0 };
-                (start.wrapping_add(tick * 50), elevation(metres, Source::Other))
+                (start.wrapping_add(tick * 50), barometer(metres))
             })
             .collect();
         assert_eq!(run(&mut gated(1000), Stage::Setting, &ticks), Stage::Boosting);
@@ -1866,14 +2558,14 @@ mod tests {
     #[test]
     fn a_level_confirmed_before_the_clock_stepped_back_is_forgotten() {
         // the pad's 0 m from 1000 to 1500, then 11 m: launch_ms into the climb, it launches
-        let pad = |now_ms: u32| (now_ms, elevation(0.0, Source::Other));
-        let high = |now_ms: u32| (now_ms, elevation(11.0, Source::Other));
-        let mut ticks: Vec<(u32, Readings)> = (1000..=1500).step_by(50).map(pad).collect();
+        let pad = |now_ms: u32| (now_ms, barometer(0.0));
+        let high = |now_ms: u32| (now_ms, barometer(11.0));
+        let mut ticks: Vec<(u32, SourceReadings)> = (1000..=1500).step_by(50).map(pad).collect();
         ticks.extend((1550..=2000).step_by(50).map(high));
         assert_eq!(run(&mut gated(1000), Stage::Setting, &ticks), Stage::Boosting);
         // the same 11 m once the clock has stepped back to 600: the pad's level reads as confirmed in the future, and
         // no climb is measured from it
-        let mut ticks: Vec<(u32, Readings)> = (1000..=1500).step_by(50).map(pad).collect();
+        let mut ticks: Vec<(u32, SourceReadings)> = (1000..=1500).step_by(50).map(pad).collect();
         ticks.extend((600..=2000).step_by(50).map(high));
         assert_eq!(run(&mut gated(1000), Stage::Setting, &ticks), Stage::Setting);
     }
@@ -1905,16 +2597,10 @@ mod tests {
         // last reading), then 10.5 m: held exactly launch_ms, the 0 m is a level the 10.5 m rose from; a millisecond
         // short, it is not
         for (held_ms, launched) in [(100, true), (99, false)] {
-            let mut ticks: Vec<(u32, Readings)> = (0..5000)
-                .step_by(50)
-                .map(|now_ms| (now_ms, elevation(10.5, Source::Other)))
-                .collect();
-            ticks.extend([5000, 5000 + held_ms].map(|now_ms| (now_ms, elevation(0.0, Source::Other))));
-            ticks.extend(
-                (5150..=6000)
-                    .step_by(50)
-                    .map(|now_ms| (now_ms, elevation(10.5, Source::Other))),
-            );
+            let mut ticks: Vec<(u32, SourceReadings)> =
+                (0..5000).step_by(50).map(|now_ms| (now_ms, barometer(10.5))).collect();
+            ticks.extend([5000, 5000 + held_ms].map(|now_ms| (now_ms, barometer(0.0))));
+            ticks.extend((5150..=6000).step_by(50).map(|now_ms| (now_ms, barometer(10.5))));
             let stage = run(&mut gated(1000), Stage::Setting, &ticks);
             assert_eq!(stage == Stage::Boosting, launched, "held {held_ms} ms");
         }
@@ -1941,13 +2627,13 @@ mod tests {
 
     #[test]
     fn a_return_to_setting_measures_the_pad_afresh() {
-        let high = elevation(15.0, Source::Other);
+        let high = barometer(15.0);
         let mut machine = on_a_pad(0.0);
-        machine.step(150, Stage::Setting, &high, false);
-        machine.step(160, Stage::Gliding, &high, false);
+        machine.step(150, Stage::Setting, high, false);
+        machine.step(160, Stage::Gliding, high, false);
         // back on the pad 10 ms later, still 15 m up: the pad's level before the excursion is forgotten, so no rise is
         // seen
-        let step = machine.step(170, Stage::Setting, &high, false);
+        let step = machine.step(170, Stage::Setting, high, false);
         assert_eq!(rows(step), [(Stage::Setting, "external".to_string())]);
         assert_eq!(repeat(&mut machine, Stage::Setting, high, 220, 2000), None);
     }
@@ -1956,10 +2642,10 @@ mod tests {
     fn a_hold_records_no_level() {
         // the pad at 5 m; an operator hold (`stage gliding`, a fin check) reads 0 m; `stage setting` ends it where the
         // machine last looked, so nothing restarts, and 11 m is risen only 6 m above the level the machine saw
-        let (low, high) = (elevation(0.0, Source::Other), elevation(11.0, Source::Other));
+        let (low, high) = (barometer(0.0), barometer(11.0));
         let mut machine = on_a_pad(5.0);
         for now_ms in (550..=800).step_by(50) {
-            assert_eq!(machine.step(now_ms, Stage::Gliding, &low, true), Step::default());
+            assert_eq!(machine.step(now_ms, Stage::Gliding, low, true), Step::default());
         }
         assert_eq!(repeat(&mut machine, Stage::Setting, high, 850, 2000), None);
         // the same 0 m read on the pad is a level the 11 m rose from
@@ -1971,15 +2657,12 @@ mod tests {
     #[test]
     fn a_warm_entry_is_unaffected_by_the_gate() {
         // a warm start into each airborne stage flies the same whatever the window: the gate looks only in SETTING
-        let ticks: Vec<(u32, Readings)> = (0..80)
+        let ticks: Vec<(u32, SourceReadings)> = (0..80)
             .map(|tick| {
                 let now_ms = tick * 50;
                 let metres = 200.0 - (now_ms as f32 - 600.0).abs() * 0.1;
-                let readings = Readings {
-                    elevation: Some(Reading {
-                        value: metres.max(0.0),
-                        source: Source::Other,
-                    }),
+                let readings = SourceReadings {
+                    elevations: [Some(metres.max(0.0)), None],
                     ..acceleration(1.0)
                 };
                 (now_ms, readings)
@@ -1996,7 +2679,7 @@ mod tests {
                 let mut current = stage;
                 let mut recorded = Vec::new();
                 for (now_ms, readings) in &ticks {
-                    let step = machine.step(*now_ms, current, readings, false);
+                    let step = machine.step(*now_ms, current, *readings, false);
                     current = step.advance.map_or(current, |advance| advance.to);
                     recorded.extend(rows(step));
                 }
@@ -2007,5 +2690,265 @@ mod tests {
             assert_eq!(flown(0), (end, recorded.clone()), "{stage:?}");
             assert_eq!(flown(LONGEST_LAUNCH_ALTITUDE_WINDOW_MS), (end, recorded), "{stage:?}");
         }
+    }
+
+    #[test]
+    fn the_fused_read_takes_the_first_slots_and_the_gnss_its_own() {
+        // the one-source form the control thread still steps with: plan B's fused read, slot by slot
+        let fused = Readings {
+            acceleration: Some(Reading {
+                value: [0.0, 0.0, 1.0],
+                source: Source::Other,
+            }),
+            elevation: Some(Reading {
+                value: 12.0,
+                source: Source::Other,
+            }),
+            height_above_ground: Some(Reading {
+                value: 2.0,
+                source: Source::Other,
+            }),
+        };
+        let slots = SourceReadings::from(&fused);
+        assert_eq!(slots.accelerations, [Some([0.0, 0.0, 1.0]), None, None, None]);
+        assert_eq!(
+            (slots.elevations, slots.gnss_elevation, slots.height_above_ground),
+            ([Some(12.0), None], None, Some(2.0))
+        );
+        // NEGATIVE: the GNSS's elevation never sits in a barometer's slot, nor does nothing anywhere
+        let gnss = Readings {
+            elevation: Some(Reading {
+                value: 15.0,
+                source: Source::Gnss,
+            }),
+            ..Readings::default()
+        };
+        let slots = SourceReadings::from(&gnss);
+        assert_eq!((slots.elevations, slots.gnss_elevation), ([None, None], Some(15.0)));
+        assert_eq!(SourceReadings::from(&Readings::default()), SourceReadings::default());
+        // the control thread's call, as it is written today: a fused read, by reference, steps the machine as its slots
+        let mut by_reference = StageMachine::new(spec());
+        let mut by_slots = StageMachine::new(spec());
+        for now_ms in [0, 50, 100] {
+            assert_eq!(
+                by_reference.step(now_ms, Stage::Setting, &gnss, false),
+                by_slots.step(now_ms, Stage::Setting, SourceReadings::from(&gnss), false)
+            );
+        }
+    }
+
+    #[test]
+    fn a_reading_that_is_not_finite_is_no_reading() {
+        let readings = SourceReadings {
+            accelerations: [
+                Some([0.0, f32::NAN, 1.0]),
+                Some([0.0, 0.0, f32::NEG_INFINITY]),
+                Some([0.0, 0.0, 1.0]),
+                None,
+            ],
+            elevations: [Some(f32::INFINITY), Some(-3.5)],
+            gnss_elevation: Some(f32::NAN),
+            height_above_ground: Some(f32::NAN),
+        };
+        let live = readings.live();
+        assert_eq!(live.accelerations, [None, None, Some([0.0, 0.0, 1.0]), None]);
+        assert_eq!(
+            (live.elevations, live.gnss_elevation, live.height_above_ground),
+            ([None, Some(-3.5)], None, None)
+        );
+        // NEGATIVE: finite readings pass as they are, zero and negative ones included
+        let finite = SourceReadings {
+            elevations: [Some(0.0), Some(-0.0)],
+            height_above_ground: Some(0.0),
+            ..readings
+        };
+        assert_eq!(finite.live().elevations, [Some(0.0), Some(-0.0)]);
+    }
+
+    #[test]
+    fn a_climb_confirms_no_level_until_one_is_held() {
+        // the first readings of a barometer, and its first readings back after a gap past the window, confirm no level:
+        // no rise, not even 0
+        let mut climb = Climb::new();
+        assert_eq!(climb.rise(0, 0.0, 1000, 100), None);
+        assert_eq!(climb.rise(50, 0.0, 1000, 100), None);
+        assert_eq!(climb.rise(100, 0.0, 1000, 100), Some(0.0), "held launch_ms");
+        assert_eq!(climb.rise(150, 15.0, 1000, 100), Some(15.0));
+        // a level above the reading: the rise is negative, not clamped
+        assert_eq!(climb.rise(200, -2.0, 1000, 100), Some(-2.0));
+        assert_eq!(climb.rise(1500, 3.0, 1000, 100), None, "the levels are past the window");
+        assert_eq!(climb.rise(1600, 3.0, 1000, 100), Some(0.0));
+    }
+
+    #[test]
+    fn vetoes_read_as_vetoes_csv_writes_them() {
+        let veto = |peer: bool, physics: Option<Physics>| Veto {
+            detector: Detector::Apogee,
+            decider: Decider::Gnss,
+            peer,
+            physics,
+            contrary: 0,
+            live: 0,
+            value: 0.0,
+        };
+        let kinds = [
+            (veto(true, None), "peer"),
+            (veto(false, Some(Physics::AtRest)), "at_rest"),
+            (veto(false, Some(Physics::UnderThrust)), "thrust"),
+            (veto(true, Some(Physics::AtRest)), "peer+at_rest"),
+            (veto(true, Some(Physics::UnderThrust)), "peer+thrust"),
+            (veto(false, None), "none"),
+        ];
+        for (veto, text) in kinds {
+            assert_eq!(veto.kinds(), text);
+        }
+        let names = [
+            Detector::LaunchAltitude,
+            Detector::LaunchAcceleration,
+            Detector::Apogee,
+            Detector::Stillness,
+        ]
+        .map(Detector::name);
+        assert_eq!(names, ["launch_altitude", "launch_acceleration", "apogee", "stillness"]);
+        let held = veto(true, None);
+        assert_eq!(
+            (VetoEdge::Begin(held).name(), VetoEdge::End(held).name()),
+            ("begin", "end")
+        );
+        assert_eq!(VetoEdge::End(held).veto(), &held);
+    }
+
+    #[test]
+    fn a_decider_never_votes_against_itself() {
+        // a launch line inside the still band (no shipped config has one): 1.25 g is over launch_g 1.2 and still. Its
+        // own reading counts toward the live voters, never as contrary, so alone it launches
+        let mut machine = StageMachine::new(Settings {
+            launch_g: 1.2,
+            ..spec()
+        });
+        let wobble = acceleration(1.25);
+        let launch = repeat(&mut machine, Stage::Setting, wobble, 0, 100);
+        assert_eq!(launch.map(|launch| launch.to), Some(Stage::Boosting));
+        // NEGATIVE: a peer reading the same still 1.25 g is contrary, and holds it
+        let mut machine = StageMachine::new(Settings {
+            launch_g: 1.2,
+            ..spec()
+        });
+        let mut pair = wobble;
+        pair.accelerations[1] = pair.accelerations[0];
+        assert_eq!(repeat(&mut machine, Stage::Setting, pair, 0, 300), None);
+    }
+
+    #[test]
+    fn entering_boosting_restarts_the_apogee_dwell() {
+        // the fall below the line opens the dwell at 100; a separation moves the stage to GLIDING at 150 (external),
+        // and an operator's `stage boosting` brings it back at 1000. The new flight's tracker seeds afresh at 1050 (300
+        // m, its own peak), and its fall opens a dwell of its own at 1100 that holds launch_ms
+        let mut machine = StageMachine::new(Settings {
+            boost_timeout_ms: 5000,
+            ..spec()
+        });
+        let ticks = [(0, barometer(200.0)), (50, barometer(200.0)), (100, barometer(150.0))];
+        assert_eq!(run(&mut machine, Stage::Boosting, &ticks), Stage::Boosting);
+        machine.step(150, Stage::Gliding, barometer(150.0), false);
+        for (now_ms, metres) in [(1000, 300.0), (1050, 300.0)] {
+            assert_eq!(
+                machine.step(now_ms, Stage::Boosting, barometer(metres), false).advance,
+                None
+            );
+        }
+        assert_eq!(
+            machine.step(1100, Stage::Boosting, barometer(250.0), false).advance,
+            None
+        );
+        let step = machine.step(1200, Stage::Boosting, barometer(250.0), false);
+        assert_eq!(rows(step), [(Stage::Gliding, "apogee 300m".to_string())]);
+    }
+
+    #[test]
+    fn a_clock_stepping_back_into_the_arming_window_blinds_the_apogee_again() {
+        // the fall below the line at 100 is held under thrust (8 g on +x, seen at 100): an apogee episode opens. The
+        // clock then steps back to 40, inside apogee_arm_ms: blind, the detector has no decider, and the episode ends
+        let mut machine = StageMachine::new(Settings {
+            boost_timeout_ms: 5000,
+            ..spec()
+        });
+        let thrust = |metres: f32| SourceReadings {
+            accelerations: [Some([8.0, 0.0, 0.0]), None, None, None],
+            ..barometer(metres)
+        };
+        machine.step(0, Stage::Boosting, thrust(200.0), false);
+        machine.step(50, Stage::Boosting, thrust(200.0), false);
+        let held = machine.step(100, Stage::Boosting, thrust(150.0), false);
+        assert!(matches!(held.vetoes().next(), Some(VetoEdge::Begin(veto)) if veto.detector == Detector::Apogee));
+        let blind = machine.step(40, Stage::Boosting, thrust(150.0), false);
+        assert!(matches!(blind.vetoes().next(), Some(VetoEdge::End(veto)) if veto.detector == Detector::Apogee));
+        // NEGATIVE: armed again, still under thrust, the episode opens again
+        let again = machine.step(150, Stage::Boosting, thrust(150.0), false);
+        assert!(matches!(again.vetoes().next(), Some(VetoEdge::Begin(_))));
+    }
+
+    #[test]
+    fn a_source_joins_only_when_away_past_launch_ms_with_a_peer_read_since() {
+        // the tracker read at 100, its peak 240 m; a peer read at 150
+        let read = |current: [Option<u32>; 2], now_ms: u32| {
+            let mut tracker = Tracker {
+                apogee: Apogee {
+                    peak: Some(240.0),
+                    since_ms: None,
+                    smooth: Some(238.0),
+                },
+                current_ms: current[0],
+                joined_ms: None,
+            };
+            tracker.feed(now_ms, 230.0, &current, 5.0, 100);
+            tracker
+        };
+        // back exactly launch_ms on, one missed step: it holds through, smoothing on from 238
+        let held = read([Some(100), Some(150)], 200);
+        assert_eq!((held.apogee.smooth, held.joined_ms), (Some(236.0), None));
+        // a millisecond later it joins: the smoothing restarts on the reading, the peak stays its own
+        let joined = read([Some(100), Some(150)], 201);
+        assert_eq!(
+            (joined.apogee.smooth, joined.apogee.peak, joined.joined_ms),
+            (Some(230.0), Some(240.0), Some(201))
+        );
+        // it sits out launch_ms exactly
+        assert!(joined.joining(300, 100) && !joined.joining(301, 100));
+        // NEGATIVE: with no peer read after it, it holds through any gap, as plan B's one tracker does
+        let alone = read([Some(100), Some(100)], 60_000);
+        assert_eq!((alone.apogee.smooth, alone.joined_ms), (Some(236.0), None));
+        assert!(!alone.joining(60_000, 100));
+    }
+
+    #[test]
+    fn a_flickering_accelerometer_never_sees_thrust() {
+        // NEGATIVE: 8 g on +x every other step, nothing between: each missing reading drains the slot's thrust dwell
+        let flicker = |now_ms: u32| SourceReadings {
+            accelerations: [now_ms.is_multiple_of(100).then_some([8.0, 0.0, 0.0]), None, None, None],
+            ..SourceReadings::default()
+        };
+        let mut machine = StageMachine::new(spec());
+        for now_ms in (0..=1000).step_by(50) {
+            machine.step(now_ms, Stage::Boosting, flicker(now_ms), false);
+        }
+        assert_eq!(machine.accelerometers[0].thrust.thrust(), Thrust::Unseen);
+        // on every step it is seen, launch_ms on
+        let mut machine = StageMachine::new(spec());
+        for now_ms in (0..=100).step_by(50) {
+            machine.step(now_ms, Stage::Boosting, flicker(0), false);
+        }
+        assert_eq!(machine.accelerometers[0].thrust.thrust(), Thrust::Seen);
+    }
+
+    #[test]
+    fn the_machine_and_its_histories_fit_their_budget() {
+        // the machine on the control thread's stack, and the climbs' histories it boxes on the heap
+        let stack = size_of::<StageMachine>();
+        let heap = BAROMETER_SLOTS * size_of::<Climb>();
+        assert!(
+            stack <= 1024 && heap <= 2048 && stack + heap <= 3 * 1024,
+            "{stack} B + {heap} B"
+        );
     }
 }

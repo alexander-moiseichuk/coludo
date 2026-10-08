@@ -141,11 +141,53 @@ fn a_config_of_the_wrong_type_takes_the_defaults() {
     // NEGATIVE: plan B stores whatever arrives and raises where it is used; the port keeps its defaults
     let odd = Settings::from_json(&json!({
         "period_ms": "20", "corr_shift": 2.5, "course_shift": -1, "turn_gate_deg_s": null, "grav_low_g": true,
-        "provides": {"attitude": {"priority": 300}}
+        "provides": {"attitude": {"priority": 1.5}}
     }));
     assert_eq!(odd, Settings::default());
     assert_eq!(Settings::from_json(&json!([1, 2])), Settings::default());
     assert_eq!(Settings::from_json(&json!({"provides": 3})).rank, 0);
+}
+
+#[test]
+fn the_rank_is_the_one_the_databoard_registers() {
+    // the filter compares a winner's registered rank with its own, so its own is read by the registration's rule
+    // (board_config::provides): Python's int, a bool 0 or 1, saturating at i32, anything else 0
+    let rank = |priority: Option<serde_json::Value>| {
+        let mut block =
+            json!({"name": "attitude", "activity": "attitude", "provides": {"attitude": {"timeout_ms": 40}}});
+        if let Some(priority) = priority {
+            block["provides"]["attitude"]["priority"] = priority;
+        }
+        let document = json!({"components": [block.clone()]});
+        let registered = board_config::provides(&board_config::entries(&document)[0])[0].priority;
+        let read = Settings::from_json(&block).rank;
+        assert_eq!(read, registered, "{block}");
+        read
+    };
+    for (priority, owed) in [
+        (json!(1), 1),
+        (json!(300), 300),
+        (json!(-1), -1),
+        (json!(true), 1),
+        (json!(false), 0),
+        (json!(2_147_483_648_i64), i32::MAX),
+        (json!(i64::MIN), i32::MIN),
+        (json!(u64::MAX), i32::MAX),
+    ] {
+        assert_eq!(rank(Some(priority.clone())), owed, "{priority}");
+    }
+    // NEGATIVE: what is no int registers at 0, and so does a missing priority
+    for priority in [
+        json!(1.0),
+        json!(1.5),
+        json!("1"),
+        json!(null),
+        json!([1]),
+        json!({"priority": 1}),
+    ] {
+        assert_eq!(rank(Some(priority.clone())), 0, "{priority}");
+    }
+    assert_eq!(rank(None), 0);
 }
 
 #[test]

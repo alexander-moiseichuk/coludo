@@ -6,14 +6,19 @@
 //!   crates/control's): the detector primitives case by case;
 //! - sequencer_trace.json (golden/build_sequencer_trace.py): plan B's `Sequencer._tick` driven tick by tick,
 //!   where every stage and every sequencer.csv row (stage and reason text) must match EXACTLY, from settings
-//!   `Settings::from_config` reads out of each scenario's config as the firmware reads the board config. The one
-//!   exception is pinned in the fixture: the altitude launch's rate gate (the port's, not plan B's) removes the
-//!   altitude launches whose elevation never rose `launch_alt_m` within `launch_alt_window_ms` above a level it held
-//!   for `launch_ms`, each step it changes carrying the `divergence` the port owes instead.
+//!   `Settings::from_config` reads out of each scenario's config as the firmware reads the board config. Plan B's
+//!   fused read is one source per class: the accel in the first accelerometer slot, the elevation in the first
+//!   barometer slot (the GNSS slot when the GNSS vouches for it), the agl in the laser slot. The port's own rules are
+//!   pinned in the fixture, each step they change carrying the `divergence` the port owes instead and its `cause`:
+//!   the altitude launch's rate gate removes the altitude launches whose elevation never rose `launch_alt_m` within
+//!   `launch_alt_window_ms` above a level it held for `launch_ms` (`rate_gate`); and the fusion rule's physics vetoes
+//!   hold the altitude launch at rest and the apogee under thrust (`physics_veto`, only in the scenarios made for
+//!   them). Its per-source trackers move no plan B event (`source_history` would pin one): the GNSS standing in for a
+//!   stale barometer at the top joins the flight afresh and calls plan B's apogee on plan B's step.
 
 use golden::{Compare, Fixture};
 use sequencer::commons::{self, Apogee, Dwell};
-use sequencer::{Reading, Readings, Reason, Settings, Source, Stage, StageMachine};
+use sequencer::{Detector, Physics, Reason, Settings, SourceReadings, Stage, StageMachine, Veto, VetoEdge};
 use serde_json::{Value, json};
 
 /// plan B's commons.py primitives (four sections; this crate ports two).
@@ -171,33 +176,32 @@ fn settings_json(settings: &Settings) -> Value {
     })
 }
 
-/// A scripted read: null (no reading at all), a stale one (null source: what plan B's read() extrapolates and
-/// the Rust databoard never produces) or a fresh one.
-fn reading<T>(read: &Value, value: impl Fn(&Value) -> T) -> Option<Reading<T>> {
+/// A scripted read's fresh value and its source's device name: None for null (no reading at all) and for a stale
+/// read (null source: what plan B's read() extrapolates and the Rust databoard never produces).
+fn reading<T>(read: &Value, value: impl Fn(&Value) -> T) -> Option<(T, &str)> {
     if read.is_null() || read["source"].is_null() {
         return None;
     }
-    let source = match read["source"].as_str().expect("a source is a device name") {
-        "gnss" => Source::Gnss,
-        _ => Source::Other,
-    };
-    Some(Reading {
-        value: value(&read["value"]),
-        source,
-    })
+    let source = read["source"].as_str().expect("a source is a device name");
+    Some((value(&read["value"]), source))
 }
 
-/// A step's three reads.
-fn readings(reads: &Value) -> Readings {
+/// A step's three reads as the port's slots take plan B's fused read: one source per class, the GNSS's elevation in
+/// the GNSS slot.
+fn readings(reads: &Value) -> SourceReadings {
     let vector = |value: &Value| {
         let axes = value.as_array().expect("an accel value is [x, y, z]");
         [float(&axes[0]), float(&axes[1]), float(&axes[2])]
     };
-    Readings {
-        acceleration: reading(&reads["accel"], vector),
-        elevation: reading(&reads["elevation"], float),
-        height_above_ground: reading(&reads["agl"], float),
+    let mut slots = SourceReadings::default();
+    slots.accelerations[0] = reading(&reads["accel"], vector).map(|(value, _)| value);
+    match reading(&reads["elevation"], float) {
+        Some((metres, sequencer::GNSS_SOURCE)) => slots.gnss_elevation = Some(metres),
+        Some((metres, _)) => slots.elevations[0] = Some(metres),
+        None => {}
     }
+    slots.height_above_ground = reading(&reads["agl"], float).map(|(value, _)| value);
+    slots
 }
 
 /// A stage by its fixture name.
@@ -211,10 +215,15 @@ struct Answer {
     name: String,
     /// Plan B's out.
     plan_b: Value,
-    /// The out the port owes instead, on a step the rate gate changes; None on every other.
+    /// The out the port owes instead, on a step its own rules change; None on every other.
     divergence: Option<Value>,
+    /// What changes the step: `rate_gate` or `physics_veto` (or `source_history`, which the fixture pins nowhere);
+    /// None where nothing does.
+    cause: Option<String>,
     /// The port's out.
     port: Value,
+    /// The veto episodes open after the step, by detector.
+    vetoes: Vec<Veto>,
 }
 
 impl Answer {
@@ -224,14 +233,16 @@ impl Answer {
     }
 }
 
-/// Every scenario step, run on the port. Each step's stage and manual flag come from the fixture -- the
-/// Controller's, after the step's events -- and the machine's advance is reported as the stage after the step.
-fn trace_answers() -> Vec<Answer> {
+/// Every scenario step, run on the port with `adapt` making its slots from the step's reads. Each step's stage and
+/// manual flag come from the fixture -- the Controller's, after the step's events -- and the machine's advance is
+/// reported as the stage after the step.
+fn trace_answers_through(adapt: impl Fn(&Value) -> SourceReadings) -> Vec<Answer> {
     let fixture = Fixture::parse(SEQUENCER_TRACE);
     let mut answers = Vec::new();
     for scenario in fixture.get("scenarios").as_array().expect("scenarios is a list") {
         let name = scenario["name"].as_str().expect("a scenario has a name");
         let mut machine = StageMachine::new(settings(&scenario["init"]["config"]));
+        let mut open: Vec<Veto> = Vec::new();
         for (index, step) in scenario["steps"]
             .as_array()
             .expect("steps is a list")
@@ -242,21 +253,36 @@ fn trace_answers() -> Vec<Answer> {
             let now_ms = milliseconds(&input["now_ms"]);
             let current = stage(&input["stage"]);
             let manual = input["manual"].as_bool().expect("manual is a flag");
-            let result = machine.step(now_ms, current, &readings(&input["reads"]), manual);
+            let result = machine.step(now_ms, current, adapt(&input["reads"]), manual);
             let after = result.advance.map_or(current, |advance| advance.to);
             let records: Vec<Value> = result
                 .transitions()
                 .map(|transition| json!([transition.to.name(), transition.reason.to_string()]))
                 .collect();
+            for edge in result.vetoes() {
+                open.retain(|veto| veto.detector != edge.veto().detector);
+                if let VetoEdge::Begin(veto) = edge {
+                    open.push(veto);
+                }
+            }
             answers.push(Answer {
                 name: format!("{name} step {index} (now_ms {now_ms})"),
                 plan_b: step["out"].clone(),
                 divergence: step.get("divergence").map(|divergence| divergence["out"].clone()),
+                cause: step
+                    .get("divergence")
+                    .map(|divergence| divergence["cause"].as_str().expect("a cause").to_string()),
                 port: json!({"stage": after.name(), "records": records}),
+                vetoes: open.clone(),
             });
         }
     }
     answers
+}
+
+/// Every scenario step, run on the port through the fused-read adapter ([`readings`]).
+fn trace_answers() -> Vec<Answer> {
+    trace_answers_through(readings)
 }
 
 #[test]
@@ -274,7 +300,7 @@ fn the_settings_and_their_defaults_are_plan_b_s() {
 }
 
 #[test]
-fn the_trace_matches_plan_b_exactly_but_for_the_rate_gate() {
+fn the_trace_matches_plan_b_exactly_but_for_the_pinned_divergences() {
     let fixture = Fixture::parse(SEQUENCER_TRACE);
     let compare = fixture.compare();
     assert_eq!(compare, Compare::Exact, "stages and reasons compare exactly");
@@ -338,8 +364,8 @@ fn rose_within(steps: &[Value], last: usize, rise_m: f32, window_ms: u32, held_m
     let readings: Vec<(u32, f32)> = steps[..=last]
         .iter()
         .filter_map(|step| {
-            let reading = reading(&step["in"]["reads"]["elevation"], float)?;
-            (reading.source == Source::Other).then(|| (milliseconds(&step["in"]["now_ms"]), reading.value))
+            let (metres, source) = reading(&step["in"]["reads"]["elevation"], float)?;
+            (source != sequencer::GNSS_SOURCE).then(|| (milliseconds(&step["in"]["now_ms"]), metres))
         })
         .collect();
     let age_ms = |now_ms: u32, then_ms: u32| i64::from(commons::elapsed_ms(now_ms, then_ms));
@@ -383,6 +409,9 @@ fn the_rate_gate_removes_only_altitude_launches_of_a_slow_rise() {
                 }
                 continue;
             };
+            if divergence["cause"] != "rate_gate" {
+                continue; // the fusion rule's: the_fusion_rule_changes_only_the_events_it_pins
+            }
             let (out, owed) = (&step["out"], &divergence["out"]);
             if rows_starting(out, "launch alt=") > 0 {
                 // an altitude launch removed: the rise was slow, and the tick records nothing else differently
@@ -435,6 +464,144 @@ fn the_rate_gate_removes_only_altitude_launches_of_a_slow_rise() {
             );
         }
     }
+}
+
+/// The scenarios made for the fusion rule's physics vetoes: the only ones they change.
+const PHYSICS_SCENARIOS: [&str; 3] = [
+    "a_drifted_pad_at_rest_then_a_fast_climb",
+    "a_dropout_on_a_pad_at_rest_then_a_fast_climb",
+    "a_sustained_boost_with_the_elevation_falling",
+];
+
+/// The steps of `scenario` that carry a divergence of `cause`, by name and index.
+fn pinned(answers: &[Answer], cause: &str) -> Vec<String> {
+    answers
+        .iter()
+        .filter(|answer| answer.cause.as_deref() == Some(cause))
+        .map(|answer| answer.name.clone())
+        .collect()
+}
+
+#[test]
+fn the_fusion_rule_changes_only_the_events_it_pins() {
+    let answers = trace_answers();
+    let scenarios = Fixture::parse(SEQUENCER_TRACE)
+        .get("scenarios")
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(scenarios, 49, "45 scenarios from before the fusion rule, 4 made for it");
+    // the physics vetoes: no plan B event changes in the scenarios made before them; in each made for them, its one
+    // event is removed and the next step carries plan B's stage on
+    let physics = pinned(&answers, "physics_veto");
+    assert_eq!(
+        physics,
+        [
+            "a_drifted_pad_at_rest_then_a_fast_climb step 33 (now_ms 1650)",
+            "a_drifted_pad_at_rest_then_a_fast_climb step 34 (now_ms 1700)",
+            "a_dropout_on_a_pad_at_rest_then_a_fast_climb step 33 (now_ms 1650)",
+            "a_dropout_on_a_pad_at_rest_then_a_fast_climb step 34 (now_ms 1700)",
+            "a_sustained_boost_with_the_elevation_falling step 4 (now_ms 200)",
+            "a_sustained_boost_with_the_elevation_falling step 5 (now_ms 250)",
+        ]
+    );
+    for name in &physics {
+        assert!(
+            PHYSICS_SCENARIOS.iter().any(|scenario| name.starts_with(scenario)),
+            "{name}"
+        );
+    }
+    // where the event is removed, the port holds the detector with that physics veto open
+    let held = |name: &str| {
+        let answer = answers.iter().find(|answer| answer.name == name).expect("the step");
+        answer
+            .vetoes
+            .iter()
+            .map(|veto| (veto.detector, veto.physics))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(held(&physics[0]), [(Detector::LaunchAltitude, Some(Physics::AtRest))]);
+    assert_eq!(held(&physics[2]), [(Detector::LaunchAltitude, Some(Physics::AtRest))]);
+    assert_eq!(held(&physics[4]), [(Detector::Apogee, Some(Physics::UnderThrust))]);
+    // the per-source trackers move no apogee: where the GNSS stands in for a stale barometer at the top, after a gap
+    // the barometer was read through, it joins the flight afresh and calls plan B's apogee on plan B's step
+    assert_eq!(pinned(&answers, "source_history"), Vec::<String>::new());
+    let top = answers
+        .iter()
+        .find(|answer| answer.name == "flight_dropouts_gnss_rocking step 104 (now_ms 6496)")
+        .expect("the step");
+    assert_eq!(rows_starting(&top.port, "apogee "), 1, "{}", top.port);
+    let scenario = Fixture::parse(SEQUENCER_TRACE)
+        .get("scenarios")
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|scenario| scenario["name"] == "flight_dropouts_gnss_rocking")
+        .cloned()
+        .expect("the scenario");
+    let sources: Vec<&str> = scenario["steps"].as_array().unwrap()[..=104]
+        .iter()
+        .filter(|step| step["in"]["stage"] == "boosting")
+        .filter_map(|step| reading(&step["in"]["reads"]["elevation"], float).map(|(_, source)| source))
+        .collect();
+    assert_eq!(
+        sources.last(),
+        Some(&"gnss"),
+        "the GNSS decides the step plan B calls apogee on"
+    );
+    let handovers = sources.windows(2).filter(|pair| pair[0] != pair[1]).count();
+    assert_eq!(
+        handovers, 3,
+        "the GNSS stood in twice in BOOSTING, the barometer fresh between"
+    );
+}
+
+#[test]
+fn a_gnss_never_read_fails_where_it_stands_in() {
+    // NEGATIVE: the GNSS slot is where plan B's GNSS stand-ins reach the port. Left empty, the apogee and the landing
+    // the GNSS decides alone go uncalled, and so does the apogee it calls standing in at the top
+    let blind = |reads: &Value| SourceReadings {
+        gnss_elevation: None,
+        ..readings(reads)
+    };
+    let failures: Vec<String> = trace_answers_through(blind)
+        .iter()
+        .filter(|answer| answer.port != *answer.owed())
+        .map(|answer| answer.name.clone())
+        .collect();
+    assert_eq!(
+        failures,
+        [
+            "gnss_elevation_in_flight step 7 (now_ms 350)",
+            "gnss_elevation_in_flight step 8 (now_ms 400)",
+            "gnss_elevation_in_flight step 11 (now_ms 550)",
+            "flight_dropouts_gnss_rocking step 104 (now_ms 6496)",
+            "flight_dropouts_gnss_rocking step 105 (now_ms 6551)",
+        ]
+    );
+}
+
+#[test]
+fn an_accelerometer_read_off_its_axes_fails_the_trace() {
+    // NEGATIVE: the thrust gate reads the body frame's +x; the same |accel| read on z never sees the boost, so the
+    // apogee under thrust is called, and the trace fails exactly there
+    let off_axis = |reads: &Value| {
+        let mut slots = readings(reads);
+        slots.accelerations[0] = slots.accelerations[0].map(|[x, y, z]| [z, y, x]);
+        slots
+    };
+    let failures: Vec<String> = trace_answers_through(off_axis)
+        .iter()
+        .filter(|answer| answer.port != *answer.owed())
+        .map(|answer| answer.name.clone())
+        .collect();
+    assert_eq!(
+        failures,
+        [
+            "a_sustained_boost_with_the_elevation_falling step 4 (now_ms 200)",
+            "a_sustained_boost_with_the_elevation_falling step 5 (now_ms 250)",
+        ]
+    );
 }
 
 #[test]
@@ -545,7 +712,7 @@ fn a_stale_reading_taken_as_fresh_fails_the_trace() {
         let result = machine.step(
             milliseconds(&input["now_ms"]),
             current,
-            &readings(&reads),
+            readings(&reads),
             input["manual"].as_bool().unwrap(),
         );
         let records: Vec<Value> = result

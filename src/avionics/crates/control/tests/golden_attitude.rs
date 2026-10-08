@@ -33,10 +33,10 @@ fn vector(value: &Value, scale: f32) -> Option<[f32; 3]> {
 fn readings(input: &Value) -> Readings {
     let fused = (!input["fused"].is_null()).then(|| {
         let [heading, roll, pitch] = vector(&input["fused"]["value"], 100.0).expect("a fused value");
-        let rank = input["fused"]["rank"].as_u64().expect("a fused rank");
+        let rank = input["fused"]["rank"].as_i64().expect("a fused rank");
         Fused {
             orientation: Orientation { heading, roll, pitch },
-            rank: u8::try_from(rank).expect("a small rank"),
+            rank: i32::try_from(rank).expect("a rank within i32"),
         }
     });
     Readings {

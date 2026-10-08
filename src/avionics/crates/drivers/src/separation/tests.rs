@@ -14,10 +14,11 @@
 //! contact closing again, which waits for its episode. The generic stamps and their race are tested in
 //! debounce/tests.rs.
 
-use super::{BACKSTOP_US, DEFAULT_DEBOUNCE_MS, Event, Kind, Separation, Settings, THRUST_END_MS, Thrust, ThrustGate};
+use super::{BACKSTOP_US, DEFAULT_DEBOUNCE_MS, Event, Kind, Separation, Settings, Thrust, ThrustGate};
 use crate::debounce::{Episode, StampPair};
 use board_config::LONGEST_DEBOUNCE_MS;
 use sequencer::Stage;
+use sequencer::thrust::THRUST_END_MS;
 use serde_json::json;
 
 /// The control tick, µs: the default 100 Hz schedule.
