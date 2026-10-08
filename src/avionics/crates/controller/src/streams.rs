@@ -1,18 +1,22 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The device telemetry streams (doc/specs/avionics-port.md M6): which entry writes which stream,
-//! with its file, its columns, its decimation window and whether it is durable, as plan B's drivers build their
-//! Telemetry at setup (drivers/lsm6dso32.py:124-126, drivers/icp10111.py:123-125, drivers/separation.py:57,
+//! The telemetry streams (doc/specs/avionics-port.md M6, M9): which entry writes which stream, with its file, its
+//! columns, its decimation window and whether it is durable, as plan B's drivers and tasks build their Telemetry at
+//! setup (drivers/lsm6dso32.py:124-126, drivers/bmi323.py:100-102, drivers/icp10111.py:123-125,
+//! drivers/bmp581.py:69-71, drivers/bmm350.py:99-100, tasks/attitude.py:100-102, drivers/separation.py:57,
 //! tasks/sequencer.py:110, warmstart.py:318). M6 records the LSM6DSO32, the ICP-10111 and the separation switch, M7
-//! the stage machine's transitions, and M8 the checkpoint's timeline; every other part, the BMI323 among them until
-//! M9, has none yet.
+//! the stage machine's transitions, M8 the checkpoint's timeline, and M9 the SEN0697 (the BMI323, the BMP581 and the
+//! BMM350), the attitude filter and the stage machine's veto episodes; every other part has none yet.
 //!
 //! The port, against plan B:
 //!  * Plan B registers a stream in its task's setup. The firmware registers one at `recorder::open` for every named
 //!    entry, enabled or not (board_config's `entries`), so a part the layout enables at boot still has its stream.
-//!  * Plan B multiplies whatever `telemetry_ms` holds by 1000: null raises at setup, text makes a 1000-fold text
-//!    that fails later, and a bool reads as 0 or 1 ms. validate() refuses all three. Here a number, int or float,
-//!    is honoured, and anything else reads as 0, the global window.
+//!  * MEASURED -> REPORTED (the operator, 2026-10-08): no device stream is decimated. Plan B thinned each one to its
+//!    entry's `telemetry_ms` (0 or absent: the global `recorder.telemetry_ms`) and attitude.csv to 100 ms by default,
+//!    a MicroPython-era economy. Here every sample a part measures, and every attitude the filter publishes, is a row,
+//!    and each part runs at the rate its consumers need instead. `telemetry_ms` is read by nothing here, whatever it
+//!    holds (plan B multiplied it by 1000: null raised at setup, text made a text that failed later, a bool read as 0
+//!    or 1 ms; validate() still refuses all three).
 //!  * Plan B passes `separation.csv` no window, so the global decimates it, while its note says "durable, every
 //!    event". Here the stream is durable and never decimated.
 //!  * Plan B's sequencer passes its `<name>.csv` no window either. Its rows are the stage transitions, a handful a
@@ -20,6 +24,11 @@
 //!  * Plan B's checkpoint passes `checkpoint.csv` no window either. Its rows come once a stage change and once a
 //!    `checkpoint_s` aloft, and the last one before a reset is the post-mortem's record of where the flight was, so
 //!    here it is durable and never decimated too.
+//!  * So every stream here is never decimated; the device streams stay not durable (many rows a second, which the
+//!    ring_writer's own cadence carries), the event records durable.
+//!  * A barometer's row gains a fifth column, `change`, its climb rate in m/s (crates/control `change`), appended so
+//!    plan B's four stay where they were. A reader takes plan B's four-column rows as they are
+//!    (tools/recorder_flight.py).
 //!  * separation.csv gains two columns, `moment` and `duration`: the first edge of the contact's episode the row
 //!    concludes, on the uptime column's own clock, microseconds, and the microseconds from it to the episode's last
 //!    edge (the wobble). A row's `uptime` is the tick that concluded the episode, a quiet after its last edge, so the
@@ -27,16 +36,26 @@
 //!  * Its `event` gains a third value: plan B's `separated` and `nested`, and the port's `blip`, an episode that ended
 //!    on the level the latch already held (the contact moved and came back), so a flight shows every movement of the
 //!    contact. A blip moves neither the latch nor the stage; the readers take the event as a word, whichever it is.
+//!  * The stage machine's entry writes a second stream, the port's own ([`vetoes`]): `vetoes.csv`, a begin and an end
+//!    row per veto episode of the multi-source machine (crates/sequencer `VetoEdge`), fixed, durable and never
+//!    decimated like the transitions' record. Those rows stay out of `<name>.csv`, whose every row
+//!    tools/assemble_capture.py takes for a stage event.
 
 use board_config::Entry;
-use serde_json::Value;
+use control::attitude;
 
-/// The LSM6DSO32's columns (plan B drivers/lsm6dso32.py:125): accel in g, the gyro as raw centidegrees a second,
-/// and the INT1 edges the tick saw.
+/// The IMUs' columns, the LSM6DSO32's and the BMI323's alike (plan B drivers/lsm6dso32.py:125,
+/// drivers/bmi323.py:101): accel in g, the gyro as raw centidegrees a second, and the INT1 edges the tick saw.
 pub const IMU_FIELDS: [&str; 7] = ["ax", "ay", "az", "gx", "gy", "gz", "irq_runs"];
 
-/// The ICP-10111's columns (plan B drivers/icp10111.py:124): m AMSL, degrees C, Pa, m above the ground.
-pub const BAROMETER_FIELDS: [&str; 4] = ["altitude", "temperature", "pressure", "elevation"];
+/// The barometers' columns, the ICP-10111's and the BMP581's alike: plan B's four (drivers/icp10111.py:124,
+/// drivers/bmp581.py:70), m AMSL, degrees C, Pa and m above the ground, then the port's `change`, the climb rate in
+/// m/s (crates/control `change`), appended.
+pub const BAROMETER_FIELDS: [&str; 5] = ["altitude", "temperature", "pressure", "elevation", "change"];
+
+/// The BMM350's columns (plan B drivers/bmm350.py:99): the field per axis in the part's own counts, raw until the
+/// operator calibrates it, then centred and normalised (crates/drivers `bmm350`).
+pub const MAGNETOMETER_FIELDS: [&str; 3] = ["mx", "my", "mz"];
 
 /// The separation switch's columns: plan B's event (`separated` or `nested`, and the port's `blip`) and the stage after
 /// it (drivers/separation.py:57), then the port's `moment`, the uptime (µs) of the first edge of the episode the event
@@ -48,10 +67,27 @@ pub const SEPARATION_FIELDS: [&str; 4] = ["event", "stage", "moment", "duration"
 /// and why (`launch |a|=...`, or `external` for a move it did not make).
 pub const SEQUENCER_FIELDS: [&str; 2] = ["stage", "reason"];
 
+/// The stage machine's veto episodes' columns, the port's own (crates/sequencer `VetoEdge`, one row per edge):
+///  * `detector` -- the detector held (`Detector::name`: `launch_altitude`, `launch_acceleration`, `apogee` or
+///    `stillness`);
+///  * `edge` -- `begin` on the episode's first vetoed step, `end` on the first step after it (`VetoEdge::name`); both
+///    rows carry a vetoed step, an end row the episode's last;
+///  * `decider` -- the deciding source's device name (`Binding::source` of `Veto::decider`);
+///  * `kinds` -- the vetoes that held it (`Veto::kinds`: `peer`, `at_rest` or `thrust`, two joined by `+`);
+///  * `contrary` and `live` -- how many of the decider's live peers were contrary, and how many voting sources were
+///    live, the decider included (`Veto::contrary`, `Veto::live`);
+///  * `value` -- the decider's value (`Veto::value`): |accel| in g for the accel launch and the stillness, the
+///    elevation in m for the altitude launch and the apogee.
+pub const VETOES_FIELDS: [&str; 7] = ["detector", "edge", "decider", "kinds", "contrary", "live", "value"];
+
 /// The checkpoint's columns (plan B warmstart.py:318-319): the stage's id, 1 (SETTING) to 5 (DONE), as plan B pushes
 /// `controller.stage`; the altitude in m AMSL, the speed and the airspeed in m/s; and the uptime in ms the checkpoint
 /// was taken at.
 pub const CHECKPOINT_FIELDS: [&str; 5] = ["stage", "altitude", "speed", "airspeed", "ticks_ms"];
+
+/// The stage machine's implementation in a device entry (plan B's `@task.activity('sequencer')`): the entry that
+/// writes both `<name>.csv` and [`VETOES_FILE`].
+const SEQUENCER: &str = "sequencer";
 
 /// The separation switch's file, whatever its entry's name (plan B drivers/separation.py:57).
 const SEPARATION_FILE: &str = "separation.csv";
@@ -59,84 +95,75 @@ const SEPARATION_FILE: &str = "separation.csv";
 /// The checkpoint's file, whatever its entry's name (plan B warmstart.py:318).
 const CHECKPOINT_FILE: &str = "checkpoint.csv";
 
-/// The window that reads the global `recorder.telemetry_ms` at each use: 0, as the recorder's
-/// `Telemetry::window_us` reads it.
-const GLOBAL_WINDOW_US: i32 = 0;
+/// The stage machine's veto episodes' file, whatever its entry's name.
+const VETOES_FILE: &str = "vetoes.csv";
 
 /// The window of a stream that is never decimated, every row going out: negative, as the recorder's
-/// `Telemetry::window_us` reads it.
+/// `Telemetry::window_us` reads it. Every stream here has it.
 const NEVER_DECIMATED: i32 = -1;
 
-/// Microseconds in a millisecond, as `telemetry_ms` is scaled to a window.
-const MICROSECONDS_PER_MILLISECOND: f64 = 1000.0;
-
-/// A device's telemetry stream, as the recorder registers it.
+/// A telemetry stream, as the recorder registers it.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Stream {
     /// The file, without the session prefix.
     pub file: String,
     /// The columns after `uptime`.
     pub fields: &'static [&'static str],
-    /// The decimation window in microseconds: positive its own, 0 the global `recorder.telemetry_ms`, negative
-    /// never decimated.
+    /// The decimation window in microseconds, as the recorder's registry takes it (positive its own, 0 the global
+    /// `recorder.telemetry_ms`, negative never decimated): negative for every stream here, measured -> reported.
     pub decimate_us: i32,
     /// Whether each row wakes the ring_writer at once: separation.csv; the stage machine's, the stage transitions'
-    /// record; and checkpoint.csv, the last state before a reset.
+    /// record, and vetoes.csv beside it; and checkpoint.csv, the last state before a reset.
     pub durable: bool,
 }
 
-/// The stream `entry` writes, when its part is one the port records: the LSM6DSO32 and the ICP-10111 as
-/// `<name>.csv` with their entry's window (`window_us`), the separation switch as the fixed `separation.csv`, the
-/// stage machine as `<name>.csv` and the checkpoint as the fixed `checkpoint.csv`, the last three durable and never
-/// decimated. None for any other part.
+/// The stream `entry` writes, when its part is one the port records, every one never decimated: the IMUs (LSM6DSO32,
+/// BMI323), the barometers (ICP-10111, BMP581) and the BMM350 as `<name>.csv`, the attitude filter as the fixed
+/// `attitude.csv`; the separation switch as the fixed `separation.csv`, the stage machine as `<name>.csv` and the
+/// checkpoint as the fixed `checkpoint.csv`, the last three durable. None for any other part. The stage machine's
+/// second stream is [`vetoes`].
 pub fn stream(entry: &Entry) -> Option<Stream> {
-    let (file, fields, decimate_us, durable): (String, &'static [&'static str], i32, bool) = match entry.implementation
-    {
-        "lsm6dso32" => (format!("{}.csv", entry.name), &IMU_FIELDS, window_us(entry), false),
-        "icp10111" => (
-            format!("{}.csv", entry.name),
-            &BAROMETER_FIELDS,
-            window_us(entry),
-            false,
-        ),
-        "separation" => (SEPARATION_FILE.to_string(), &SEPARATION_FIELDS, NEVER_DECIMATED, true),
-        "sequencer" => (format!("{}.csv", entry.name), &SEQUENCER_FIELDS, NEVER_DECIMATED, true),
-        "checkpoint" => (CHECKPOINT_FILE.to_string(), &CHECKPOINT_FIELDS, NEVER_DECIMATED, true),
+    let named = || format!("{}.csv", entry.name);
+    let (file, fields, durable): (String, &'static [&'static str], bool) = match entry.implementation {
+        "lsm6dso32" | "bmi323" => (named(), &IMU_FIELDS, false),
+        "icp10111" | "bmp581" => (named(), &BAROMETER_FIELDS, false),
+        "bmm350" => (named(), &MAGNETOMETER_FIELDS, false),
+        "attitude" => (attitude::STREAM.to_string(), &attitude::FIELDS, false),
+        "separation" => (SEPARATION_FILE.to_string(), &SEPARATION_FIELDS, true),
+        SEQUENCER => (named(), &SEQUENCER_FIELDS, true),
+        "checkpoint" => (CHECKPOINT_FILE.to_string(), &CHECKPOINT_FIELDS, true),
         _ => return None,
     };
     Some(Stream {
         file,
         fields,
-        decimate_us,
+        decimate_us: NEVER_DECIMATED,
         durable,
     })
 }
 
-/// The decimation window `entry`'s `telemetry_ms` asks for, in microseconds.
-///
-/// A positive number is its own window, ms x 1000 rounded, saturating at `i32::MAX`, and at least 1 us: a window
-/// below half a microsecond is still the entry's own (every row), never the global. A negative number is never
-/// decimated ([`NEVER_DECIMATED`]). 0, an absent key and anything that is not a number (text, null, a bool) are the
-/// global window. The scaling is f64, the JSON number's own width: f32 would not hold every whole-millisecond
-/// window exactly past 16.8 s.
-fn window_us(entry: &Entry) -> i32 {
-    match entry.fields.get("telemetry_ms").and_then(Value::as_f64) {
-        Some(milliseconds) if milliseconds > 0.0 => {
-            ((milliseconds * MICROSECONDS_PER_MILLISECOND).round() as i32).max(1)
-        }
-        Some(milliseconds) if milliseconds < 0.0 => NEVER_DECIMATED,
-        _ => GLOBAL_WINDOW_US,
-    }
+/// The stream the stage machine's entry writes beside its own `<name>.csv`: its veto episodes, the fixed `vetoes.csv`
+/// whatever the entry's name, durable and never decimated like the transitions' record. None for any other entry.
+pub fn vetoes(entry: &Entry) -> Option<Stream> {
+    (entry.implementation == SEQUENCER).then(|| Stream {
+        file: VETOES_FILE.to_string(),
+        fields: &VETOES_FIELDS,
+        decimate_us: NEVER_DECIMATED,
+        durable: true,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, stream};
+    use super::{
+        BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, MAGNETOMETER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS,
+        Stream, VETOES_FIELDS, stream, vetoes,
+    };
     use board_config::{directory, entries};
     use serde_json::{Value, json};
 
-    // The windows below are literals, never the module's constants: 0 (the global) and -1 (never decimated) are
-    // the recorder's contract (`Telemetry::window_us`), so a wrong sentinel must fail a test.
+    // The windows below are literals, never the module's constants: -1 (never decimated) is the recorder's contract
+    // (`Telemetry::window_us`), so a wrong sentinel must fail a test.
 
     /// The firmware's defaults: golden/build_config_default.py's dump of plan B's config_default.py.
     const CONFIG_DEFAULT: &str = include_str!("../../../golden/config_default.json");
@@ -154,6 +181,13 @@ mod tests {
         stream(&named[0])
     }
 
+    /// The veto stream of the one entry `document` names.
+    fn only_vetoes(document: &Value) -> Option<Stream> {
+        let named = entries(document);
+        assert_eq!(named.len(), 1, "the document names one entry");
+        vetoes(&named[0])
+    }
+
     /// A document with one sensor `name` run by `driver`, carrying `telemetry_ms` when it is Some.
     fn sensor(name: &str, driver: &str, telemetry_ms: Option<Value>) -> Value {
         let mut device = json!({"name": name, "driver": driver});
@@ -163,15 +197,28 @@ mod tests {
         json!({"sensors": [device]})
     }
 
-    /// The window the LSM6DSO32 entry gets for `telemetry_ms` (absent when None).
-    fn window(telemetry_ms: Option<Value>) -> i32 {
-        only(&sensor("imu_lsm6dso32", "lsm6dso32", telemetry_ms))
-            .expect("the LSM6DSO32 writes a stream")
-            .decimate_us
+    /// A device stream: `<file>` with `fields`, never decimated, not durable.
+    fn measured(file: &str, fields: &'static [&'static str]) -> Stream {
+        Stream {
+            file: file.to_string(),
+            fields,
+            decimate_us: -1,
+            durable: false,
+        }
+    }
+
+    /// An event record: `<file>` with `fields`, never decimated, durable.
+    fn event(file: &str, fields: &'static [&'static str]) -> Stream {
+        Stream {
+            file: file.to_string(),
+            fields,
+            decimate_us: -1,
+            durable: true,
+        }
     }
 
     #[test]
-    fn the_defaults_record_the_imu_the_barometer_the_separation_switch_the_stage_machine_and_the_checkpoint() {
+    fn the_defaults_record_every_ported_part_and_the_stage_machine_s_vetoes() {
         let document = defaults();
         let streams: Vec<(&str, Stream)> = entries(&document)
             .iter()
@@ -180,52 +227,113 @@ mod tests {
         assert_eq!(
             streams,
             [
-                (
-                    "imu_lsm6dso32",
-                    Stream {
-                        file: "imu_lsm6dso32.csv".to_string(),
-                        fields: &IMU_FIELDS,
-                        decimate_us: 0,
-                        durable: false,
-                    }
-                ),
-                (
-                    "baro_icp10111",
-                    Stream {
-                        file: "baro_icp10111.csv".to_string(),
-                        fields: &BAROMETER_FIELDS,
-                        decimate_us: 0,
-                        durable: false,
-                    }
-                ),
-                (
-                    "separation",
-                    Stream {
-                        file: "separation.csv".to_string(),
-                        fields: &SEPARATION_FIELDS,
-                        decimate_us: -1,
-                        durable: true,
-                    }
-                ),
-                (
-                    "sequencer",
-                    Stream {
-                        file: "sequencer.csv".to_string(),
-                        fields: &SEQUENCER_FIELDS,
-                        decimate_us: -1,
-                        durable: true,
-                    }
-                ),
-                (
-                    "checkpoint",
-                    Stream {
-                        file: "checkpoint.csv".to_string(),
-                        fields: &CHECKPOINT_FIELDS,
-                        decimate_us: -1,
-                        durable: true,
-                    }
-                ),
+                ("imu_lsm6dso32", measured("imu_lsm6dso32.csv", &IMU_FIELDS)),
+                ("attitude", measured("attitude.csv", &control::attitude::FIELDS)),
+                ("baro_icp10111", measured("baro_icp10111.csv", &BAROMETER_FIELDS)),
+                ("imu_bmi323", measured("imu_bmi323.csv", &IMU_FIELDS)),
+                ("mag_bmm350", measured("mag_bmm350.csv", &MAGNETOMETER_FIELDS)),
+                ("baro_bmp581", measured("baro_bmp581.csv", &BAROMETER_FIELDS)),
+                ("separation", event("separation.csv", &SEPARATION_FIELDS)),
+                ("sequencer", event("sequencer.csv", &SEQUENCER_FIELDS)),
+                ("checkpoint", event("checkpoint.csv", &CHECKPOINT_FIELDS)),
             ]
+        );
+        let vetoes: Vec<(&str, Stream)> = entries(&document)
+            .iter()
+            .filter_map(|entry| Some((entry.name, vetoes(entry)?)))
+            .collect();
+        assert_eq!(vetoes, [("sequencer", event("vetoes.csv", &VETOES_FIELDS))]);
+    }
+
+    #[test]
+    fn the_columns_are_plan_b_s_with_the_port_s_appended() {
+        assert_eq!(IMU_FIELDS.join(";"), "ax;ay;az;gx;gy;gz;irq_runs");
+        assert_eq!(MAGNETOMETER_FIELDS.join(";"), "mx;my;mz");
+        // plan B's four first and unchanged, so a reader by position or by name still finds them; the change trails
+        assert_eq!(
+            BAROMETER_FIELDS.join(";"),
+            "altitude;temperature;pressure;elevation;change"
+        );
+        assert_eq!(
+            BAROMETER_FIELDS[..4],
+            ["altitude", "temperature", "pressure", "elevation"]
+        );
+        assert_eq!(
+            control::attitude::FIELDS.join(";"),
+            "heading_cd;roll_cd;pitch_cd;free;mag_known;mag_offset_cd",
+            "plan B tasks/attitude.py:101"
+        );
+    }
+
+    #[test]
+    fn every_device_stream_reports_every_measurement_whatever_its_window() {
+        // the operator's measured -> reported: plan B's own window (100 ms), its global (0 or absent), a negative, and
+        // what plan B could not multiply (text, null, a bool, a list, an object): never decimated, every one
+        let windows = [
+            None,
+            Some(json!(100)),
+            Some(json!(0)),
+            Some(json!(12.5)),
+            Some(json!(-1)),
+            Some(json!(1e12)),
+            Some(json!("50")),
+            Some(Value::Null),
+            Some(json!(true)),
+            Some(json!([50])),
+            Some(json!({"ms": 50})),
+        ];
+        for driver in ["lsm6dso32", "bmi323", "icp10111", "bmp581", "bmm350"] {
+            for telemetry_ms in &windows {
+                let device = only(&sensor("part", driver, telemetry_ms.clone())).expect("a stream");
+                assert_eq!(
+                    (device.decimate_us, device.durable),
+                    (-1, false),
+                    "{driver} {telemetry_ms:?}"
+                );
+            }
+        }
+        for telemetry_ms in [json!(100), json!(0), json!(-1)] {
+            let document =
+                json!({"sensors": [{"name": "attitude", "activity": "attitude", "telemetry_ms": telemetry_ms}]});
+            assert_eq!(only(&document).expect("a stream").decimate_us, -1, "{telemetry_ms}");
+        }
+    }
+
+    #[test]
+    fn the_sen0697_writes_plan_b_s_columns_under_its_entries_names() {
+        assert_eq!(
+            only(&sensor("imu_backup", "bmi323", Some(json!(10)))),
+            Some(measured("imu_backup.csv", &IMU_FIELDS))
+        );
+        assert_eq!(
+            only(&sensor("baro_backup", "bmp581", None)),
+            Some(measured("baro_backup.csv", &BAROMETER_FIELDS))
+        );
+        assert_eq!(
+            only(&sensor("compass", "bmm350", Some(json!(0)))),
+            Some(measured("compass.csv", &MAGNETOMETER_FIELDS))
+        );
+    }
+
+    #[test]
+    fn the_attitude_filter_writes_attitude_csv_whatever_its_name() {
+        let document = json!({"sensors": [
+            {"name": "filter", "activity": "attitude", "enabled": false, "telemetry_ms": 100},
+        ]});
+        assert_eq!(
+            only(&document),
+            Some(measured("attitude.csv", &control::attitude::FIELDS)),
+            "disabled, renamed and with plan B's window: still attitude.csv, never decimated"
+        );
+    }
+
+    #[test]
+    fn the_attitude_filter_is_known_by_its_activity_not_its_name() {
+        // the SEN0253's BNO055 publishes `attitude` too, through a driver the port does not record yet
+        assert_eq!(only(&sensor("attitude", "bno055", None)), None);
+        assert_eq!(
+            only(&json!({"sensors": [{"name": "attitude", "activity": "attitudes"}]})),
+            None
         );
     }
 
@@ -237,14 +345,10 @@ mod tests {
         ]});
         assert_eq!(
             only(&document),
-            Some(Stream {
-                file: "checkpoint.csv".to_string(),
-                fields: &CHECKPOINT_FIELDS,
-                decimate_us: -1,
-                durable: true,
-            }),
+            Some(event("checkpoint.csv", &CHECKPOINT_FIELDS)),
             "disabled, renamed and with a window of its own: still checkpoint.csv, durable and never decimated"
         );
+        assert_eq!(only_vetoes(&document), None, "the checkpoint writes no vetoes");
     }
 
     #[test]
@@ -268,14 +372,41 @@ mod tests {
         ]});
         assert_eq!(
             only(&document),
-            Some(Stream {
-                file: "stages.csv".to_string(),
-                fields: &SEQUENCER_FIELDS,
-                decimate_us: -1,
-                durable: true,
-            }),
+            Some(event("stages.csv", &SEQUENCER_FIELDS)),
             "disabled, and with a window of its own: still durable and never decimated"
         );
+    }
+
+    #[test]
+    fn the_stage_machine_writes_its_vetoes_to_vetoes_csv_whatever_its_name() {
+        // the cells crates/sequencer's VetoEdge carries, the edge beside the detector it qualifies
+        assert_eq!(
+            VETOES_FIELDS.join(";"),
+            "detector;edge;decider;kinds;contrary;live;value"
+        );
+        let document = json!({"components": [
+            {"name": "stages", "activity": "sequencer", "enabled": false, "telemetry_ms": 50},
+        ]});
+        assert_eq!(
+            only_vetoes(&document),
+            Some(event("vetoes.csv", &VETOES_FIELDS)),
+            "disabled, renamed and with a window of its own: still vetoes.csv, durable and never decimated"
+        );
+    }
+
+    #[test]
+    fn only_the_stage_machine_writes_vetoes() {
+        for document in [
+            sensor("imu_lsm6dso32", "lsm6dso32", None),
+            sensor("baro_icp10111", "icp10111", None),
+            json!({"sensors": [{"name": "attitude", "activity": "attitude"}]}),
+            json!({"components": [{"name": "separation", "activity": "separation"}]}),
+            json!({"components": [{"name": "vetoes", "activity": "flight"}]}),
+            json!({"components": [{"name": "sequencer", "activity": "flight"}]}),
+            json!({"components": [{"name": "sequencer", "driver": "x", "activity": "sequencer"}]}),
+        ] {
+            assert_eq!(only_vetoes(&document), None, "{document}");
+        }
     }
 
     #[test]
@@ -288,12 +419,6 @@ mod tests {
             only(&json!({"components": [{"name": "sequencer", "activity": "sequencers"}]})),
             None
         );
-    }
-
-    #[test]
-    fn the_columns_are_plan_b_s() {
-        assert_eq!(IMU_FIELDS.join(";"), "ax;ay;az;gx;gy;gz;irq_runs");
-        assert_eq!(BAROMETER_FIELDS.join(";"), "altitude;temperature;pressure;elevation");
     }
 
     #[test]
@@ -322,41 +447,9 @@ mod tests {
         assert_eq!(
             streams,
             [
-                ("imu_lsm6dso32.csv".to_string(), 20_000),
-                ("baro_icp10111.csv".to_string(), 0)
+                ("imu_lsm6dso32.csv".to_string(), -1),
+                ("baro_icp10111.csv".to_string(), -1)
             ]
-        );
-    }
-
-    #[test]
-    fn a_number_is_its_window_in_microseconds() {
-        assert_eq!(window(None), 0);
-        assert_eq!(window(Some(json!(0))), 0);
-        assert_eq!(window(Some(json!(0.0))), 0);
-        assert_eq!(window(Some(json!(50))), 50_000);
-        assert_eq!(window(Some(json!(50.0))), 50_000);
-        assert_eq!(window(Some(json!(12.5))), 12_500);
-        assert_eq!(window(Some(json!(-1))), -1);
-        assert_eq!(window(Some(json!(-250.5))), -1);
-    }
-
-    #[test]
-    fn a_window_rounds_saturates_and_never_falls_to_the_global() {
-        assert_eq!(window(Some(json!(0.0625))), 63);
-        assert_eq!(window(Some(json!(0.0624))), 62);
-        assert_eq!(window(Some(json!(0.0001))), 1);
-        assert_eq!(window(Some(json!(-0.0001))), -1);
-        assert_eq!(window(Some(json!(2_147_483))), 2_147_483_000);
-        assert_eq!(window(Some(json!(1e12))), i32::MAX);
-        assert_eq!(window(Some(json!(u64::MAX))), i32::MAX);
-    }
-
-    #[test]
-    fn the_barometer_takes_its_window_too() {
-        let barometer = only(&sensor("baro_icp10111", "icp10111", Some(json!(100)))).expect("a stream");
-        assert_eq!(
-            (barometer.file.as_str(), barometer.decimate_us),
-            ("baro_icp10111.csv", 100_000)
         );
     }
 
@@ -365,41 +458,22 @@ mod tests {
         let document = json!({"components": [
             {"name": "pads", "activity": "separation", "telemetry_ms": 50},
         ]});
-        assert_eq!(
-            only(&document),
-            Some(Stream {
-                file: "separation.csv".to_string(),
-                fields: &SEPARATION_FIELDS,
-                decimate_us: -1,
-                durable: true,
-            })
-        );
-    }
-
-    #[test]
-    fn a_window_that_is_not_a_number_is_the_global() {
-        for not_a_number in [
-            json!("50"),
-            Value::Null,
-            json!(true),
-            json!(false),
-            json!([50]),
-            json!({"ms": 50}),
-        ] {
-            assert_eq!(window(Some(not_a_number.clone())), 0, "{not_a_number}");
-        }
+        assert_eq!(only(&document), Some(event("separation.csv", &SEPARATION_FIELDS)));
     }
 
     #[test]
     fn a_part_the_port_does_not_record_has_no_stream() {
-        assert_eq!(only(&sensor("imu_bmi323", "bmi323", Some(json!(10)))), None);
-        assert_eq!(only(&sensor("baro_bmp581", "bmp581", None)), None);
+        for driver in [
+            "adxl375", "bno055", "bmp280", "sdp810", "vl53l4cx", "vl53l1x", "ina226", "atgm336h",
+        ] {
+            assert_eq!(only(&sensor("part", driver, Some(json!(10)))), None, "{driver}");
+        }
         assert_eq!(only(&json!({"sensors": [{"name": "no_implementation"}]})), None);
         let document = defaults();
-        let bmi323 = entries(&document)
+        let adxl375 = entries(&document)
             .into_iter()
-            .find(|entry| entry.implementation == "bmi323")
-            .expect("the defaults carry a BMI323");
-        assert_eq!(stream(&bmi323), None);
+            .find(|entry| entry.implementation == "adxl375")
+            .expect("the defaults carry an ADXL375");
+        assert_eq!(stream(&adxl375), None);
     }
 }

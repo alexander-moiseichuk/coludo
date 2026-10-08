@@ -19,6 +19,7 @@ harness = false  # no libtest on the board; on-board tests are their own binarie
 [dependencies]
 board_config.workspace = true
 cc_protocol.workspace = true
+control.workspace = true
 controller.workspace = true
 databoard.workspace = true
 drivers.workspace = true

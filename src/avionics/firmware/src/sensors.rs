@@ -13,6 +13,7 @@
 use std::mem::ManuallyDrop;
 
 use board_config::Entry;
+use control::change::Change;
 use controller::DeviceEntry;
 use databoard::Writer;
 use drivers::axes::Axes;
@@ -123,10 +124,11 @@ pub fn default_address(implementation: &str) -> Option<u8> {
     }
 }
 
-/// What a part does on its owner's tick beyond its bus work: where its readings go (M6: the ICP-10111).
+/// What a part does on its owner's tick beyond its bus work: where its readings go (M6: the ICP-10111). Each variant
+/// is boxed, so the other members of a port do not pay for the largest inline (M9).
 pub enum Run {
-    /// A barometer's channels and stream.
-    Barometer(Barometer),
+    /// A barometer's channels, its climb rate and its stream.
+    Barometer(Box<Barometer>),
 }
 
 impl Run {
@@ -139,7 +141,7 @@ impl Run {
         entry: Option<&'static DeviceEntry<'static>>,
     ) -> Option<Run> {
         match part {
-            Part::Icp10111(_) => Some(Run::Barometer(Barometer::new(name, topology, entry))),
+            Part::Icp10111(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
             Part::Lsm6dso32(_) => {
                 log::info!("{name} :: no read loop on I2C (SPI only)");
                 None
@@ -155,7 +157,7 @@ pub enum Event {
     Rearm,
 }
 
-/// A barometer's outputs: its four databoard channels (plan B's push order) and its stream.
+/// A barometer's outputs: its five databoard channels (plan B's four in its push order, then `change`) and its stream.
 pub struct Barometer {
     /// The `altitude` writer (m AMSL), when the quantity is on the databoard.
     altitude: Option<Writer<'static, f32>>,
@@ -165,6 +167,10 @@ pub struct Barometer {
     pressure: Option<Writer<'static, f32>>,
     /// The `elevation` writer (m above the ground).
     elevation: Option<Writer<'static, f32>>,
+    /// The `change` writer (m/s, climb positive; M9).
+    change: Option<Writer<'static, f32>>,
+    /// The climb rate's samples: the least-squares slope of the altitude over the last half second.
+    climb: Change,
     /// Its stream, with a recorder.
     telemetry: Option<Telemetry<'static>>,
     /// Its table entry, whose `healthy` the run writes (plan B's `Task._healthy`).
@@ -184,6 +190,8 @@ impl Barometer {
             temperature: writer("temperature"),
             pressure: writer("pressure"),
             elevation: writer("elevation"),
+            change: writer("change"),
+            climb: Change::default(),
             telemetry: crate::recorder::get()
                 .zip(crate::recorder::device_stream(name))
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
@@ -201,15 +209,18 @@ impl Barometer {
     }
 
     /// Publishes a reading (plan B icp10111.py:346-362): altitude, temperature, pressure, then the elevation above
-    /// the ground, and the row.
+    /// the ground, then the climb rate once its window holds enough (M9), and the row -- one for every conversion,
+    /// never decimated (measured -> reported, the operator).
     fn publish(&mut self, name: &str, elevation: Option<f32>, reading: &Reading, now_us: u64) {
         self.failing = false;
         self.set_healthy(true);
+        let change = self.climb.push(reading.altitude, now_us);
         for (writer, value) in [
             (&mut self.altitude, Some(reading.altitude)),
             (&mut self.temperature, Some(reading.temperature)),
             (&mut self.pressure, Some(reading.pressure)),
             (&mut self.elevation, elevation),
+            (&mut self.change, change),
         ] {
             if let (Some(writer), Some(value)) = (writer, value) {
                 writer.push(value, now_us);
@@ -218,14 +229,12 @@ impl Barometer {
         let Some(telemetry) = &mut self.telemetry else {
             return;
         };
-        if !telemetry.due(now_us) {
-            return;
-        }
         let row = [
             Cell::F32(reading.altitude),
             Cell::F32(reading.temperature),
             Cell::F32(reading.pressure),
             elevation.map_or(Cell::None, Cell::F32),
+            change.map_or(Cell::None, Cell::F32),
         ];
         match telemetry.push(now_us, &row) {
             Ok(()) => self.overflowing = false,

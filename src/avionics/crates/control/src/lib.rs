@@ -15,9 +15,13 @@
 //!  * [`guidance`] -- the stage-dependent guidance law: the attitude setpoints and the heading error;
 //!  * [`attitude`] -- the primary attitude: the complementary filter (gyro, gravity, track, magnetometer), its
 //!    blind window and the handover to a source above or below it.
+//!
+//! And one with no plan B file, the port's own:
+//!  * [`change`] -- a barometer's climb rate, `change`: the least-squares slope of its altitude over half a second.
 
 pub mod airspeed;
 pub mod attitude;
+pub mod change;
 pub mod commons;
 pub mod governor;
 pub mod guidance;

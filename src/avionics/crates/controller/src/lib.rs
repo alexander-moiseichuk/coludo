@@ -16,8 +16,9 @@
 //!    513, 807-816), and `inspect controller` (controller.py:630-632);
 //!  * [`binding`] -- plan B's bind() defaults: the bus and address an entry's driver talks over (i2cbus.py:275-301,
 //!    spibus.py:196-219), ported once so no call site compares the raw `bus`, `id` and `addr` fields itself;
-//!  * [`stream`] -- the telemetry stream a recorded device writes: its file, columns, window and durability
-//!    (module `streams`);
+//!  * [`stream`] and [`vetoes`] -- the telemetry stream a recorded entry writes, and the stage machine's second, its
+//!    veto episodes: the file, columns, window (never decimated: measured -> reported) and durability (module
+//!    `streams`);
 //!  * [`readiness`] -- `verify`'s flight-readiness verdict, the config choices no probe can see (cc_client.py:47-107);
 //!  * [`ring_gate`] -- the flash ring's refusal of `arm` and `verify`, under plan B's recorder probe's words;
 //!  * [`stale_arm`] -- the refusal of an `arm` that waited on the board until the hub may have given up on it;
@@ -63,7 +64,8 @@ pub use readiness::readiness;
 pub use ring_gate::ring_gate;
 pub use stale_arm::stale_arm;
 pub use streams::{
-    BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, stream,
+    BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, MAGNETOMETER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream,
+    VETOES_FIELDS, stream, vetoes,
 };
 pub use watchdog::Stall;
 

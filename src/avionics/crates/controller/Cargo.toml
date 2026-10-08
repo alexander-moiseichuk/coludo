@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 board_config.workspace = true  # the device directory, pins, provides and Python's %s over config values
+control.workspace = true  # streams: attitude.csv's file and columns, the filter's own (control::attitude)
 serde_json.workspace = true
 
 [dev-dependencies]

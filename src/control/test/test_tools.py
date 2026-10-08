@@ -804,8 +804,8 @@ def test_recorder_flight_salvages_a_wrapped_dump():
                          baro_routing + '@' + stranded['1700000'],   # a lost leading '@'
                          '3_baro_bmp280.csv@' + stranded['1900000'],  # ... and part of the name with it
                          recorder_wire.wrap('1500000 sequencer :: stage -> boosting').rstrip('\n')],
-        '000123_attitude.csv': [_body('uptime;heading_cd;roll_cd', '000123_attitude.csv'),
-                                _body('1600000;100;5', '000123_attitude.csv')],  # not a stream it knows of
+        '000123_undeclared.csv': [_body('uptime;heading_cd;roll_cd', '000123_undeclared.csv'),
+                                  _body('1600000;100;5', '000123_undeclared.csv')],  # not a stream it knows of
         other: [_body(row, other) for row in imu[:5]],             # another session: left alone
         'session.csv': [_body(row, 'session.csv') for row in clock],
     })
@@ -824,7 +824,7 @@ def test_recorder_flight_salvages_a_wrapped_dump():
     assert [line.split(';')[-1] for line in flown[1:]] == [str(row.split(';')[0]) for row in baro
                                                            if not row.startswith('1200000;')]
     assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + 200  # less the spliced row
-    assert _read(os.path.join(out, 'flight', 'attitude.csv'))[0] == 't_s;heading_cd;roll_cd;uptime_us'
+    assert _read(os.path.join(out, 'flight', 'undeclared.csv'))[0] == 't_s;heading_cd;roll_cd;uptime_us'
     assert not any('000122' in name for name in os.listdir(os.path.join(out, 'recorder')))
     assert status in _read(os.path.join(out, 'recorder', 'board.log'))
 
@@ -844,7 +844,7 @@ def test_recorder_flight_reads_an_unwrapped_dump_as_before():
     _write_dump(recordings, {
         '%s_imu_lsm6dso32.csv' % session: ['uptime;ax;ay;az;gx;gy;gz;irq_runs'] + imu,
         '%s_baro_bmp280.csv' % session: baro_file,
-        '%s_attitude.csv' % session: ['uptime;heading_cd;roll_cd', '1600000;100;5'],  # not a known stream
+        '%s_undeclared.csv' % session: ['uptime;heading_cd;roll_cd', '1600000;100;5'],  # not a known stream
         '%s_baro_bmXX280.csv' % session: [_body(baro[1], 'x')],  # a wrapper-shaped junk row decides nothing
     })
     status = ("900000 recorder :: {'session': '%s'}\n" % session).encode()
@@ -856,7 +856,7 @@ def test_recorder_flight_reads_an_unwrapped_dump_as_before():
         assert handle.read() == status + '1500000 sequencer :: z\ufffd\ufffdndung\n'.encode('utf-8')
     assert _read(os.path.join(out, 'recorder', 'baro_bmp280.csv')) == baro  # the corrupted uptime dropped
     assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + len(imu)
-    assert not os.path.exists(os.path.join(out, 'flight', 'attitude.csv')), 'only known streams on an old dump'
+    assert not os.path.exists(os.path.join(out, 'flight', 'undeclared.csv')), 'only known streams on an old dump'
 
 
 def test_assemble_capture_keeps_a_wrapped_capture_strict():
@@ -1106,6 +1106,184 @@ def test_every_reader_takes_a_separation_blip_as_a_word():
     assert separation.column('moment')[1][3] != separation.column('moment')[1][3], 'a word as the moment is no number'
 
 
+_AVIONICS: str = os.path.join(_ROOT, 'src', 'avionics', 'crates')  # the Rust port's portable crates
+"""
+Every stream the Rust port records: the source under crates/ that declares its columns, and the constant there.
+"""
+_RUST_STREAMS: dict = {
+    'imu_lsm6dso32': ('controller/src/streams.rs', 'IMU_FIELDS'),
+    'imu_bmi323': ('controller/src/streams.rs', 'IMU_FIELDS'),
+    'baro_icp10111': ('controller/src/streams.rs', 'BAROMETER_FIELDS'),
+    'baro_bmp581': ('controller/src/streams.rs', 'BAROMETER_FIELDS'),
+    'mag_bmm350': ('controller/src/streams.rs', 'MAGNETOMETER_FIELDS'),
+    'attitude': ('control/src/attitude.rs', 'FIELDS'),
+    'separation': ('controller/src/streams.rs', 'SEPARATION_FIELDS'),
+    'sequencer': ('controller/src/streams.rs', 'SEQUENCER_FIELDS'),
+    'checkpoint': ('controller/src/streams.rs', 'CHECKPOINT_FIELDS'),
+    'vetoes': ('controller/src/streams.rs', 'VETOES_FIELDS'),
+}
+"""
+The plan B file declaring each of those streams but the port's own (vetoes), under src/glider: the Rust port keeps
+plan B's columns first, then what it appended (recorder_flight._APPENDED).
+"""
+_PLAN_B_STREAMS: dict = {
+    'imu_lsm6dso32': 'drivers/lsm6dso32.py',
+    'imu_bmi323': 'drivers/bmi323.py',
+    'baro_icp10111': 'drivers/icp10111.py',
+    'baro_bmp581': 'drivers/bmp581.py',
+    'mag_bmm350': 'drivers/bmm350.py',
+    'attitude': 'tasks/attitude.py',
+    'separation': 'drivers/separation.py',
+    'sequencer': 'tasks/sequencer.py',
+    'checkpoint': 'warmstart.py',
+}
+
+
+def _rust_fields(path: str) -> dict:
+    """
+    The string-array constants of one Rust source, as its column lists are declared.
+
+    Args:
+        path - the .rs file to read.
+
+    Returns:
+        {constant: (field, ...)} for every `pub const NAME: [&str; N] = [...];` in it.
+    """
+    with open(path) as handle:
+        text = handle.read()
+    return {name: tuple(re.findall(r'"([^"]*)"', body))
+            for name, body in re.findall(r'pub const (\w+): \[&str; \d+\] = \[(.*?)\];', text, re.DOTALL)}
+
+
+def _rust_mismatches(sources: dict) -> list:
+    """
+    Where recorder_flight's field lists differ from the Rust port's declarations (_RUST_STREAMS).
+
+    Args:
+        sources - {source under crates/: the path to read it from}, so a doctored copy can stand in for one.
+
+    Returns:
+        [(stream, recorder_flight's fields, the declared fields or None when not declared)], empty when every stream
+        agrees.
+    """
+    declared = {source: _rust_fields(path) for source, path in sources.items()}
+    mismatches = []
+    for stream, (source, constant) in _RUST_STREAMS.items():
+        fields = declared[source].get(constant)
+        if recorder_flight._FIELDS.get(stream) != fields:
+            mismatches.append((stream, recorder_flight._FIELDS.get(stream), fields))
+    return mismatches
+
+
+def test_recorder_flight_knows_the_rust_streams_as_declared():
+    """
+    recorder_flight._FIELDS names a stream's columns when its header was lost, the usual case on a damaged link. The
+    Rust port declares its streams in crates/controller streams.rs (and the attitude filter's in crates/control
+    attitude.rs); nothing tied the copy here to them, nor to plan B's, whose rows the same readers take.
+
+    Every Rust stream's list matches its declaration, every *_FIELDS constant in streams.rs is some stream's (a new
+    Rust stream must be added here too), and the plan B part of each list -- all but what the port appended -- matches
+    plan B's Telemetry declaration. NEGATIVE: a doctored streams.rs -- two barometer columns swapped, the vetoes' edge
+    dropped -- is caught, so the check cannot pass vacuously.
+    """
+    sources = {source: os.path.join(_AVIONICS, source) for source, _constant in _RUST_STREAMS.values()}
+    assert _rust_mismatches(sources) == [], _rust_mismatches(sources)
+    streams_rs = sources['controller/src/streams.rs']
+    constants = {constant for source, constant in _RUST_STREAMS.values() if source == 'controller/src/streams.rs'}
+    assert set(_rust_fields(streams_rs)) == constants, sorted(set(_rust_fields(streams_rs)) ^ constants)
+
+    for stream, relative in _PLAN_B_STREAMS.items():
+        declared = [fields for name, fields, pattern in gen_schema._streams_in(os.path.join(_ROOT, 'src', 'glider',
+                                                                                            relative))
+                    if name == stream + '.csv' or pattern == '<name>.csv']
+        assert len(declared) == 1, (stream, declared)
+        fields, appended = recorder_flight._FIELDS[stream], recorder_flight._APPENDED.get(stream, ())
+        assert fields[:len(fields) - len(appended)] == tuple(declared[0]), (stream, fields, appended, declared)
+        assert fields[len(fields) - len(appended):] == appended, (stream, fields, appended)
+    assert 'vetoes' not in _PLAN_B_STREAMS and 'vetoes' not in recorder_flight._APPENDED, 'the port\'s own stream'
+
+    with open(streams_rs) as handle:
+        text = handle.read()
+    for original, doctored, broken in (('"pressure", "elevation", "change"', '"elevation", "pressure", "change"',
+                                        ['baro_icp10111', 'baro_bmp581']),
+                                       ('"detector", "edge", "decider"', '"detector", "decider"', ['vetoes'])):
+        assert text.count(original) == 1, original  # the doctoring below must hit the declaration itself
+        path = os.path.join(_folder(), 'streams.rs')
+        with open(path, 'w') as handle:
+            handle.write(text.replace(original, doctored))
+        found = _rust_mismatches(dict(sources, **{'controller/src/streams.rs': path}))
+        assert [mismatch[0] for mismatch in found] == broken, doctored
+
+
+def test_recorder_flight_reads_a_barometer_with_and_without_its_change():
+    """
+    The Rust port appended `change` to every barometer's row (its climb rate, m/s; 'None' until its window fills);
+    plan B's rows have four cells. With the header lost, recorder_flight names both: a Rust row in full, a plan B row
+    with the change empty. A file that kept its header is read by it alone. NEGATIVE: a Rust file's row cut short, a
+    row of three or of six cells, and the BMP280 (which the port does not record, so nothing was appended to it).
+    Then a Rust session end to end: a BMP581 whose header was lost, its change 'None' at first, and the stage
+    machine's vetoes.csv with its words verbatim and a word in its value's place blanked. And a dump from before the
+    wrapper, which predates the change: its ICP-10111 rows are named by plan B's four, as the 2026-10-03 cuts were
+    (they regenerate byte for byte), and a five-cell row there is damage.
+    """
+    rust, plan_b = ['1234.56', '21.5', '87500.25', '3.21', '0.12'], ['1234.56', '21.5', '87500.25', '3.21']
+    header = ('altitude', 'temperature', 'pressure', 'elevation', 'change')
+    for stream in ('baro_icp10111', 'baro_bmp581'):
+        assert recorder_flight._cells(stream, None, rust) == rust
+        assert recorder_flight._cells(stream, None, plan_b) == plan_b + ['']
+        assert recorder_flight._cells(stream, header[:4], plan_b) == plan_b
+        assert recorder_flight._cells(stream, header, rust) == rust
+        assert recorder_flight._cells(stream, header, plan_b) is None, stream
+        assert recorder_flight._cells(stream, None, plan_b[:3]) is None, stream
+        assert recorder_flight._cells(stream, None, rust + ['1']) is None, stream
+    assert recorder_flight._cells('baro_bmp280', None, plan_b) == plan_b
+    assert recorder_flight._cells('baro_bmp280', None, rust) is None
+
+    session, imu_routing = '000123', '000123_imu_lsm6dso32.csv'
+    baro_routing, vetoes_routing = '000123_baro_bmp581.csv', '000123_vetoes.csv'
+    baro = ['1400000;250.10;21.5;98300.5;0.00;None', '1420000;250.11;21.5;98300.4;0.01;None',
+            '1600000;251.20;21.5;98287.1;1.10;4.85']
+    vetoes = ['1450000;launch_altitude;begin;baro_icp10111;peer+at_rest;1;2;15.3',
+              '1500000;launch_altitude;end;baro_icp10111;at_rest;0;2;oops']
+    status = recorder_wire.wrap("900000 recorder :: {'session': '000123', 'lines': 9}").rstrip('\n')
+    recordings = _folder()
+    _write_dump(recordings, {
+        imu_routing: [_body('uptime;ax;ay;az;gx;gy;gz;irq_runs', imu_routing)]
+        + [_body(row, imu_routing) for row in _imu_rows()],
+        baro_routing: [_body(row, baro_routing) for row in baro],
+        vetoes_routing: [_body(row, vetoes_routing) for row in vetoes],
+        'recorder.log': [status],
+    })
+    printed, out = _cut(recordings, session)
+    assert re.search(r'baro_bmp581\s+3 original rows,\s+3 named', printed), printed
+    assert re.search(r'vetoes\s+2 original rows,\s+2 named', printed), printed
+    assert _read(os.path.join(out, 'flight', 'baro_bmp581.csv')) == [
+        't_s;altitude;temperature;pressure;elevation;change;uptime_us',
+        '-0.100000;250.10;21.5;98300.5;0.00;None;1400000',
+        '-0.080000;250.11;21.5;98300.4;0.01;None;1420000',
+        '0.100000;251.20;21.5;98287.1;1.10;4.85;1600000']
+    assert _read(os.path.join(out, 'flight', 'vetoes.csv')) == [
+        't_s;detector;edge;decider;kinds;contrary;live;value;uptime_us',
+        '-0.050000;launch_altitude;begin;baro_icp10111;peer+at_rest;1;2;15.3;1450000',
+        '0.000000;launch_altitude;end;baro_icp10111;at_rest;0;2;;1500000']
+
+    session = '20000101_000006_898573'
+    recordings = _folder()
+    _write_dump(recordings, {
+        '%s_imu_lsm6dso32.csv' % session: ['uptime;ax;ay;az;gx;gy;gz;irq_runs'] + _imu_rows(),
+        '%s_baro_icp10111.csv' % session: ['1400000;250.10;21.5;98300.5;0.00', '1600000;251.20;21.5;98287.1;1.10',
+                                           '1700000;251.30;21.5;98287.0;1.20;0.50'],
+    })
+    with open(os.path.join(recordings, 'recorder.log'), 'wb') as handle:
+        handle.write(("900000 recorder :: {'session': '%s'}\n" % session).encode())
+    printed, out = _cut(recordings, session)
+    assert re.search(r'baro_icp10111\s+3 original rows,\s+2 named', printed), printed
+    assert _read(os.path.join(out, 'flight', 'baro_icp10111.csv')) == [
+        't_s;altitude;temperature;pressure;elevation;uptime_us',
+        '-0.100000;250.10;21.5;98300.5;0.00;1400000',
+        '0.100000;251.20;21.5;98287.1;1.10;1600000']
+
+
 def test_recorder_flight_places_salvage_across_a_wrap():
     """
     A session longer than the ticks_us wrap (2**30 us, 17.9 min): recovered rows are placed by the good
@@ -1177,7 +1355,7 @@ def test_a_label_never_takes_another_sessions_files():
         files[baro_routing] = [_body(row, baro_routing) for row in _baro_rows()]
         files[prefix + '_health.csv'] = [_body('1000000;35;31480912;10;0;0;0;0;0', prefix + '_health.csv')]
         files[prefix + '_sequencer.csv'] = [_body('1500000;boosting;launch', prefix + '_sequencer.csv')]
-    files['hitl_attitude.csv'] = [_body('1600000;100;5', 'hitl_attitude.csv')]  # this session's, but undeclared
+    files['hitl_undeclared.csv'] = [_body('1600000;100;5', 'hitl_undeclared.csv')]  # this session's, but undeclared
     files['recorder.log'] = [_log("900000 recorder :: {'session': 'hitl'}")]
     recordings = _folder()
     _write_dump(recordings, files)
@@ -1188,8 +1366,8 @@ def test_a_label_never_takes_another_sessions_files():
     capture = os.path.join(_folder(), 'capture.txt')
     assemble_capture.assemble(session, recordings, capture)
     streams, _logs = flight_telemetry.parse('\n'.join(_read(capture)))
-    assert sorted(streams) == ['attitude.csv', 'baro_bmp280.csv', 'health.csv', 'imu_lsm6dso32.csv',
-                               'sequencer.csv'], sorted(streams)
+    assert sorted(streams) == ['baro_bmp280.csv', 'health.csv', 'imu_lsm6dso32.csv', 'sequencer.csv',
+                               'undeclared.csv'], sorted(streams)
     # NEGATIVE: the other label is still its own session, whole, and only that
     assemble_capture.assemble(foreign, recordings, capture)
     assert sorted({line[1:].partition('@')[0] for line in _read(capture) if line.startswith('@')}) == [
@@ -1699,6 +1877,8 @@ test_assemble_capture_keeps_a_wrapped_capture_strict()
 test_recorder_flight_error_matrix()
 test_recorder_flight_reads_separation_with_and_without_the_port_s_columns()
 test_every_reader_takes_a_separation_blip_as_a_word()
+test_recorder_flight_knows_the_rust_streams_as_declared()
+test_recorder_flight_reads_a_barometer_with_and_without_its_change()
 test_recorder_flight_places_salvage_across_a_wrap()
 test_a_label_never_takes_another_sessions_files()
 test_flight_pull_takes_a_session_not_a_junk_name()
@@ -1715,7 +1895,8 @@ print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, tou
       'the GNSS field lists as gnss.py declares them, '
       'recorder_flight on wrapped + unwrapped dumps, assemble_capture strictness, the recorder_flight error '
       'matrix (every unproven line counted), separation.csv with and without its moment and duration (and its '
-      'blips), '
+      "blips), every Rust stream's columns as streams.rs and plan B declare them, a barometer with and without its "
+      'change (and vetoes.csv), '
       'salvage across a ticks wrap (a sparse stream too), label-prefix '
       'collisions and junk tails, flight_pull session pick (byte-safe, never a label), every boot of the session '
       'index, the flight\'s UTC across a wrap, the log timeline of this boot only, a log line found in a stream, '

@@ -81,17 +81,22 @@ import sys
 import recorder_wire
 
 """
-The firmware's Telemetry declarations (src/glider; the Rust port's where it appended columns, _APPENDED),
-used when a stream's own header row was lost to UART corruption -- which is the usual case: the header goes
-out once, at the start of a session. A hand-kept copy: src/control/test/test_tools.py checks the GNSS pair
-against gnss.py's own declarations.
+The firmware's Telemetry declarations (src/glider; the Rust port's where it appended columns, _APPENDED, and its
+own streams, vetoes), used when a stream's own header row was lost to UART corruption -- which is the usual
+case: the header goes out once, at the start of a session. A hand-kept copy: src/control/test/test_tools.py
+checks the GNSS pair against gnss.py's own declarations, and every stream the Rust port records against both
+its declaration there (src/avionics controller streams.rs, control attitude.rs) and plan B's.
 """
 _FIELDS: dict = {
     'imu_lsm6dso32': ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
+    'imu_bmi323': ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
     'accel_adxl375': ('ax', 'ay', 'az', 'irq_runs'),
     'imu_bno055': ('heading', 'roll', 'pitch', 'ax', 'ay', 'az'),
+    'mag_bmm350': ('mx', 'my', 'mz'),
+    'attitude': ('heading_cd', 'roll_cd', 'pitch_cd', 'free', 'mag_known', 'mag_offset_cd'),
     'baro_bmp280': ('altitude', 'temperature', 'pressure', 'elevation'),
-    'baro_icp10111': ('altitude', 'temperature', 'pressure', 'elevation'),
+    'baro_icp10111': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
+    'baro_bmp581': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
     'airspeed_sdp810': ('dynamic_pressure', 'airspeed_cms', 'temperature'),
     'laser_agl': ('agl', 'irq_runs'),
     'health': ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps', 'rescues', 'rescue_ms'),
@@ -105,15 +110,22 @@ _FIELDS: dict = {
     'separation': ('event', 'stage', 'moment', 'duration'),
     'sequencer': ('stage', 'reason'),
     'sequencer_events': ('stage', 'reason'),
+    'vetoes': ('detector', 'edge', 'decider', 'kinds', 'contrary', 'live', 'value'),
 }
 """
 The columns a later firmware appended to a stream, the tail of its _FIELDS entry: the Rust port's separation
 `moment`, the uptime (us) of the first edge of the contact's episode the row concludes, and `duration`, the us from
 it to the episode's last edge (the contact's wobble; src/avionics controller streams.rs). The port's `event` is
-`separated`, `nested` or `blip` (the contact moved and came back), read as a word like any event. A row of the older
-firmware (plan B) stops short of all of them; with the header lost it is kept with those cells empty (_cells).
+`separated`, `nested` or `blip` (the contact moved and came back), read as a word like any event. And the Rust port's
+barometer `change`, its climb rate in m/s (src/avionics control change.rs), after plan B's four. A row of the older
+firmware (plan B) stops short of all of them; with the header lost it is kept with those cells empty (_cells). A dump
+from before the wrapper predates every one of them, and is named without them (_before_the_wrapper).
 """
-_APPENDED: dict = {'separation': ('moment', 'duration')}
+_APPENDED: dict = {
+    'separation': ('moment', 'duration'),
+    'baro_icp10111': ('change',),
+    'baro_bmp581': ('change',),
+}
 _BOOST_G: float = 3.0
 _BOOST_HOLD_S: float = 0.3
 _BOOST_SAMPLES: int = 10       # ... over at least this many real samples, never one corrupted row
@@ -126,7 +138,7 @@ _WRAP_SLACK_US: int = 60_000_000  # ... give or take the rows a slow stream has 
 _CONFIRM_ROWS: int = 3
 _PROBE_LINES: int = 100       # lines per file _wrapped() reads: one good row decides
 _STATUS = re.compile(r"'session': '([^']*)'")
-_TEXT_FIELDS: tuple = ('stage', 'reason', 'event')  # recorded as words; every other field is a number
+_TEXT_FIELDS: tuple = ('stage', 'reason', 'event', 'detector', 'edge', 'decider', 'kinds')  # words; the rest numbers
 _CODEC: dict = {'encoding': 'utf-8', 'errors': 'surrogateescape'}  # writes give back the bytes _lines() read
 _NO_STREAM: str = '(no stream)'  # the tally of this session's lines that prove no row at all
 _BOARD_LOG: str = '(board.log)'  # the tally of its log lines: recorder.log's part, and those run on into a stream
@@ -666,6 +678,16 @@ def _cells(stream: str, header: tuple | None, tokens: list) -> list | None:
     return None
 
 
+def _before_the_wrapper(stream: str) -> tuple:
+    """
+    The columns of a known stream whose header was lost, in a dump from before the wrapper: its _FIELDS less what a
+    later firmware appended (_APPENDED), since every such dump predates those. Its rows are named exactly as before the
+    columns existed, so the 2026-10-03 cuts regenerate byte for byte.
+    """
+    fields, appended = _FIELDS[stream], _APPENDED.get(stream, ())
+    return fields[:len(fields) - len(appended)]
+
+
 def _numbers(line: str, count: int) -> list | None:
     """The fields after the uptime as floats (None where not numeric), or None if the count is wrong."""
     parts = line.split(';')[1:]
@@ -901,7 +923,8 @@ def main() -> None:
     args = parser.parse_args()
 
     tally, clock, elsewhere, board = None, [], 0, []
-    if _wrapped(args.recordings, args.session):
+    wrapped = _wrapped(args.recordings, args.session)
+    if wrapped:
         found, tally, clock, elsewhere, board = _wrapped_streams(args.recordings, args.session)
     else:
         found = _streams(args.recordings, args.session)
@@ -958,6 +981,8 @@ def main() -> None:
         os.makedirs(os.path.join(args.out, folder), exist_ok=True)
 
     for stream, (header, rows) in sorted(streams.items()):
+        if header is None and not wrapped:
+            header = _before_the_wrapper(stream)  # an unwrapped dump's streams are all known ones (_streams)
         fields = header or _FIELDS.get(stream)
         kept = sorted((uptime, line) for uptime, line in rows if start <= uptime <= end)
         if not kept:

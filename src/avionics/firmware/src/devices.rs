@@ -103,10 +103,12 @@ const IMU_PERIOD_MS: u32 = 10;
 /// The pin name plan B's separation driver takes when its entry names none (`_pin_gpio('pin', 'separation_switch')`).
 const SEPARATION_PIN: &str = "separation_switch";
 
-/// The quantities scalars are (D14 of the M5 plan): one f32 each.
-const SCALARS: [&str; 12] = [
+/// The quantities scalars are (D14 of the M5 plan): one f32 each. `change` is the port's own (M9): each barometer's
+/// climb rate, registered with its `elevation` ([`BAROMETERS`]).
+const SCALARS: [&str; 13] = [
     "altitude",
     "elevation",
+    "change",
     "pressure",
     "temperature",
     "airspeed",
@@ -118,6 +120,11 @@ const SCALARS: [&str; 12] = [
     "speed",
     "course",
 ];
+
+/// The barometers: each one that provides `elevation` also provides `change` (m/s, climb positive; M9, the operator's
+/// fifth barometer quantity) at that elevation's priority and timeout, with no entry in the board config, so no board
+/// file or `config_id` changes; never reconciled (a rate has no offset).
+const BAROMETERS: [&str; 3] = ["icp10111", "bmp581", "bmp280"];
 
 /// The quantities that are vectors: three f32 (plan B pushes 3-tuples).
 const VECTORS: [&str; 4] = ["accel", "rate", "mag", "attitude"];
@@ -173,7 +180,19 @@ impl Topology {
             .zip(table.entries())
             .filter(|(_, device)| device.active());
         for (entry, _) in up {
-            for provide in board_config::provides(entry) {
+            let mut provides = board_config::provides(entry);
+            if BAROMETERS.contains(&entry.implementation) {
+                let change = provides
+                    .iter()
+                    .find(|provide| provide.quantity == "elevation")
+                    .map(|elevation| board_config::Provide {
+                        quantity: "change",
+                        reconcile: false,
+                        ..*elevation
+                    });
+                provides.extend(change);
+            }
+            for provide in provides {
                 let quantity = provide.quantity;
                 let added = if SCALARS.contains(&quantity) {
                     add(&mut topology.scalars, entry.name, &provide)
