@@ -92,6 +92,9 @@ pub enum Gate {
     Open,
     /// Only in SETTING: it changes the board, loads a core, or takes the board away.
     Setting,
+    /// Only in SETTING and disarmed: a bus diagnostic, which holds a bus owner off its parts while it runs, so never
+    /// in the last seconds on the pad (M9).
+    Disarmed,
 }
 
 /// Who may send a command.
@@ -199,7 +202,9 @@ pub fn set_cc_names(names: Vec<&'static str>) {
 /// * `origin` - who sent it: a [`Reach::Console`] command refuses the hub.
 /// * `refusal` - why a change must not run now (the stage is not SETTING), or None in SETTING: a [`Gate::Setting`]
 ///   command answers `err unsafe <refusal>`, the CC commands' own answer.
-pub fn handle(line: &str, origin: Origin, refusal: Option<&str>) -> Option<String> {
+/// * `diagnostic_refusal` - why a bus diagnostic must not run now (not SETTING, or armed), or None: a
+///   [`Gate::Disarmed`] command answers `err unsafe <diagnostic_refusal>`.
+pub fn handle(line: &str, origin: Origin, refusal: Option<&str>, diagnostic_refusal: Option<&str>) -> Option<String> {
     let message = cc_protocol::parse(line).ok()?;
     let name = message.command.as_deref()?;
     let registry = REGISTRY.read().ok()?;
@@ -246,7 +251,12 @@ pub fn handle(line: &str, origin: Origin, refusal: Option<&str>) -> Option<Strin
             &[],
         ));
     }
-    if let (Gate::Setting, Some(refusal)) = (command.gate, refusal) {
+    let refused = match command.gate {
+        Gate::Open => None,
+        Gate::Setting => refusal,
+        Gate::Disarmed => diagnostic_refusal,
+    };
+    if let Some(refusal) = refused {
         return Some(cc_protocol::build("err", &["unsafe", refusal], &[]));
     }
     Some(match parse(command, &message, consumed) {
@@ -364,7 +374,8 @@ fn help(registry: &[Command], wanted: &[String]) -> String {
                 .map(|word| json!({"name": word.name, "about": word.about}))
                 .collect();
             json!({"command": command.words, "component": command.owner, "about": command.about,
-                   "setting_only": command.gate == Gate::Setting, "console_only": command.reach == Reach::Console,
+                   "setting_only": command.gate != Gate::Open,
+                   "disarmed_only": command.gate == Gate::Disarmed, "console_only": command.reach == Reach::Console,
                    "parameters": parameters, "words": words})
         })
         .collect();

@@ -75,6 +75,14 @@ pub enum Request {
     /// Start the port's failure run from zero, then read one register of `address` `times` times (plan B
     /// test_i2cbus.py:43-77): with an absent address, the 4th failure in a row cures a wedge.
     Touch { address: u8, register: u8, times: u8 },
+    /// Read `length` bytes from `register` of `address`, `times` times back to back (`i2c read`: a part's register
+    /// facts, M9). Answered raw; the executor formats them.
+    Read {
+        address: u8,
+        register: u8,
+        length: u8,
+        times: u8,
+    },
     /// List what acknowledges on the port (the `detect` command's scan).
     Scan,
     /// Probe the port's parts (plan B's device `probe`): the one named, or every one.
@@ -100,6 +108,11 @@ pub type Verdict = (&'static str, Option<String>);
 pub enum Answer {
     /// Each read's verdict, and the port's counters after them.
     Touch { results: Vec<String>, figures: PortFigures },
+    /// Each read's bytes or its fault, and how long the reads took together, in microseconds.
+    Read {
+        reads: Vec<Result<Vec<u8>, I2cError>>,
+        elapsed_us: u64,
+    },
     /// The addresses that acknowledged, or why the scan failed.
     Scan(Result<Addresses, I2cError>),
     /// The probed parts' verdicts, in the owner's order.
@@ -352,6 +365,25 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
                 figures: port.figures(),
             }
         }
+        Request::Read {
+            address,
+            register,
+            length,
+            times,
+        } => {
+            // SAFETY: plain reads of the monotonic timer.
+            let start_us = unsafe { sys::esp_timer_get_time() };
+            let reads = (0..times)
+                .map(|_| {
+                    let mut bytes = vec![0u8; usize::from(length)];
+                    port.write_read(address, &[register], &mut bytes).map(|()| bytes)
+                })
+                .collect();
+            Answer::Read {
+                reads,
+                elapsed_us: (unsafe { sys::esp_timer_get_time() } - start_us) as u64,
+            }
+        }
         Request::Scan => Answer::Scan(port.scan()),
         Request::Probe { name } => {
             let named = |member: &&mut Member| name.as_deref().is_none_or(|name| member.name == name);
@@ -577,17 +609,19 @@ pub fn bustune(port: u8, clock_hz: u32) -> Result<Result<Vec<Verdict>, I2cError>
     }
 }
 
-/// The owners' console commands (the Glider Command Language): `i2c general-call`, and `i2c touch`, which proves the
-/// wedge rule on the board.
+/// The owners' console commands (the Glider Command Language): `i2c general-call`, `i2c read` (a part's register
+/// facts), and `i2c touch`, which proves the wedge rule on the board. All three hold the owner off its parts while
+/// they run, so they run only in SETTING while disarmed.
 pub fn register_commands() {
     gcl::register(vec![
         general_call_command(),
+        read_command(),
         Command {
             owner: "buses",
             words: "i2c touch",
             about: "zero a port's failure run, then read one register of an address n times: an absent address's 4th \
                 failure in a row cures a wedge (plan B's rule); answers each read and the port's counters",
-            gate: Gate::Setting,
+            gate: Gate::Disarmed,
             reach: Reach::Everywhere,
             parameters: &[
                 Parameter {
@@ -655,7 +689,7 @@ fn general_call_command() -> Command {
         words: "i2c general-call",
         about: "send the I2C general call's software reset on a port (every part that honours it resets), re-arm the \
                 port's parts unless rearm=no, then probe them all; written to the panic log as an oops",
-        gate: Gate::Setting,
+        gate: Gate::Disarmed,
         reach: Reach::Everywhere,
         parameters: &[
             Parameter {
@@ -699,6 +733,80 @@ fn general_call_command() -> Command {
                         "probed": probed,
                         "speed_hz": figures.speed_hz,
                     });
+                    cc_protocol::build("ok", &[&reply.to_string()], &[])
+                }
+                Ok(_) => cc_protocol::build("err", &["i2c", "the owner answered another request"], &[]),
+                Err(error) => cc_protocol::build("err", &["i2c", &error], &[]),
+            }
+        }),
+    }
+}
+
+/// GCL `i2c read port=<0..1> address=<0x08..0x7f> register=<0..0xff> length=<1..32> times=<1..64>`: reads `length`
+/// bytes from a register `times` times back to back, for a part's register facts (M9: whether the BMI323's STATUS
+/// carries data-ready bits and what clears them; whether the BMP581 survives a general call). No write: YAGNI. Answers
+/// each read as hex (or its fault) and how long the reads took together.
+fn read_command() -> Command {
+    Command {
+        owner: "buses",
+        words: "i2c read",
+        about: "read bytes from a register of an address, back to back: answers each read as hex (or nak/busy/error) and \
+                the reads' total microseconds",
+        gate: Gate::Disarmed,
+        reach: Reach::Everywhere,
+        parameters: &[
+            Parameter {
+                name: "port",
+                kind: Kind::Integer { low: 0, high: 1 },
+                default: None,
+                about: "the I2C port",
+            },
+            Parameter {
+                name: "address",
+                kind: Kind::Integer { low: 0x08, high: 0x7f },
+                default: None,
+                about: "the 7-bit address",
+            },
+            Parameter {
+                name: "register",
+                kind: Kind::Integer { low: 0, high: 0xff },
+                default: None,
+                about: "the first register read",
+            },
+            Parameter {
+                name: "length",
+                kind: Kind::Integer { low: 1, high: 32 },
+                default: Some("1"),
+                about: "how many bytes each read takes",
+            },
+            Parameter {
+                name: "times",
+                kind: Kind::Integer { low: 1, high: 64 },
+                default: Some("1"),
+                about: "how many reads, back to back",
+            },
+        ],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let port = arguments.integer("port") as u8;
+            let request = Request::Read {
+                address: arguments.integer("address") as u8,
+                register: arguments.integer("register") as u8,
+                length: arguments.integer("length") as u8,
+                times: arguments.integer("times") as u8,
+            };
+            match ask(port, request, ANSWER_DEADLINE) {
+                Ok(Answer::Read { reads, elapsed_us }) => {
+                    let reads: Vec<String> = reads
+                        .iter()
+                        .map(|read| match read {
+                            Ok(bytes) => bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+                            Err(I2cError::NotAcknowledged) => "nak".to_string(),
+                            Err(I2cError::BusBusy) => "busy".to_string(),
+                            Err(I2cError::Driver(code)) => format!("error:{code:#x}"),
+                        })
+                        .collect();
+                    let reply = serde_json::json!({"port": port, "reads": reads, "elapsed_us": elapsed_us});
                     cc_protocol::build("ok", &[&reply.to_string()], &[])
                 }
                 Ok(_) => cc_protocol::build("err", &["i2c", "the owner answered another request"], &[]),

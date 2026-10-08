@@ -211,6 +211,7 @@ def _render_help(document: dict) -> str:
     lines = ['grammar: %s' % document.get('grammar', '')]
     for command in document.get('commands', []):
         marks = [mark for mark, flag in (('SETTING only', command.get('setting_only')),
+                                         ('disarmed only', command.get('disarmed_only')),
                                          ('console only', command.get('console_only'))) if flag]
         lines.append('')
         lines.append('%s  -- %s%s' % (command['command'], command['about'],
