@@ -1,118 +1,77 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! A debounce for a two-level input read once per tick, with or without an edge interrupt: the contact a latch stands
-//! behind. It knows levels, not what they mean. The owner keeps the latch, says on every read which level the latch
-//! stands for (`latched`) and acts on a verdict that differs from it: the separation switch's pads
-//! ([`crate::separation`]) are the first owner, and a remove-before-flight pin or a breakwire would be the same. It
-//! grew from plan B's separation `_settle` (src/glider/drivers/separation.py), stepped one read at a time.
+//! A debounce for a two-level input behind a latch, in two stamps: when the input first moved and when it last moved.
+//! It knows edges and times, not what a level means: the owner keeps the latch and decides what a concluded episode
+//! means from the level it reads at the conclusion. A remove-before-flight pin or a breakwire would be owners alike.
 //!
-//! THE EVIDENCE ([`Edges`]): each read carries its level and what the input's both-edge interrupt saw since the
-//! previous read: [`Edges::Seen`], the first and the last edge's stamps, or [`Edges::Quiet`], none. An input with no
-//! armed interrupt passes [`Edges::Polled`] on every read, and the read is then the only evidence. An input passes one
-//! kind for good: Polled, or Quiet and Seen.
+//! THE MODEL (the operator's): an EPISODE is the edges no quiet time separates. Its first edge sets the start of the
+//! [`StampPair`], every edge its finish ([`StampPair::record`]: wait-free and allocation-free, so the input's both-edge
+//! interrupt calls it). The owner's tick takes the pair once the finish is `quiet_us` old ([`StampPair::take`]), and
+//! the [`Episode`] it gets is the first and the last edge; the pair is empty again for the next one. The owner reads
+//! the level for that same tick and decides by it: a level the latch does not hold moves the latch, the level it
+//! holds is a blip (the input moved and came back). No count of reads and no deadline: an input that never holds still
+//! for the quiet keeps its episode open, dated by the first edge of the whole run. An episode ends when a tick SEES it
+//! quiet, so an edge that comes after the quiet ran out but before the tick took the pair is still the episode's: the
+//! episode is the edges no gap of a quiet and the tick's own delay separates.
 //!
-//! A SETTLE runs from the read that starts it to a verdict. Idle, an edge starts one; so does THE LEVEL RULE, a read
-//! whose level differs from `latched` with no edge (a change before the interrupt was armed, a lost edge, any change on
-//! a polled input). An idle read of the latched level with no edge does nothing, and the read that starts a settle
-//! never concludes it. Under way:
-//!  * THE RESTART RULE: an edge, or a read of the other level, restarts the run of agreeing reads: since the last edge
-//!    (the line last changed then, not at the read), else since the read. Without it, chatter of a few ms between
-//!    10 ms reads reads as a held level: toggles of 0.5-2 ms false-deployed 23-81 % of seeded separation runs with plan
-//!    B's rule on the tick, none with this one.
-//!  * THE HOLD, armed: a Quiet read that agrees with the run's level, `debounce_us` or more after the run began,
-//!    concludes it, [`Verdict::Held`]. No count of reads: the interrupt proves the line held between them, so the hold
-//!    is timed from the last edge's own stamp, to the µs, and a debounce of 0 concludes at the first quiet agreeing
-//!    read.
-//!  * THE RETURN, armed: a run at `latched` whose level held `debounce_us` or more up to an edge has concluded, though
-//!    no quiet read came while it held: the edge's read concludes it, [`Verdict::Held`] at `latched` (the owner
-//!    records nothing), and that read's edges start the next settle, departed at its first. So whether a return ends
-//!    the episode is the line's own timing, not where the reads fell: a nest held 10-19 ms between a blip and the real
-//!    separation once dated the separation by the blip at most tick phases. Home only: a verdict that moves the latch
-//!    still waits for a quiet read, a read that sees the level held.
-//!  * THE HOLD, polled: [`MINIMUM_SAMPLES`] agreeing reads spanning `debounce_us` conclude it, plan B's rule: such an
-//!    input cannot see between its reads, so one read is never enough, however long the debounce.
-//!  * THE DEADLINE: a settle with no verdict `debounce_us` x [`SETTLE_WINDOWS`] after its first read concludes
-//!    [`Verdict::Unsettled`], but only once it has taken [`MINIMUM_SAMPLES`] reads (the floor), so any debounce settles
-//!    a held level at any tick. Plan B gave up at the deadline alone, which a debounce under two read spacings reaches
-//!    before a third read: its 0 ms debounce never settled. A deadline ends the episode, not the run under way: with
-//!    the run at `latched` the line is home and the debounce goes idle; away, the next settle starts on the deadline's
-//!    read with that run, departed when the run began. So a deadline delays no verdict and keeps the run's stamps: it
-//!    only re-dates the departure.
+//! THE TICK'S OWN READ is evidence too ([`StampPair::observe`]): when no episode is open and the level the tick reads
+//! is not the latch's, the tick opens one at its read. That covers a change before the interrupt was armed, an edge
+//! the interrupt lost, and a latch that started from a level the input has since left: the latch follows the input a
+//! quiet after the read that saw it, with or without an interrupt. A read of the latch's own level records nothing.
 //!
-//! THE DEPARTURE ([`Verdict::Held`]'s `departed_us`): when the line first left `latched` in the settle -- the first
-//! edge of the read that started it, else that read (the level rule, all a polled input has), or after a deadline the
-//! start of the run carried over. It is kept across the restarts: a contact that wobbles as it parts restarts the run
-//! on every bounce, and the verdict still dates the episode from its first departure. An edge a later read brings,
-//! stamped before the departure, pulls it back: the edge contract lets an edge change the level a read sees after
-//! that read took its edges, so the level rule dates that departure at the read and the edge's own stamp reaches the
-//! next one. THE SETTLING (`settled_us`): when the held level began for good, the start of the run that concluded --
-//! its last edge on an armed input, the first read of the final run on a polled one, so a polled input's settling, and
-//! its span from the departure, are quantized to its reads; never before the departure. A settle that concludes, at
-//! either level, ends the episode, and so does a deadline. So a departure whose return held for the debounce is an
-//! episode of its own, and one whose return did not is part of the episode that follows.
+//! A POLLED input (no interrupt: none wired, or arming it failed) feeds the same pair from its reads
+//! ([`StampPair::poll`]): a read whose level differs from the previous read's is an edge at the read's time, any other
+//! read is observed. One path for both: a polled episode is dated by its reads, so its moment and its duration are
+//! quantized to them, and a change and its undoing between two reads go unseen.
 //!
-//! THE EDGE CONTRACT: [`Edges::Seen`]'s stamps are on the reads' clock, `first_us <= last_us <= now_us`, and cover
-//! every edge since the previous read took its edges (an edge may reach two reads, never none): take the edges, then
-//! the level, then the read's time. An armed input that loses an edge still settles: a Quiet read of the other level
-//! restarts the run, since that read. An edge passed on every read restarts every run, so no settle away from the
-//! latch concludes but on its deadline, Unsettled: the latch would never move. A polled input passes Polled, never an
-//! edge.
+//! THE TICK, in order: read the level, read the clock, observe (or poll), take, and on an episode decide with that
+//! same level. The level comes before the take: an edge after the take's load belongs to the next episode, so it can
+//! never decide this one. The residual: an edge in the instant before the read, inside the interrupt's entry latency
+//! (well under a µs on one core), is in the level yet reaches the pair after the take, so it decides the concluding
+//! episode as well as starting the next one, which then decides again by its own read. At worst a blip whose quiet
+//! ran out on this very tick concludes on the next episode's first edge: the latch moves, and the next episode moves
+//! it back if the line returns; an owner whose move cannot be undone states what that costs it.
 //!
-//! THE LATENCY, after the last change. Armed: the first quiet read at least `debounce_us` after the last edge; a quiet
-//! read comes a read spacing after it at the earliest, so that is max(debounce, spacing) to that plus a spacing, and a
-//! debounce up to the spacing decides on the same read (though a shorter one ends a return sooner: THE RETURN). Polled:
-//! the read that is both `debounce_us` after the first read to see the level and the third to see it, max(2,
-//! ceil(debounce / spacing)) spacings after that first read, which comes up to a spacing after the change. A deadline
-//! adds nothing to either. The owner states the figures for its own tick ([`crate::separation`], THE LATENCY).
+//! THE RACE: the interrupt may record while the tick takes. A take is decided by its load of the finish: an edge
+//! recorded before that load is the episode's (it is the latest, so the episode is not quiet and goes on), any edge
+//! after it is the next episode's. The take then releases the start and reloads the finish: an edge between the load
+//! and the release stored a finish but found the start set, so the take re-seeds the start with it, and an edge after
+//! the release started the next episode itself. So no episode loses its start and no later edge joins a concluded
+//! episode. The residual: when two or more edges land inside those few instructions (stretched by the interrupts' own
+//! run time, a few µs), the next episode starts at a later one of them, late by at most that span; its finish, and
+//! the episode concluded, are exact. The tick's own read opens an episode by an exchange from empty, and sets the
+//! finish only where no edge stored one since: an edge the interrupt records meanwhile is never overwritten by the
+//! read's older time. Only the tick observes, polls and takes.
 //!
-//! THE CLOCK is the caller's wrapping u32 of microseconds (esp_timer's, truncated): it wraps every 71.6 minutes. Every
-//! comparison is a wrapping difference read as i32 ([`elapsed_us`]), valid within 35 minutes, and the hold and the
-//! deadline are both elapsed times, so the clock may wrap mid-settle. A debounce of any size is safe: a window past
-//! the clock's half range never runs out, and never reads as run out. How long a debounce is sane is the config
-//! validator's to bound (board_config's `LONGEST_DEBOUNCE_MS`, 1000 ms: a 10 s deadline).
+//! THE MEMORY ORDER is sequentially consistent throughout. A take releases the start, then reloads the finish; an edge
+//! stores the finish, then exchanges the start: each side writes one word and then reads the other, which only one
+//! total order makes safe across cores (else a take could miss an edge that also missed its release, and the next
+//! episode would never start). The fences cost a few instructions per edge and per tick.
+//!
+//! ONE CORE is what THE RACE assumes: the interrupt runs to its end before the tick goes on, so a record is one step
+//! for the tick. On the board it is (the interrupt and the tick share core 1). Across cores a record's two writes can
+//! straddle the tick's few instructions, and two residuals come in, both for an edge inside them. A take that loads
+//! the edge's finish but releases the start before the edge's exchange concludes the edge, and the exchange then
+//! opens the next episode with it too; a take concludes only an edge a quiet old, so that needs a record that outlasts
+//! the quiet: in practice a quiet of 0. The next take concludes that edge again (a single-edge episode at the
+//! concluded finish), or with the edges after it, dated from it. An observation the edge straddles may date the
+//! episode by the read's time or the edge's, whichever the race leaves, never with a finish before the start. Closing
+//! the first would take a third word (the concluded finish); an interrupt moved off the tick's core is the owner's to
+//! weigh against it.
+//!
+//! THE CLOCK is the caller's wrapping u32 of microseconds (esp_timer's, truncated): it wraps every 71.6 minutes. A
+//! stamp of 0 means empty, so an edge that would stamp 0 stamps 1, a µs late. The quiet is an elapsed time, a wrapping
+//! difference read as i32 ([`elapsed_us`]), valid within 35.8 minutes, so the clock may wrap mid-episode; a finish
+//! after the take's `now_us` (an edge between the caller's clock read and the take) is a negative interval, never
+//! quiet. How long a quiet is sane is the config validator's to bound (board_config's `LONGEST_DEBOUNCE_MS`).
 
-/// Agreeing reads a polled input's verdict needs, however long the window: one read is never enough. Also the reads a
-/// settle takes before its deadline may conclude it, on either kind of input.
-pub const MINIMUM_SAMPLES: u32 = 3;
+use core::sync::atomic::{AtomicU32, Ordering};
 
-/// A settle with no verdict gives up this many debounce windows after its first read, once it has taken
-/// [`MINIMUM_SAMPLES`] reads.
-pub const SETTLE_WINDOWS: u32 = 10;
+/// The empty stamp: no episode open.
+const EMPTY: u32 = 0;
 
-/// What the input's edge interrupt saw between the previous read and this one: a read's evidence besides its level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Edges {
-    /// The input has no armed interrupt (none wired, or arming it failed): the read is the only evidence, on every read.
-    Polled,
-    /// The interrupt is armed and saw no edge since the previous read: the line held its level between the two.
-    Quiet,
-    /// The interrupt saw at least one edge since the previous read, stamped on the reads' clock:
-    /// `first_us <= last_us <=` the read's `now_us`.
-    Seen {
-        /// The first edge's stamp, µs: where a settle this read starts departs.
-        first_us: u32,
-        /// The last edge's stamp, µs: the line has held the read's level since.
-        last_us: u32,
-    },
-}
-
-/// What a settle concluded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Verdict {
-    /// The line held one level for the debounce.
-    Held {
-        /// The level it held (true = HIGH).
-        level: bool,
-        /// When the line first left the latched level in this settle, µs: the first edge of the read that started
-        /// it, else that read, or an earlier edge a later read brought (see the module notes, THE DEPARTURE).
-        departed_us: u32,
-        /// When the held level began for good, µs: the last edge on an armed input, the first read of the final run
-        /// on a polled one (THE SETTLING). At or after `departed_us` under the edge contract.
-        settled_us: u32,
-    },
-    /// The line never held still for the debounce before the settle's deadline.
-    Unsettled,
-}
+/// The memory order of every access (see the module notes, THE MEMORY ORDER).
+const ORDER: Ordering = Ordering::SeqCst;
 
 /// The signed microseconds from `then_us` to `now_us` on the wrapping u32 clock: negative when `now_us` is the earlier
 /// one. Valid while the two are less than half the clock's period apart, 35.8 minutes.
@@ -120,141 +79,144 @@ pub fn elapsed_us(now_us: u32, then_us: u32) -> i32 {
     now_us.wrapping_sub(then_us) as i32
 }
 
-/// Whether [`elapsed_us`] from `since_us` to `now_us` has reached `threshold_us`. Widened to i64, so a negative
-/// interval compares below every threshold, and a threshold past the clock's half range is never reached.
-fn reached_us(now_us: u32, since_us: u32, threshold_us: u32) -> bool {
-    i64::from(elapsed_us(now_us, since_us)) >= i64::from(threshold_us)
+/// The stamp of an edge at `now_us`: the time itself, but 1 for 0, the empty stamp.
+fn stamp(now_us: u32) -> u32 {
+    now_us.max(1)
 }
 
-/// One settle under way: the settle's own record, and the run of agreeing reads it is on.
+/// The points inside the tick's calls where an interrupt may land: the race tests record an edge there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Settle {
-    /// When its first read came, µs: the deadline counts from it.
-    began_us: u32,
-    /// The reads it has taken, its first included: the deadline waits for [`MINIMUM_SAMPLES`] of them.
-    reads: u32,
-    /// When the line first left the latched level in it, µs (THE DEPARTURE).
-    departed_us: u32,
-    /// The level the run under way agrees on (true = HIGH).
-    candidate: bool,
-    /// When the run began, µs: its last edge, else its first read. The hold counts from it.
-    since_us: u32,
-    /// The run's agreeing reads, its first included: a polled verdict needs [`MINIMUM_SAMPLES`] of them.
-    agreeing: u32,
+enum Point {
+    /// A take read the start, not yet the finish.
+    StartLoaded,
+    /// A take found the episode quiet, and has not released the start.
+    Concluded,
+    /// A take released the start, and has not reloaded the finish.
+    Released,
+    /// A take reloaded a finish an edge stored since its load, and has not re-seeded the start with it.
+    Reloaded,
+    /// An observation opened an episode at its read, and has not set the finish.
+    Opened,
 }
 
-impl Settle {
-    /// A settle whose first read came at `began_us`, departed at `departed_us`, on a run of `candidate` since
-    /// `since_us`: one read taken, one agreeing.
-    fn new(began_us: u32, departed_us: u32, candidate: bool, since_us: u32) -> Settle {
-        Settle {
-            began_us,
-            reads: 1,
-            departed_us,
-            candidate,
-            since_us,
-            agreeing: 1,
+/// One episode, as [`StampPair::take`] concludes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Episode {
+    /// The first edge, µs.
+    pub start_us: u32,
+    /// The last edge, µs: `start_us` when only one edge came.
+    pub finish_us: u32,
+}
+
+impl Episode {
+    /// From the first edge to the last, µs (wrapping): 0 for a single edge.
+    pub fn duration_us(&self) -> u32 {
+        self.finish_us.wrapping_sub(self.start_us)
+    }
+}
+
+/// The open episode's first and latest edge, shared by the input's interrupt and the owner's tick (see the module
+/// notes). A static: [`StampPair::new`] is const.
+#[derive(Debug, Default)]
+pub struct StampPair {
+    /// The episode's first edge, µs; [`EMPTY`] while none is open. Set only from empty; emptied only by a take.
+    start: AtomicU32,
+    /// The episode's latest edge, µs: stored by every edge, the first included, so while an episode is open it is
+    /// never older than the start; left as it is when an episode concludes, and meaningless while none is open.
+    finish: AtomicU32,
+}
+
+impl StampPair {
+    /// An empty pair: no episode open.
+    pub const fn new() -> StampPair {
+        StampPair {
+            start: AtomicU32::new(EMPTY),
+            finish: AtomicU32::new(EMPTY),
         }
     }
-}
 
-/// The debounce of a two-level input, one read per step (see the module notes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Debounce {
-    /// How long a level must hold, µs.
-    debounce_us: u32,
-    /// The settle under way, None while the line is idle.
-    settle: Option<Settle>,
-}
+    /// An edge at `now_us`: it is the finish, and the start when no episode is open. Wait-free, for an interrupt.
+    ///
+    /// The finish is stored first, then the start exchanged from empty: so a tick that sees the start sees this
+    /// finish or a later one, never one from a concluded episode.
+    pub fn record(&self, now_us: u32) {
+        let stamp = stamp(now_us);
+        self.finish.store(stamp, ORDER);
+        let _ = self.start.compare_exchange(EMPTY, stamp, ORDER, ORDER);
+    }
 
-impl Debounce {
-    /// An idle debounce whose level must hold `debounce_us`: nothing happens until an edge is seen or a read differs
-    /// from the latched level.
-    pub fn new(debounce_us: u32) -> Debounce {
-        Debounce {
-            debounce_us,
-            settle: None,
+    /// The tick's own read, `level` at `now_us`, against the level the owner's latch stands for, `latched`: when they
+    /// differ and no episode is open, it opens one at the read (THE TICK'S OWN READ). Anything else records nothing.
+    pub fn observe(&self, now_us: u32, level: bool, latched: bool) {
+        self.observe_interrupted(now_us, level, latched, |_| {});
+    }
+
+    /// [`StampPair::observe`], with `interrupt` run at its [`Point`]: the race tests' edge.
+    ///
+    /// It opens by an exchange from empty, so an episode the interrupt opened first is left alone; and it sets the
+    /// finish only from the value it found before, so a later edge's finish is never replaced by the read's time. An
+    /// edge stamped before the read whose finish lands after it (its record on another core) pulls the start back to
+    /// itself: never a finish before the start.
+    fn observe_interrupted(&self, now_us: u32, level: bool, latched: bool, mut interrupt: impl FnMut(Point)) {
+        if level == latched {
+            return;
+        }
+        let stamp = stamp(now_us);
+        let found = self.finish.load(ORDER);
+        if self.start.compare_exchange(EMPTY, stamp, ORDER, ORDER).is_ok() {
+            interrupt(Point::Opened);
+            if let Err(latest_us) = self.finish.compare_exchange(found, stamp, ORDER, ORDER)
+                && elapsed_us(stamp, latest_us) > 0
+            {
+                // only a take empties a set start, and the tick is the only taker: the exchange cannot fail
+                let _ = self.start.compare_exchange(stamp, latest_us, ORDER, ORDER);
+            }
         }
     }
 
-    /// Whether a settle is under way.
-    pub fn settling(&self) -> bool {
-        self.settle.is_some()
+    /// A polled input's read, `level` at `now_us` (no interrupt): an edge when it differs from the `previous` read's
+    /// level, else [`StampPair::observe`]d against `latched`. Nothing else writes the pair of a polled input, so the
+    /// edge is a plain [`StampPair::record`]. The caller keeps `previous`: at first the level its latch started from.
+    pub fn poll(&self, now_us: u32, level: bool, previous: bool, latched: bool) {
+        if level == previous {
+            self.observe(now_us, level, latched);
+        } else {
+            self.record(now_us);
+        }
     }
 
-    /// Take one read: `level` is the input at `now_us` (true = HIGH), `edges` what the interrupt saw since the
-    /// previous read ([`Edges::Polled`] on every read of an input without one: the edge contract), and `latched` the
-    /// level the owner's latch stands for.
+    /// Take the open episode once it is quiet at `now_us`: its latest edge `quiet_us` old or more.
     ///
-    /// Idle, an edge or a level other than `latched` (the level rule) starts a settle on this read: its departure is
-    /// the first edge, else this read, and its run begins at the last edge, else this read. An idle read with neither
-    /// does nothing. Under way, an edge that ends a run held at `latched` for the debounce concludes it and starts the
-    /// next settle (the return); else an edge or a read of the other level restarts the run (the restart rule), an
-    /// agreeing read counts, and the hold or the deadline concludes the settle (see the module notes).
-    ///
-    /// Returns the verdict on the read that concludes a settle, else None.
-    pub fn step(&mut self, now_us: u32, level: bool, edges: Edges, latched: bool) -> Option<Verdict> {
-        let Some(mut settle) = self.settle else {
-            self.settle = match edges {
-                Edges::Seen { first_us, last_us } => Some(Settle::new(now_us, first_us, level, last_us)),
-                Edges::Polled | Edges::Quiet if level != latched => Some(Settle::new(now_us, now_us, level, now_us)),
-                Edges::Polled | Edges::Quiet => None,
-            };
+    /// Returns None while no episode is open, or while it is not quiet (an edge stamped after `now_us` is younger than
+    /// any quiet). Else the episode, the pair emptied for the next one (re-seeded with an edge that came during the
+    /// take: THE RACE in the module notes).
+    pub fn take(&self, now_us: u32, quiet_us: u32) -> Option<Episode> {
+        self.take_interrupted(now_us, quiet_us, |_| {})
+    }
+
+    /// [`StampPair::take`], with `interrupt` run at each of its [`Point`]s: the race tests' edges.
+    fn take_interrupted(&self, now_us: u32, quiet_us: u32, mut interrupt: impl FnMut(Point)) -> Option<Episode> {
+        let start_us = self.start.load(ORDER);
+        if start_us == EMPTY {
             return None;
-        };
-        if let Edges::Seen { first_us, last_us } = edges {
-            if settle.candidate == latched && reached_us(first_us, settle.since_us, self.debounce_us) {
-                // the return: home for the debounce before this read's first edge, which departs anew
-                self.settle = Some(Settle::new(now_us, first_us, level, last_us));
-                return Some(Verdict::Held {
-                    level: latched,
-                    departed_us: settle.departed_us,
-                    settled_us: settle.since_us,
-                });
-            }
-            // an edge that changed the level an earlier read saw after that read took its edges
-            if elapsed_us(first_us, settle.departed_us) < 0 {
-                settle.departed_us = first_us;
-            }
         }
-        settle.reads = settle.reads.saturating_add(1);
-        let agrees = level == settle.candidate && !matches!(edges, Edges::Seen { .. });
-        if agrees {
-            settle.agreeing = settle.agreeing.saturating_add(1);
-        } else {
-            settle.candidate = level;
-            settle.since_us = match edges {
-                Edges::Seen { last_us, .. } => last_us,
-                Edges::Polled | Edges::Quiet => now_us,
-            };
-            settle.agreeing = 1;
+        interrupt(Point::StartLoaded);
+        let finish_us = self.finish.load(ORDER);
+        // widened, so a negative interval is below every quiet and a quiet past the clock's half range is never met
+        if i64::from(elapsed_us(now_us, finish_us)) < i64::from(quiet_us) {
+            return None;
         }
-        // the interrupt proves an armed line held between the reads; a polled one needs the reads themselves
-        let enough = agrees && (edges != Edges::Polled || settle.agreeing >= MINIMUM_SAMPLES);
-        let window_us = self.debounce_us.saturating_mul(SETTLE_WINDOWS);
-        let verdict = if enough && reached_us(now_us, settle.since_us, self.debounce_us) {
-            Some(Verdict::Held {
-                level: settle.candidate,
-                departed_us: settle.departed_us,
-                settled_us: settle.since_us,
-            })
-        } else if settle.reads >= MINIMUM_SAMPLES && reached_us(now_us, settle.began_us, window_us) {
-            Some(Verdict::Unsettled)
-        } else {
-            None
-        };
-        self.settle = match verdict {
-            None => Some(settle),
-            // a deadline away from the latch keeps the run: the next settle departs where it began
-            Some(Verdict::Unsettled) if settle.candidate != latched => Some(Settle {
-                began_us: now_us,
-                reads: 1,
-                departed_us: settle.since_us,
-                ..settle
-            }),
-            Some(_) => None,
-        };
-        verdict
+        interrupt(Point::Concluded);
+        // only a take empties a set start: no edge can change it before this store
+        self.start.store(EMPTY, ORDER);
+        interrupt(Point::Released);
+        let latest_us = self.finish.load(ORDER);
+        if latest_us != finish_us {
+            // an edge since the load: the next episode's first, unless one after the release opened it already
+            interrupt(Point::Reloaded);
+            let _ = self.start.compare_exchange(EMPTY, latest_us, ORDER, ORDER);
+        }
+        Some(Episode { start_us, finish_us })
     }
 }
 

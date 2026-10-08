@@ -15,9 +15,10 @@
 //! thread's own producer ring; [`STALE_LIMIT`] reads in a row with neither make the part unhealthy, with one line (a
 //! part slower than the tick reads stale now and then: that is its ODR, not a fault); the separation switch (M6) --
 //! a both-edge
-//! GPIO interrupt stamps the first and the last change since the tick last took them (esp_timer us), each tick steps
-//! the debounce with one pin read and those stamps, and a confirmed separation in BOOSTING moves the stage to GLIDING,
-//! recorded, with its moment and the pads' wobble, in the durable separation.csv.
+//! GPIO interrupt on core 1 records the contact's episode (its first and latest edge, esp_timer us) into a stamp pair;
+//! each tick reads the pin, offers the read (observed, or polled when the arm failed), takes the pair once no edge came
+//! for `debounce_ms` and concludes it by that read -- separated, nested or a blip, each recorded with its moment and
+//! wobble in the durable separation.csv; a separation in BOOSTING moves the stage to GLIDING.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
@@ -26,8 +27,9 @@ use std::time::Duration;
 
 use controller::{DeviceEntry, Table};
 use databoard::Writer;
-use drivers::debounce::Edges;
+use drivers::debounce::StampPair;
 use drivers::lsm6dso32::{Lsm6dso32, OverSpi, STALE_LIMIT};
+use drivers::separation::Kind;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
@@ -107,15 +109,15 @@ const REQUESTS_PER_TICK: usize = 2;
 /// How long a probe waits for the control thread's answer: a tick and a frame, with a wide margin.
 const PROBE_DEADLINE: Duration = Duration::from_secs(2);
 
-/// No separation-pin edge since the tick last took them: the stamps' empty value.
-const NO_EDGE: u32 = 0;
-/// The stamp of the FIRST separation-pin edge since the tick last took it -- esp_timer's us truncated to u32, the
-/// debounce's clock -- [`NO_EDGE`] for none: the GPIO interrupt sets it once, the tick swaps it out. An edge whose
-/// stamp would read 0 is stamped 1 (a us late, once every 71.6 minutes).
-static SEPARATION_FIRST_US: AtomicU32 = AtomicU32::new(NO_EDGE);
-/// The stamp of the LAST separation-pin edge: the GPIO interrupt stores it on every edge, before the first's; the
-/// tick reads it only after taking a first.
-static SEPARATION_LAST_US: AtomicU32 = AtomicU32::new(NO_EDGE);
+/// The separation pin's open episode, its first and latest edge (esp_timer's us truncated to u32): the GPIO interrupt
+/// records into it, the tick takes it once quiet (drivers::debounce).
+static SEPARATION: StampPair = StampPair::new();
+/// Episodes the separation switch concluded since boot (`control`).
+static SEPARATION_EPISODES: AtomicU32 = AtomicU32::new(0);
+/// Of those, the blips: the contact moved and came back (`control`).
+static SEPARATION_BLIPS: AtomicU32 = AtomicU32::new(0);
+/// Arming the separation pin's edge interrupt failed: the tick polls it (`control`).
+static SEPARATION_POLLED: AtomicBool = AtomicBool::new(false);
 /// The separation switch's debounced latch, for the console and (M8) the warm-start gate: true = separated.
 static SEPARATED: AtomicBool = AtomicBool::new(false);
 
@@ -138,9 +140,9 @@ pub fn switch_level() -> Option<(&'static str, bool)> {
 struct Switch {
     /// Its GPIO.
     gpio: u8,
-    /// Arming the edge interrupt failed: every read passes [`Edges::Polled`] (a quiet read would claim the line held).
-    polled: bool,
-    /// The debounced latch.
+    /// The previous read's level while the pin is polled (arming the edge interrupt failed); None while armed.
+    polled: Option<bool>,
+    /// The latch.
     part: drivers::separation::Separation,
     /// separation.csv, with a recorder.
     telemetry: Option<Telemetry<'static>>,
@@ -150,17 +152,19 @@ impl Switch {
     /// The switch of `member`, its edge interrupt armed on this thread (core 1).
     fn new(member: SeparationMember) -> Switch {
         let polled = match arm_edges(member.gpio) {
-            Ok(()) => false,
+            Ok(()) => None,
             Err(error) => {
                 log::warn!(
-                    "separation :: GPIO{} edge interrupt not armed ({error}): the pin is polled every tick, and \
-                     chatter between two reads goes unseen",
+                    "separation :: GPIO{} edge interrupt not armed ({error}): the pin is polled every tick, and a \
+                     change and its undoing between two reads go unseen",
                     member.gpio
                 );
-                true
+                // the first read is compared with the level bring-up read
+                Some(member.part.latched())
             }
         };
-        // the level rule settles a change between bring-up's read and the arming: no edge is needed for it
+        SEPARATION_POLLED.store(polled.is_some(), Ordering::Relaxed);
+        // a change between bring-up's read and the arming is the tick's own read's to see (StampPair::observe)
         SEPARATED.store(member.part.separated(), Ordering::Relaxed);
         let _ = SWITCH.set((member.name, member.gpio));
         Switch {
@@ -173,40 +177,39 @@ impl Switch {
         }
     }
 
-    /// One tick: one pin read through the debounce -- the edges taken first, the level next, the read stamped last, so
-    /// every edge stamp is at or before the read's (the edge contract); a confirmed change is applied in the current
-    /// stage (plan B separation._apply): the stage advances, the row is written (with the moment and the wobble's
-    /// duration), the event is logged.
+    /// One tick: the pin's level, then the clock, offered to the stamp pair (observed, or polled when the arm failed);
+    /// once the pair is quiet, its episode is concluded by that same level (drivers::debounce): the stage advances on a
+    /// separation in BOOSTING, the row is written with the moment and the wobble, the event is logged.
     fn tick(&mut self) {
-        let edges = if self.polled {
-            Edges::Polled
-        } else {
-            // the first swapped out before the last is read: an edge between the two reaches this read and the next,
-            // never neither
-            match SEPARATION_FIRST_US.swap(NO_EDGE, Ordering::Acquire) {
-                NO_EDGE => Edges::Quiet,
-                first_us => Edges::Seen {
-                    first_us,
-                    last_us: SEPARATION_LAST_US.load(Ordering::Relaxed),
-                },
-            }
-        };
+        // the level first, then the clock: the level decides the episode this tick concludes
         // SAFETY: a plain read of the input bring-up configured.
         let high = unsafe { sys::gpio_get_level(i32::from(self.gpio)) } != 0;
         // SAFETY: a plain read of the monotonic timer.
         let now_us = unsafe { sys::esp_timer_get_time() } as u64;
         let read_us = now_us as u32;
-        let Some(event) = self.part.step(read_us, high, edges, STATUS.stage()) else {
+        match &mut self.polled {
+            Some(previous) => {
+                SEPARATION.poll(read_us, high, *previous, self.part.latched());
+                *previous = high;
+            }
+            None => SEPARATION.observe(read_us, high, self.part.latched()),
+        }
+        let Some(episode) = SEPARATION.take(read_us, self.part.quiet_us()) else {
             return;
         };
+        let event = self.part.conclude(episode, high, STATUS.stage());
         if event.advanced {
             STATUS.set_stage(event.stage);
         }
-        SEPARATED.store(event.separated, Ordering::Relaxed);
+        SEPARATED.store(self.part.separated(), Ordering::Relaxed);
+        SEPARATION_EPISODES.fetch_add(1, Ordering::Relaxed);
+        if event.kind == Kind::Blip {
+            SEPARATION_BLIPS.fetch_add(1, Ordering::Relaxed);
+        }
+        // the moment on the uptime's clock: the read's uptime less the moment's age on the u32 clock (wrap-safe)
+        let moment_us = now_us.saturating_sub(u64::from(read_us.wrapping_sub(event.moment_us)));
         if let Some(telemetry) = &mut self.telemetry {
             let [name, stage] = event.row();
-            // the moment on the uptime's clock: the read's uptime less the moment's age on the u32 clock (wrap-safe)
-            let moment_us = now_us.saturating_sub(u64::from(read_us.wrapping_sub(event.moment_us)));
             let row = [
                 Cell::Text(name),
                 Cell::Text(stage),
@@ -218,31 +221,23 @@ impl Switch {
                 log::warn!("separation :: record {overflow}");
             }
         }
-        let (from, to) = if event.separated { ("1->0", "0") } else { ("0->1", "1") };
-        // the decision's delay after the sustained level began: 10-20 ms at the default debounce on the 10 ms tick (a
-        // tick more when an edge landed between the swap and the level read)
-        let decided_ms = read_us.wrapping_sub(event.moment_us.wrapping_add(event.duration_us)) / 1000;
         log::info!(
-            "separation :: {} -- {}.{:03} ms from the first {from} to the sustained {to}, decided {decided_ms} ms after it",
+            "separation :: {} -- started {moment_us} us, finished +{} us, {}",
             event.name(),
-            event.duration_us / 1000,
-            event.duration_us % 1000,
+            event.duration_us,
+            u8::from(high)
         );
     }
 }
 
-/// A separation-pin edge: stamp it the last, and the first unless an earlier one still waits for the tick. Integer
-/// only.
+/// A separation-pin edge, recorded into [`SEPARATION`] at esp_timer's us. Integer only, wait-free.
 unsafe extern "C" fn separation_edge(_: *mut core::ffi::c_void) {
     // SAFETY: a plain read of the monotonic timer, ISR-safe.
-    let now_us = (unsafe { sys::esp_timer_get_time() } as u32).max(1);
-    // the last before the first: a tick that takes this first (Acquire) then reads this last, or a later one
-    SEPARATION_LAST_US.store(now_us, Ordering::Relaxed);
-    let _ = SEPARATION_FIRST_US.compare_exchange(NO_EDGE, now_us, Ordering::Release, Ordering::Relaxed);
+    SEPARATION.record(unsafe { sys::esp_timer_get_time() } as u32);
 }
 
-/// Arms a both-edge interrupt on the separation pin (already an input with its pull-down) that stamps
-/// [`SEPARATION_FIRST_US`] and [`SEPARATION_LAST_US`], through the service [`install_gpio_service`] installed.
+/// Arms a both-edge interrupt on the separation pin (already an input with its pull-down) that records into
+/// [`SEPARATION`], through the service [`install_gpio_service`] installed.
 fn arm_edges(gpio: u8) -> Result<(), sys::EspError> {
     // SAFETY: the pin bring-up configured; the handler is a static function.
     unsafe {
@@ -793,7 +788,7 @@ pub fn register_commands() {
         words: "control",
         about: "the control tick: its rate, ticks, overruns (ticks the thread missed) and lateness (the latest, the \
                 largest, and how many ticks passed the 200 us budget); the IMU's reads, failures, reads with no new \
-                conversion, INT1 edges at the latest tick and whether INT1 is silent; the IMU's SPI clock; the separation latch; flight-core log lines the console queue \
+                conversion, INT1 edges at the latest tick and whether INT1 is silent; the IMU's SPI clock; the separation latch, whether its pin is polled, and the episodes it concluded (blips among them); flight-core log lines the console queue \
                 dropped",
         gate: Gate::Open,
         reach: Reach::Everywhere,
@@ -819,6 +814,18 @@ pub fn register_commands() {
                     ("irq_runs_last", &IRQ_RUNS_LAST.load(Ordering::Relaxed).to_string()),
                     ("int1_silent", &INTERRUPT_SILENT.load(Ordering::Relaxed).to_string()),
                     ("separated", &SEPARATED.load(Ordering::Relaxed).to_string()),
+                    (
+                        "separation_polled",
+                        &SEPARATION_POLLED.load(Ordering::Relaxed).to_string(),
+                    ),
+                    (
+                        "separation_episodes",
+                        &SEPARATION_EPISODES.load(Ordering::Relaxed).to_string(),
+                    ),
+                    (
+                        "separation_blips",
+                        &SEPARATION_BLIPS.load(Ordering::Relaxed).to_string(),
+                    ),
                     ("console_dropped", &crate::logging::console_dropped().to_string()),
                     ("spi_clock_hz", &SPI_CLOCK_HZ.load(Ordering::Relaxed).to_string()),
                 ],

@@ -1,15 +1,16 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! Unit tests of the separation switch on the Rust cadence (one read per 10 ms control tick, the edges stamped in µs as
-//! the interrupt stamps them), beyond its golden fixture (tests/golden_separation.rs), which replays plan B's 5 ms
-//! reads: the operator's physics (a wobble of at most 7 ms as the 2 cm pads part at 3 m/s, dated by its first edge and
-//! measured to its last), boost blips that must never deploy, the hold exact from the edge stamps, a held return that
-//! ends a blip's episode, chatter and its deadlines, the edge the level read saw first, the clock's wrap, the polled
-//! pin, the 10 ms default and its floor, and the latch's own rules. The generic debounce's rules are tested in
-//! debounce/tests.rs.
+//! Unit tests of the separation switch on the Rust cadence (one read per 10 ms control tick, the edges stamped in µs by
+//! the interrupt), beyond its golden fixture (tests/golden_separation.rs), which replays plan B's 5 ms reads: the
+//! decision table (separated, nested, blip; only a separation in BOOSTING advances), the operator's physics (a wobble
+//! of about 7 ms as the strips slide out at 3 m/s, dated by its first edge and measured to its last), boost blips that
+//! are recorded and never deploy, the quiet exact from the stamps, a gap past the quiet that splits a wobble, chatter
+//! that keeps one episode, the polled pin and the tick's own read (a board powered up unassembled, then assembled),
+//! the clock's wrap, and the settings. The generic stamps and their race are tested in debounce/tests.rs.
 
-use super::{DEFAULT_DEBOUNCE_MS, Event, Separation, Settings};
-use crate::debounce::Edges;
+use super::{DEFAULT_DEBOUNCE_MS, Event, Kind, Separation, Settings};
+use crate::debounce::{Episode, StampPair};
+use board_config::LONGEST_DEBOUNCE_MS;
 use sequencer::Stage;
 use serde_json::json;
 
@@ -19,23 +20,28 @@ const TICK_US: u32 = 10_000;
 /// The fastest tick a config may ask for, µs: schedule_hz 1000.
 const FAST_TICK_US: u32 = 1000;
 
-/// The pads' travel as the operator measures it, µs: 2 cm at 3 m/s is about 7 ms, and any loss and restoring of
-/// contact while they part falls inside it.
+/// The default quiet, µs.
+const QUIET_US: u32 = DEFAULT_DEBOUNCE_MS * 1000;
+
+/// The strips' travel as the operator measures it, µs: 2 cm at 3 m/s is about 7 ms, and any loss and restoring of
+/// contact while they slide out falls inside it.
 const WOBBLE_US: u32 = 7000;
 
-/// How the switch learns that the line moved between two reads.
+/// How the switch learns that the line moved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pin {
-    /// The both-edge interrupt stamps every change, however brief: the first and the last since the previous read.
+    /// The both-edge interrupt records every change at its own time, however brief, and the tick observes its reads.
     Interrupt,
-    /// No interrupt (an arm that failed): the reads alone (the edge contract).
+    /// The interrupt is armed but every edge is lost (or came before it was armed): the tick's own reads alone.
+    Lost,
+    /// No interrupt (an arm that failed): each read is polled against the previous one.
     Polled,
 }
 
 /// What a switch did over a timeline: its events, each with its read's time (µs), the stage it ended in, and the
 /// switch itself.
 struct Flight {
-    /// The events, each with the time of the read that recorded it.
+    /// The events, each with the time of the read that concluded it.
     events: Vec<(u32, Event)>,
     /// The stage after the last event.
     stage: Stage,
@@ -43,38 +49,45 @@ struct Flight {
     switch: Separation,
 }
 
+impl Flight {
+    /// The events' kinds, in order.
+    fn kinds(&self) -> Vec<Kind> {
+        self.events.iter().map(|(_, event)| event.kind).collect()
+    }
+}
+
 /// The reads of a `tick_us` tick from `phase_us` to `end_us`, µs.
 fn ticks(tick_us: u32, phase_us: u32, end_us: u32) -> impl Iterator<Item = u32> {
     (phase_us..=end_us).step_by(tick_us as usize)
 }
 
-/// Read a pin in `stage` with a `debounce_ms` debounce, its latch set up from the timeline's first level: `timeline` is
-/// the level (true = HIGH = nested) from each time on, µs, ascending from 0, and `reads` the read times, µs, ascending.
-/// On a [`Pin::Interrupt`] each read passes the first and the last change since the previous read, however brief.
+/// Read a pin in `stage` with a `debounce_ms` quiet, its latch set up from the timeline's first level (bring-up's
+/// read): `timeline` is the level (true = HIGH = nested) from each time on, µs, ascending from 0, and `reads` the
+/// read times, µs, ascending. Each read is the firmware's tick: the interrupt's edges up to it recorded at their own
+/// times ([`Pin::Interrupt`]), then the level, observed or polled, then the take and its conclusion by that level.
 fn fly(debounce_ms: u32, stage: Stage, timeline: &[(u32, bool)], pin: Pin, reads: impl Iterator<Item = u32>) -> Flight {
+    let pair = StampPair::new();
     let mut flight = Flight {
         events: Vec::new(),
         stage,
         switch: Separation::new(&Settings { debounce_ms }, timeline[0].1),
     };
-    let mut level = timeline[0].1;
-    let mut next = 1;
+    let (mut level, mut previous, mut next) = (timeline[0].1, timeline[0].1, 1);
     for read_us in reads {
-        let mut seen: Option<(u32, u32)> = None;
         while next < timeline.len() && timeline[next].0 <= read_us {
-            if timeline[next].1 != level {
-                let at_us = timeline[next].0;
-                seen = Some((seen.map_or(at_us, |(first_us, _)| first_us), at_us));
+            if timeline[next].1 != level && pin == Pin::Interrupt {
+                pair.record(timeline[next].0);
             }
             level = timeline[next].1;
             next += 1;
         }
-        let edges = match (pin, seen) {
-            (Pin::Polled, _) => Edges::Polled,
-            (Pin::Interrupt, None) => Edges::Quiet,
-            (Pin::Interrupt, Some((first_us, last_us))) => Edges::Seen { first_us, last_us },
-        };
-        if let Some(event) = flight.switch.step(read_us, level, edges, flight.stage) {
+        match pin {
+            Pin::Interrupt | Pin::Lost => pair.observe(read_us, level, flight.switch.latched()),
+            Pin::Polled => pair.poll(read_us, level, previous, flight.switch.latched()),
+        }
+        previous = level;
+        if let Some(episode) = pair.take(read_us, flight.switch.quiet_us()) {
+            let event = flight.switch.conclude(episode, level, flight.stage);
             flight.stage = event.stage;
             flight.events.push((read_us, event));
         }
@@ -82,14 +95,14 @@ fn fly(debounce_ms: u32, stage: Stage, timeline: &[(u32, bool)], pin: Pin, reads
     flight
 }
 
-/// [`fly`] in BOOSTING at the default debounce, on the 10 ms tick from `phase_us` to `end_us`.
-fn boost(timeline: &[(u32, bool)], pin: Pin, phase_us: u32, end_us: u32) -> Flight {
+/// [`fly`] in `stage` at the default quiet, on the 10 ms tick from `phase_us` for a second.
+fn tick_through(timeline: &[(u32, bool)], pin: Pin, stage: Stage, phase_us: u32) -> Flight {
     fly(
         DEFAULT_DEBOUNCE_MS,
-        Stage::Boosting,
+        stage,
         timeline,
         pin,
-        ticks(TICK_US, phase_us, end_us),
+        ticks(TICK_US, phase_us, 1_000_000),
     )
 }
 
@@ -103,17 +116,20 @@ fn level_at(timeline: &[(u32, bool)], at_us: u32) -> bool {
         .1
 }
 
-/// The time of the first tick from `phase_us` that reads `level` on `timeline`, µs.
+/// The first tick from `phase_us` at or after `at_us`, µs.
+fn first_tick_from(at_us: u32, phase_us: u32) -> u32 {
+    (phase_us..)
+        .step_by(TICK_US as usize)
+        .find(|tick_us| *tick_us >= at_us)
+        .expect("a tick")
+}
+
+/// The first tick from `phase_us` that reads `level` on `timeline`, µs.
 fn first_read_of(timeline: &[(u32, bool)], level: bool, phase_us: u32) -> u32 {
     (phase_us..)
         .step_by(TICK_US as usize)
         .find(|read_us| level_at(timeline, *read_us) == level)
         .expect("the timeline reaches the level")
-}
-
-/// A timeline in ms, as test_separation.py writes it, in µs.
-fn in_microseconds(timeline_ms: &[(u32, bool)]) -> Vec<(u32, bool)> {
-    timeline_ms.iter().map(|(ms, high)| (ms * 1000, *high)).collect()
 }
 
 /// Every tick phase, in 0.5 ms steps: where the 10 ms reads fall against a timeline.
@@ -150,740 +166,158 @@ fn wobble(state: &mut u32, timeline: &mut Vec<(u32, bool)>, departure_us: u32, e
     at
 }
 
-/// A seeded bounce on a nested line: it starts within 50 ms, toggles every 0.5-2 ms for 50-200 ms, then the line
-/// holds `then_high`. Returns the timeline (µs) and the time of its last change.
-fn bounce_then(state: &mut u32, then_high: bool) -> (Vec<(u32, bool)>, u32) {
-    let start = within(state, 0, 50_000);
-    let end = start + within(state, 50_000, 200_000);
-    let mut timeline = vec![(0, true)];
-    let (mut at, mut level) = (start, true);
-    loop {
-        at += within(state, 500, 2000);
-        if at >= end {
-            break;
-        }
-        level = !level;
-        timeline.push((at, level));
-    }
-    if level != then_high {
-        timeline.push((end, then_high));
-    }
-    let last = timeline.last().unwrap().0;
-    (timeline, last)
-}
-
 /// An event's time fields: (moment, duration), µs.
 fn dated(event: &Event) -> (u32, u32) {
     (event.moment_us, event.duration_us)
 }
 
+/// An episode from `start_us` to `finish_us`.
+fn episode(start_us: u32, finish_us: u32) -> Episode {
+    Episode { start_us, finish_us }
+}
+
+#[test]
+fn the_level_read_at_the_conclusion_decides() {
+    // the latch and the level read decide the kind; only a separation in BOOSTING moves the stage
+    let stages = [
+        Stage::Setting,
+        Stage::Boosting,
+        Stage::Gliding,
+        Stage::Landing,
+        Stage::Done,
+    ];
+    let table = [
+        (true, false, Kind::Separated),
+        (true, true, Kind::Blip),
+        (false, true, Kind::Nested),
+        (false, false, Kind::Blip),
+    ];
+    for stage in stages {
+        for (setup_high, high, kind) in table {
+            let mut switch = Separation::new(&Settings { debounce_ms: 10 }, setup_high);
+            let event = switch.conclude(episode(1000, 4500), high, stage);
+            let advanced = kind == Kind::Separated && stage == Stage::Boosting;
+            assert_eq!(
+                event,
+                Event {
+                    kind,
+                    stage: if advanced { Stage::Gliding } else { stage },
+                    advanced,
+                    moment_us: 1000,
+                    duration_us: 3500,
+                },
+                "{stage:?}, set up {setup_high}, read {high}"
+            );
+            // the latch follows the level read: a blip leaves it where it was
+            assert_eq!(switch.separated(), !high, "{stage:?}: the latch");
+            assert_eq!(switch.latched(), high, "{stage:?}: the level it stands for");
+        }
+    }
+}
+
+#[test]
+fn every_event_is_named_in_its_row() {
+    let named = [
+        (Kind::Separated, "separated"),
+        (Kind::Nested, "nested"),
+        (Kind::Blip, "blip"),
+    ];
+    for (kind, name) in named {
+        let event = Event {
+            kind,
+            stage: Stage::Boosting,
+            advanced: false,
+            moment_us: 0,
+            duration_us: 0,
+        };
+        assert_eq!((event.name(), event.row()), (name, [name, "boosting"]));
+    }
+}
+
 #[test]
 fn the_operator_s_wobble_separates_once_dated_by_its_first_edge() {
-    // the pads part, lose and regain contact any number of times within 7 ms, then stay open: at every phase of the
-    // tick, exactly one separation, GLIDING, its moment the first edge and its duration the wobble's span to the last
-    // edge, both exact, decided 10-20 ms after the last edge (the first quiet read 10 ms after it)
-    let mut state = 20261007;
-    for _ in 0..300 {
+    // seeded wobbles within the 7 ms the strips take to slide out, at every tick phase: one separation, its moment the
+    // first 1 -> 0 and its duration to the last edge, exact to the µs, decided on the first tick a quiet after it
+    let mut state = 0x5eed_0001;
+    let (mut flights, mut wobbled) = (0, 0);
+    for _ in 0..40 {
+        let departure_us = within(&mut state, 20_000, 60_000);
         let mut timeline = vec![(0, true)];
-        let departure_us = within(&mut state, 50_000, 60_000);
         let last_us = wobble(&mut state, &mut timeline, departure_us, true);
-        for phase in phases() {
-            let flight = boost(&timeline, Pin::Interrupt, phase, 300_000);
-            assert_eq!(
-                flight.events.len(),
-                1,
-                "phase {phase} µs: {:?} on {timeline:?}",
-                flight.events
-            );
+        for phase_us in phases() {
+            let flight = tick_through(&timeline, Pin::Interrupt, Stage::Boosting, phase_us);
             let (read_us, event) = flight.events[0];
-            assert_eq!((event.row(), event.advanced), (["separated", "gliding"], true));
-            assert_eq!(
-                dated(&event),
-                (departure_us, last_us - departure_us),
-                "the first edge and the span, on {timeline:?}"
-            );
+            assert_eq!(flight.kinds(), [Kind::Separated], "{timeline:?} at phase {phase_us}");
+            assert_eq!(dated(&event), (departure_us, last_us - departure_us));
+            assert_eq!(read_us, first_tick_from(last_us + QUIET_US, phase_us));
+            assert!(event.advanced && flight.stage == Stage::Gliding && flight.switch.separated());
+            flights += 1;
+        }
+        wobbled += usize::from(last_us > departure_us);
+    }
+    assert!(flights == 800 && wobbled > 20, "{flights} flights, {wobbled} wobbled");
+}
+
+#[test]
+fn a_boost_blip_is_recorded_and_never_deploys() {
+    // NEGATIVE: a wobble that returns to nested within 7 ms, at every phase: one blip, dated like a separation, the
+    // latch and BOOSTING untouched -- armed, and polled where a read saw it (else nothing)
+    let mut state = 0x5eed_0002;
+    let mut polled_blips = 0;
+    for _ in 0..40 {
+        let departure_us = within(&mut state, 20_000, 60_000);
+        let mut timeline = vec![(0, true)];
+        let last_us = wobble(&mut state, &mut timeline, departure_us, false);
+        for phase_us in phases() {
+            let flight = tick_through(&timeline, Pin::Interrupt, Stage::Boosting, phase_us);
+            assert_eq!(flight.kinds(), [Kind::Blip], "{timeline:?} at phase {phase_us}");
+            assert_eq!(dated(&flight.events[0].1), (departure_us, last_us - departure_us));
+            assert!(flight.stage == Stage::Boosting && !flight.switch.separated());
+            let polled = tick_through(&timeline, Pin::Polled, Stage::Boosting, phase_us);
             assert!(
-                (10_000..20_000).contains(&(read_us - last_us)),
-                "phase {phase} µs: {} µs after the last edge",
-                read_us - last_us
+                polled.kinds().iter().all(|kind| *kind == Kind::Blip),
+                "{timeline:?} polled"
             );
-            assert_eq!((flight.stage, flight.switch.separated()), (Stage::Gliding, true));
+            assert!(polled.stage == Stage::Boosting && !polled.switch.separated());
+            polled_blips += polled.events.len();
         }
     }
+    assert!(polled_blips > 0, "a read never fell inside a blip");
 }
 
 #[test]
-fn a_polled_wobble_is_dated_by_its_first_open_read() {
-    // no interrupt: the level rule settles the wobble on its third open read, and the moment is the first read that
-    // saw the pads open; the 7 ms wobble falls between two reads at most once, so it reads as no wobble at all
-    let mut state = 7;
-    for _ in 0..100 {
-        let mut timeline = vec![(0, true)];
-        let departure_us = within(&mut state, 50_000, 60_000);
-        wobble(&mut state, &mut timeline, departure_us, true);
-        for phase in phases() {
-            let flight = boost(&timeline, Pin::Polled, phase, 300_000);
-            assert_eq!(flight.events.len(), 1, "phase {phase} µs on {timeline:?}");
-            let first_open_us = first_read_of(&timeline, false, phase);
-            let (read_us, event) = flight.events[0];
-            assert_eq!(dated(&event), (first_open_us, 0), "phase {phase} µs on {timeline:?}");
-            assert_eq!(read_us, first_open_us + 2 * TICK_US);
-            assert_eq!(flight.stage, Stage::Gliding);
-        }
-    }
-}
-
-#[test]
-fn a_polled_duration_is_counted_in_whole_ticks() {
-    // open at 3 ms, contact again from 12 ms (9 ms, short of the debounce), open for good from 21 ms, read on the tick
-    // from 0: the interrupt measures the wobble exactly, 18 ms from the first edge; the reads alone see open, nested,
-    // open from 10, 20 and 30 ms, and count 20 ms from the first open read to the first of the final run
-    let timeline = in_microseconds(&[(0, true), (3, false), (12, true), (21, false)]);
-    let armed = boost(&timeline, Pin::Interrupt, 0, 200_000);
-    let found: Vec<(u32, (u32, u32))> = armed
-        .events
-        .iter()
-        .map(|(read_us, event)| (*read_us, dated(event)))
-        .collect();
-    assert_eq!(found, [(40_000, (3000, 18_000))]);
-    let polled = boost(&timeline, Pin::Polled, 0, 200_000);
-    let found: Vec<(u32, (u32, u32))> = polled
-        .events
-        .iter()
-        .map(|(read_us, event)| (*read_us, dated(event)))
-        .collect();
-    assert_eq!(found, [(50_000, (10_000, 20_000))]);
-    assert_eq!(found[0].1.1 % TICK_US, 0, "a polled duration is whole ticks");
-}
-
-#[test]
-fn a_held_separation_in_boosting_glides() {
-    // test_separation.py's timeline: the pads open at 5 ms and stay open, a clean single edge: no duration. With the
-    // interrupt, decided 10-20 ms after the edge; polled, two ticks after the first open read, 20-30 ms after it opened
-    let timeline = in_microseconds(&[(0, true), (5, false)]);
-    for pin in [Pin::Interrupt, Pin::Polled] {
-        for phase in phases() {
-            let flight = boost(&timeline, pin, phase, 500_000);
-            assert_eq!(flight.events.len(), 1, "{pin:?}, phase {phase} µs");
-            let (read_us, event) = flight.events[0];
-            assert_eq!(event.row(), ["separated", "gliding"]);
-            assert!(event.advanced && flight.switch.separated());
-            assert_eq!(flight.stage, Stage::Gliding);
-            let (moment_us, latency_us) = match pin {
-                Pin::Interrupt => (5000, 10_000..20_000),
-                Pin::Polled => (first_read_of(&timeline, false, phase), 20_000..30_000),
-            };
-            assert_eq!(dated(&event), (moment_us, 0), "{pin:?}, phase {phase} µs");
-            assert!(
-                latency_us.contains(&(read_us - 5000)),
-                "{pin:?}, phase {phase} µs: at {read_us} µs"
-            );
-        }
-    }
-}
-
-#[test]
-fn a_bounce_then_hold_glides_dated_by_its_first_bounce() {
-    // test_separation.py's timeline: three bounces, open for good from 15 ms; every read until then sees an edge, so
-    // the hold waits out the bounces: the moment is the first at 3 ms, the duration 12 ms to the last
-    let timeline = in_microseconds(&[(0, true), (3, false), (6, true), (9, false), (12, true), (15, false)]);
-    for phase in phases() {
-        let flight = boost(&timeline, Pin::Interrupt, phase, 500_000);
-        assert_eq!(flight.events.len(), 1, "phase {phase} µs");
-        let (read_us, event) = flight.events[0];
-        assert!((25_000..35_000).contains(&read_us), "phase {phase} µs: at {read_us} µs");
-        assert_eq!(
-            (event.row(), flight.stage, dated(&event)),
-            (["separated", "gliding"], Stage::Gliding, (3000, 12_000))
-        );
-    }
-}
-
-#[test]
-fn a_boost_blip_up_to_7_ms_never_deploys() {
-    // NEGATIVE: vibration opens the pads for up to 7 ms, with any wobble, and they close again for good -- with the
-    // interrupt or polled, at every phase: no event, BOOSTING, nested, and the blip's settle concluded nested
-    let mut state = 2026;
-    for _ in 0..300 {
-        let mut timeline = vec![(0, true)];
-        let blip_us = within(&mut state, 50_000, 60_000);
-        wobble(&mut state, &mut timeline, blip_us, false);
-        for pin in [Pin::Interrupt, Pin::Polled] {
-            for phase in phases() {
-                let flight = boost(&timeline, pin, phase, 300_000);
-                assert!(
-                    flight.events.is_empty(),
-                    "{pin:?}, phase {phase} µs: {:?} on {timeline:?}",
-                    flight.events
-                );
-                assert_eq!((flight.stage, flight.switch.separated()), (Stage::Boosting, false));
-                assert!(!flight.switch.settling(), "the blip's settle concluded nested");
-            }
-        }
-    }
-}
-
-#[test]
-fn the_7_ms_blip_and_the_8_ms_chatter_never_deploy() {
-    // NEGATIVE: test_separation.py's two timelines that must not deploy, at every phase of the tick. Polled too: the
-    // blip is open for one read at most, and no three reads in a row see the chatter's 8 ms open halves
-    let blip = in_microseconds(&[(0, true), (19, false), (26, true)]);
-    let mut chatter: Vec<(u32, bool)> = vec![(0, true)];
-    chatter.extend((8..200).step_by(8).map(|start| (start * 1000, start / 8 % 2 == 1)));
-    chatter.push((200_000, true));
-    for pin in [Pin::Interrupt, Pin::Polled] {
-        for timeline in [&blip, &chatter] {
-            for phase in phases() {
-                let flight = boost(timeline, pin, phase, 600_000);
-                assert!(
-                    flight.events.is_empty(),
-                    "{pin:?}, phase {phase} µs: {:?}",
-                    flight.events
-                );
-                assert_eq!((flight.stage, flight.switch.separated()), (Stage::Boosting, false));
-            }
-        }
-    }
-}
-
-#[test]
-fn the_hold_is_exact_to_the_microsecond_from_the_edge_stamps() {
-    // an open of 9 or 10 ms then a re-nest never deploys at a 10 ms debounce; an 11 ms one deploys on any read in its
-    // last ms, the only reads both quiet and 10 ms past its edge -- every phase of a 1 kHz tick, one phase in ten of
-    // the 10 ms tick (the reads in 0.1 ms phases). The deploy is that read, at least 10 ms after the edge
-    let opened_us = 50_000;
-    for (tick_us, deploying) in [(FAST_TICK_US, 10), (TICK_US, 10)] {
-        let mut deployed = 0;
-        for phase in (0..tick_us).step_by(100) {
-            for open_us in [9000, 10_000, 11_000] {
-                let timeline = [(0, true), (opened_us, false), (opened_us + open_us, true)];
-                let flight = fly(
-                    DEFAULT_DEBOUNCE_MS,
-                    Stage::Boosting,
-                    &timeline,
-                    Pin::Interrupt,
-                    ticks(tick_us, phase, 300_000),
-                );
-                let deciding = ticks(tick_us, phase, 300_000)
-                    .find(|read_us| (opened_us + 10_000..opened_us + open_us).contains(read_us));
-                let first = flight
-                    .events
-                    .first()
-                    .map(|(read_us, event)| (*read_us, event.name(), dated(event)));
-                assert_eq!(
-                    first,
-                    deciding.map(|read_us| (read_us, "separated", (opened_us, 0))),
-                    "a {open_us} µs open, tick {tick_us} µs, phase {phase} µs"
-                );
-                deployed += usize::from(first.is_some());
-            }
-        }
-        assert_eq!(deployed, deploying, "tick {tick_us} µs");
-    }
-}
-
-#[test]
-fn a_held_nest_after_a_blip_ends_its_episode() {
-    // a boost blip, the pads nested again for the debounce or more, then the real separation: one event, dated and
-    // measured by the separation's own wobble, at every phase. A nest of 10-19 ms often has no quiet read 10 ms after
-    // its last edge before the separation's first; the read of that edge concludes it (the return), so where the reads
-    // fall no longer decides which departure dates the separation
-    let mut state = 99;
-    for _ in 0..300 {
-        let mut timeline = vec![(0, true)];
-        let blip_us = within(&mut state, 50_000, 60_000);
-        let returned_us = wobble(&mut state, &mut timeline, blip_us, false);
-        let departure_us = returned_us + within(&mut state, 10_000, 30_000);
-        let last_us = wobble(&mut state, &mut timeline, departure_us, true);
-        for phase in phases() {
-            let flight = boost(&timeline, Pin::Interrupt, phase, 400_000);
-            assert_eq!(
-                flight.events.len(),
-                1,
-                "phase {phase} µs: {:?} on {timeline:?}",
-                flight.events
-            );
-            assert_eq!(
-                dated(&flight.events[0].1),
-                (departure_us, last_us - departure_us),
-                "phase {phase} µs on {timeline:?}"
-            );
-            assert_eq!(flight.stage, Stage::Gliding);
-        }
-    }
-}
-
-#[test]
-fn a_return_shorter_than_the_debounce_is_the_same_episode() {
-    // NEGATIVE, the documented consequence: the pads closed again for under 10 ms before they parted for good, so the
-    // nest never held the debounce and the settle never concluded nested -- the separation is dated by the blip's
-    // first edge, and its duration runs from there, at any phase
-    let mut state = 1234;
-    for _ in 0..200 {
-        let mut timeline = vec![(0, true)];
-        let blip_us = within(&mut state, 50_000, 60_000);
-        let returned_us = wobble(&mut state, &mut timeline, blip_us, false);
-        let departure_us = returned_us + within(&mut state, 1000, 9999);
-        let last_us = wobble(&mut state, &mut timeline, departure_us, true);
-        for phase in phases() {
-            let flight = boost(&timeline, Pin::Interrupt, phase, 400_000);
-            assert_eq!(
-                flight.events.len(),
-                1,
-                "phase {phase} µs: {:?} on {timeline:?}",
-                flight.events
-            );
-            assert_eq!(
-                dated(&flight.events[0].1),
-                (blip_us, last_us - blip_us),
-                "phase {phase} µs on {timeline:?}"
-            );
-        }
-    }
-}
-
-#[test]
-fn a_debounce_up_to_the_tick_decides_on_the_same_read() {
-    // on the 10 ms tick a quiet read comes a whole tick after the last edge, so every debounce up to 10 ms decides the
-    // operator's wobble on the same read, settled at its last edge; polled, the third read decides them all alike.
-    // What a debounce no longer than a contact gap inside the wobble changes is the moment: where a read saw the pads
-    // closed in that gap, the next edge's read concludes the return (it held the debounce), and the separation is
-    // dated by a later departure -- the floor of the 10 ms choice, seen on the default tick
-    let mut state = 31;
-    let mut moved = 0;
-    for _ in 0..100 {
-        let mut timeline = vec![(0, true)];
-        let departure_us = within(&mut state, 50_000, 60_000);
-        wobble(&mut state, &mut timeline, departure_us, true);
-        let longest_gap_us = timeline
-            .windows(2)
-            .skip(1)
-            .filter(|pair| pair[0].1)
-            .map(|pair| pair[1].0 - pair[0].0)
-            .max()
-            .unwrap_or(0);
-        for pin in [Pin::Interrupt, Pin::Polled] {
-            for phase in phases() {
-                let decided = |debounce_ms: u32| {
-                    fly(
-                        debounce_ms,
-                        Stage::Boosting,
-                        &timeline,
-                        pin,
-                        ticks(TICK_US, phase, 300_000),
-                    )
-                    .events
-                };
-                let default = decided(DEFAULT_DEBOUNCE_MS);
-                assert_eq!(default.len(), 1);
-                let (read_us, event) = default[0];
-                let first_us = match pin {
-                    Pin::Interrupt => departure_us,
-                    Pin::Polled => first_read_of(&timeline, false, phase),
-                };
-                assert_eq!(
-                    event.moment_us, first_us,
-                    "the default dates it by its first edge or open read"
-                );
-                for debounce_ms in [0, 1, 2, 5, 9] {
-                    let shorter = decided(debounce_ms);
-                    let context = format!("{pin:?}, debounce {debounce_ms} ms, phase {phase} µs on {timeline:?}");
-                    assert_eq!(shorter.len(), 1, "{context}");
-                    let (shorter_read_us, shorter) = shorter[0];
-                    assert_eq!(
-                        (shorter_read_us, shorter.row(), shorter.moment_us + shorter.duration_us),
-                        (read_us, event.row(), event.moment_us + event.duration_us),
-                        "{context}"
-                    );
-                    if shorter.moment_us != event.moment_us {
-                        assert!(
-                            pin == Pin::Interrupt
-                                && shorter.moment_us > event.moment_us
-                                && debounce_ms * 1000 <= longest_gap_us,
-                            "{context}"
-                        );
-                        moved += 1;
-                    }
-                }
-            }
-        }
-    }
-    assert!(moved > 0, "no shorter debounce moved a moment");
-}
-
-#[test]
-fn below_the_wobble_s_gap_a_faster_tick_splits_one_separation() {
-    // NEGATIVE, the floor of the 10 ms choice: the debounce must outlast the wobble's longest contact gap. Pads open 3
-    // ms, in contact 3 ms, then open for good: on a 1 kHz tick a 2 ms debounce records separated, nested, separated
-    // (GLIDING stays); open 1 ms, in contact 5 ms, then open: a 4 ms debounce concludes the contact nested, which
-    // records nothing but ends the episode, so the moment moves to the later departure. On the 10 ms tick no quiet read
-    // falls inside either, so each is one row, but the same debounces move its moment wherever a read saw the contact
-    // (the return). 10 ms keeps each one event dated by the first edge, on either tick
-    let opened_us = 50_000;
-    let three_and_three = [
-        (0, true),
-        (opened_us, false),
-        (opened_us + 3000, true),
-        (opened_us + 6000, false),
-    ];
-    let one_and_five = [
-        (0, true),
-        (opened_us, false),
-        (opened_us + 1000, true),
-        (opened_us + 6000, false),
-    ];
-    for phase in (0..FAST_TICK_US).step_by(100) {
-        let rows = |debounce_ms: u32, timeline: &[(u32, bool)]| {
-            let flight = fly(
-                debounce_ms,
-                Stage::Boosting,
-                timeline,
-                Pin::Interrupt,
-                ticks(FAST_TICK_US, phase, 300_000),
-            );
-            assert_eq!(flight.stage, Stage::Gliding, "the stage never reverses");
-            flight
-                .events
-                .iter()
-                .map(|(_, event)| (event.row(), dated(event)))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            rows(2, &three_and_three),
-            [
-                (["separated", "gliding"], (opened_us, 0)),
-                (["nested", "gliding"], (opened_us + 3000, 0)),
-                (["separated", "gliding"], (opened_us + 6000, 0)),
-            ],
-            "phase {phase} µs"
-        );
-        assert_eq!(
-            rows(4, &one_and_five),
-            [(["separated", "gliding"], (opened_us + 6000, 0))],
-            "phase {phase} µs"
-        );
-        for timeline in [&three_and_three[..], &one_and_five[..]] {
-            assert_eq!(
-                rows(DEFAULT_DEBOUNCE_MS, timeline),
-                [(["separated", "gliding"], (opened_us, 6000))],
-                "phase {phase} µs"
-            );
-        }
-    }
-    for phase in phases() {
-        // the one read in the wobble's tick, and the contact each timeline holds
-        let read_us = opened_us + phase;
-        for (debounce_ms, timeline, contact_us) in [
-            (2, &three_and_three, opened_us + 3000..opened_us + 6000),
-            (4, &one_and_five, opened_us + 1000..opened_us + 6000),
-            (DEFAULT_DEBOUNCE_MS, &three_and_three, 0..0),
-            (DEFAULT_DEBOUNCE_MS, &one_and_five, 0..0),
-        ] {
-            let flight = fly(
-                debounce_ms,
-                Stage::Boosting,
-                timeline,
-                Pin::Interrupt,
-                ticks(TICK_US, phase, 300_000),
-            );
-            let found: Vec<(u32, u32)> = flight.events.iter().map(|(_, event)| dated(event)).collect();
-            let owed = if contact_us.contains(&read_us) {
-                (opened_us + 6000, 0)
-            } else {
-                (opened_us, 6000)
-            };
-            assert_eq!(found, [owed], "debounce {debounce_ms} ms, phase {phase} µs");
-        }
-    }
-}
-
-#[test]
-fn seeded_chatter_never_deploys_and_a_held_open_after_it_does() {
-    // toggles of 0.5-2 ms for 50-200 ms. Ending nested, no debounce deploys. Ending open, the switch deploys 10-20 ms
-    // after the last bounce, a deadline or not (a deadline carries the run under way into the next settle) -- and never
-    // during the bounce. It is settled at the last bounce. Its moment is the first bounce whenever the chatter lasts
-    // 90 ms or less (the settle it started concludes before its deadline); after a deadline, the start of the run the
-    // last deadline carried over
-    let mut state = 20261007;
-    let (mut first_bounce, mut runs) = (0, 0);
-    for _ in 0..1000 {
-        let phase = within(&mut state, 0, TICK_US - 1);
-        let (nested, last) = bounce_then(&mut state, true);
-        for debounce_ms in [0, 2, 10, 20, 30] {
-            let flight = fly(
-                debounce_ms,
-                Stage::Boosting,
-                &nested,
-                Pin::Interrupt,
-                ticks(TICK_US, phase, last + 500_000),
-            );
-            assert!(
-                flight.events.is_empty(),
-                "debounce {debounce_ms} ms, phase {phase} µs: {:?} on {nested:?}",
-                flight.events
-            );
+fn an_open_up_to_the_quiet_is_a_blip_and_one_a_tick_past_it_a_separation() {
+    // the quiet is the line: an open of up to 10 ms concludes nested whatever the phase (no tick can find it a quiet
+    // old and still open), one held 20 ms is found open by a tick at every phase -- and the re-nest after it is a
+    // nested row that leaves GLIDING alone
+    for open_us in [1, 500, 7000, 9999, QUIET_US] {
+        let timeline = [(0, true), (30_000, false), (30_000 + open_us, true)];
+        for phase_us in phases() {
+            let flight = tick_through(&timeline, Pin::Interrupt, Stage::Boosting, phase_us);
+            assert_eq!(flight.kinds(), [Kind::Blip], "open {open_us} µs at phase {phase_us}");
+            assert_eq!(dated(&flight.events[0].1), (30_000, open_us));
             assert_eq!(flight.stage, Stage::Boosting);
         }
-        let (open, last) = bounce_then(&mut state, false);
-        let flight = boost(&open, Pin::Interrupt, phase, last + 500_000);
-        assert_eq!(
-            flight.events.len(),
-            1,
-            "phase {phase} µs: {:?} on {open:?}",
-            flight.events
-        );
-        let (read_us, event) = flight.events[0];
-        assert_eq!((event.row(), flight.stage), (["separated", "gliding"], Stage::Gliding));
-        let after_us = read_us - last;
-        assert!(
-            (10_000..20_000).contains(&after_us),
-            "{after_us} µs after the last bounce, phase {phase} µs"
-        );
-        let departure_us = open[1].0;
-        let (moment_us, duration_us) = dated(&event);
-        assert!(
-            (departure_us..=read_us).contains(&moment_us),
-            "a moment {moment_us} µs outside the episode"
-        );
-        assert_eq!(moment_us + duration_us, last, "phase {phase} µs on {open:?}");
-        if last - departure_us <= 90_000 {
-            assert_eq!(moment_us, departure_us, "phase {phase} µs on {open:?}");
-        }
-        first_bounce += usize::from(moment_us == departure_us);
-        runs += 1;
     }
-    // a fair share of the chatters, the shorter ones, are dated by their first bounce, and the longer ones by the run
-    // their last deadline carried over
-    assert!(
-        first_bounce > runs / 5 && first_bounce < runs,
-        "{first_bounce} of {runs}"
-    );
-}
-
-#[test]
-fn a_bounce_that_runs_out_its_settles_deploys_on_time() {
-    // toggles every 5 ms, open for good from 215 ms, read at 6, 16, ... ms: every read sees the pads open and bouncing.
-    // The read at 6 ms starts a settle that runs out at 106; the run it was on (open since the bounce at 105 ms) carries
-    // into the next settle, departed there, which runs out at 206 and carries on from 205; 216 sees the last bounces
-    // (210 and 215 ms) and restarts the run at 215; 226 is quiet and 11 ms past it: decided there, dated 205 ms, with
-    // the 10 ms to the sustained open as its duration -- the deadlines delayed nothing
-    let mut timeline: Vec<(u32, bool)> = vec![(0, true)];
-    timeline.extend((1..=43).map(|bounce| (bounce * 5000, bounce % 2 == 0)));
-    assert_eq!(timeline.last(), Some(&(215_000, false)), "open for good from 215 ms");
-    let flight = boost(&timeline, Pin::Interrupt, 6000, 500_000);
-    let found: Vec<(u32, (u32, u32))> = flight
-        .events
-        .iter()
-        .map(|(read_us, event)| (*read_us, dated(event)))
-        .collect();
-    assert_eq!(found, [(226_000, (205_000, 10_000))], "11 ms after the last bounce");
-    assert_eq!(flight.stage, Stage::Gliding);
-}
-
-#[test]
-fn a_re_nest_on_the_tick_never_reverses_the_stage() {
-    // NEGATIVE: open for good from 5 ms, nested again from 300 ms -- recorded, dated when the pads closed, and GLIDING
-    // stays
-    let timeline = in_microseconds(&[(0, true), (5, false), (300, true)]);
-    let flight = boost(&timeline, Pin::Interrupt, 0, 600_000);
-    let rows: Vec<([&str; 2], (u32, u32))> = flight
-        .events
-        .iter()
-        .map(|(_, event)| (event.row(), dated(event)))
-        .collect();
-    assert_eq!(
-        rows,
-        [
-            (["separated", "gliding"], (5000, 0)),
-            (["nested", "gliding"], (300_000, 0))
-        ]
-    );
-    assert!(!flight.events[1].1.advanced);
-    assert_eq!((flight.stage, flight.switch.separated()), (Stage::Gliding, false));
-}
-
-#[test]
-fn outside_boosting_the_latch_moves_but_the_stage_does_not() {
-    for stage in [Stage::Setting, Stage::Gliding, Stage::Landing, Stage::Done] {
-        let mut switch = Separation::new(&Settings { debounce_ms: 10 }, true);
-        let event = switch.apply(true, stage, 7000, 300).expect("a change of the latch");
-        assert_eq!(
-            (event.stage, event.advanced, dated(&event)),
-            (stage, false, (7000, 300)),
-            "{stage:?}"
-        );
+    let timeline = [(0, true), (30_000, false), (50_000, true)];
+    for phase_us in phases() {
+        let flight = tick_through(&timeline, Pin::Interrupt, Stage::Boosting, phase_us);
+        assert_eq!(flight.kinds(), [Kind::Separated, Kind::Nested], "phase {phase_us}");
+        assert_eq!(dated(&flight.events[0].1), (30_000, 0));
+        assert_eq!(dated(&flight.events[1].1), (50_000, 0));
+        assert!(flight.events[0].1.advanced && !flight.events[1].1.advanced);
+        assert_eq!(flight.stage, Stage::Gliding, "a re-nest never reverses the stage");
     }
 }
 
 #[test]
-fn a_re_nest_is_recorded_and_never_reverses() {
-    let mut switch = Separation::new(&Settings { debounce_ms: 10 }, true);
-    assert_eq!(
-        switch.apply(true, Stage::Boosting, 1000, 0).unwrap().stage,
-        Stage::Gliding
-    );
-    assert_eq!(
-        switch.apply(true, Stage::Gliding, 2000, 0),
-        None,
-        "the same level records nothing"
-    );
-    let nested = switch.apply(false, Stage::Gliding, 3000, 1500).unwrap();
-    assert_eq!(
-        (nested.name(), nested.stage, nested.advanced, dated(&nested)),
-        ("nested", Stage::Gliding, false, (3000, 1500))
-    );
-}
-
-#[test]
-fn a_disagreeing_level_with_no_edge_settles() {
-    // the blind window: the pads opened between setup and arming the interrupt, or the arm failed -- no edge ever.
-    // Armed, a quiet read 10 ms after the first open one decides; polled, the third. Dated by that first read
-    for (edges, verdict_us) in [(Edges::Quiet, 10_000), (Edges::Polled, 20_000)] {
-        let mut nested = Separation::new(&Settings { debounce_ms: 10 }, true);
-        assert_eq!(nested.step(0, false, edges, Stage::Boosting), None);
-        assert!(nested.settling(), "the disagreeing level starts a settle");
-        for now_us in (TICK_US..verdict_us).step_by(TICK_US as usize) {
-            assert_eq!(nested.step(now_us, false, edges, Stage::Boosting), None, "{edges:?}");
-        }
-        let event = nested
-            .step(verdict_us, false, edges, Stage::Boosting)
-            .expect("a held separation");
-        assert_eq!(
-            (event.row(), event.advanced, dated(&event)),
-            (["separated", "gliding"], true, (0, 0)),
-            "{edges:?}"
-        );
-        // and the other way: a latch set up separated, nested before arming, dated by its first nested read
-        let mut open = Separation::new(&Settings { debounce_ms: 10 }, false);
-        let events: Vec<Option<Event>> = (1..=3)
-            .map(|tick| open.step(tick * TICK_US, true, edges, Stage::Setting))
-            .collect();
-        let nested_at = (verdict_us / TICK_US) as usize;
-        assert_eq!(
-            events[nested_at].map(|event| (event.row(), dated(&event))),
-            Some((["nested", "setting"], (TICK_US, 0))),
-            "{edges:?}"
-        );
-        assert!(events[..nested_at].iter().all(Option::is_none), "{edges:?}");
-    }
-}
-
-#[test]
-fn a_level_equal_to_the_latch_starts_nothing() {
-    // NEGATIVE: with no edge, a read of the latch's own level is no settle, whichever the latch and the input
-    for edges in [Edges::Quiet, Edges::Polled] {
-        for high in [true, false] {
-            let mut switch = Separation::new(&Settings { debounce_ms: 10 }, high);
-            for tick in 0..30 {
-                assert_eq!(switch.step(tick * TICK_US, high, edges, Stage::Boosting), None);
-                assert!(!switch.settling(), "{edges:?}, latch high={high}, tick {tick}");
-            }
-        }
-    }
-}
-
-#[test]
-fn an_edge_forced_on_every_read_never_separates() {
-    // NEGATIVE, the edge contract pinned at the switch: a caller that passed an edge on every read would restart
-    // every run, so the pads held open from the first read never separate; Polled is how a pin without an interrupt
-    // reads
-    let mut forced = Separation::new(&Settings { debounce_ms: 10 }, true);
-    for tick in 0..100 {
-        let now_us = tick * TICK_US;
-        let edges = Edges::Seen {
-            first_us: now_us,
-            last_us: now_us,
-        };
-        assert_eq!(forced.step(now_us, false, edges, Stage::Boosting), None, "tick {tick}");
-    }
-    assert!(!forced.separated());
-}
-
-#[test]
-fn an_edge_the_level_read_saw_before_its_stamp_dates_the_separation() {
-    // the firmware's tick takes the edges, then reads the level, then its clock: an edge between the first two is seen
-    // as a level with no edge, dated at that read, and its stamp, a µs earlier, reaches the next read. The moment is
-    // the stamp and the duration 0, never a wrapped 4 294 967 295 µs
-    let mut switch = Separation::new(&Settings { debounce_ms: 10 }, true);
-    assert_eq!(switch.step(10_000, false, Edges::Quiet, Stage::Boosting), None);
-    let edge = Edges::Seen {
-        first_us: 9999,
-        last_us: 9999,
-    };
-    assert_eq!(switch.step(20_000, false, edge, Stage::Boosting), None);
-    let event = switch
-        .step(30_000, false, Edges::Quiet, Stage::Boosting)
-        .expect("a held separation");
-    assert_eq!((event.row(), dated(&event)), (["separated", "gliding"], (9999, 0)));
-}
-
-#[test]
-fn a_wobble_across_the_wrap_keeps_its_moment_and_duration() {
-    // the pads part 2 ms before the u32 µs clock wraps and wobble 5 ms across it: the moment is the first edge, before
-    // the wrap, the duration the 5 ms to the last, after it, and the hold 10 ms from that last edge
-    let first_us = u32::MAX - 1999;
-    let last_us = first_us.wrapping_add(5000);
-    let mut switch = Separation::new(&Settings { debounce_ms: 10 }, true);
-    let wobbled = Edges::Seen { first_us, last_us };
-    assert_eq!(
-        switch.step(first_us.wrapping_add(6000), false, wobbled, Stage::Boosting),
-        None
-    );
-    let quiet_us = first_us.wrapping_add(14_999);
-    assert_eq!(switch.step(quiet_us, false, Edges::Quiet, Stage::Boosting), None);
-    let event = switch
-        .step(first_us.wrapping_add(15_000), false, Edges::Quiet, Stage::Boosting)
-        .expect("a held separation");
-    assert_eq!(
-        (event.row(), dated(&event)),
-        (["separated", "gliding"], (first_us, 5000))
-    );
-}
-
-#[test]
-fn a_blip_just_before_the_clock_wraps_never_deploys() {
-    // NEGATIVE: a 2 ms open ending 6 ms before the u32 µs clock wraps, read at 1 kHz on through the wrap. The hold's end
-    // (the edge + 10 ms) has wrapped to a small number, and a quiet read before the wrap is not past it: the hold is an
-    // elapsed time
-    let opened_us = u32::MAX - 7999;
-    let closed_us = opened_us + 2000;
-    let mut switch = Separation::new(&Settings { debounce_ms: 10 }, true);
-    for read in 0..40 {
-        let now_us = opened_us.wrapping_add(500 + read * FAST_TICK_US);
-        let (high, edges) = match read {
-            0 => (
-                false,
-                Edges::Seen {
-                    first_us: opened_us,
-                    last_us: opened_us,
-                },
-            ),
-            1 => (false, Edges::Quiet),
-            2 => (
-                true,
-                Edges::Seen {
-                    first_us: closed_us,
-                    last_us: closed_us,
-                },
-            ),
-            _ => (true, Edges::Quiet),
-        };
-        assert_eq!(switch.step(now_us, high, edges, Stage::Boosting), None, "read {read}");
-    }
-    assert!(
-        !switch.separated() && !switch.settling(),
-        "the blip's settle concluded nested"
-    );
-}
-
-#[test]
-fn the_debounce_ms_becomes_microseconds_once() {
-    // 25 ms: an edge at 5 ms on a 1 kHz tick is decided on the read at 30 ms exactly, not one before
-    let timeline = in_microseconds(&[(0, true), (5, false)]);
+fn the_quiet_is_exact_to_the_microsecond_from_the_stamps() {
+    // a single edge at 12.345 ms on a 1 kHz tick: duration 0, decided on the first tick 10 ms after it (23 ms, not 22);
+    // a wobble's quiet counts from its last edge
     let flight = fly(
-        25,
+        DEFAULT_DEBOUNCE_MS,
         Stage::Boosting,
-        &timeline,
+        &[(0, true), (12_345, false)],
         Pin::Interrupt,
         ticks(FAST_TICK_US, 0, 100_000),
     );
@@ -892,18 +326,240 @@ fn the_debounce_ms_becomes_microseconds_once() {
         .iter()
         .map(|(read_us, event)| (*read_us, dated(event)))
         .collect();
-    assert_eq!(found, [(30_000, (5000, 0))]);
-    // NEGATIVE: a debounce past the µs clock's range saturates and never concludes (the validator keeps it out)
+    assert_eq!(found, [(23_000, (12_345, 0))]);
+    let flight = fly(
+        DEFAULT_DEBOUNCE_MS,
+        Stage::Boosting,
+        &[(0, true), (12_345, false), (13_001, true), (14_567, false)],
+        Pin::Interrupt,
+        ticks(FAST_TICK_US, 0, 100_000),
+    );
+    let found: Vec<(u32, (u32, u32))> = flight
+        .events
+        .iter()
+        .map(|(read_us, event)| (*read_us, dated(event)))
+        .collect();
+    assert_eq!(found, [(25_000, (12_345, 2222))]);
+}
+
+#[test]
+fn a_contact_gap_past_the_quiet_splits_a_wobble_and_never_reverses() {
+    // LOW at 5 ms, back at 6 ms, a 12 ms gap nested, LOW for good at 18 ms: where a tick reads the gap a quiet after
+    // its edge (16-18 ms) the first part concludes a blip and the separation is dated 18 ms; elsewhere one separation
+    // from 5 ms. GLIDING either way
+    let timeline = [(0, true), (5000, false), (6000, true), (18_000, false)];
+    let (mut split, mut whole) = (0, 0);
+    for phase_us in phases() {
+        let flight = tick_through(&timeline, Pin::Interrupt, Stage::Boosting, phase_us);
+        let dates: Vec<(Kind, (u32, u32))> = flight
+            .events
+            .iter()
+            .map(|(_, event)| (event.kind, dated(event)))
+            .collect();
+        if phase_us % TICK_US >= 6000 && phase_us % TICK_US < 8000 {
+            assert_eq!(
+                dates,
+                [(Kind::Blip, (5000, 1000)), (Kind::Separated, (18_000, 0))],
+                "phase {phase_us}"
+            );
+            split += 1;
+        } else {
+            assert_eq!(dates, [(Kind::Separated, (5000, 13_000))], "phase {phase_us}");
+            whole += 1;
+        }
+        assert_eq!(flight.stage, Stage::Gliding);
+    }
+    assert_eq!((split, whole), (4, 16));
+}
+
+#[test]
+fn chatter_that_never_holds_still_keeps_one_episode() {
+    // seeded chatter, toggling every 0.5-2 ms for 50-200 ms, then held: nothing while it chatters, then one event for
+    // the whole run, dated by its first edge -- a separation where it ends open, a blip where it ends nested
+    let mut state = 0x5eed_0003;
+    for run in 0..20 {
+        let ends_open = run % 2 == 0;
+        let start_us = within(&mut state, 10_000, 50_000);
+        let end_us = start_us + within(&mut state, 50_000, 200_000);
+        let mut timeline = vec![(0, true)];
+        let (mut at_us, mut level) = (start_us, true);
+        while at_us < end_us {
+            level = !level;
+            timeline.push((at_us, level));
+            at_us += within(&mut state, 500, 2000);
+        }
+        if level == ends_open {
+            timeline.push((at_us, !ends_open));
+        }
+        let last_us = timeline.last().unwrap().0;
+        let flight = tick_through(&timeline, Pin::Interrupt, Stage::Boosting, 0);
+        let kind = if ends_open { Kind::Separated } else { Kind::Blip };
+        assert_eq!(flight.kinds(), [kind], "run {run}");
+        let (read_us, event) = flight.events[0];
+        assert_eq!(dated(&event), (start_us, last_us - start_us));
+        assert_eq!(read_us, first_tick_from(last_us + QUIET_US, 0));
+        assert_eq!(flight.stage == Stage::Gliding, ends_open);
+    }
+}
+
+#[test]
+fn a_polled_pin_is_dated_by_its_reads() {
+    // the operator's wobble on a polled pin: the moment is the first read that saw LOW, the duration 0 (a 7 ms wobble
+    // holds at most one 10 ms read), decided a tick later
+    let mut state = 0x5eed_0004;
+    for _ in 0..40 {
+        let departure_us = within(&mut state, 20_000, 60_000);
+        let mut timeline = vec![(0, true)];
+        wobble(&mut state, &mut timeline, departure_us, true);
+        for phase_us in phases() {
+            let flight = tick_through(&timeline, Pin::Polled, Stage::Boosting, phase_us);
+            let moment_us = first_read_of(&timeline, false, phase_us);
+            let found: Vec<(u32, Kind, (u32, u32))> = flight
+                .events
+                .iter()
+                .map(|(read_us, event)| (*read_us, event.kind, dated(event)))
+                .collect();
+            assert_eq!(
+                found,
+                [(moment_us + TICK_US, Kind::Separated, (moment_us, 0))],
+                "{timeline:?}"
+            );
+            assert_eq!(flight.stage, Stage::Gliding);
+        }
+    }
+    // a slower wobble seen by three reads: the duration is whole ticks, where the interrupt has the µs
+    let timeline = [(0, true), (3000, false), (14_000, true), (26_000, false)];
+    let polled = tick_through(&timeline, Pin::Polled, Stage::Boosting, 0);
+    let armed = tick_through(&timeline, Pin::Interrupt, Stage::Boosting, 0);
+    assert_eq!(
+        (polled.events[0].0, dated(&polled.events[0].1)),
+        (40_000, (10_000, 20_000))
+    );
+    assert_eq!((armed.events[0].0, dated(&armed.events[0].1)), (40_000, (3000, 23_000)));
+}
+
+#[test]
+fn a_board_powered_up_unassembled_ends_nested_once_assembled() {
+    // the operator usually assembles with the power off, but a board powered up unassembled reads LOW at bring-up: its
+    // latch starts separated, and assembling it -- the ring sliding in, wobbling for a few ms -- concludes nested in
+    // SETTING, with the interrupt, with its edges lost (the tick's own read), and polled: the final level is 1
+    let assembly = [(0, false), (500_000, true), (501_500, false), (503_000, true)];
+    for pin in [Pin::Interrupt, Pin::Lost, Pin::Polled] {
+        for phase_us in phases() {
+            let flight = tick_through(&assembly, pin, Stage::Setting, phase_us);
+            assert_eq!(flight.kinds(), [Kind::Nested], "{pin:?} at phase {phase_us}");
+            let (read_us, event) = flight.events[0];
+            if pin == Pin::Interrupt {
+                assert_eq!(
+                    (read_us, dated(&event)),
+                    (first_tick_from(513_000, phase_us), (500_000, 3000))
+                );
+            } else {
+                // the first read of contact, the ring's first touch or the ring in place, decided a tick later
+                let moment_us = first_read_of(&assembly, true, phase_us);
+                assert_eq!(
+                    (read_us, dated(&event)),
+                    (moment_us + TICK_US, (moment_us, 0)),
+                    "{pin:?}"
+                );
+            }
+            assert_eq!(flight.stage, Stage::Setting);
+            assert!(!flight.switch.separated() && flight.switch.latched());
+        }
+    }
+    // NEGATIVE: left unassembled, or assembled from the start, every read agrees with the latch: nothing, ever
+    for level in [false, true] {
+        for pin in [Pin::Interrupt, Pin::Lost, Pin::Polled] {
+            let flight = tick_through(&[(0, level)], pin, Stage::Setting, 0);
+            assert!(flight.events.is_empty(), "{pin:?}, level {level}");
+            assert_eq!(flight.switch.separated(), !level);
+        }
+    }
+}
+
+#[test]
+fn a_change_with_no_edge_is_seen_by_the_tick_s_read() {
+    // the strips opened before the interrupt was armed (or their edge was lost): the first read off the latch opens
+    // the episode, a quiet later it concludes -- in BOOSTING a separation, dated by that read
+    let timeline = [(0, true), (1, false)];
+    let flight = tick_through(&timeline, Pin::Lost, Stage::Boosting, 4000);
+    let found: Vec<(u32, Kind, (u32, u32))> = flight
+        .events
+        .iter()
+        .map(|(read_us, event)| (*read_us, event.kind, dated(event)))
+        .collect();
+    assert_eq!(found, [(14_000, Kind::Separated, (4000, 0))]);
+    assert_eq!(flight.stage, Stage::Gliding);
+}
+
+#[test]
+fn a_wobble_across_the_clock_s_wrap_keeps_its_moment_and_duration() {
+    // the stamps are esp_timer's µs truncated to u32, wrapping every 71.6 minutes
+    let pair = StampPair::new();
+    let mut switch = Separation::new(&Settings::from_config(&json!({})), true);
+    for edge_us in [u32::MAX - 3000, u32::MAX - 1000, 2000] {
+        pair.record(edge_us);
+    }
+    let mut events = Vec::new();
+    for read_us in [u32::MAX - 500, 5000, 11_999, 12_000] {
+        pair.observe(read_us, false, switch.latched());
+        if let Some(episode) = pair.take(read_us, switch.quiet_us()) {
+            events.push((read_us, switch.conclude(episode, false, Stage::Boosting)));
+        }
+    }
+    assert_eq!(events.len(), 1);
+    let (read_us, event) = events[0];
+    assert_eq!(
+        (read_us, event.kind, dated(&event)),
+        (12_000, Kind::Separated, (u32::MAX - 3000, 5001))
+    );
+}
+
+#[test]
+fn the_debounce_ms_is_the_quiet_in_microseconds() {
+    // 25 ms: an edge at 5 ms on a 1 kHz tick is decided on the read at 30 ms exactly, not one before
+    let flight = fly(
+        25,
+        Stage::Boosting,
+        &[(0, true), (5000, false)],
+        Pin::Interrupt,
+        ticks(FAST_TICK_US, 0, 100_000),
+    );
+    assert_eq!(
+        flight.events.iter().map(|(read_us, _)| *read_us).collect::<Vec<_>>(),
+        [30_000]
+    );
+    // the validator's longest, 1 s, and 0 (decided on the edge's own tick)
+    let longest = u32::try_from(LONGEST_DEBOUNCE_MS).expect("the bound fits");
+    assert_eq!(
+        Separation::new(&Settings { debounce_ms: longest }, true).quiet_us(),
+        1_000_000
+    );
+    let flight = fly(
+        0,
+        Stage::Boosting,
+        &[(0, true), (5000, false)],
+        Pin::Interrupt,
+        ticks(TICK_US, 0, 100_000),
+    );
+    assert_eq!(
+        flight.events.iter().map(|(read_us, _)| *read_us).collect::<Vec<_>>(),
+        [10_000]
+    );
+    // NEGATIVE: a debounce past the µs clock's range saturates, a quiet that never comes (the validator keeps it out)
     for debounce_ms in [4_294_968, u32::MAX] {
+        assert_eq!(Separation::new(&Settings { debounce_ms }, true).quiet_us(), u32::MAX);
         let flight = fly(
             debounce_ms,
             Stage::Boosting,
-            &timeline,
+            &[(0, true), (5000, false)],
             Pin::Interrupt,
             ticks(TICK_US, 0, 20_000_000),
         );
-        assert!(flight.events.is_empty(), "debounce {debounce_ms} ms");
-        assert!(flight.switch.settling());
+        assert!(
+            flight.events.is_empty() && !flight.switch.separated(),
+            "debounce {debounce_ms} ms"
+        );
     }
 }
 
@@ -938,7 +594,10 @@ fn settings_and_the_setup_read() {
             "{malformed}"
         );
     }
-    // LOW at setup (pads open) starts the latch separated; HIGH nested
-    assert!(Separation::new(&Settings { debounce_ms: 10 }, false).separated());
-    assert!(!Separation::new(&Settings { debounce_ms: 10 }, true).separated());
+    // LOW at setup (the contact open) starts the latch separated; HIGH nested
+    let open = Separation::new(&Settings { debounce_ms: 10 }, false);
+    let nested = Separation::new(&Settings { debounce_ms: 10 }, true);
+    assert!(open.separated() && !open.latched());
+    assert!(!nested.separated() && nested.latched());
+    assert_eq!(nested.quiet_us(), 10_000);
 }

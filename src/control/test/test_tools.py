@@ -1058,6 +1058,54 @@ def test_recorder_flight_reads_separation_with_and_without_the_port_s_columns():
         't_s;event;stage;moment;duration;uptime_us', '0.100000;separated;gliding;1570000;3217;1600000']
 
 
+def test_every_reader_takes_a_separation_blip_as_a_word():
+    """
+    The Rust port's separation.csv records `blip` too, beside `separated` and `nested`: an episode of the contact that
+    ended on the level the latch already held. recorder_flight names a blip row like any other, its header kept or
+    lost, and files it in flight/ in time order; flight_telemetry parses the stream with its moment and duration as
+    numbers and every event, a blip as a separation, as a word it does not plot. NEGATIVE: a blip row cut short is
+    damage, as for any event, and a word in the moment's place is no number.
+    """
+    blip = ['blip', 'boosting', '1570000', '6000']
+    rust_header = ('event', 'stage', 'moment', 'duration')
+    assert recorder_flight._cells('separation', None, blip) == blip
+    assert recorder_flight._cells('separation', rust_header, blip) == blip
+    assert recorder_flight._cells('separation', rust_header, blip[:3]) is None
+    assert recorder_flight._cells('separation', None, blip[:3]) is None
+
+    # end to end: a boost blip, the separation, and a blip after it, in a Rust session whose separation.csv lost its
+    # header
+    session, imu_routing, routing = '000123', '000123_imu_lsm6dso32.csv', '000123_separation.csv'
+    rows = ['1580000;blip;boosting;1570000;6000', '1600000;separated;gliding;1588000;277',
+            '1700000;blip;gliding;1650000;40000']
+    status = recorder_wire.wrap("900000 recorder :: {'session': '000123', 'lines': 9}").rstrip('\n')
+    recordings = _folder()
+    _write_dump(recordings, {
+        imu_routing: [_body('uptime;ax;ay;az;gx;gy;gz;irq_runs', imu_routing)]
+        + [_body(row, imu_routing) for row in _imu_rows()],
+        routing: [_body(row, routing) for row in rows],
+        'recorder.log': [status],
+    })
+    printed, out = _cut(recordings, session)
+    assert re.search(r'separation\s+3 original rows,\s+3 named', printed), printed
+    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [
+        't_s;event;stage;moment;duration;uptime_us',
+        '0.080000;blip;boosting;1570000;6000;1580000',
+        '0.100000;separated;gliding;1588000;277;1600000',
+        '0.200000;blip;gliding;1650000;40000;1700000']
+
+    capture = '\n'.join(['@000123_separation.csv@uptime;event;stage;moment;duration']
+                        + ['@000123_separation.csv@' + row for row in rows + ['1800000;blip;gliding;oops;0']])
+    streams, _logs = flight_telemetry.parse(capture)
+    separation = streams['separation.csv']
+    assert separation.fields == list(rust_header)
+    assert separation.column('moment')[1][:3] == [1570000.0, 1588000.0, 1650000.0]
+    assert separation.column('duration')[1] == [6000.0, 277.0, 40000.0, 0.0]
+    events = separation.column('event')[1]
+    assert len(events) == 4 and all(event != event for event in events), events  # a word is NaN: never plotted
+    assert separation.column('moment')[1][3] != separation.column('moment')[1][3], 'a word as the moment is no number'
+
+
 def test_recorder_flight_places_salvage_across_a_wrap():
     """
     A session longer than the ticks_us wrap (2**30 us, 17.9 min): recovered rows are placed by the good
@@ -1650,6 +1698,7 @@ test_recorder_flight_reads_an_unwrapped_dump_as_before()
 test_assemble_capture_keeps_a_wrapped_capture_strict()
 test_recorder_flight_error_matrix()
 test_recorder_flight_reads_separation_with_and_without_the_port_s_columns()
+test_every_reader_takes_a_separation_blip_as_a_word()
 test_recorder_flight_places_salvage_across_a_wrap()
 test_a_label_never_takes_another_sessions_files()
 test_flight_pull_takes_a_session_not_a_junk_name()
@@ -1665,7 +1714,8 @@ print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, tou
       'spliced-capture detection, sim-capture refusal, provider/consumer closure, '
       'the GNSS field lists as gnss.py declares them, '
       'recorder_flight on wrapped + unwrapped dumps, assemble_capture strictness, the recorder_flight error '
-      'matrix (every unproven line counted), separation.csv with and without its moment and duration, '
+      'matrix (every unproven line counted), separation.csv with and without its moment and duration (and its '
+      'blips), '
       'salvage across a ticks wrap (a sparse stream too), label-prefix '
       'collisions and junk tails, flight_pull session pick (byte-safe, never a label), every boot of the session '
       'index, the flight\'s UTC across a wrap, the log timeline of this boot only, a log line found in a stream, '

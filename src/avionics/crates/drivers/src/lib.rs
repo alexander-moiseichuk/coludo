@@ -20,16 +20,16 @@
 //!  * [`mock`] -- the scripted bus, delay and pin the host tests drive the drivers with;
 //!  * [`axes`] -- the optional per-sensor `axes` key: a part mounted other than per its marks (new, avionics-port.md
 //!    §7.2 Q7);
-//!  * [`debounce`] -- a two-level input read once per tick on a µs clock, with the edges its interrupt stamped or
-//!    polled, debounced for the latch it stands behind: the separation switch's pads, and any other contact (a
-//!    remove-before-flight pin, a breakwire).
+//!  * [`debounce`] -- two stamps for a two-level input behind a latch, the first and the latest edge of an episode,
+//!    recorded by its interrupt (or by its tick's own reads) and taken once the input has been quiet: the separation
+//!    switch's contact, and any other (a remove-before-flight pin, a breakwire).
 //!
 //! The parts, each named after its plan B module:
 //!  * [`sdp810`] -- the pitot: dynamic pressure and airspeed;
 //!  * [`ina226`] -- the power monitor: bus voltage, current and power;
 //!  * [`vl53l1x`] and [`vl53l4cx`] -- the two laser rangers that share one socket at 0x29;
-//!  * [`separation`] -- the stage-separation switch: its latch over [`debounce`], the separation moment and the
-//!    pads' wobble;
+//!  * [`separation`] -- the stage-separation switch: its latch over [`debounce`] (separated, nested or a blip), the
+//!    separation moment and the contact's wobble;
 //!  * [`lsm6dso32`] -- the primary IMU on SPI: accel and gyro `rate`, its write-then-verify bring-up;
 //!  * [`bmi323`] -- the SEN0697's IMU on I2C: the same `accel` and `rate`, behind the LSM6DSO32;
 //!  * [`icp10111`] -- the primary barometer: the TDK polynomial, the two-phase measurement, the general call;

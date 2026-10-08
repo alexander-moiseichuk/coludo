@@ -1,610 +1,142 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! Unit tests of the generic debounce, at both levels: the evidence (armed and polled), the level rule, the restart
-//! rule, the two holds, the return, the deadline (its origin, its floor, and the run it carries), the departure and
-//! the settling, the edge contract and the clock. The separation switch's own physics are in separation/tests.rs.
+//! Unit tests of the generic debounce: the pair's stamps (the first edge, the later ones, the empty stamp), the quiet
+//! measured from the latest edge, the take that empties it, the clock's wrap, the tick's own read and the polled read,
+//! the take/record race scripted point by point (and its residual, across the wrap too), a record split across cores
+//! (the order kept, the duplicate pinned), and two threads that lose no episode's start. The separation switch's own
+//! physics are in separation/tests.rs.
 
-use super::{Debounce, Edges, MINIMUM_SAMPLES, SETTLE_WINDOWS, Verdict, elapsed_us};
-use board_config::LONGEST_DEBOUNCE_MS;
+use super::{EMPTY, Episode, Point, StampPair, elapsed_us};
+use std::sync::atomic::{AtomicU32, Ordering};
 
-/// The read spacing these tests use, µs: the control tick.
-const TICK_US: u32 = 10_000;
+/// The quiet most tests use, µs: the separation switch's default.
+const QUIET_US: u32 = 10_000;
 
-/// The debounce most tests use, µs: the separation switch's default.
-const DEBOUNCE_US: u32 = 10_000;
-
-/// One read: its time (µs), its level and what the interrupt saw since the previous read.
-type Read = (u32, bool, Edges);
-
-/// Feed `reads` to a fresh debounce of `debounce_us` whose owner's latch stands for `latched` throughout. Returns the
-/// verdicts, each with its read's time.
-fn verdicts(debounce_us: u32, latched: bool, reads: &[Read]) -> Vec<(u32, Verdict)> {
-    let mut debounce = Debounce::new(debounce_us);
-    reads
-        .iter()
-        .filter_map(|&(now_us, level, edges)| {
-            debounce
-                .step(now_us, level, edges, latched)
-                .map(|verdict| (now_us, verdict))
-        })
-        .collect()
+/// The pair's two stamps as they stand: (start, finish).
+fn stamps(pair: &StampPair) -> (u32, u32) {
+    (pair.start.load(Ordering::SeqCst), pair.finish.load(Ordering::SeqCst))
 }
 
-/// `level` read on every tick from `from_us` to `to_us`, each with `edges` ([`Edges::Quiet`] or [`Edges::Polled`]).
-fn held(level: bool, edges: Edges, from_us: u32, to_us: u32) -> Vec<Read> {
-    (from_us..=to_us)
-        .step_by(TICK_US as usize)
-        .map(|now_us| (now_us, level, edges))
-        .collect()
+/// An episode from `start_us` to `finish_us`.
+fn episode(start_us: u32, finish_us: u32) -> Option<Episode> {
+    Some(Episode { start_us, finish_us })
 }
 
-/// One edge seen since the previous read, stamped `at_us`.
-fn edge(at_us: u32) -> Edges {
-    Edges::Seen {
-        first_us: at_us,
-        last_us: at_us,
-    }
+/// The first half of [`StampPair::record`] of an edge at `edge_us`, done by hand as a record on another core may be
+/// split: the finish stored.
+fn store_finish(pair: &StampPair, edge_us: u32) {
+    pair.finish.store(edge_us, Ordering::SeqCst);
 }
 
-/// Chatter seen by a read at `now_us` on the tick: edges from 4 ms to 1 ms before it, so no level holds a debounce
-/// between two reads' edges (1 ms to the next read, 6 ms to its first edge).
-fn chatter(now_us: u32) -> Edges {
-    Edges::Seen {
-        first_us: now_us.wrapping_sub(4000),
-        last_us: now_us.wrapping_sub(1000),
-    }
-}
-
-/// A held verdict.
-fn held_verdict(level: bool, departed_us: u32, settled_us: u32) -> Verdict {
-    Verdict::Held {
-        level,
-        departed_us,
-        settled_us,
-    }
+/// The second half of that record: the start exchanged from empty. Returns whether it opened the episode.
+fn exchange_start(pair: &StampPair, edge_us: u32) -> bool {
+    pair.start
+        .compare_exchange(EMPTY, edge_us, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
 }
 
 #[test]
-fn the_armed_hold_is_timed_from_the_last_edge_to_the_microsecond() {
-    for latched in [true, false] {
-        let level = !latched;
-        let seen = Edges::Seen {
-            first_us: 3000,
-            last_us: 7000,
-        };
-        // the line left at 3 ms and last changed at 7 ms: the hold needs a quiet read 10 ms after 7, not after the read
-        let reads = [
-            (10_000, level, seen),
-            (16_999, level, Edges::Quiet),
-            (17_000, level, Edges::Quiet),
-        ];
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &reads),
-            [(17_000, held_verdict(level, 3000, 7000))],
-            "latched {latched}"
-        );
-        // NEGATIVE: a microsecond short is no verdict, however many quiet reads
-        let short: Vec<Read> = (11_000..=16_999)
-            .step_by(1000)
-            .map(|now_us| (now_us, level, Edges::Quiet))
-            .collect();
-        assert!(verdicts(DEBOUNCE_US, latched, &[&reads[..1], &short].concat()).is_empty());
-    }
+fn the_first_edge_is_the_start_and_every_later_one_the_finish() {
+    let pair = StampPair::new();
+    assert_eq!(stamps(&pair).0, EMPTY, "a new pair is empty");
+    pair.record(3000);
+    assert_eq!(stamps(&pair), (3000, 3000), "a single edge: its own finish");
+    pair.record(4500);
+    pair.record(7000);
+    assert_eq!(stamps(&pair), (3000, 7000), "the start stays, the finish follows");
+    assert_eq!(pair.take(17_000, QUIET_US), episode(3000, 7000));
 }
 
 #[test]
-fn quiet_reads_after_a_restart_need_the_full_debounce_from_its_last_edge() {
-    // an edge mid-settle restarts the run since its last stamp: the quiet reads before it count for nothing
-    let reads = [
-        (10_000, false, edge(3000)),
-        (12_000, false, Edges::Quiet),
+fn the_quiet_is_measured_from_the_latest_edge_to_the_microsecond() {
+    let pair = StampPair::new();
+    pair.record(3000);
+    pair.record(7000);
+    // NEGATIVE: a microsecond short of the quiet after the latest edge, and the quiet after the first, take nothing
+    assert_eq!(pair.take(13_000, QUIET_US), None);
+    assert_eq!(pair.take(16_999, QUIET_US), None);
+    assert_eq!(stamps(&pair), (3000, 7000), "an early take leaves the pair as it was");
+    assert_eq!(pair.take(17_000, QUIET_US), episode(3000, 7000));
+    // a single edge concludes a quiet after itself, its duration 0
+    pair.record(50_000);
+    assert_eq!(pair.take(59_999, QUIET_US), None);
+    let single = pair.take(60_000, QUIET_US).expect("quiet");
+    assert_eq!(
+        (single, single.duration_us()),
         (
-            20_000,
-            false,
-            Edges::Seen {
-                first_us: 18_000,
-                last_us: 19_000,
+            Episode {
+                start_us: 50_000,
+                finish_us: 50_000
             },
-        ),
-        (25_000, false, Edges::Quiet),
-        (28_999, false, Edges::Quiet),
-        (29_000, false, Edges::Quiet),
-    ];
-    assert_eq!(
-        verdicts(DEBOUNCE_US, true, &reads),
-        [(29_000, held_verdict(false, 3000, 19_000))]
+            0
+        )
     );
-    // NEGATIVE: the read with the edge never concludes, even 10 ms past the settle's first edge
-    assert!(verdicts(DEBOUNCE_US, true, &reads[..5]).is_empty());
+    // a quiet of 0 concludes at the edge's own time
+    pair.record(70_000);
+    assert_eq!(pair.take(70_000, 0), episode(70_000, 70_000));
 }
 
 #[test]
-fn a_debounce_of_0_concludes_at_the_first_quiet_agreeing_read() {
-    for latched in [true, false] {
-        // an edge starts the settle; the next read, quiet and agreeing, concludes it
-        let reads = [(10_000, !latched, edge(4000)), (20_000, !latched, Edges::Quiet)];
-        assert_eq!(
-            verdicts(0, latched, &reads),
-            [(20_000, held_verdict(!latched, 4000, 4000))]
-        );
-        // the level rule alike, a microsecond later
-        let reads = [(10_000, !latched, Edges::Quiet), (10_001, !latched, Edges::Quiet)];
-        assert_eq!(
-            verdicts(0, latched, &reads),
-            [(10_001, held_verdict(!latched, 10_000, 10_000))]
-        );
-        // NEGATIVE: the read that starts a settle never concludes it, the level rule's included
-        let mut debounce = Debounce::new(0);
-        assert_eq!(debounce.step(10_000, !latched, Edges::Quiet, latched), None);
-        assert!(debounce.settling());
+fn a_take_empties_the_pair_for_the_next_episode() {
+    let pair = StampPair::new();
+    // NEGATIVE: an empty pair takes nothing, however late
+    assert_eq!(pair.take(u32::MAX / 2, 0), None);
+    pair.record(1000);
+    pair.record(2000);
+    assert_eq!(pair.take(12_000, QUIET_US), episode(1000, 2000));
+    assert_eq!(stamps(&pair).0, EMPTY);
+    assert_eq!(pair.take(1_000_000, QUIET_US), None, "taken once");
+    // the next edge starts afresh: the concluded episode's finish is never its start or its finish
+    pair.record(500_000);
+    assert_eq!(pair.take(510_000, QUIET_US), episode(500_000, 500_000));
+}
+
+#[test]
+fn an_edge_after_the_take_s_clock_read_is_never_quiet() {
+    // the caller read the clock, then an edge came before the take: a negative interval, younger than any quiet
+    let pair = StampPair::new();
+    pair.record(100_000);
+    pair.record(100_050);
+    for quiet_us in [0, 1, QUIET_US] {
+        assert_eq!(pair.take(100_049, quiet_us), None, "quiet {quiet_us} µs");
     }
+    assert_eq!(pair.take(100_050, 0), episode(100_000, 100_050));
 }
 
 #[test]
-fn the_polled_hold_needs_three_reads_spanning_the_debounce() {
-    for latched in [true, false] {
-        let level = !latched;
-        let reads = [
-            (0, level, Edges::Polled),
-            (5000, level, Edges::Polled),
-            (10_000, level, Edges::Polled),
-            (20_000, level, Edges::Polled),
-        ];
-        // the third read comes at 10 ms, but the run spans 10 ms only: the fourth concludes a 20 ms debounce
-        assert_eq!(
-            verdicts(20_000, latched, &reads),
-            [(20_000, held_verdict(level, 0, 0))],
-            "latched {latched}"
-        );
-        // NEGATIVE: the span alone is not enough either -- two reads 30 ms apart are two reads
-        let sparse = [
-            (0, level, Edges::Polled),
-            (30_000, level, Edges::Polled),
-            (40_000, level, Edges::Polled),
-        ];
-        assert_eq!(
-            verdicts(20_000, latched, &sparse),
-            [(40_000, held_verdict(level, 0, 0))]
-        );
-        assert!(verdicts(20_000, latched, &sparse[..2]).is_empty());
-        // at the default on the tick: the third read, 20 ms after the first, where an armed input decides at 10
-        let polled = held(level, Edges::Polled, 0, 50_000);
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &polled).first(),
-            Some(&(20_000, held_verdict(level, 0, 0)))
-        );
-        let quiet = held(level, Edges::Quiet, 0, 50_000);
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &quiet).first(),
-            Some(&(10_000, held_verdict(level, 0, 0)))
-        );
-    }
+fn an_edge_at_0_us_stamps_1() {
+    // 0 is the empty stamp: an edge then stamps a µs late, and is still an episode
+    let pair = StampPair::new();
+    pair.record(0);
+    assert_eq!(stamps(&pair), (1, 1));
+    assert_eq!(pair.take(QUIET_US, QUIET_US), None, "a µs short of the quiet after 1");
+    assert_eq!(pair.take(QUIET_US + 1, QUIET_US), episode(1, 1));
+    // a later edge at 0, after the wrap, is the finish 1
+    pair.record(u32::MAX - 10);
+    pair.record(0);
+    assert_eq!(pair.take(QUIET_US + 1, QUIET_US), episode(u32::MAX - 10, 1));
+    // the tick's own read at 0 µs off the latch stamps 1 too: an episode, not an empty pair
+    let pair = StampPair::new();
+    pair.observe(0, false, true);
+    assert_eq!(stamps(&pair), (1, 1));
+    assert_eq!(pair.take(QUIET_US, QUIET_US), None, "a µs short of the quiet after 1");
+    assert_eq!(pair.take(QUIET_US + 1, QUIET_US), episode(1, 1));
 }
 
 #[test]
-fn the_level_rule_starts_a_settle_with_no_edge_at_either_level() {
-    for edges in [Edges::Quiet, Edges::Polled] {
-        for latched in [true, false] {
-            let mut debounce = Debounce::new(DEBOUNCE_US);
-            assert_eq!(debounce.step(100_000, !latched, edges, latched), None);
-            assert!(
-                debounce.settling(),
-                "a level other than the latched one starts a settle"
-            );
-            // armed, one quiet read a debounce later concludes it; polled, the third read
-            let verdict_us = if edges == Edges::Quiet { 110_000 } else { 120_000 };
-            for now_us in (110_000..verdict_us).step_by(TICK_US as usize) {
-                assert_eq!(debounce.step(now_us, !latched, edges, latched), None);
-            }
-            // dated by the read that disagreed, which is also where the held level began: the change's own time is
-            // unknown to it
-            assert_eq!(
-                debounce.step(verdict_us, !latched, edges, latched),
-                Some(held_verdict(!latched, 100_000, 100_000)),
-                "{edges:?}, latched {latched}"
-            );
-            assert!(!debounce.settling());
-        }
-    }
-}
-
-#[test]
-fn an_idle_read_of_the_latched_level_starts_nothing() {
-    // NEGATIVE: no edge and the latched level, whichever the latch and the input: no settle, however long
-    for edges in [Edges::Quiet, Edges::Polled] {
-        for latched in [true, false] {
-            let mut debounce = Debounce::new(DEBOUNCE_US);
-            for tick in 0..30 {
-                assert_eq!(debounce.step(tick * TICK_US, latched, edges, latched), None);
-                assert!(!debounce.settling(), "{edges:?}, latched {latched}, tick {tick}");
-            }
-        }
-    }
-}
-
-#[test]
-fn an_edge_at_the_latched_level_settles_back_to_it() {
-    // a blip that came and went between two reads: the edges start a settle, the latched level holds, and the verdict
-    // is the latched level (the owner records nothing), departed at the blip's first edge, settled at its last
-    for latched in [true, false] {
-        let blip = Edges::Seen {
-            first_us: 4000,
-            last_us: 6000,
-        };
-        let reads = [(10_000, latched, blip), (20_000, latched, Edges::Quiet)];
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &reads),
-            [(20_000, held_verdict(latched, 4000, 6000))]
-        );
-    }
-}
-
-#[test]
-fn a_read_of_the_other_level_restarts_the_run_since_that_read() {
-    // a lost edge: a quiet read whose level is not the run's restarts it from the read itself, armed as polled
-    for (edges, departure, departed_us, verdict_us) in [
-        (Edges::Quiet, edge(2000), 2000, 30_000),
-        (Edges::Polled, Edges::Polled, 10_000, 40_000),
-    ] {
-        let mut reads = vec![(10_000, false, departure), (20_000, true, edges)];
-        reads.extend(held(true, edges, 30_000, 60_000));
-        assert_eq!(
-            verdicts(DEBOUNCE_US, true, &reads),
-            [(verdict_us, held_verdict(true, departed_us, 20_000))],
-            "{edges:?}"
-        );
-        // NEGATIVE: the disagreeing read itself concludes nothing, even with no debounce
-        assert!(verdicts(0, true, &reads[..2]).is_empty(), "{edges:?}");
-    }
-}
-
-#[test]
-fn an_edge_between_two_agreeing_reads_restarts_the_run() {
-    // NEGATIVE: reads of one level 20 ms apart, but the line moved between the second and the third
-    let mut debounce = Debounce::new(20_000);
-    assert_eq!(debounce.step(0, false, edge(0), true), None);
-    assert_eq!(debounce.step(10_000, false, Edges::Quiet, true), None);
-    let bounce = Edges::Seen {
-        first_us: 15_000,
-        last_us: 17_000,
-    };
-    assert_eq!(debounce.step(20_000, false, bounce, true), None, "the restart rule");
-    assert!(debounce.settling());
-    // the run restarted at the bounce's last edge: 20 ms after it concludes, the departure kept from the first edge
-    assert_eq!(debounce.step(30_000, false, Edges::Quiet, true), None);
-    assert_eq!(debounce.step(36_999, false, Edges::Quiet, true), None);
+fn the_clock_may_wrap_mid_episode() {
+    // the u32 µs clock wraps every 71.6 minutes: an episode across the wrap keeps its stamps and its duration, and a
+    // take before the quiet's end (since + quiet, wrapped to a small number) is not past it: the quiet is elapsed time
+    let pair = StampPair::new();
+    let start_us = u32::MAX - 3000;
+    pair.record(start_us);
+    pair.record(2000);
+    assert_eq!(pair.take(u32::MAX, QUIET_US), None);
+    assert_eq!(pair.take(11_999, QUIET_US), None);
+    let wrapped = pair.take(12_000, QUIET_US).expect("quiet");
     assert_eq!(
-        debounce.step(37_000, false, Edges::Quiet, true),
-        Some(held_verdict(false, 0, 17_000))
-    );
-}
-
-#[test]
-fn the_departure_is_the_first_edge_and_survives_every_restart() {
-    // the line leaves the latched level at 3 ms and wobbles, each read seeing an edge, sometimes back at the latched
-    // level; it then holds the other level from 33 ms: departed at the very first edge, settled at the last
-    for latched in [true, false] {
-        let other = !latched;
-        let mut reads = vec![
-            (10_000, other, edge(3000)),
-            (20_000, latched, edge(12_000)),
-            (30_000, other, edge(21_000)),
-            (40_000, other, edge(33_000)),
-        ];
-        reads.extend(held(other, Edges::Quiet, 50_000, 60_000));
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &reads),
-            [(50_000, held_verdict(other, 3000, 33_000))],
-            "latched {latched}"
-        );
-        // polled, the same wobble read by the reads alone: departed at the first read that disagreed, settled at the
-        // first read of the final run -- both on the reads' grid
-        let polled: Vec<Read> = reads
-            .iter()
-            .map(|&(now_us, level, _)| (now_us, level, Edges::Polled))
-            .collect();
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &polled),
-            [(50_000, held_verdict(other, 10_000, 30_000))],
-            "polled, latched {latched}"
-        );
-    }
-}
-
-#[test]
-fn a_concluded_settle_ends_the_episode() {
-    // a departure that returned and held the latched level through a verdict: the next departure is a new episode,
-    // dated by its own edge, not the first one's
-    let mut debounce = Debounce::new(DEBOUNCE_US);
-    let mut found = Vec::new();
-    let reads = [
-        (10_000, true, edge(4000)),
-        (20_000, true, Edges::Quiet),
-        (30_000, true, Edges::Quiet),
-        (40_000, false, edge(37_000)),
-        (50_000, false, Edges::Quiet),
-    ];
-    for (now_us, level, edges) in reads {
-        found.extend(debounce.step(now_us, level, edges, true));
-    }
-    assert_eq!(
-        found,
-        [held_verdict(true, 4000, 4000), held_verdict(false, 37_000, 37_000)]
-    );
-    // NEGATIVE: a return shorter than the debounce is the same episode, dated by the first departure
-    let short = [
-        (10_000, true, edge(8000)),
-        (20_000, false, edge(17_999)),
-        (30_000, false, Edges::Quiet),
-    ];
-    assert_eq!(
-        verdicts(DEBOUNCE_US, true, &short),
-        [(30_000, held_verdict(false, 8000, 17_999))]
-    );
-}
-
-#[test]
-fn a_return_that_held_the_debounce_concludes_on_the_read_of_its_next_edge() {
-    // the line went home at 8 ms and left again at 18 ms, with no read between to see it held: the edge's read
-    // concludes the return, at the latched level (departed at the blip before it), and its edge departs anew
-    for latched in [true, false] {
-        let mut debounce = Debounce::new(DEBOUNCE_US);
-        assert_eq!(debounce.step(10_000, latched, edge(8000), latched), None);
-        assert_eq!(
-            debounce.step(20_000, !latched, edge(18_000), latched),
-            Some(held_verdict(latched, 8000, 8000)),
-            "latched {latched}"
-        );
-        assert!(
-            debounce.settling(),
-            "the edge that ended the return starts the next settle"
-        );
-        assert_eq!(
-            debounce.step(30_000, !latched, Edges::Quiet, latched),
-            Some(held_verdict(!latched, 18_000, 18_000)),
-            "latched {latched}"
-        );
-        // NEGATIVE: a run away from the latch that held as long concludes only on a quiet read -- the edge's read
-        // restarts it, and the departure stays the first edge's
-        let away = [
-            (10_000, !latched, edge(8000)),
-            (20_000, latched, edge(18_000)),
-            (30_000, latched, Edges::Quiet),
-        ];
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &away),
-            [(30_000, held_verdict(latched, 8000, 18_000))],
-            "latched {latched}"
-        );
-        // NEGATIVE: home a microsecond short of the debounce is no return
-        let short = [
-            (10_000, latched, edge(8000)),
-            (20_000, !latched, edge(17_999)),
-            (30_000, !latched, Edges::Quiet),
-        ];
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &short),
-            [(30_000, held_verdict(!latched, 8000, 17_999))],
-            "latched {latched}"
-        );
-    }
-}
-
-#[test]
-fn an_edge_stamped_before_the_level_rule_s_read_pulls_the_departure_back() {
-    // the tick took its edges, then the line moved, then the tick read the level: that read sees the new level with no
-    // edge (the level rule, dated at the read), and the edge's stamp, a µs earlier, reaches the next read. The
-    // departure is the edge's: the settling is never before it, so the duration never wraps
-    for latched in [true, false] {
-        let reads = [
-            (10_000, !latched, Edges::Quiet),
-            (20_000, !latched, edge(9999)),
-            (30_000, !latched, Edges::Quiet),
-        ];
-        assert_eq!(
-            verdicts(DEBOUNCE_US, latched, &reads),
-            [(30_000, held_verdict(!latched, 9999, 9999))],
-            "latched {latched}"
-        );
-    }
-    // NEGATIVE: a later edge never pushes the departure forward
-    let reads = [
-        (10_000, false, Edges::Quiet),
-        (20_000, false, edge(15_000)),
-        (30_000, false, Edges::Quiet),
-    ];
-    assert_eq!(
-        verdicts(DEBOUNCE_US, true, &reads),
-        [(30_000, held_verdict(false, 10_000, 15_000))]
-    );
-}
-
-#[test]
-fn chatter_runs_out_at_ten_windows_and_the_run_carries_on_away() {
-    // chatter seen on every read: no quiet read, so no hold, and no level held a debounce between two reads' edges, so
-    // no return; the settle gives up 10 x 10 ms after its first read. The deadline ends the episode, not the run
-    assert_eq!(SETTLE_WINDOWS, 10);
-    for home_last in [false, true] {
-        let mut debounce = Debounce::new(DEBOUNCE_US);
-        let mut found = Vec::new();
-        for tick in 1..=11 {
-            let now_us = tick * TICK_US;
-            let level = (tick % 2 == 1) == home_last;
-            found.extend(
-                debounce
-                    .step(now_us, level, chatter(now_us), true)
-                    .map(|verdict| (now_us, verdict)),
-            );
-        }
-        assert_eq!(
-            found,
-            [(110_000, Verdict::Unsettled)],
-            "the deadline is 10 x 10 = 100 ms after the first read"
-        );
-        if home_last {
-            // NEGATIVE: home, nothing is carried over: a quiet read of the latched level starts nothing
-            assert!(!debounce.settling());
-            assert_eq!(debounce.step(120_000, true, Edges::Quiet, true), None);
-            assert!(!debounce.settling());
-            // the other level does, and dates a new departure from its own read
-            assert_eq!(debounce.step(130_000, false, Edges::Quiet, true), None);
-            assert_eq!(
-                debounce.step(140_000, false, Edges::Quiet, true),
-                Some(held_verdict(false, 130_000, 130_000))
-            );
-        } else {
-            // away, the run since the deadline read's last edge carries on, departed there: a quiet read a debounce
-            // after that edge concludes it, as it would have with no deadline
-            assert!(debounce.settling());
-            assert_eq!(debounce.step(118_999, false, Edges::Quiet, true), None);
-            assert_eq!(
-                debounce.step(119_000, false, Edges::Quiet, true),
-                Some(held_verdict(false, 109_000, 109_000))
-            );
-        }
-    }
-}
-
-#[test]
-fn the_deadline_counts_from_the_settle_s_first_read_not_its_first_edge() {
-    // the first edge 4 ms before the settle's first read, chatter away from the latch on every read after it, and a
-    // read off the tick at 101 ms: the deadline is 100 ms after the first read (105 ms), not after the edge (101 ms)
-    let mut reads = vec![(5000, false, edge(1000))];
-    reads.extend(
-        (15_000..=95_000)
-            .step_by(TICK_US as usize)
-            .map(|now_us| (now_us, false, chatter(now_us))),
-    );
-    reads.extend([(101_000, false, chatter(101_000)), (105_000, false, chatter(105_000))]);
-    assert_eq!(verdicts(DEBOUNCE_US, true, &reads), [(105_000, Verdict::Unsettled)]);
-}
-
-#[test]
-fn the_deadline_waits_for_three_reads() {
-    // the floor: a deadline of 0 or 10 ms has passed by the second read, but a settle concludes Unsettled on its
-    // third at the earliest -- plan B's arithmetic ran its 0 and 1 ms debounces out before a third read could come
-    assert_eq!(MINIMUM_SAMPLES, 3);
-    for debounce_us in [0, 1000] {
-        // armed chatter away from the latch, a blip home between every two reads (home held at no read: no return)
-        let chatter = [
-            (0, false, edge(0)),
-            (
-                10_000,
-                false,
-                Edges::Seen {
-                    first_us: 5000,
-                    last_us: 6000,
-                },
-            ),
-            (
-                20_000,
-                false,
-                Edges::Seen {
-                    first_us: 15_000,
-                    last_us: 16_000,
-                },
-            ),
-        ];
-        assert_eq!(
-            verdicts(debounce_us, true, &chatter),
-            [(20_000, Verdict::Unsettled)],
-            "debounce {debounce_us} µs"
-        );
-        assert!(verdicts(debounce_us, true, &chatter[..2]).is_empty());
-        // polled chatter the reads see
-        let polled = [
-            (0, false, Edges::Polled),
-            (10_000, true, Edges::Polled),
-            (20_000, false, Edges::Polled),
-        ];
-        assert_eq!(
-            verdicts(debounce_us, true, &polled),
-            [(20_000, Verdict::Unsettled)],
-            "polled, debounce {debounce_us} µs"
-        );
-        // and a held level settles at any debounce: polled on its third read, armed on its first quiet one
-        for (edges, verdict_us) in [(Edges::Polled, 20_000), (Edges::Quiet, 10_000)] {
-            assert_eq!(
-                verdicts(debounce_us, true, &held(false, edges, 0, 40_000)).first(),
-                Some(&(verdict_us, held_verdict(false, 0, 0))),
-                "{edges:?}, debounce {debounce_us} µs"
-            );
-        }
-    }
-}
-
-#[test]
-fn an_edge_passed_on_every_read_never_settles() {
-    // NEGATIVE, the edge contract pinned: a polled caller that passed an edge on every read would restart every run;
-    // held at the other level from the first read, each settle runs out to its deadline, Unsettled, and carries the
-    // run into the next, which runs out in turn
-    let reads: Vec<Read> = (0..=45)
-        .map(|tick| (tick * TICK_US, false, edge(tick * TICK_US)))
-        .collect();
-    assert_eq!(
-        verdicts(DEBOUNCE_US, true, &reads),
-        [
-            (100_000, Verdict::Unsettled),
-            (200_000, Verdict::Unsettled),
-            (300_000, Verdict::Unsettled),
-            (400_000, Verdict::Unsettled)
-        ]
-    );
-    // the same reads polled: the level rule settles them at once
-    let polled: Vec<Read> = reads
-        .iter()
-        .map(|&(now_us, level, _)| (now_us, level, Edges::Polled))
-        .collect();
-    assert_eq!(
-        verdicts(DEBOUNCE_US, true, &polled).first(),
-        Some(&(20_000, held_verdict(false, 0, 0)))
-    );
-}
-
-#[test]
-fn the_clock_may_wrap() {
-    // the u32 µs clock wraps every 71.6 minutes: a settle across the wrap, departed and settled before it, concluded
-    // after it -- and a quiet read before the wrap, where the hold's end (since + debounce) has wrapped to a small
-    // number, is not past it: the hold is an elapsed time
-    let start = u32::MAX - 5000;
-    let reads = [
-        (
-            start,
-            false,
-            Edges::Seen {
-                first_us: start - 3000,
-                last_us: start - 1000,
-            },
-        ),
-        (start + 1000, false, Edges::Quiet),
-        (start.wrapping_add(8000), false, Edges::Quiet),
-        (start.wrapping_add(9000), false, Edges::Quiet),
-    ];
-    assert_eq!(
-        verdicts(DEBOUNCE_US, true, &reads),
-        [(
-            start.wrapping_add(9000),
-            held_verdict(false, start - 3000, start - 1000)
-        )]
-    );
-    // polled alike
-    let polled: Vec<Read> = (0..3)
-        .map(|tick| (start.wrapping_add(tick * TICK_US), false, Edges::Polled))
-        .collect();
-    assert_eq!(
-        verdicts(DEBOUNCE_US, true, &polled),
-        [(start.wrapping_add(20_000), held_verdict(false, start, start))]
-    );
-    // chatter across the wrap still runs out 100 ms after its first read
-    let chattering: Vec<Read> = (0..=10)
-        .map(|tick| {
-            let now_us = start.wrapping_add(tick * TICK_US);
-            (now_us, tick % 2 == 0, chatter(now_us))
-        })
-        .collect();
-    assert_eq!(
-        verdicts(DEBOUNCE_US, true, &chattering),
-        [(start.wrapping_add(100_000), Verdict::Unsettled)]
+        (wrapped.start_us, wrapped.finish_us, wrapped.duration_us()),
+        (start_us, 2000, 5001)
     );
 }
 
@@ -618,68 +150,330 @@ fn elapsed_us_reads_the_wrap_as_a_short_interval() {
 }
 
 #[test]
-fn a_debounce_at_the_validator_s_bound_and_one_past_it() {
-    // board_config refuses a debounce_ms past LONGEST_DEBOUNCE_MS (a latch held back a second or more); the debounce
-    // itself needs no bound: at the bound and one ms past it, a held level settles on its span and chatter on its
-    // deadline, armed and polled
-    let longest_us = u32::try_from(LONGEST_DEBOUNCE_MS * 1000).expect("the bound fits the µs clock");
-    for (debounce_us, verdict_us) in [(longest_us, 1_000_000), (longest_us + 1000, 1_010_000)] {
-        for edges in [Edges::Quiet, Edges::Polled] {
-            assert_eq!(
-                verdicts(debounce_us, true, &held(false, edges, 0, 2_000_000)),
-                [(verdict_us, held_verdict(false, 0, 0))],
-                "{edges:?}, debounce {debounce_us} µs"
-            );
+fn a_quiet_past_the_clock_s_half_range_never_comes() {
+    // NEGATIVE: a quiet past i32::MAX µs (35.8 minutes) is never met, nor read as met when the interval wraps
+    let pair = StampPair::new();
+    pair.record(1000);
+    for now_us in [1000, 1_000_000, i32::MAX as u32, u32::MAX] {
+        assert_eq!(pair.take(now_us, i32::MAX as u32 + 1), None, "at {now_us} µs");
+        assert_eq!(pair.take(now_us, u32::MAX), None, "at {now_us} µs");
+    }
+    // and one at the half range is met exactly there
+    assert_eq!(pair.take(1000 + i32::MAX as u32, i32::MAX as u32), episode(1000, 1000));
+}
+
+#[test]
+fn the_tick_s_read_opens_an_episode_only_off_the_latch_and_with_none_open() {
+    let pair = StampPair::new();
+    // NEGATIVE: a read that agrees with the latch records nothing, at either level
+    for level in [true, false] {
+        pair.observe(5000, level, level);
+        assert_eq!(stamps(&pair).0, EMPTY, "level {level}");
+    }
+    // a read off the latch with none open opens one at the read, at either level
+    for (now_us, level) in [(20_000, false), (40_000, true)] {
+        pair.observe(now_us, level, !level);
+        assert_eq!(stamps(&pair), (now_us, now_us));
+        // NEGATIVE: the next reads off the latch add nothing to the open episode: the quiet runs from the first
+        pair.observe(now_us + 5000, level, !level);
+        assert_eq!(pair.take(now_us + QUIET_US, QUIET_US), episode(now_us, now_us));
+    }
+    // NEGATIVE: an episode the interrupt opened is left alone, its stamps too
+    pair.record(60_000);
+    pair.record(61_000);
+    pair.observe(62_000, false, true);
+    assert_eq!(stamps(&pair), (60_000, 61_000));
+}
+
+#[test]
+fn a_polled_read_is_an_edge_where_the_level_changed_since_the_previous_read() {
+    // the line read every 10 ms with a 25 ms quiet: HIGH at setup (the latch HIGH), LOW read from 30 ms, back HIGH
+    // read at 50 ms, LOW again from 60 ms
+    let quiet_us = 25_000;
+    let pair = StampPair::new();
+    let reads = [
+        (10_000, true),
+        (20_000, true),
+        (30_000, false),
+        (40_000, false),
+        (50_000, true),
+        (60_000, false),
+        (70_000, false),
+        (80_000, false),
+    ];
+    let mut previous = true;
+    for (now_us, level) in reads {
+        pair.poll(now_us, level, previous, true);
+        previous = level;
+        assert_eq!(pair.take(now_us, quiet_us), None, "at {now_us} µs");
+    }
+    assert_eq!(
+        stamps(&pair),
+        (30_000, 60_000),
+        "dated by the reads that saw the changes"
+    );
+    assert_eq!(pair.take(85_000, quiet_us), episode(30_000, 60_000));
+    // NEGATIVE: an unchanged read that agrees with the latch is nothing
+    pair.poll(90_000, false, false, false);
+    assert_eq!(stamps(&pair).0, EMPTY);
+    // an unchanged read off the latch with no episode open is observed: a latch that started from a level the line
+    // has left
+    pair.poll(100_000, false, false, true);
+    assert_eq!(pair.take(125_000, quiet_us), episode(100_000, 100_000));
+}
+
+#[test]
+fn an_edge_before_the_take_loads_the_finish_is_the_episode_s() {
+    // the interrupt lands after the take read the start: the edge is the latest, so the episode is not quiet and goes
+    // on with it -- a take is decided by its load of the finish
+    let pair = StampPair::new();
+    pair.record(1000);
+    let taken = pair.take_interrupted(20_000, QUIET_US, |point| {
+        if point == Point::StartLoaded {
+            pair.record(20_001);
         }
-        let chatter: Vec<Read> = (0..=1100)
-            .map(|tick| (tick * TICK_US, tick % 2 == 0, edge(tick * TICK_US)))
-            .collect();
-        let deadline_us = debounce_us * SETTLE_WINDOWS;
+    });
+    assert_eq!(taken, None);
+    assert_eq!(stamps(&pair), (1000, 20_001));
+    assert_eq!(pair.take(30_001, QUIET_US), episode(1000, 20_001));
+}
+
+#[test]
+fn an_edge_during_the_take_starts_the_next_episode_at_every_point() {
+    // after the load, an edge belongs to the next episode wherever it lands: between the load and the release (the take
+    // re-seeds the start with it) or after the release (it opens the next episode itself). The concluded episode is
+    // exact each time
+    for landing in [Point::Concluded, Point::Released] {
+        let pair = StampPair::new();
+        pair.record(1000);
+        pair.record(2000);
+        let mut seen = Vec::new();
+        let taken = pair.take_interrupted(20_000, QUIET_US, |point| {
+            seen.push(point);
+            if point == landing {
+                pair.record(20_005);
+            }
+        });
+        assert_eq!(taken, episode(1000, 2000), "{landing:?}");
         assert_eq!(
-            verdicts(debounce_us, true, &chatter).first(),
-            Some(&(deadline_us.next_multiple_of(TICK_US), Verdict::Unsettled)),
-            "debounce {debounce_us} µs"
+            stamps(&pair),
+            (20_005, 20_005),
+            "{landing:?}: the next episode, started at its edge"
+        );
+        assert_eq!(
+            seen,
+            [Point::StartLoaded, Point::Concluded, Point::Released, Point::Reloaded],
+            "{landing:?}"
+        );
+        assert_eq!(pair.take(30_005, QUIET_US), episode(20_005, 20_005), "{landing:?}");
+    }
+    // NEGATIVE: with no edge during the take there is no re-seed: the pair is empty
+    let pair = StampPair::new();
+    pair.record(1000);
+    let mut seen = Vec::new();
+    assert_eq!(
+        pair.take_interrupted(20_000, QUIET_US, |point| seen.push(point)),
+        episode(1000, 1000)
+    );
+    assert_eq!(seen, [Point::StartLoaded, Point::Concluded, Point::Released]);
+    assert_eq!(stamps(&pair).0, EMPTY);
+}
+
+#[test]
+fn an_edge_during_the_take_across_the_clock_s_wrap_starts_the_next_episode() {
+    // the concluded finish just before the u32 clock wraps, the edge during the take 5 µs after the take's clock read,
+    // just past the wrap: a smaller number yet a later edge. The take re-seeds on a changed finish, not a larger one
+    let pair = StampPair::new();
+    pair.record(u32::MAX - 20_000);
+    let taken = pair.take_interrupted(u32::MAX - 2, QUIET_US, |point| {
+        if point == Point::Concluded {
+            pair.record(2);
+        }
+    });
+    assert_eq!(taken, episode(u32::MAX - 20_000, u32::MAX - 20_000));
+    assert_eq!(stamps(&pair), (2, 2), "the next episode, started at its edge");
+    assert_eq!(pair.take(2 + QUIET_US, QUIET_US), episode(2, 2));
+}
+
+#[test]
+fn later_edges_during_the_take_are_the_next_episode_s_finish() {
+    // three edges after the release: the next episode starts at the first and ends at the last
+    let pair = StampPair::new();
+    pair.record(1000);
+    let taken = pair.take_interrupted(20_000, QUIET_US, |point| {
+        if point == Point::Released {
+            for edge_us in [20_001, 20_002, 20_003] {
+                pair.record(edge_us);
+            }
+        }
+    });
+    assert_eq!(taken, episode(1000, 1000));
+    assert_eq!(pair.take(40_000, QUIET_US), episode(20_001, 20_003));
+}
+
+#[test]
+fn the_residual_two_edges_inside_the_take_date_the_next_episode_by_the_later() {
+    // THE RACE's residual, pinned: two edges land inside the take's few instructions. The next episode starts at the
+    // later one, late by their spacing; its finish and the concluded episode stay exact, and the pair stays consistent
+    // (its start never after its finish)
+    let cases: [(Point, Point); 3] = [
+        (Point::Concluded, Point::Concluded),
+        (Point::Concluded, Point::Released),
+        (Point::Concluded, Point::Reloaded),
+    ];
+    for (first, second) in cases {
+        let pair = StampPair::new();
+        pair.record(1000);
+        let mut edges = [20_001, 20_002].into_iter();
+        let mut landings = [first, second].into_iter().peekable();
+        let taken = pair.take_interrupted(20_000, QUIET_US, |point| {
+            while landings.peek() == Some(&point) {
+                landings.next();
+                pair.record(edges.next().expect("two edges"));
+            }
+        });
+        assert_eq!(landings.next(), None, "{first:?}, {second:?}: both landed");
+        assert_eq!(taken, episode(1000, 1000));
+        let next = pair.take(40_000, QUIET_US).expect("the next episode");
+        assert_eq!(
+            next,
+            Episode {
+                start_us: 20_002,
+                finish_us: 20_002
+            },
+            "{first:?}, {second:?}"
         );
     }
 }
 
 #[test]
-fn a_window_past_the_clock_s_half_range_never_reads_as_run_out() {
-    // NEGATIVE: a window past i32::MAX µs once read its deadline as passed on the second read, so every settle ended
-    // Unsettled and the latch never moved. The deadline is an elapsed time: such a window never runs out, even past the
-    // clock's half range (chatter read every minute for 40 minutes), and a held level still settles on its span (here
-    // 214 748 365 µs, about 3.6 minutes)
-    let debounce_us = 214_748_365;
-    let mut chattering = Debounce::new(debounce_us);
-    for minute in 0..=40 {
-        let now_us = minute * 60_000_000;
-        assert_eq!(
-            chattering.step(now_us, minute % 2 == 0, chatter(now_us), true),
-            None,
-            "minute {minute}"
-        );
+fn an_edge_while_the_tick_s_read_opens_an_episode_keeps_its_later_finish() {
+    // the tick's read opened an episode at 30 ms, and an edge at 30.002 ms lands before the read sets the finish: the
+    // finish is the edge's, never replaced by the read's older time
+    let pair = StampPair::new();
+    pair.observe_interrupted(30_000, false, true, |point| {
+        assert_eq!(point, Point::Opened);
+        pair.record(30_002);
+    });
+    assert_eq!(stamps(&pair), (30_000, 30_002));
+    assert_eq!(pair.take(40_002, QUIET_US), episode(30_000, 30_002));
+    // NEGATIVE: an interrupt that opened the episode first leaves the read nothing to open
+    pair.record(50_000);
+    pair.observe_interrupted(49_999, false, true, |_| panic!("no episode opened by the read"));
+    assert_eq!(stamps(&pair), (50_000, 50_000));
+}
+
+#[test]
+fn across_cores_an_edge_stamped_before_the_tick_s_read_dates_the_episode_it_opened() {
+    // ONE CORE's second residual, closed for the order: the interrupt on another core read its clock at 29.990 ms and
+    // the tick at 30 ms; the edge's finish lands after the read opened the episode, its start exchange after that. The
+    // start is pulled back to the edge: never a finish before the start (whose duration would wrap to 4.29e9 µs)
+    let pair = StampPair::new();
+    pair.observe_interrupted(30_000, false, true, |point| {
+        assert_eq!(point, Point::Opened);
+        store_finish(&pair, 29_990);
+        assert!(!exchange_start(&pair, 29_990), "the read opened it");
+    });
+    assert_eq!(stamps(&pair), (29_990, 29_990));
+    assert_eq!(pair.take(39_990, QUIET_US), episode(29_990, 29_990));
+    // NEGATIVE: an edge stamped at the read or after it is a later finish, and the start stays the read's
+    for edge_us in [30_000, 30_002] {
+        let pair = StampPair::new();
+        pair.observe_interrupted(30_000, false, true, |_| {
+            store_finish(&pair, edge_us);
+            assert!(!exchange_start(&pair, edge_us));
+        });
+        assert_eq!(stamps(&pair), (30_000, edge_us));
     }
-    assert!(chattering.settling());
-    assert!(u64::from(debounce_us) * u64::from(SETTLE_WINDOWS) > i32::MAX as u64);
-    let reads = [
-        (0, false, edge(0)),
-        (10_000, false, Edges::Quiet),
-        (20_000, false, Edges::Quiet),
-        (1_000_000, false, Edges::Quiet),
-        (debounce_us - 1, false, Edges::Quiet),
-        (debounce_us, false, Edges::Quiet),
-    ];
+}
+
+#[test]
+fn across_cores_a_record_that_outlasts_the_quiet_concludes_its_edge_twice() {
+    // ONE CORE's first residual, pinned (never on the board, where the interrupt runs to its end on the tick's core):
+    // an edge at 1.5 ms stores its finish before a take at 1.5 ms with a quiet of 0 loads it, and exchanges the start
+    // only after the take released it. The take concludes the edge, and the exchange opens the next episode with it
+    let straddle = |pair: &StampPair, point: Point| match point {
+        Point::StartLoaded => store_finish(pair, 1500),
+        Point::Released => assert!(exchange_start(pair, 1500), "after the release"),
+        _ => {}
+    };
+    let pair = StampPair::new();
+    pair.record(1000);
     assert_eq!(
-        verdicts(debounce_us, true, &reads),
-        [(debounce_us, held_verdict(false, 0, 0))]
+        pair.take_interrupted(1500, 0, |point| straddle(&pair, point)),
+        episode(1000, 1500)
     );
-    // and the longest of all never concludes, and never overflows a count
-    let mut longest = Debounce::new(u32::MAX);
-    for tick in 0..10_000 {
-        assert_eq!(
-            longest.step(tick * TICK_US, tick % 2 == 0, edge(tick * TICK_US), true),
-            None
+    assert_eq!(pair.take(1500, 0), episode(1500, 1500), "the concluded edge again");
+    // NEGATIVE: under a quiet of 1 µs the same edge is too young for that take, which leaves the episode open: the
+    // record then ends (its exchange finds the start set) and the edge is the episode's, once
+    let pair = StampPair::new();
+    pair.record(1000);
+    assert_eq!(pair.take_interrupted(1500, 1, |point| straddle(&pair, point)), None);
+    assert!(!exchange_start(&pair, 1500));
+    assert_eq!(pair.take(1501, 1), episode(1000, 1500));
+    assert_eq!(pair.take(1_000_000, 1), None, "concluded once");
+}
+
+#[test]
+fn two_threads_lose_no_episode_start() {
+    // an interrupt stand-in records one edge per turn while the tick stand-in takes, the two racing on separate cores.
+    // The edges are 1 ms apart and the turn's take runs at its edge's time with a quiet of 1 ms, after a delay that
+    // varies by turn: it concludes the episode before where it loads the finish ahead of the turn's edge (which then
+    // lands somewhere in the take or after it), and folds the edge in where it loads it after. One edge per turn, so
+    // the residual (two inside one take) never comes: the episodes must be runs of consecutive edges, each starting
+    // at the edge after the last one's finish
+    const EDGES: u32 = 50_000;
+    const SPACING_US: u32 = 1000;
+    let pair = StampPair::new();
+    let turn = AtomicU32::new(0);
+    let done = AtomicU32::new(0);
+    let mut episodes = Vec::new();
+    // spin, and yield after a while, so the test also ends on a single core
+    let wait_for = |counter: &AtomicU32, value: u32| {
+        let mut spins = 0_u32;
+        while counter.load(Ordering::SeqCst) != value {
+            spins += 1;
+            if spins < 100 {
+                std::hint::spin_loop();
+            } else {
+                std::thread::yield_now();
+            }
+        }
+    };
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            for edge in 1..=EDGES {
+                wait_for(&turn, edge);
+                pair.record(edge * SPACING_US);
+                done.store(edge, Ordering::SeqCst);
+            }
+        });
+        for edge in 1..=EDGES {
+            turn.store(edge, Ordering::SeqCst);
+            // 1 to 1024 spins, doubling turn by turn: whatever a spin costs on this CPU, the take lands before, across
+            // and after the turn's edge
+            for _ in 0..1 << (edge % 11) {
+                std::hint::spin_loop();
+            }
+            episodes.extend(pair.take(edge * SPACING_US, SPACING_US));
+            wait_for(&done, edge);
+        }
+    });
+    episodes.extend(pair.take(EDGES * SPACING_US + SPACING_US, SPACING_US));
+    let mut next = 1;
+    for taken in &episodes {
+        assert_eq!(taken.start_us, next * SPACING_US, "the episode after edge {}", next - 1);
+        assert!(taken.finish_us >= taken.start_us, "{taken:?}");
+        next = taken.finish_us / SPACING_US + 1;
+    }
+    assert_eq!(next, EDGES + 1, "every edge in an episode");
+    // with a second core the two overlap: some takes fold the turn's edge in, most conclude ahead of it
+    let folded = episodes.iter().filter(|taken| taken.duration_us() > 0).count();
+    if std::thread::available_parallelism().is_ok_and(|cores| cores.get() > 1) {
+        assert!(
+            folded > 100 && episodes.len() > 1000,
+            "{} episodes, {folded} with more than one edge: the race was never run",
+            episodes.len()
         );
     }
-    assert!(longest.settling());
 }

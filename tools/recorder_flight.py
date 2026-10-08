@@ -108,9 +108,10 @@ _FIELDS: dict = {
 }
 """
 The columns a later firmware appended to a stream, the tail of its _FIELDS entry: the Rust port's separation
-`moment`, the uptime (us) the pads first parted, and `duration`, the us from it to the sustained open (the pads'
-wobble; src/avionics controller streams.rs). A row of the older firmware (plan B) stops short of all of them; with
-the header lost it is kept with those cells empty (_cells).
+`moment`, the uptime (us) of the first edge of the contact's episode the row concludes, and `duration`, the us from
+it to the episode's last edge (the contact's wobble; src/avionics controller streams.rs). The port's `event` is
+`separated`, `nested` or `blip` (the contact moved and came back), read as a word like any event. A row of the older
+firmware (plan B) stops short of all of them; with the header lost it is kept with those cells empty (_cells).
 """
 _APPENDED: dict = {'separation': ('moment', 'duration')}
 _BOOST_G: float = 3.0
