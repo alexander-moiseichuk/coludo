@@ -11,6 +11,7 @@
 //! and the SPI LSM6DSO32's probe, which needs SPI2's owner (M6).
 
 use std::mem::ManuallyDrop;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use board_config::Entry;
 use control::change::Change;
@@ -109,6 +110,13 @@ pub fn rezeroes(implementation: &str) -> bool {
     implementation == "icp10111"
 }
 
+/// The `axes` of an IMU entry (drivers::axes, M9): the identity when absent.
+///
+/// Errors: a malformed key or a mirror, naming the key (the part's setup fails with it).
+pub fn imu_axes(entry: &Entry) -> Result<Axes, String> {
+    Axes::from_config(&Value::Object(entry.fields.clone())).map_err(|error| error.to_string())
+}
+
 /// The datasheet address an I2C part's driver binds when its entry has no `addr` (plan B i2cbus.py:301).
 pub fn default_address(implementation: &str) -> Option<u8> {
     match implementation {
@@ -124,24 +132,33 @@ pub fn default_address(implementation: &str) -> Option<u8> {
     }
 }
 
-/// What a part does on its owner's tick beyond its bus work: where its readings go (M6: the ICP-10111). Each variant
-/// is boxed, so the other members of a port do not pay for the largest inline (M9).
+/// What a part does on its owner's tick beyond its bus work: where its readings go (M6: the ICP-10111; M9: the
+/// BMI323). Each variant is boxed, so the other members of a port do not pay for the largest inline (M9).
 pub enum Run {
     /// A barometer's channels, its climb rate and its stream.
     Barometer(Box<Barometer>),
+    /// The second IMU's channels and stream.
+    Imu(Box<Inertial>),
 }
 
 impl Run {
-    /// The run `part` needs on its owner's tick, its writers claimed from `topology` for source `name`, writing the
-    /// health of its table `entry`; None for a part with nothing to run yet.
+    /// The run `member`'s part needs on its owner's tick, its writers claimed from `topology` for its source name,
+    /// writing the health of its table `entry`; None for a part with nothing to run yet.
     pub fn new(
-        name: &'static str,
-        part: &Part,
+        member: &crate::devices::Member,
         topology: &'static Topology,
         entry: Option<&'static DeviceEntry<'static>>,
     ) -> Option<Run> {
-        match part {
+        let name = member.name;
+        match &member.part {
             Part::Icp10111(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
+            Part::Bmi323(_) => Some(Run::Imu(Box::new(Inertial::new(
+                name,
+                member.axes,
+                member.interrupt,
+                topology,
+                entry,
+            )))),
             Part::Lsm6dso32(_) => {
                 log::info!("{name} :: no read loop on I2C (SPI only)");
                 None
@@ -248,6 +265,198 @@ impl Barometer {
     }
 }
 
+/// The BMI323's raced halves (accel, rate): its data-ready flag clear but its bytes changed (M9, `inspect`).
+static BMI323_RACED: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+/// The BMI323's halves flagged over bytes identical to the last read's (accel, rate).
+static BMI323_IDENTICAL: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+/// The BMI323's fresh accel conversions, the first one's and the latest one's uptime in ms: its real ODR.
+static BMI323_CONVERSIONS: AtomicU32 = AtomicU32::new(0);
+/// The uptime of the BMI323's first fresh accel conversion, ms.
+static BMI323_FIRST_MS: AtomicU32 = AtomicU32::new(0);
+/// The uptime of its latest, ms.
+static BMI323_LAST_MS: AtomicU32 = AtomicU32::new(0);
+/// The INT1 edges its latest read took (`irq_runs`).
+static BMI323_IRQ_RUNS: AtomicU32 = AtomicU32::new(0);
+/// Its INT1 line's verdict: 0 no wire declared (polled by design), 1 driving, 2 declared and silent.
+static BMI323_SILENT: AtomicU8 = AtomicU8::new(0);
+
+/// What `inspect` shows of the BMI323 beyond its channels (plan B bmi323.py:305-317 and the port's own): whether its
+/// INT1 is silent (None: no wire declared), the edges its latest read took, its measured ODR (None before two
+/// conversions), and its raced and identical halves (accel, rate).
+pub fn bmi323_inspection() -> (Option<bool>, u32, Option<f32>, [u32; 2], [u32; 2]) {
+    let silent = match BMI323_SILENT.load(Ordering::Relaxed) {
+        0 => None,
+        verdict => Some(verdict == 2),
+    };
+    let conversions = BMI323_CONVERSIONS.load(Ordering::Relaxed);
+    let span_ms = BMI323_LAST_MS
+        .load(Ordering::Relaxed)
+        .wrapping_sub(BMI323_FIRST_MS.load(Ordering::Relaxed));
+    let odr_hz = (conversions > 1 && span_ms > 0).then(|| (conversions - 1) as f32 * 1000.0 / span_ms as f32);
+    let pair = |counters: &[AtomicU32; 2]| counters.each_ref().map(|counter| counter.load(Ordering::Relaxed));
+    (
+        silent,
+        BMI323_IRQ_RUNS.load(Ordering::Relaxed),
+        odr_hz,
+        pair(&BMI323_RACED),
+        pair(&BMI323_IDENTICAL),
+    )
+}
+
+/// The BMI323's outputs (M9): its `accel` and `rate` channels (a backup to the SPI IMU, at its config priority) and
+/// its stream, every conversion through the airframe's axes. Read every owner wake, paced by the control tick; its
+/// INT1, when wired, is evidence only (D12 of the M9 plan; plan B sampled on the edge).
+pub struct Inertial {
+    /// The `accel` writer (g).
+    accel: Option<Writer<'static, [f32; 3]>>,
+    /// The `rate` writer (deg/s).
+    rate: Option<Writer<'static, [f32; 3]>>,
+    /// Its stream, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// Its table entry, whose `healthy` the run writes.
+    entry: Option<&'static DeviceEntry<'static>>,
+    /// How its axes map onto the airframe's.
+    axes: Axes,
+    /// Its INT1 GPIO until armed: armed once the control thread runs (its GPIO interrupt service first).
+    interrupt: Option<u8>,
+    /// Whether INT1 is armed: its edges are counted.
+    armed: bool,
+    /// Reads in a row with no new conversion.
+    stale_run: u32,
+    /// A read failed and none succeeded since: one log line per run.
+    failing: bool,
+    /// A row was refused and none written since: one log line per run.
+    overflowing: bool,
+}
+
+impl Inertial {
+    /// The outputs of source `name`, mapped through `axes`, counting INT1 on `interrupt` once armed, writing the health
+    /// of `entry`.
+    fn new(
+        name: &'static str,
+        axes: Axes,
+        interrupt: Option<u8>,
+        topology: &'static Topology,
+        entry: Option<&'static DeviceEntry<'static>>,
+    ) -> Inertial {
+        let writer = |quantity: &str| topology.vector(quantity).and_then(|parameter| parameter.writer(name));
+        Inertial {
+            accel: writer("accel"),
+            rate: writer("rate"),
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            entry,
+            axes,
+            interrupt,
+            armed: false,
+            stale_run: 0,
+            failing: false,
+            overflowing: false,
+        }
+    }
+
+    /// Records the latest read's outcome in the table entry: true when that changed it.
+    fn set_healthy(&self, healthy: bool) -> bool {
+        self.entry.is_some_and(|entry| entry.set_healthy(healthy))
+    }
+
+    /// One owner wake for the part named `name`: its INT1 edges, the 16-byte status burst, and what is new published
+    /// through the airframe's axes, with a row (plan B bmi323.py's run loop, read on the tick).
+    fn tick(&mut self, name: &str, imu: &mut Bmi323, port: &mut I2cPort, now_us: u64) {
+        if let (Some(gpio), false) = (self.interrupt, self.armed)
+            && crate::control::running()
+        {
+            self.armed = true;
+            match crate::control::arm_second_interrupt(gpio) {
+                Ok(()) => log::info!("{name} :: INT1 GPIO{gpio} counted (evidence; reads paced by the tick)"),
+                Err(error) => log::warn!("{name} :: INT1 GPIO{gpio} not armed ({error}): no edges counted"),
+            }
+        }
+        let runs = if self.armed { crate::control::take_second_edges() } else { 0 };
+        BMI323_IRQ_RUNS.store(runs, Ordering::Relaxed);
+        if self.armed && imu.wake(runs) {
+            log::warn!("{name} :: INT1 silent -- sampling on the tick, the line unproven");
+        }
+        BMI323_SILENT.store(
+            match imu.interrupt_silent() {
+                None => 0,
+                Some(false) => 1,
+                Some(true) => 2,
+            },
+            Ordering::Relaxed,
+        );
+        let (fresh, sample) = match imu.read_fresh(port) {
+            Ok(read) => read,
+            Err(fault) => {
+                self.set_healthy(false);
+                if !self.failing {
+                    log::warn!("{name} :: read {fault}");
+                    self.failing = true;
+                }
+                return;
+            }
+        };
+        self.failing = false;
+        for (half, raced, identical) in [
+            (0, fresh.accel_raced, fresh.accel_identical),
+            (1, fresh.rate_raced, fresh.rate_identical),
+        ] {
+            if raced {
+                BMI323_RACED[half].fetch_add(1, Ordering::Relaxed);
+            }
+            if identical {
+                BMI323_IDENTICAL[half].fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        if !fresh.accel && !fresh.rate {
+            self.stale_run = self.stale_run.saturating_add(1);
+            if self.stale_run >= drivers::bmi323::STALE_LIMIT && self.set_healthy(false) {
+                log::warn!("{name} :: no new conversion -- stale");
+            }
+            return;
+        }
+        self.stale_run = 0;
+        self.set_healthy(true);
+        if fresh.accel {
+            let now_ms = (now_us / 1000) as u32;
+            if BMI323_CONVERSIONS.fetch_add(1, Ordering::Relaxed) == 0 {
+                BMI323_FIRST_MS.store(now_ms, Ordering::Relaxed);
+            }
+            BMI323_LAST_MS.store(now_ms, Ordering::Relaxed);
+        }
+        let accel = self.axes.apply(sample.accel_g());
+        if let (true, Some(writer)) = (fresh.accel, &mut self.accel) {
+            writer.push(accel, now_us);
+        }
+        if let (true, Some(writer)) = (fresh.rate, &mut self.rate) {
+            writer.push(self.axes.apply(sample.rate_degrees_per_second()), now_us);
+        }
+        let Some(telemetry) = &mut self.telemetry else {
+            return;
+        };
+        let [gx, gy, gz] = self.axes.apply(sample.rate_centidegrees_per_second());
+        let row = [
+            Cell::F32(accel[0]),
+            Cell::F32(accel[1]),
+            Cell::F32(accel[2]),
+            Cell::I32(gx),
+            Cell::I32(gy),
+            Cell::I32(gz),
+            Cell::I32(runs as i32),
+        ];
+        match telemetry.push(now_us, &row) {
+            Ok(()) => self.overflowing = false,
+            Err(overflow) => {
+                if !self.overflowing {
+                    log::warn!("{name} :: telemetry {overflow}");
+                    self.overflowing = true;
+                }
+            }
+        }
+    }
+}
+
 /// A VL53 ranger's XSHUT line, when the config wires one (v0.1; layout nulls it on v1.x), driven for the rest of the
 /// run once a part first takes it. Dropping an esp-idf-hal PinDriver disables the pad, so the line would float when a
 /// failed attempt's part is dropped: on a pin two laser entries share (the default config's GPIO5), the fitted
@@ -325,7 +534,10 @@ impl Part {
         let wired = |key: &str| board_config::pin(document, entry, key).is_some();
         let fields = Value::Object(entry.fields.clone());
         Ok(match entry.implementation {
-            "bmi323" => Part::Bmi323(Bmi323::new(address, wired("int_pin"))),
+            "bmi323" => {
+                imu_axes(entry)?;
+                Part::Bmi323(Bmi323::new(address, wired("int_pin")))
+            }
             "bmm350" => {
                 let axes = Axes::from_config(&fields).map_err(|error| error.to_string())?;
                 Part::Bmm350(Bmm350::new(address).mounted(axes).map_err(|error| error.to_string())?)
@@ -485,8 +697,18 @@ impl Part {
                 }
                 Poll::Rearm => Some(Event::Rearm),
             },
+            (Part::Bmi323(imu), Run::Imu(outputs)) => {
+                outputs.tick(name, imu, port, now_us);
+                None
+            }
             _ => None,
         }
+    }
+
+    /// Whether the part is an IMU, whose run goes first in each owner wake (D13 of the M9 plan): the lowest latency
+    /// for the backup IMU.
+    pub fn first(&self) -> bool {
+        matches!(self, Part::Bmi323(_))
     }
 
     /// The calibration the part waits for, in plan B's words (`calibration()`); empty when none. The ICP-10111 asks
@@ -528,7 +750,7 @@ impl Part {
                         .altitude
                         .as_ref()
                         .and_then(|writer| writer.recent(window_us, now_us)),
-                    None => None,
+                    Some(Run::Imu(_)) | None => None,
                 };
                 barometer
                     .update(properties, fresh)

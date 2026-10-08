@@ -73,6 +73,21 @@ enum Own {
         accel_g: Option<[f32; 3]>,
         rate_dps: Option<[f32; 3]>,
     },
+    /// The BMI323 (M9): the LSM6DSO32's keys -- its INT1 wired and silent (None: no wire declared, polled by
+    /// design, plan B bmi323.py:310-315), its own channels' latest values -- and the edges its latest read took; the
+    /// port's own: its measured ODR (null before two conversions), its channels' lapses by quantity, and its raced
+    /// and identical halves (accel, rate).
+    Bmi323 {
+        interrupt: bool,
+        interrupt_silent: Option<bool>,
+        accel_g: Option<[f32; 3]>,
+        rate_dps: Option<[f32; 3]>,
+        irq_runs: u32,
+        odr_hz: Option<f32>,
+        lapses: serde_json::Map<String, Value>,
+        raced: [u32; 2],
+        identical: [u32; 2],
+    },
     /// The ICP-10111: its own channels' latest values.
     Barometer {
         altitude_m: Option<f32>,
@@ -120,6 +135,23 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 rate_dps: vector("rate"),
             }
         }
+        "bmi323" => {
+            let (interrupt_silent, irq_runs, odr_hz, raced, identical) = crate::sensors::bmi323_inspection();
+            Own::Bmi323 {
+                interrupt: interrupt_silent.is_some(),
+                interrupt_silent,
+                accel_g: vector("accel"),
+                rate_dps: vector("rate"),
+                irq_runs,
+                odr_hz,
+                lapses: crate::control::lapses_of(name)
+                    .into_iter()
+                    .map(|(quantity, count)| (quantity, Value::from(count)))
+                    .collect(),
+                raced,
+                identical,
+            }
+        }
         "icp10111" => Own::Barometer {
             altitude_m: scalar("altitude"),
             temperature_c: scalar("temperature"),
@@ -165,6 +197,11 @@ pub fn inspect(message: &Message, context: &mut Context) -> Reply {
             }))
         }
         "mission" => super::ok_json(&context.mission.inspect(None, &clock::text(), clock::epoch())),
+        "databoard" => {
+            // SAFETY: a plain read of the monotonic timer.
+            let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() } as u64;
+            super::ok_json(&context.topology.inspect(now_us))
+        }
         RECORDER => super::ok_json(&crate::recorder::inspect_report().ok_or_else(|| no_object(RECORDER))?),
         other => super::ok_json(&device(context, other).ok_or_else(|| no_object(other))?),
     }

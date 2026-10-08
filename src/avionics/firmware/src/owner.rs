@@ -220,7 +220,7 @@ pub fn start(
     // by name, the order plan B's Inspector walks them for probes and re-arms
     members.sort_by(|left, right| left.name.cmp(right.name));
     for member in &mut members {
-        member.run = Run::new(member.name, &member.part, topology, table.find(member.name));
+        member.run = Run::new(member, topology, table.find(member.name));
         note_calibration(member);
     }
     parked
@@ -291,23 +291,30 @@ fn own(
     }
 }
 
-/// The parts' run loops on one wake (§4.3): each part with a run, due by time; a part's recovery re-arms the port's
-/// other parts, logged as plan B's icp10111 logs it and recorded once.
+/// The parts' run loops on one wake (§4.3): each part with a run, due by time, the IMU first (D13 of the M9 plan:
+/// the backup IMU's reads at the lowest latency); a part's recovery re-arms the port's other parts, logged as plan B's
+/// icp10111 logs it and recorded once.
 fn run(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, now_us: u64) {
-    for index in 0..members.len() {
-        let member = &mut members[index];
-        let Some(run) = member.run.as_mut() else {
-            continue;
-        };
-        if let Some(Event::Rearm) = member.part.tick(member.name, run, port, now_us) {
-            let name = member.name;
-            let _ = port.take_general_call();
-            let rearmed = rearm(port, members, name, delay);
-            log::warn!(
-                "{name} :: read recovery: general-call reset + peer rearm after {} failures",
-                drivers::icp10111::RECOVER_AFTER
-            );
-            record(port.id(), name, 1, &rearmed);
+    // two passes, the IMU's then the rest: no allocation on the wake
+    for imu in [true, false] {
+        for index in 0..members.len() {
+            let member = &mut members[index];
+            if member.part.first() != imu {
+                continue;
+            }
+            let Some(run) = member.run.as_mut() else {
+                continue;
+            };
+            if let Some(Event::Rearm) = member.part.tick(member.name, run, port, now_us) {
+                let name = member.name;
+                let _ = port.take_general_call();
+                let rearmed = rearm(port, members, name, delay);
+                log::warn!(
+                    "{name} :: read recovery: general-call reset + peer rearm after {} failures",
+                    drivers::icp10111::RECOVER_AFTER
+                );
+                record(port.id(), name, 1, &rearmed);
+            }
         }
     }
 }

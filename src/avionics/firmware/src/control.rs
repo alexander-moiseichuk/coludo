@@ -56,6 +56,7 @@ use std::time::Duration;
 
 use controller::{DeviceEntry, Table};
 use databoard::{Parameter, Writer};
+use drivers::axes::Axes;
 use drivers::debounce::StampPair;
 use drivers::lsm6dso32::{Lsm6dso32, OverSpi, STALE_LIMIT};
 use drivers::separation::{Kind, Thrust, ThrustGate};
@@ -101,6 +102,11 @@ static LATE_MAX_US: AtomicU32 = AtomicU32::new(0);
 static LATE_OVER_BUDGET: AtomicU32 = AtomicU32::new(0);
 /// INT1 edges since the tick last took them: the GPIO interrupt counts, the tick swaps the count out.
 static INTERRUPT_EDGES: AtomicU32 = AtomicU32::new(0);
+/// The second IMU's INT1 edges since its owner last took them ([`take_second_edges`]): the BMI323's data-ready line,
+/// evidence only, its reads paced by the owner's tick (M9).
+static SECOND_EDGES: AtomicU32 = AtomicU32::new(0);
+/// IMU reads `imu mute` skipped (M9).
+static IMU_MUTED: AtomicU32 = AtomicU32::new(0);
 /// IMU samples read.
 static IMU_READS: AtomicU32 = AtomicU32::new(0);
 /// IMU reads that failed.
@@ -172,6 +178,11 @@ enum Request {
     BustuneSpi {
         clock_hz: u32,
         reply: SyncSender<Result<(Option<String>, u32), ChangeRefused>>,
+    },
+    /// Skip the IMU's reads for `duration_ms` (`imu mute`, M9): whether an IMU took it.
+    Mute {
+        duration_ms: u32,
+        reply: SyncSender<Result<bool, ChangeRefused>>,
     },
 }
 
@@ -423,6 +434,11 @@ struct Imu {
     period_us: u64,
     /// When the next read is due, microseconds.
     next_due_us: u64,
+    /// How its axes map onto the airframe's (`axes`, M9): applied to every converted sample before the push and the
+    /// row.
+    axes: Axes,
+    /// Until when `imu mute` skips its reads, microseconds; 0 when not muted (M9).
+    muted_until_us: u64,
 }
 
 impl Imu {
@@ -450,7 +466,16 @@ impl Imu {
             overflowing: false,
             period_us: u64::from(member.period_ms) * 1000,
             next_due_us: 0,
+            axes: member.axes,
+            muted_until_us: 0,
         }
+    }
+
+    /// `imu mute`: skips the reads for `duration_ms` from `now_us`, so the part goes stale, then unhealthy, and the
+    /// databoard hands its channels to the next fresh source; the reads resume by themselves at expiry.
+    fn mute(&mut self, now_us: u64, duration_ms: u32) {
+        self.muted_until_us = now_us + u64::from(duration_ms) * 1000;
+        log::warn!("{} :: muted for {duration_ms} ms (imu mute)", self.name);
     }
 
     /// Plan B's probe (lsm6dso32.py:248-278): WHO_AM_I and one sample, logged in plan B's shape. None when healthy,
@@ -537,6 +562,21 @@ impl Imu {
             log::warn!("lsm6dso32 :: INT1 silent -- sampling on the tick, the line unproven");
         }
         INTERRUPT_SILENT.store(self.part.interrupt_silent(), Ordering::Relaxed);
+        if self.muted_until_us != 0 {
+            if now_us < self.muted_until_us {
+                // a muted read is a read with no new conversion: STALE_LIMIT of them mark the part unhealthy
+                IMU_MUTED.fetch_add(1, Ordering::Relaxed);
+                self.stale_run = self.stale_run.saturating_add(1);
+                if self.stale_run >= STALE_LIMIT && self.set_healthy(false) {
+                    log::warn!("lsm6dso32 :: muted -- stale");
+                }
+                return;
+            }
+            self.muted_until_us = 0;
+            // the first read after the mute is judged by its flags alone
+            self.part.forget();
+            log::info!("{} :: mute over: reading again", self.name);
+        }
         let Some(handle) = self.handle.as_mut() else {
             return;
         };
@@ -575,18 +615,19 @@ impl Imu {
         }
         self.stale_run = 0;
         self.set_healthy(true);
-        let accel = sample.accel_g();
+        // the airframe's axes, on converted values (drivers::axes): the push and the row alike
+        let accel = self.axes.apply(sample.accel_g());
         if let (true, Some(writer)) = (fresh.accel, &mut self.accel) {
             writer.push(accel, now_us);
         }
         if let (true, Some(writer)) = (fresh.rate, &mut self.rate) {
-            writer.push(sample.rate_degrees_per_second(), now_us);
+            writer.push(self.axes.apply(sample.rate_degrees_per_second()), now_us);
         }
         // measured -> reported (the operator, M9): a row for every fresh sample, never decimated
         let Some(telemetry) = &mut self.telemetry else {
             return;
         };
-        let [gx, gy, gz] = sample.rate_centidegrees_per_second();
+        let [gx, gy, gz] = self.axes.apply(sample.rate_centidegrees_per_second());
         let row = [
             Cell::F32(accel[0]),
             Cell::F32(accel[1]),
@@ -623,16 +664,16 @@ struct Watch {
 }
 
 impl Watch {
-    /// The `accel` and `rate` channels of each of `sources` that the databoard and the table hold, in that order, at
-    /// most [`WATCHED`]; their names published for `inspect control`.
-    fn every(sources: &[&'static str], topology: &'static Topology, table: &'static Table<'static>) -> Vec<Watch> {
+    /// Every source's `accel` and `rate` channel, by quantity in rank order, at most [`WATCHED`]: the SPI IMU's on
+    /// this thread and the BMI323's on its bus owner alike. Their names published for `inspect`.
+    fn every(topology: &'static Topology, table: &'static Table<'static>) -> Vec<Watch> {
         let mut watches = Vec::new();
         let mut names = Vec::new();
-        for source in sources {
-            for quantity in ["accel", "rate"] {
-                let Some(parameter) = topology.vector(quantity) else {
-                    continue;
-                };
+        for quantity in ["accel", "rate"] {
+            let Some(parameter) = topology.vector(quantity) else {
+                continue;
+            };
+            for source in parameter.sources() {
                 let (Some(channel), Some(entry), Some(lapses)) = (
                     parameter.channel(source),
                     table.find(source),
@@ -790,10 +831,33 @@ unsafe extern "C" fn interrupt_edge(_: *mut core::ffi::c_void) {
     INTERRUPT_EDGES.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Arms a rising-edge interrupt on GPIO `gpio` that counts into [`INTERRUPT_EDGES`], through the service
+/// The second IMU's INT1 data-ready interrupt: count the edge. Integer only.
+unsafe extern "C" fn second_edge(_: *mut core::ffi::c_void) {
+    SECOND_EDGES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Arms the second IMU's INT1 (the BMI323's, M9) on GPIO `gpio`, counting into [`take_second_edges`]. Only once the
+/// control thread runs ([`running`]): it installed the GPIO interrupt service on core 1 before it ran.
+///
+/// Errors: the pin would not configure, or its handler would not attach.
+pub fn arm_second_interrupt(gpio: u8) -> Result<(), sys::EspError> {
+    arm_interrupt(gpio, second_edge)
+}
+
+/// The second IMU's INT1 edges since the last take.
+pub fn take_second_edges() -> u32 {
+    SECOND_EDGES.swap(0, Ordering::Relaxed)
+}
+
+/// Whether the control thread runs: its tick, and the GPIO interrupt service it installed first.
+pub fn running() -> bool {
+    RUNNING.load(Ordering::Acquire)
+}
+
+/// Arms a rising-edge interrupt on GPIO `gpio` that counts with `handler`, through the service
 /// [`install_gpio_service`] installed. The internal pull-down holds a broken wire at 0,
 /// where plan B's `Pin(gpio, Pin.IN)` left it floating.
-fn arm_interrupt(gpio: u8) -> Result<(), sys::EspError> {
+fn arm_interrupt(gpio: u8, handler: unsafe extern "C" fn(*mut core::ffi::c_void)) -> Result<(), sys::EspError> {
     let config = sys::gpio_config_t {
         pin_bit_mask: 1u64 << gpio,
         mode: sys::gpio_mode_t_GPIO_MODE_INPUT,
@@ -807,7 +871,7 @@ fn arm_interrupt(gpio: u8) -> Result<(), sys::EspError> {
         sys::esp!(sys::gpio_config(&config))?;
         sys::esp!(sys::gpio_isr_handler_add(
             i32::from(gpio),
-            Some(interrupt_edge),
+            Some(handler),
             core::ptr::null_mut()
         ))?;
     }
@@ -942,7 +1006,7 @@ fn run(
     let mut spi = spi.into_iter();
     let mut imu = spi.next().map(|member| {
         if let Some(gpio) = member.interrupt
-            && let Err(error) = arm_interrupt(gpio)
+            && let Err(error) = arm_interrupt(gpio, interrupt_edge)
         {
             log::warn!(
                 "{} :: INT1 GPIO{gpio} not armed ({error}): sampling on the tick alone",
@@ -962,7 +1026,7 @@ fn run(
         }
         Imu::new(member, topology, table)
     });
-    let watches = Watch::every(&imu.as_ref().map(|imu| imu.name).into_iter().collect::<Vec<_>>(), topology, table);
+    let watches = Watch::every(topology, table);
     let (mailbox, requests) = sync_channel(REQUESTS_PER_TICK);
     let _ = MAILBOX.set(mailbox);
     for extra in spi {
@@ -1137,6 +1201,18 @@ fn serve(requests: &Receiver<Request>, mut imu: Option<&mut Imu>, bus: Option<&S
                 };
                 let _ = reply.send(answer);
             }
+            Request::Mute { duration_ms, reply } => {
+                let answer = match (refusal, imu.as_deref_mut()) {
+                    (Some(refusal), _) => Err(refusal),
+                    (None, Some(imu)) => {
+                        // SAFETY: a plain read of the monotonic timer.
+                        imu.mute(unsafe { sys::esp_timer_get_time() } as u64, duration_ms);
+                        Ok(true)
+                    }
+                    (None, None) => Ok(false),
+                };
+                let _ = reply.send(answer);
+            }
         }
     }
 }
@@ -1268,7 +1344,7 @@ fn start_timer(period_us: u64, wakers: &'static Wakers) -> Result<(), sys::EspEr
 
 /// The control thread's console command (the Glider Command Language): `control`, the tick's figures.
 pub fn register_commands() {
-    gcl::register(vec![Command {
+    gcl::register(vec![mute_command(), Command {
         owner: "control",
         words: "control",
         about: "the control tick: its rate, ticks, overruns (ticks the thread missed), lateness (the latest, the \
@@ -1306,6 +1382,7 @@ pub fn register_commands() {
                     ("imu_raced", &pair(&IMU_RACED)),
                     ("imu_identical", &pair(&IMU_IDENTICAL)),
                     ("lapses", &lapses()),
+                    ("imu_muted", &IMU_MUTED.load(Ordering::Relaxed).to_string()),
                     ("irq_runs_last", &IRQ_RUNS_LAST.load(Ordering::Relaxed).to_string()),
                     ("int1_silent", &INTERRUPT_SILENT.load(Ordering::Relaxed).to_string()),
                     ("separated", &SEPARATED.load(Ordering::Relaxed).to_string()),
@@ -1340,6 +1417,23 @@ fn pair(counters: &[AtomicU32; 2]) -> String {
     )
 }
 
+/// `source`'s watched channels' lapses, by quantity (`inspect` of an IMU); empty before the thread starts.
+pub fn lapses_of(source: &str) -> Vec<(String, u32)> {
+    WATCH_NAMES
+        .get()
+        .map(|names| {
+            names
+                .iter()
+                .zip(&LAPSES)
+                .filter_map(|(name, count)| {
+                    let (owner, quantity) = name.split_once('.')?;
+                    (owner == source).then(|| (quantity.to_string(), count.load(Ordering::Relaxed)))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Each watched channel's lapses as `source.quantity:count`, comma-separated; empty before the thread starts.
 fn lapses() -> String {
     WATCH_NAMES
@@ -1353,4 +1447,42 @@ fn lapses() -> String {
                 .join(",")
         })
         .unwrap_or_default()
+}
+
+/// GCL `imu mute ms=<1..10000>`: the control thread skips the SPI IMU's reads for that long, so the part goes stale,
+/// then unhealthy, and the databoard hands `accel` and `rate` to the next fresh source; the reads resume by themselves
+/// at expiry, judged by their flags alone. The failover's forced proof (M9): `bustune spi` cannot silence the part.
+/// Rust-only, like every bus diagnostic only in SETTING while disarmed.
+fn mute_command() -> Command {
+    Command {
+        owner: "control",
+        words: "imu mute",
+        about: "skip the SPI IMU's reads for ms: it goes stale, then unhealthy, and accel and rate fail over to the \
+                next fresh source; the reads resume by themselves",
+        gate: Gate::Disarmed,
+        reach: Reach::Everywhere,
+        parameters: &[gcl::Parameter {
+            name: "ms",
+            kind: gcl::Kind::Integer { low: 1, high: 10_000 },
+            default: None,
+            about: "how long, milliseconds",
+        }],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let duration_ms = arguments.integer("ms") as u32;
+            let Some(mailbox) = MAILBOX.get() else {
+                return cc_protocol::build("err", &["imu", "the control thread is not running"], &[]);
+            };
+            let (reply, answer) = sync_channel(1);
+            if mailbox.try_send(Request::Mute { duration_ms, reply }).is_err() {
+                return cc_protocol::build("err", &["imu", "the control thread is busy"], &[]);
+            }
+            match answer.recv_timeout(PROBE_DEADLINE) {
+                Ok(Ok(true)) => cc_protocol::build("ok", &["imu", "mute"], &[("ms", &duration_ms.to_string())]),
+                Ok(Ok(false)) => cc_protocol::build("err", &["imu", "no SPI IMU on the control thread"], &[]),
+                Ok(Err(refusal)) => cc_protocol::build("err", &["unsafe", &refusal.to_string()], &[]),
+                Err(_) => cc_protocol::build("err", &["imu", "the control thread did not answer"], &[]),
+            }
+        }),
+    }
 }

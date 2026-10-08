@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 use board_config::Entry;
 use controller::{Attempt, Binding, Table};
 use databoard::Parameter;
+use drivers::axes::Axes;
 use drivers::lsm6dso32::{Lsm6dso32, OverSpi};
 use drivers::separation::Separation;
 use esp_idf_svc::hal::delay::Delay;
@@ -46,6 +47,11 @@ pub struct Member {
     pub part: Part,
     /// What it runs on the owner's tick, from the owner's start (crate::owner).
     pub run: Option<sensors::Run>,
+    /// How its axes map onto the airframe's (`axes`, M9): what the BMI323's run applies; the identity for a part
+    /// with no vectors, and for the BMM350, which maps its own after its calibration.
+    pub axes: Axes,
+    /// Its data-ready GPIO, when the config wires one (`int_pin`): the BMI323's INT1, counted as evidence (M9).
+    pub interrupt: Option<u8>,
 }
 
 /// The LSM6DSO32 on SPI2 once it came up: the control thread, SPI2's owner, takes it (crate::control).
@@ -60,6 +66,8 @@ pub struct SpiMember {
     pub interrupt: Option<u8>,
     /// Its sampling period, ms (`period_ms`, plan B's 10; at least 1).
     pub period_ms: u32,
+    /// How its axes map onto the airframe's (`axes`, M9).
+    pub axes: Axes,
 }
 
 /// The separation switch once it came up: the control thread reads it every tick (crate::control).
@@ -167,6 +175,28 @@ impl Topology {
             .map(|parameter| &**parameter)
     }
 
+    /// Plan B's `inspect databoard` (databoard.py:506-511): each quantity's fused reading at `now_us` -- its value
+    /// (a scalar, a vector, a position in degrees), the source that won, its age in ms, all null when no source is
+    /// fresh -- and the learned reconcile offsets by source.
+    pub fn inspect(&self, now_us: u64) -> serde_json::Map<String, Value> {
+        let mut quantities = serde_json::Map::new();
+        for parameter in &self.scalars {
+            quantities.insert(parameter.name().to_string(), fused(parameter, now_us, |value| value.into()));
+        }
+        for parameter in &self.vectors {
+            quantities.insert(parameter.name().to_string(), fused(parameter, now_us, |value| value.to_vec().into()));
+        }
+        for parameter in &self.positions {
+            quantities.insert(
+                parameter.name().to_string(),
+                fused(parameter, now_us, |[latitude, longitude]| {
+                    vec![f64::from(latitude) * 1e-7, f64::from(longitude) * 1e-7].into()
+                }),
+            );
+        }
+        quantities
+    }
+
     /// The topology of the entries that came up, in setup order, with one log line per quantity: its sources in rank
     /// order with their priorities, and its shared window. M6 adds the readers.
     fn build(entries: &[Entry<'static>], table: &Table) -> Topology {
@@ -227,6 +257,22 @@ impl Topology {
         }
         topology
     }
+}
+
+/// One quantity's `inspect databoard` entry: `value` through `json`, `source` and `age_ms` of the fused reading at
+/// `now_us` (all null when no source is fresh), and the reconcile `offsets` by source.
+fn fused<T: databoard::Sample>(parameter: &Parameter<T>, now_us: u64, json: impl Fn(T) -> Value) -> Value {
+    let reading = parameter.read(now_us);
+    let offsets: serde_json::Map<String, Value> = parameter
+        .offsets()
+        .map(|(source, offset)| (source.to_string(), offset.into()))
+        .collect();
+    serde_json::json!({
+        "value": reading.map(|reading| json(reading.value)),
+        "source": reading.map(|reading| reading.source),
+        "age_ms": reading.map(|reading| reading.age_us / 1000),
+        "offsets": offsets,
+    })
 }
 
 /// Registers `source` for `provide`'s quantity in `parameters`, making the quantity on its first source. Whether it
@@ -664,6 +710,9 @@ fn set_up_i2c(
             name: entry.name,
             part,
             run: None,
+            // Part::build refused a malformed key, so the part up has a good one
+            axes: sensors::imu_axes(entry).unwrap_or_default(),
+            interrupt: board_config::pin(document, entry, "int_pin"),
         });
     }
     outcome
@@ -713,6 +762,7 @@ fn set_up_spi(
     };
     let interrupt = board_config::pin(document, entry, "int_pin");
     let interrupt_wired = interrupt.is_some();
+    let axes = sensors::imu_axes(entry);
     let mut came_up = None;
     let outcome = controller::set_up(
         entry.name,
@@ -724,6 +774,12 @@ fn set_up_spi(
                     diagnosis: last.then(|| no_transport(entry)),
                 };
             };
+            if let Err(error) = &axes {
+                return Attempt::Raised {
+                    error: error.clone(),
+                    diagnosis: None,
+                };
+            }
             let mut part = Lsm6dso32::new(OverSpi, interrupt_wired);
             match drivers::device::Device::setup(&mut part, handle, delay) {
                 Ok(()) => {
@@ -762,6 +818,7 @@ fn set_up_spi(
             part,
             interrupt,
             period_ms,
+            axes: axes.unwrap_or_default(),
         });
     }
     outcome
