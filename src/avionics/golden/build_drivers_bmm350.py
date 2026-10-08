@@ -17,8 +17,12 @@ plan B's calibration is integer arithmetic on counts (floored divisions included
                    key bmm350_cal, shared with the Rust board) and _restore() reading one back (a blob of another
                    length leaves the axes raw);
   * setup       -- setup()'s transcript: the identity PAST the dummy bytes, then the configuration table -- the soft
-                   reset, the MANDATORY OTP power-off, the rate and its apply, normal mode -- with its waits;
-  * rearm       -- rearm()'s transcript (the table again) and whether plan B logged a failure;
+                   reset, the MANDATORY OTP power-off, the rate and its apply, normal mode -- with its waits. Every
+                   case whose transcript reaches the rate write carries a `divergence`, the transcript the port owes
+                   instead: plan B's with that one byte changed, PMU_CMD_AGGR_SET 0x24 (100 Hz, averaging 4) -> 0x37
+                   (12.5 Hz, averaging 8; avionics-port.md M9 D2), every other step and the answer plan B's;
+  * rearm       -- rearm()'s transcript (the table again) and whether plan B logged a failure; the same one-byte
+                   `divergence` where the re-arm reaches the rate write;
   * probe       -- probe()'s transcript, the step that failed, and the not-measuring reason (all axes zero; the raw
                    0x7F7F7F of a part whose OTP is still powered);
   * diagnose    -- diagnose()'s verdict, up to its ' -- ' (the error's repr is the runtime's own).
@@ -291,8 +295,38 @@ def _decodes() -> dict:
             'cases': cases}
 
 
+_RATE_PORT: int = 0x37  # PMU_CMD_AGGR_SET as the port writes it: 12.5 Hz (bits 3:0 = 7), averaging 8 (bits 5:4 = 3)
+
+
+def _rate_divergence(case: dict) -> dict:
+    """
+    Pin the port's one rate byte on a setup or rearm case: when plan B's transcript writes PMU_CMD_AGGR_SET, the case
+    gains a `divergence` owing that transcript with the write's value 0x24 -> 0x37, and plan B's answer.
+
+    Args:
+        case - the case, its plan B transcript in input.script and its answer in output.ok.
+
+    Returns:
+        The case, with its divergence when the transcript reaches the rate write.
+    """
+    plan_b = '%02x%02x' % (bmm350._REG_PMU_CMD_AGGR_SET, bmm350._AGGR_100HZ_AVG4)
+    script = case['input']['script']
+    rate = [step for step in script if step['op'] == 'write' and step['bytes'] == plan_b]
+    if not rate:
+        return case
+    if len(rate) != 1:
+        raise ValueError('drivers_bmm350: case %s writes the rate %d times' % (case['name'], len(rate)))
+    port = '%02x%02x' % (bmm350._REG_PMU_CMD_AGGR_SET, _RATE_PORT)
+    owed = [dict(step, bytes=port) if step is rate[0] else step for step in script]
+    case['divergence'] = {'note': ('the port runs the part at 12.5 Hz with averaging 8 (PMU_CMD_AGGR_SET 0x37, '
+                                   'avionics-port.md M9 D2) where plan B ran 100 Hz with averaging 4 (0x24): the one '
+                                   'byte that differs'),
+                          'script': owed, 'ok': case['output']['ok']}
+    return case
+
+
 def _setup_case(name: str, part) -> dict:
-    """One setup case: plan B's setup() over a scripted part."""
+    """One setup case: plan B's setup() over a scripted part, with the port's rate byte pinned."""
     bus = register_bus.Bus(part)
     driver = bmm350.Bmm350('mag_bmm350', {'bus': 'i2c', 'id': 0, 'addr': _ADDRESS}, _Controller())
     originals = i2cbus.bind, databoard.Databoard.provide, bmm350._nvs
@@ -303,13 +337,14 @@ def _setup_case(name: str, part) -> dict:
         ok = register_bus.run(bus, driver.setup())
     finally:
         i2cbus.bind, databoard.Databoard.provide, bmm350._nvs = originals
-    return {'name': name, 'input': {'script': bus.transcript}, 'output': {'ok': ok}}
+    return _rate_divergence({'name': name, 'input': {'script': bus.transcript}, 'output': {'ok': ok}})
 
 
 def _setups() -> dict:
     """The setup section."""
     return {'compare': {'kind': 'exact'},
-            'note': 'setup() over a scripted part: the transcript (the table with its waits) and ok',
+            'note': ('setup() over a scripted part: the transcript (the table with its waits) and ok; a case with a '
+                     'divergence owes its script and ok instead -- the rate byte 0x37 for plan B\'s 0x24'),
             'cases': [_setup_case('healthy', _part()),
                       _setup_case('the_dummy_byte_is_not_the_identity', _part(identity=0x43, dummy=_IDENTITY)),
                       _setup_case('the_identity_read_naks', _part(refuse=(('read', bmm350._REG_CHIP_ID),))),
@@ -318,7 +353,10 @@ def _setups() -> dict:
 
 
 def _rearm_case(name: str, refuse: tuple = ()) -> dict:
-    """One rearm case: rearm() over a part that refuses `refuse`, and whether plan B logged a failure."""
+    """
+    One rearm case: rearm() over a part that refuses `refuse`, and whether plan B logged a failure, with the port's
+    rate byte pinned.
+    """
     bus = register_bus.Bus(_part(refuse=refuse))
     driver = _driver()
     driver._bus = bus
@@ -329,13 +367,14 @@ def _rearm_case(name: str, refuse: tuple = ()) -> dict:
         register_bus.run(bus, driver.rearm())
     finally:
         recorder.Recorder.log = original
-    return {'name': name, 'input': {'script': bus.transcript}, 'output': {'ok': not logged}}
+    return _rate_divergence({'name': name, 'input': {'script': bus.transcript}, 'output': {'ok': not logged}})
 
 
 def _rearms() -> dict:
     """The rearm section."""
     return {'compare': {'kind': 'exact'},
-            'note': 'rearm(): the transcript (the configuration table again) and ok (plan B logs a failure)',
+            'note': ('rearm(): the transcript (the configuration table again) and ok (plan B logs a failure); a case '
+                     'with a divergence owes its script and ok instead -- the rate byte 0x37 for plan B\'s 0x24'),
             'cases': [_rearm_case('the_table_again'),
                       _rearm_case('a_dead_part_is_logged', refuse=(('write', bmm350._REG_CMD),))]}
 

@@ -4,11 +4,13 @@
 //! builds from src/glider/drivers/bmi323.py on CPython. The burst decode past the dummy bytes (exact), the gyro in
 //! degrees per second (within plan B's 0.01 floor), then plan B's I2C transcripts replayed through the mock bus --
 //! setup with its start-up wait, the re-arm (two cases owe the fixture's `divergence`: the INT1 route restored, and a
-//! gyro that never restarts reported), the probe and the diagnosis -- and the run loop's INT1 verdict per wake.
+//! gyro that never restarts reported), the probe and the diagnosis -- and the run loop's INT1 verdict per wake. Every
+//! decode case also owes its `divergence`: the port's run read, one burst from STATUS 0x02 (avionics-port.md M9 D1b),
+//! decoding to plan B's output, and fresh in both halves unless the frame is no sample (a gyro axis at 0x8000).
 
 mod transcript;
 
-use drivers::bmi323::Bmi323;
+use drivers::bmi323::{Bmi323, Fresh};
 use drivers::device::{Device, Fault};
 use golden::Compare;
 use serde_json::{Value, json};
@@ -41,6 +43,44 @@ fn the_burst_decodes_past_the_dummy_bytes() {
         json!({"accel_g": sample.accel_g().map(f64::from), "rate_cd_s": sample.rate_centidegrees_per_second()})
     });
     assert!(count > 40, "{count} decode cases");
+}
+
+#[test]
+fn the_status_burst_owes_plan_b_s_decode() {
+    let section = part("decode");
+    let compare = Compare::from_json(&section["compare"]);
+    let mut divergences = 0;
+    let mut markers = 0;
+    let cases = section["cases"].as_array().unwrap();
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let mock = replay(&case["divergence"]["script"]);
+        let (fresh, sample) = Bmi323::new(ADDRESS, false)
+            .read_fresh(&mut mock.clone())
+            .expect("a scripted status burst");
+        mock.done();
+        divergences += 1;
+        // both flags set on a driver with nothing stored: both halves new, unless the frame is no sample
+        let new = sample.is_sample();
+        markers += usize::from(!new);
+        assert_eq!(
+            fresh,
+            Fresh {
+                accel: new,
+                rate: new,
+                ..Fresh::default()
+            },
+            "{name}"
+        );
+        let answer =
+            json!({"accel_g": sample.accel_g().map(f64::from), "rate_cd_s": sample.rate_centidegrees_per_second()});
+        compare
+            .check(name, &case["output"], &answer)
+            .unwrap_or_else(|failure| panic!("{failure}"));
+    }
+    assert_eq!(divergences, cases.len(), "every decode case owes the STATUS burst");
+    // test_bmi323's rails put -32768 on gyro y: the one frame the port never calls fresh
+    assert_eq!(markers, 1, "the rails frame is the one with a gyro axis at the marker");
 }
 
 #[test]

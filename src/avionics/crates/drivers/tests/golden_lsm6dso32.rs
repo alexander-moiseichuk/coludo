@@ -6,12 +6,13 @@
 //! mock bus -- the write-then-verify setup, the probe, the diagnosis -- and the run loop's INT1 verdict per wake,
 //! with INT1 wired and without (plan B counts both on this part, and the port keeps it). The decode frames are
 //! replayed once more through the port's status burst (plan B has none: it read the 12 bytes alone), prefixed with
-//! a status and the bytes the burst skips, to prove the burst decodes them bit for bit as the bare read does.
+//! a status and the bytes the burst skips, to prove the burst decodes them bit for bit as the bare read does; its
+//! freshness is the port's own (avionics-port.md M9 D1), plan B's all-zero frame the one burst never fresh.
 
 mod transcript;
 
 use drivers::device::{Device, Fault};
-use drivers::lsm6dso32::{Fresh, Lsm6dso32, OverI2c, STATUS_REG};
+use drivers::lsm6dso32::{Fresh, Lsm6dso32, OverI2c, STATUS_REG, Sample};
 use serde_json::{Value, json};
 use transcript::{check_cases, replay, section};
 
@@ -75,12 +76,17 @@ fn the_status_burst_decodes_plan_b_s_frames_bit_for_bit() {
             .read_fresh(&mut mock.clone())
             .expect("a scripted status burst");
         mock.done();
+        // both flags set on a driver with nothing stored: both halves new, except plan B's all-zero frame, which the
+        // port never calls fresh (avionics-port.md M9 D1: a chip-select that never asserts reads all zero)
+        let new = sample != Sample::default();
         assert_eq!(
             fresh,
             Fresh {
-                accel: true,
-                rate: true
-            }
+                accel: new,
+                rate: new,
+                ..Fresh::default()
+            },
+            "{burst}"
         );
         assert_eq!(
             sample, expected,

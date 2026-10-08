@@ -367,7 +367,8 @@ fn the_status_burst_is_one_i2c_read_from_status_reg() {
         fresh,
         Fresh {
             accel: true,
-            rate: true
+            rate: true,
+            ..Fresh::default()
         }
     );
     // the output decodes exactly as the bare 12-byte burst does: the reserved byte and OUT_TEMP are skipped
@@ -401,7 +402,16 @@ fn each_flag_speaks_for_its_own_half() {
         mock.expect_write_read(ADDRESS, &[STATUS_REG], &status_frame(status));
         let (fresh, sample) = driver(true).read_fresh(&mut mock.clone()).unwrap();
         mock.done();
-        assert_eq!(fresh, Fresh { accel, rate }, "status 0x{status:02x}");
+        // a driver with nothing stored judges by the flags alone: nothing raced, nothing identical
+        assert_eq!(
+            fresh,
+            Fresh {
+                accel,
+                rate,
+                ..Fresh::default()
+            },
+            "status 0x{status:02x}"
+        );
         // the burst still returns the output registers: the flags, not the bytes, say whether they are new
         assert_eq!(sample, Sample::decode(&OUTPUT), "status 0x{status:02x}");
     }
@@ -455,13 +465,13 @@ fn a_failed_status_burst_is_a_bus_fault() {
 fn spi_reads_the_status_burst_in_one_frame() {
     let mut bus = ScriptedSpi::default();
     bus.answers.push_back(status_frame(0x02).to_vec());
-    let imu = Lsm6dso32::new(OverSpi, true);
+    let mut imu = Lsm6dso32::new(OverSpi, true);
     let (fresh, sample) = imu.read_fresh(&mut bus).unwrap();
     assert_eq!(
         fresh,
         Fresh {
-            accel: false,
-            rate: true
+            rate: true,
+            ..Fresh::default()
         }
     );
     assert_eq!(sample, Sample::decode(&OUTPUT));
@@ -524,4 +534,247 @@ fn the_odr_is_the_datasheets_formula() {
     // NEGATIVE: the sign matters -- a negative trim is a SLOWER part, below the tick, a positive one faster
     assert!(odr_hz(-1) < odr_hz(0) && odr_hz(0) < odr_hz(1));
     assert!(odr_hz(-33) < 100.0 && odr_hz(33) > 100.0);
+}
+
+/// The 12 output bytes of a sample: gyro x, y, z then accel x, y, z, little-endian.
+fn output(gyro: [i16; 3], accel: [i16; 3]) -> [u8; FRAME_LENGTH] {
+    let mut bytes = [0u8; FRAME_LENGTH];
+    for (index, word) in gyro.iter().chain(accel.iter()).enumerate() {
+        bytes[2 * index..2 * index + 2].copy_from_slice(&word.to_le_bytes());
+    }
+    bytes
+}
+
+/// One sample's counts: (gyro x, y, z; accel x, y, z).
+type Counts = ([i16; 3], [i16; 3]);
+
+/// A part at rest: a small gyro bias, 1 g on z.
+const REST: Counts = ([3, -2, 1], [5, -7, 1025]);
+
+/// [`REST`] one accel conversion later (one count on x).
+const REST_ACCEL_MOVED: Counts = ([3, -2, 1], [6, -7, 1025]);
+
+/// [`REST`] one gyro conversion later (one count on z).
+const REST_GYRO_MOVED: Counts = ([3, -2, 2], [5, -7, 1025]);
+
+/// [`REST`] with both halves one conversion later.
+const REST_BOTH_MOVED: Counts = ([3, -2, 2], [6, -7, 1025]);
+
+/// Read status bursts in turn on one driver, each `(status, (gyro, accel))`, and return what each one judged.
+fn read_in_turn(imu: &mut Lsm6dso32<OverI2c>, bursts: &[(u8, Counts)]) -> Vec<Fresh> {
+    let mock = MockBus::new();
+    for (status, (gyro, accel)) in bursts {
+        let mut frame = status_frame(*status);
+        frame[STATUS_HEADER_LENGTH..].copy_from_slice(&output(*gyro, *accel));
+        mock.expect_write_read(ADDRESS, &[STATUS_REG], &frame);
+    }
+    let verdicts = bursts
+        .iter()
+        .map(|_| imu.read_fresh(&mut mock.clone()).expect("a scripted burst").0)
+        .collect();
+    mock.done();
+    verdicts
+}
+
+/// Both halves new by their flags, nothing corrected.
+const BOTH: Fresh = Fresh {
+    accel: true,
+    rate: true,
+    accel_raced: false,
+    rate_raced: false,
+    accel_identical: false,
+    rate_identical: false,
+};
+
+#[test]
+fn a_flag_alone_is_fresh() {
+    // the first burst has nothing to compare with; then each flag pushes its own half, even over identical bytes
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(
+        &mut imu,
+        &[(0x03, REST), (0x01, REST_ACCEL_MOVED), (0x02, REST_ACCEL_MOVED)],
+    );
+    assert_eq!(verdicts[0], BOTH);
+    assert_eq!(
+        verdicts[1],
+        Fresh {
+            accel: true,
+            ..Fresh::default()
+        }
+    );
+    // the gyro converted to the very same bytes: a flagged half is never stale for identical bytes, only counted
+    assert_eq!(
+        verdicts[2],
+        Fresh {
+            rate: true,
+            rate_identical: true,
+            ..Fresh::default()
+        }
+    );
+}
+
+#[test]
+fn bytes_changed_under_a_clear_flag_are_a_raced_conversion_pushed_once() {
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(
+        &mut imu,
+        &[
+            (0x03, REST),
+            (0x00, REST_ACCEL_MOVED),
+            (0x01, REST_ACCEL_MOVED),
+            (0x00, REST_ACCEL_MOVED),
+        ],
+    );
+    // the conversion landed after the status byte: its bytes are in the burst, its flag is not
+    assert_eq!(
+        verdicts[1],
+        Fresh {
+            accel: true,
+            accel_raced: true,
+            ..Fresh::default()
+        }
+    );
+    // its flag, read on the next burst over the same bytes, is the duplicate: not pushed a second time
+    assert_eq!(
+        verdicts[2],
+        Fresh {
+            accel_identical: true,
+            ..Fresh::default()
+        }
+    );
+    assert_eq!(verdicts[3], Fresh::default());
+    // the gyro's race, the same way
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(
+        &mut imu,
+        &[(0x03, REST), (0x00, REST_GYRO_MOVED), (0x02, REST_GYRO_MOVED)],
+    );
+    assert!(verdicts[1].rate && verdicts[1].rate_raced && !verdicts[1].accel);
+    assert!(!verdicts[2].rate && verdicts[2].rate_identical);
+}
+
+#[test]
+fn a_flag_and_changed_bytes_are_fresh_and_corrected_by_nothing() {
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(&mut imu, &[(0x03, REST), (0x03, REST_BOTH_MOVED)]);
+    assert_eq!(verdicts, [BOTH, BOTH]);
+    // a raced push followed by a flag over NEW bytes: the next conversion, pushed
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(&mut imu, &[(0x03, REST), (0x00, REST_ACCEL_MOVED), (0x01, REST)]);
+    assert!(verdicts[1].accel_raced);
+    assert!(verdicts[2].accel && !verdicts[2].accel_identical);
+}
+
+#[test]
+fn neither_a_flag_nor_a_change_is_not_fresh() {
+    // NEGATIVE: a part slower than the tick, read between two conversions
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(&mut imu, &[(0x03, REST), (0x00, REST), (0x04, REST)]);
+    assert_eq!(verdicts[1..], [Fresh::default(), Fresh::default()]);
+}
+
+#[test]
+fn a_flag_over_identical_bytes_after_a_raced_push_is_skipped() {
+    // NEGATIVE: both halves raced, then both flags arrive late over the same bytes: nothing is pushed twice
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(
+        &mut imu,
+        &[(0x03, REST), (0x00, REST_BOTH_MOVED), (0x03, REST_BOTH_MOVED)],
+    );
+    assert!(verdicts[1].accel_raced && verdicts[1].rate_raced);
+    assert_eq!(
+        verdicts[2],
+        Fresh {
+            accel_identical: true,
+            rate_identical: true,
+            ..Fresh::default()
+        }
+    );
+}
+
+#[test]
+fn a_flag_over_identical_bytes_after_a_flagged_push_is_pushed() {
+    // NEGATIVE of the correction: a conversion that repeats the last one bit for bit (common at rest) is new
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(&mut imu, &[(0x03, REST), (0x03, REST), (0x03, REST)]);
+    let identical = Fresh {
+        accel_identical: true,
+        rate_identical: true,
+        ..BOTH
+    };
+    assert_eq!(verdicts, [BOTH, identical, identical]);
+}
+
+#[test]
+fn a_reserved_status_bit_is_never_fresh_and_never_stored() {
+    // NEGATIVE: bytes changed AND flags set, under an impossible status
+    let mut imu = driver(true);
+    let verdicts = read_in_turn(&mut imu, &[(0x03, REST), (0x83, REST_BOTH_MOVED), (0x00, REST)]);
+    assert_eq!(verdicts[1], Fresh::default());
+    // the impossible frame's bytes were not stored: the part's own bytes again are no change, so no raced push
+    assert_eq!(verdicts[2], Fresh::default());
+}
+
+#[test]
+fn all_twelve_output_bytes_zero_are_never_fresh() {
+    // NEGATIVE: a chip-select that never asserts, with flags that happen to read set, and with them clear
+    let mut imu = driver(true);
+    let zero: Counts = ([0; 3], [0; 3]);
+    let verdicts = read_in_turn(&mut imu, &[(0x03, REST), (0x03, zero), (0x00, zero), (0x00, REST)]);
+    assert_eq!(verdicts[1..], [Fresh::default(), Fresh::default(), Fresh::default()]);
+}
+
+#[test]
+fn a_zero_gyro_half_alone_is_fresh() {
+    // a well-biased gyro at rest reads (0, 0, 0): the zero guard is the whole frame, never a half
+    let mut imu = driver(true);
+    let still: Counts = ([0; 3], [5, -7, 1025]);
+    let verdicts = read_in_turn(&mut imu, &[(0x03, still), (0x02, still)]);
+    assert_eq!(verdicts[0], BOTH);
+    assert!(verdicts[1].rate && verdicts[1].rate_identical && !verdicts[1].accel);
+}
+
+#[test]
+fn after_forget_a_burst_is_judged_by_its_flag() {
+    let mut imu = driver(true);
+    read_in_turn(&mut imu, &[(0x03, REST)]);
+    imu.forget();
+    // NEGATIVE: changed bytes under a clear flag are no raced conversion with nothing stored
+    assert_eq!(read_in_turn(&mut imu, &[(0x00, REST_BOTH_MOVED)]), [Fresh::default()]);
+    // the burst after it is compared again: a flag over its bytes is pushed and counted identical
+    let verdicts = read_in_turn(&mut imu, &[(0x01, REST_BOTH_MOVED)]);
+    assert!(verdicts[0].accel && verdicts[0].accel_identical && !verdicts[0].rate);
+    // a raced mark is forgotten too: the flag read late after a forget is pushed, never skipped
+    read_in_turn(&mut imu, &[(0x00, REST)]);
+    imu.forget();
+    assert_eq!(read_in_turn(&mut imu, &[(0x03, REST)]), [BOTH]);
+}
+
+#[test]
+fn the_rearm_forgets_the_stored_bytes() {
+    let mut imu = driver(true);
+    read_in_turn(&mut imu, &[(0x03, REST)]);
+    let mock = MockBus::new();
+    script_round(&mock, IDENTITY);
+    script_configuration(&mock);
+    mock.expect_write(ADDRESS, &[ROUTE_INTERRUPT.0, ROUTE_INTERRUPT.1])
+        .expect_write_read(ADDRESS, &[OUTX_L_G], &output(REST_BOTH_MOVED.0, REST_BOTH_MOVED.1));
+    imu.rearm(&mut mock.clone(), &mut mock.delay()).unwrap();
+    mock.done();
+    // the re-armed part's first burst, flag clear over bytes that changed: judged by the flag alone
+    assert_eq!(read_in_turn(&mut imu, &[(0x00, REST_BOTH_MOVED)]), [Fresh::default()]);
+}
+
+#[test]
+fn a_bare_read_leaves_the_judge_alone() {
+    // the probe's 12-byte read takes a conversion from under the flags; the next burst finds its bytes changed
+    // under a clear flag and pushes it, raced: it never was pushed
+    let mut imu = driver(true);
+    read_in_turn(&mut imu, &[(0x03, REST)]);
+    let mock = MockBus::new();
+    mock.expect_write_read(ADDRESS, &[OUTX_L_G], &output(REST_ACCEL_MOVED.0, REST_ACCEL_MOVED.1));
+    imu.read(&mut mock.clone()).unwrap();
+    mock.done();
+    let verdicts = read_in_turn(&mut imu, &[(0x00, REST_ACCEL_MOVED)]);
+    assert!(verdicts[0].accel && verdicts[0].accel_raced);
 }

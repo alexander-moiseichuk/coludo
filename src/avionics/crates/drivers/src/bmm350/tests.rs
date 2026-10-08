@@ -3,10 +3,14 @@
 //! The BMM350's unit tests: the 24-bit decode in both signs, the OTP power-off table over the scripted bus, and the
 //! OPERATOR CALIBRATION that CC drives, scenario by scenario as test_bmm350.py runs them: a partial turn, a still
 //! board and a dead part are REFUSED; an ellipse and a full circle are ACCEPTED, and the corrected axes give the
-//! heading back. The same scenarios run through plan B in the golden fixture drivers_bmm350.json.
+//! heading back. The same scenarios run through plan B in the golden fixture drivers_bmm350.json. And the port's own
+//! (avionics-port.md M9): the 12.5 Hz averaging-8 rate byte (D2), freshness by changed axis bytes with a suspended
+//! part going stale (D3), and the calibration computed without being applied, applied from its value, and restored
+//! from its NVS blob (D9), its text formatted from the values inspect carries.
 
 use super::{
-    Bmm350, CHIP_ID, CONFIGURATION, Calibration, Field, IDENTITY, MAG_X_XLSB, NEEDED_SECTORS, ProbeFailure, Step,
+    Bmm350, CALIBRATION_BYTES, CHIP_ID, CONFIGURATION, CONVERSION_PERIOD_US, Calibration, Change, Field, IDENTITY,
+    MAG_X_XLSB, NEEDED_SECTORS, PMU_CMD_AGGR_SET, POLL_PERIOD_MS, ProbeFailure, SECTORS, Step, format_instruction,
     not_measuring,
 };
 use crate::axes::{Axes, AxesError};
@@ -84,7 +88,8 @@ fn setup_powers_the_otp_off_before_asking_for_samples() {
         .setup(&mut mock.clone(), &mut mock.delay())
         .unwrap();
     mock.done();
-    // the OTP power-off (OTP_CMD_REG = 0x80) is in the table, after the reset, before normal mode
+    // the OTP power-off (OTP_CMD_REG = 0x80) is in the table, after the reset, before normal mode; the rate is
+    // M9 D2's 12.5 Hz averaging 8 (0x37), plan B's 0x24 the one byte that differs
     let writes: Vec<(u8, u8)> = CONFIGURATION
         .iter()
         .filter_map(|step| match step {
@@ -94,7 +99,32 @@ fn setup_powers_the_otp_off_before_asking_for_samples() {
         .collect();
     assert_eq!(
         writes,
-        [(0x7E, 0xB6), (0x50, 0x80), (0x04, 0x24), (0x06, 0x02), (0x06, 0x01)]
+        [(0x7E, 0xB6), (0x50, 0x80), (0x04, 0x37), (0x06, 0x02), (0x06, 0x01)]
+    );
+}
+
+#[test]
+fn the_rate_byte_is_12_5_hz_averaging_8() {
+    // bmm350_defs.h: the ODR in bits 3:0 (BMM350_DATA_RATE_12_5HZ = 7; 100 Hz = 4), the averaging in bits 5:4
+    // (BMM350_AVERAGING_8 = 3; 4 is 2): 0x37, where plan B wrote 0x24
+    let rate = CONFIGURATION
+        .iter()
+        .find_map(|step| match step {
+            Step::Write {
+                register: PMU_CMD_AGGR_SET,
+                value,
+            } => Some(*value),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(rate & 0x0F, 0x07, "12.5 Hz");
+    assert_eq!((rate >> 4) & 0x03, 0x03, "averaging 8");
+    assert_eq!(rate & 0xC0, 0, "the reserved bits stay clear");
+    assert_eq!(CONVERSION_PERIOD_US, 80_000);
+    assert_eq!(
+        u64::from(POLL_PERIOD_MS) * 2_000,
+        CONVERSION_PERIOD_US,
+        "two reads a conversion"
     );
 }
 
@@ -435,4 +465,218 @@ fn the_probe_refuses_a_part_that_is_not_measuring() {
         Err(ProbeFailure::Fault(Fault::Bus(_)))
     ));
     mock.done();
+}
+
+/// A magnetometer that has seen a full level circle twice: ready to calibrate.
+fn turned() -> Bmm350 {
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    turn(&mut magnetometer, 360, CENTRE, ROUND, 2);
+    turn(&mut magnetometer, 360, CENTRE, ROUND, 2);
+    magnetometer
+}
+
+#[test]
+fn a_calibration_is_computed_without_being_applied_then_applied_from_its_value() {
+    // D9: the owner answers the computed calibration; only after the executor persisted it is it put in force
+    let mut magnetometer = turned();
+    let computed = magnetometer.calibrate().unwrap();
+    assert_eq!(magnetometer.calibration(), None, "computing applies nothing");
+    assert!(!magnetometer.calibrated());
+    let raw = magnetometer.observe(&Field {
+        x: 12_000,
+        y: -4500,
+        z: 700,
+    });
+    assert_eq!(raw, [12_000, -4500, 700], "the axes stay raw until it is applied");
+    // the value travels (to NVS and back) as its 16 bytes, and is applied from them
+    let persisted = Calibration::from_bytes(&computed.to_bytes()).unwrap();
+    magnetometer.set_calibration(persisted);
+    assert_eq!(magnetometer.calibration(), Some(computed));
+    assert_eq!(
+        magnetometer.observe(&Field {
+            x: 12_000,
+            y: -4500,
+            z: 700
+        }),
+        [1000, 0, 700]
+    );
+    assert_eq!(magnetometer.instruction(), "");
+}
+
+#[test]
+fn a_refused_calibration_has_nothing_to_persist() {
+    // NEGATIVE: a still board -- the answer is the refusal text, no Calibration value exists to write to NVS, and the
+    // calibration in force (here none) is untouched
+    let mut still = Bmm350::new(ADDRESS);
+    for index in 0..400 {
+        still.observe(&Field {
+            x: 13_700 + (index * 37) % 201 - 100,
+            y: 16_780 + (index * 53) % 201 - 100,
+            z: 700,
+        });
+    }
+    let refusal = still.calibrate().unwrap_err();
+    assert!(refusal.starts_with("no field change seen"), "{refusal}");
+    assert_eq!(still.calibration(), None);
+}
+
+#[test]
+fn a_16_byte_blob_restores_and_a_short_one_leaves_the_axes_raw() {
+    let blob = Calibration {
+        centre_x: 7500,
+        centre_y: -4500,
+        radius_x: 4500,
+        radius_y: 4500,
+    }
+    .to_bytes();
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    let restored = magnetometer.restore(&blob).unwrap();
+    assert_eq!(magnetometer.calibration(), Some(restored));
+    assert_eq!(restored.centre_x, 7500);
+    assert_eq!(
+        magnetometer.observe(&Field {
+            x: 12_000,
+            y: -4500,
+            z: 700
+        }),
+        [1000, 0, 700]
+    );
+    // NEGATIVE: a short blob (and a long one) is no calibration: nothing restored, the axes stay raw
+    for length in [0, 4, CALIBRATION_BYTES - 1, CALIBRATION_BYTES + 1] {
+        let mut raw = Bmm350::new(ADDRESS);
+        let mut other = blob.to_vec();
+        other.resize(length, 0);
+        assert_eq!(raw.restore(&other), None, "{length} bytes");
+        assert!(!raw.calibrated());
+        assert_eq!(
+            raw.observe(&Field {
+                x: 12_000,
+                y: -4500,
+                z: 700
+            }),
+            [12_000, -4500, 700]
+        );
+    }
+}
+
+#[test]
+fn the_instruction_formatter_is_the_live_part_s_instruction() {
+    // the executor formats from the atomics (calibrated, sectors, samples): the same text as the part's own, in each
+    // of plan B's three states and as the turn progresses
+    assert_eq!(
+        format_instruction(false, 0, 0),
+        "turn the airframe through a full circle, LEVEL, then calibrate (no field seen yet)"
+    );
+    assert_eq!(
+        format_instruction(false, 3, 120),
+        format!(
+            "turn the airframe slowly through a FULL CIRCLE, keeping it level -- 3 of {SECTORS} sectors covered, 120 \
+             samples"
+        )
+    );
+    assert_eq!(format_instruction(true, 8, 500), "");
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    let pure = |magnetometer: &Bmm350| {
+        format_instruction(magnetometer.calibrated(), magnetometer.covered(), magnetometer.seen())
+    };
+    assert_eq!(pure(&magnetometer), magnetometer.instruction());
+    for degrees in [10, 90, 200, 360] {
+        turn(&mut magnetometer, degrees, CENTRE, ROUND, 5);
+        assert_eq!(pure(&magnetometer), magnetometer.instruction(), "{degrees} degrees");
+    }
+    magnetometer.set_calibration(magnetometer.calibrate().unwrap_or(Calibration {
+        centre_x: 0,
+        centre_y: 0,
+        radius_x: 1,
+        radius_y: 1,
+    }));
+    assert_eq!(pure(&magnetometer), "");
+    assert_eq!(pure(&magnetometer), magnetometer.instruction());
+}
+
+/// Read the part every [`POLL_PERIOD_MS`] from `start_us`, answering each read with the next of `fields`; the
+/// verdicts, each fresh field observed as the firmware observes it.
+fn poll(magnetometer: &mut Bmm350, start_us: u64, fields: &[(i32, i32, i32)]) -> Vec<Change> {
+    let mock = MockBus::new();
+    for (x, y, z) in fields {
+        mock.expect_write_read(ADDRESS, &[MAG_X_XLSB], &frame(*x, *y, *z));
+    }
+    let verdicts = (0u64..)
+        .zip(fields)
+        .map(|(tick, _)| {
+            let now_us = start_us + tick * u64::from(POLL_PERIOD_MS) * 1000;
+            let (change, field) = magnetometer.read_fresh(&mut mock.clone(), now_us).unwrap();
+            if change == Change::Fresh {
+                magnetometer.observe(&field);
+            }
+            change
+        })
+        .collect();
+    mock.done();
+    verdicts
+}
+
+#[test]
+fn each_conversion_is_fresh_once_and_observed_once() {
+    use Change::{Fresh, Unchanged};
+    // polled every 40 ms, a 12.5 Hz part shows each conversion on two reads
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    let fields = [
+        (1200, -300, 700),
+        (1200, -300, 700),
+        (1210, -300, 700),
+        (1210, -300, 700),
+        (1210, -300, 701),
+    ];
+    assert_eq!(
+        poll(&mut magnetometer, 0, &fields),
+        [Fresh, Unchanged, Fresh, Unchanged, Fresh]
+    );
+    assert_eq!(
+        magnetometer.seen(),
+        3,
+        "the evidence counts conversions, never a read twice"
+    );
+}
+
+#[test]
+fn only_the_axis_bytes_decide() {
+    // NEGATIVE: the dummy bytes and the temperature may change while the axes do not -- no new field
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    let mock = MockBus::new();
+    let first = frame(1200, -300, 700);
+    let mut second = first;
+    second[0] = 0x00;
+    second[11..].copy_from_slice(&[0x11, 0x22, 0x33]);
+    mock.expect_write_read(ADDRESS, &[MAG_X_XLSB], &first)
+        .expect_write_read(ADDRESS, &[MAG_X_XLSB], &second);
+    assert_eq!(magnetometer.read_fresh(&mut mock.clone(), 0).unwrap().0, Change::Fresh);
+    assert_eq!(
+        magnetometer.read_fresh(&mut mock.clone(), 40_000).unwrap().0,
+        Change::Unchanged
+    );
+    mock.done();
+}
+
+#[test]
+fn a_suspended_part_goes_stale_after_three_conversion_periods() {
+    // NEGATIVE: a reset leaves the part SUSPENDED, answering its last sample forever; the firmware calls it unhealthy
+    // at Stale, three conversion periods (240 ms) after the axes last changed
+    let mut magnetometer = Bmm350::new(ADDRESS);
+    let verdicts = poll(&mut magnetometer, 5_000_000, &[(1200, -300, 700); 9]);
+    let first_stale = verdicts.iter().position(|change| *change == Change::Stale).unwrap();
+    let periods = u64::try_from(first_stale).unwrap() * u64::from(POLL_PERIOD_MS) * 1000 / CONVERSION_PERIOD_US;
+    assert_eq!(periods, 3, "{verdicts:?}");
+    assert!(
+        verdicts[1..first_stale]
+            .iter()
+            .all(|change| *change == Change::Unchanged)
+    );
+    assert!(verdicts[first_stale..].iter().all(|change| *change == Change::Stale));
+    assert_eq!(magnetometer.seen(), 1, "a stale field is never observed");
+    // the re-arm brings it back: the first new conversion is fresh at once
+    assert_eq!(
+        poll(&mut magnetometer, 6_000_000, &[(1200, -300, 700), (1201, -300, 700)]),
+        [Change::Stale, Change::Fresh]
+    );
 }

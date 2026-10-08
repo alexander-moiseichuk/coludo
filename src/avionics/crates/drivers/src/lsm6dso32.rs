@@ -19,20 +19,30 @@
 //! peripheral CREATED AND DEINITIALISED under the part, which a pin test does and no flight path does. So this is
 //! not a fix for a flight failure; it is the right shape for the operation, at microseconds a round.
 //!
-//! NEW CONVERSIONS ONLY (avionics-port.md M6). The flight read is [`Lsm6dso32::read_fresh`]: ONE 16-byte burst
-//! from STATUS_REG -- the status, the reserved 0x1F, OUT_TEMP, then the same 12 output bytes -- so the data-available
-//! flags and the sample come out of one chip-select frame. The firmware pushes `accel` only on XLDA and `rate` only
-//! on GDA, writes the row on either, and calls the part unhealthy after [`STALE_LIMIT`] ticks in a row with neither
-//! (avionics-port.md §6's VL53 rule: a repeated value is never republished as fresh). Plan B pushed every pass, but
-//! its pass was slower than the ODR; the 100 Hz tick is not, so without the flags a part slower than the tick would
-//! publish an old sample as a new one. An impossible status (a bit the datasheet fixes at 0, as the 0xFF of an SPI
-//! bus nothing drives) is never fresh, so a part that lost power, chip-select or MISO goes stale the same way.
+//! NEW CONVERSIONS ONLY (avionics-port.md M6, M9 D1). The flight read is [`Lsm6dso32::read_fresh`]: ONE 16-byte
+//! burst from STATUS_REG -- the status, the reserved 0x1F, OUT_TEMP, then the same 12 output bytes -- so the
+//! data-available flags and the sample come out of one chip-select frame. The firmware pushes `accel` only on a fresh
+//! accel half and `rate` only on a fresh gyro half, writes the row on either, and calls the part unhealthy after
+//! [`STALE_LIMIT`] ticks in a row with neither (avionics-port.md §6's VL53 rule: a repeated value is never
+//! republished as fresh). Plan B pushed every pass, but its pass was slower than the ODR; the 100 Hz tick is not, so
+//! without the flags a part slower than the tick would publish an old sample as a new one. Never fresh, and never
+//! stored: an impossible status (a bit the datasheet fixes at 0, as the 0xFF of an SPI bus nothing drives), so a part
+//! that lost power, chip-select or MISO goes stale the same way; and a burst whose 12 output bytes are ALL zero (a
+//! chip-select that never asserts reads 16 x 0x00). The zero guard is the whole frame, not a half: a well-biased gyro
+//! at rest reads (0, 0, 0).
 //!
-//! One frame keeps the window between the flags and the output small, not empty: a conversion that lands after the
-//! status byte, with none unread before it, is read but flagged as not new, and is lost (an old sample is never
-//! marked fresh). Only a part slower than the tick has such a tick, where the drift wraps: the lost conversion
-//! doubles that wrap's stale tick, two in a row, a 30 ms gap between rows. The chance per wrap is the window
-//! (microseconds) over the drift per tick (about 100 us at 99 Hz), so a few wraps in a hundred.
+//! THE FLAG DECIDES; THE BYTES ONLY CORRECT IT ([`crate::freshness::Flagged`], D1). One frame keeps the window
+//! between the flags and the output small, not empty: a conversion that lands after the status byte reads with its
+//! flag clear but its bytes changed. That half is a raced conversion, pushed once and marked raced, where M6 lost it
+//! (a 30 ms gap between rows, measured at 9.2 and 8.4 a minute on the taster and 7F). If that read leaves its flag
+//! set, the next read finds the flag over the same bytes: the duplicate, skipped. A flagged half is otherwise never
+//! called stale for identical bytes, since at rest a new gyro conversion often repeats the last one bit for bit. The
+//! residual is a raced conversion whose half is bit-identical to the one before: still lost, now counted (the
+//! [`Fresh`] `identical` marks), not assumed. The driver stores the last read's 12 bytes and a raced mark per half;
+//! setup and the re-arm forget them, and the firmware calls [`Lsm6dso32::forget`] when it re-adds the bus handle or
+//! resumes reads it skipped, so the first read after any of them is judged by its flag alone. A bare
+//! [`Lsm6dso32::read`] (the probe, setup's clearing read) clears data-ready without storing anything, so a conversion
+//! it took from under the flags reads as raced on the next burst, and is pushed: it never was.
 //!
 //! THE PART'S OWN ODR. 104 Hz is nominal: the conversions run off the part's own oscillator, whose per-die offset
 //! INTERNAL_FREQ_FINE reports ([`Lsm6dso32::frequency_fine`], [`odr_hz`], 0.15 % per LSB). A part slower than the
@@ -73,6 +83,8 @@ use serde_json::Value;
 
 use crate::commons::id_classify;
 use crate::device::{Device, Fault, Strikes};
+pub use crate::freshness::Fresh;
+use crate::freshness::{Flagged, HALF_LENGTH};
 
 /// The default I2C address (SDO low; 0x6B when high), for a config that names bus 'i2c'.
 pub const ADDRESS: u8 = 0x6A;
@@ -147,9 +159,15 @@ const GYRO_DATA_AVAILABLE: u8 = 0x02;
 /// broken MISO, reads 0xFF with no bus error).
 const STATUS_RESERVED: u8 = 0xF8;
 
-/// Consecutive reads with no new conversion (neither XLDA nor GDA) before the firmware calls the part unhealthy: one
+/// Consecutive reads with no new conversion (neither half fresh) before the firmware calls the part unhealthy: one
 /// such tick is a part slower than the tick, three in a row are a part that stopped converting.
 pub const STALE_LIMIT: u32 = 3;
+
+/// Where the gyro half sits in the 12 output bytes (gyro x, y, z come first out of this part).
+const GYRO_HALF: usize = 0;
+
+/// Where the accel half sits in the 12 output bytes.
+const ACCEL_HALF: usize = HALF_LENGTH;
 
 /// The base rate every ODR setting divides, in Hz (the datasheet's 6667).
 const BASE_RATE_HZ: f32 = 6667.0;
@@ -318,28 +336,11 @@ impl Sample {
     }
 }
 
-/// Which halves of a status burst's sample are new conversions: STATUS_REG's data-available flags.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Fresh {
-    /// XLDA: the accel is a conversion no read has returned before (push `accel`).
-    pub accel: bool,
-    /// GDA: the gyro is a conversion no read has returned before (push `rate`).
-    pub rate: bool,
-}
-
-impl Fresh {
-    /// The flags of a STATUS_REG byte: XLDA (bit 0) and GDA (bit 1); TDA (bit 2, the temperature's) is ignored. A
-    /// status with a [`STATUS_RESERVED`] bit set is impossible from a live part, so it is never fresh: a dead SPI
-    /// part goes stale and turns unhealthy after [`STALE_LIMIT`] ticks instead of publishing 0xFF bytes forever.
-    fn from_status(status: u8) -> Fresh {
-        if status & STATUS_RESERVED != 0 {
-            return Fresh::default();
-        }
-        Fresh {
-            accel: status & ACCEL_DATA_AVAILABLE != 0,
-            rate: status & GYRO_DATA_AVAILABLE != 0,
-        }
-    }
+/// One half of the 12 output bytes, from `start`.
+fn half(output: &[u8; FRAME_LENGTH], start: usize) -> [u8; HALF_LENGTH] {
+    let mut bytes = [0u8; HALF_LENGTH];
+    bytes.copy_from_slice(&output[start..start + HALF_LENGTH]);
+    bytes
 }
 
 /// The part's own output data rate at the configured 104 Hz setting, in Hz, from its INTERNAL_FREQ_FINE byte: the
@@ -361,6 +362,8 @@ pub struct Lsm6dso32<F> {
     strikes: Strikes,
     /// The operator view: the INT line went silent (the tick still paces the reads; the wire is what is lost).
     interrupt_silent: bool,
+    /// The status bursts' judge: the last burst's output bytes and its raced marks (see the module notes).
+    flags: Flagged,
 }
 
 impl<F> Lsm6dso32<F> {
@@ -371,7 +374,15 @@ impl<F> Lsm6dso32<F> {
             interrupt_wired,
             strikes: Strikes::default(),
             interrupt_silent: false,
+            flags: Flagged::default(),
         }
+    }
+
+    /// Forget the stored output bytes and the raced marks, so the next [`Lsm6dso32::read_fresh`] is judged by its
+    /// flags alone. Setup and the re-arm forget by themselves; the firmware calls it when it re-adds the bus handle (a
+    /// bustune rung) and when it resumes reads it skipped (`imu mute`).
+    pub fn forget(&mut self) {
+        self.flags.forget();
     }
 
     /// Whether an INT1 wire is declared (inspect's `interrupt`).
@@ -428,14 +439,15 @@ impl<F> Lsm6dso32<F> {
     }
 
     /// Read one sample and which of its halves are new: ONE 16-byte burst from STATUS_REG (the status, the reserved
-    /// 0x1F, OUT_TEMP, then the 12 output bytes). One frame keeps the window between the flags and the output small,
-    /// not empty: a conversion that lands after the status byte, with none unread before it, reads as not new and is
-    /// lost (never republished); an old sample is never marked fresh. The status byte gives the [`Fresh`] flags (an
-    /// impossible status is never fresh), the reserved byte and the temperature are discarded, and the output bytes
-    /// decode exactly as [`Lsm6dso32::read`]'s. Over SPI that is one chip-select frame, `0x80 | 0x1E` then 16 bytes
-    /// clocked in; over I2C, the register then a 16-byte read after a repeated start. Like `read`, it clears
-    /// data-ready.
-    pub fn read_fresh<Bus>(&self, bus: &mut Bus) -> Result<(Fresh, Sample), Fault<F::BusError>>
+    /// 0x1F, OUT_TEMP, then the 12 output bytes). Each half is judged by its flag, XLDA (bit 0) for the accel and GDA
+    /// (bit 1) for the gyro, corrected by its bytes against the last burst's (the module notes; TDA, bit 2, is
+    /// ignored). Never fresh, and the stored bytes left as they were: a status with a [`STATUS_RESERVED`] bit set
+    /// (impossible from a live part, so a dead SPI part goes stale and turns unhealthy after [`STALE_LIMIT`] ticks
+    /// instead of publishing 0xFF bytes forever), or all 12 output bytes zero. The reserved byte and the temperature
+    /// are discarded, and the output bytes decode exactly as [`Lsm6dso32::read`]'s. Over SPI that is one chip-select
+    /// frame, `0x80 | 0x1E` then 16 bytes clocked in; over I2C, the register then a 16-byte read after a repeated
+    /// start. Like `read`, it clears data-ready.
+    pub fn read_fresh<Bus>(&mut self, bus: &mut Bus) -> Result<(Fresh, Sample), Fault<F::BusError>>
     where
         F: Interface<Bus>,
     {
@@ -443,7 +455,18 @@ impl<F> Lsm6dso32<F> {
         self.interface.read(bus, STATUS_REG, &mut frame).map_err(Fault::Bus)?;
         let mut output = [0u8; FRAME_LENGTH];
         output.copy_from_slice(&frame[STATUS_HEADER_LENGTH..]);
-        Ok((Fresh::from_status(frame[0]), Sample::decode(&output)))
+        let status = frame[0];
+        let fresh = if status & STATUS_RESERVED != 0 || output == [0u8; FRAME_LENGTH] {
+            Fresh::default()
+        } else {
+            self.flags.judge(
+                status & ACCEL_DATA_AVAILABLE != 0,
+                &half(&output, ACCEL_HALF),
+                status & GYRO_DATA_AVAILABLE != 0,
+                &half(&output, GYRO_HALF),
+            )
+        };
+        Ok((fresh, Sample::decode(&output)))
     }
 
     /// Read INTERNAL_FREQ_FINE once (the bring-up's ODR line, through [`odr_hz`]): the part's own ODR offset, a
@@ -525,15 +548,18 @@ impl<Bus, F: Interface<Bus>> Device<Bus> for Lsm6dso32<F> {
     type BusError = F::BusError;
 
     /// The write-then-verify bring-up (see the module notes). An `Err` is plan B's `setup() -> False`: a wrong
-    /// identity after every round is "not an LSM6DSO32 at this chip-select / address".
+    /// identity after every round is "not an LSM6DSO32 at this chip-select / address". The stored output bytes are
+    /// forgotten first ([`Lsm6dso32::forget`]).
     fn setup(&mut self, bus: &mut Bus, _delay: &mut dyn DelayNs) -> Result<(), Fault<F::BusError>> {
+        self.forget();
         self.bring_up(bus)
     }
 
     /// The whole bring-up again. Plan B gave this part no re-arm, since on SPI no general call reaches it; the
     /// port re-arms every device, and a reset LSM6DSO32 comes back powered down (CTRL1_XL and CTRL2_G at 0), so the
-    /// only correct re-arm is the bring-up itself, the identity check included.
+    /// only correct re-arm is the bring-up itself, the identity check included, the stored output bytes forgotten.
     fn rearm(&mut self, bus: &mut Bus, _delay: &mut dyn DelayNs) -> Result<(), Fault<F::BusError>> {
+        self.forget();
         self.bring_up(bus)
     }
 }

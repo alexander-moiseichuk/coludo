@@ -66818,7 +66818,7 @@
   "note": "diagnose() on i2c:0 at 0x15: the verdict, up to ' -- ' (the error's repr is the runtime's own)"
  },
  "meta": {
-  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "commit": "1ba7501524ec25bcd494d284a776f1fa2a8dc98d",
   "generator": "drivers_bmm350",
   "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",
@@ -67051,6 +67051,53 @@
  "rearm": {
   "cases": [
    {
+    "divergence": {
+     "note": "the port runs the part at 12.5 Hz with averaging 8 (PMU_CMD_AGGR_SET 0x37, avionics-port.md M9 D2) where plan B ran 100 Hz with averaging 4 (0x24): the one byte that differs",
+     "ok": true,
+     "script": [
+      {
+       "address": 21,
+       "bytes": "7eb6",
+       "op": "write"
+      },
+      {
+       "ms": 25,
+       "op": "delay_ms"
+      },
+      {
+       "address": 21,
+       "bytes": "5080",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 21,
+       "bytes": "0437",
+       "op": "write"
+      },
+      {
+       "address": 21,
+       "bytes": "0602",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 21,
+       "bytes": "0601",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -67121,11 +67168,64 @@
   "compare": {
    "kind": "exact"
   },
-  "note": "rearm(): the transcript (the configuration table again) and ok (plan B logs a failure)"
+  "note": "rearm(): the transcript (the configuration table again) and ok (plan B logs a failure); a case with a divergence owes its script and ok instead -- the rate byte 0x37 for plan B's 0x24"
  },
  "setup": {
   "cases": [
    {
+    "divergence": {
+     "note": "the port runs the part at 12.5 Hz with averaging 8 (PMU_CMD_AGGR_SET 0x37, avionics-port.md M9 D2) where plan B ran 100 Hz with averaging 4 (0x24): the one byte that differs",
+     "ok": true,
+     "script": [
+      {
+       "address": 21,
+       "op": "write_read",
+       "read": "000033",
+       "write": "00"
+      },
+      {
+       "address": 21,
+       "bytes": "7eb6",
+       "op": "write"
+      },
+      {
+       "ms": 25,
+       "op": "delay_ms"
+      },
+      {
+       "address": 21,
+       "bytes": "5080",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 21,
+       "bytes": "0437",
+       "op": "write"
+      },
+      {
+       "address": 21,
+       "bytes": "0602",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 21,
+       "bytes": "0601",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -67247,6 +67347,47 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port runs the part at 12.5 Hz with averaging 8 (PMU_CMD_AGGR_SET 0x37, avionics-port.md M9 D2) where plan B ran 100 Hz with averaging 4 (0x24): the one byte that differs",
+     "ok": false,
+     "script": [
+      {
+       "address": 21,
+       "op": "write_read",
+       "read": "000033",
+       "write": "00"
+      },
+      {
+       "address": 21,
+       "bytes": "7eb6",
+       "op": "write"
+      },
+      {
+       "ms": 25,
+       "op": "delay_ms"
+      },
+      {
+       "address": 21,
+       "bytes": "5080",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 21,
+       "bytes": "0437",
+       "op": "write"
+      },
+      {
+       "address": 21,
+       "bytes": "0602",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -67295,6 +67436,6 @@
   "compare": {
    "kind": "exact"
   },
-  "note": "setup() over a scripted part: the transcript (the table with its waits) and ok"
+  "note": "setup() over a scripted part: the transcript (the table with its waits) and ok; a case with a divergence owes its script and ok instead -- the rate byte 0x37 for plan B's 0x24"
  }
 }

@@ -6,7 +6,11 @@ module bmi323) must answer it. Sections, each a fixture of its own:
   * decode   -- _read() over a scripted part: the 14-byte burst (TWO DUMMY BYTES, then accel x..z and gyro x..z,
                 signed little-endian), the accel in g and the gyro's centidegree-per-second integer (raw x 2000 x 100
                 // 32768, floored: the telemetry column). Exact: the accel's 1/2048 g is a power of two, exact in f32
-                as in f64. test_bmi323.py's frames (non-zero dummy bytes, the rails both ways) and a seeded sweep;
+                as in f64. test_bmi323.py's frames (non-zero dummy bytes, the rails both ways) and a seeded sweep.
+                Every case carries a `divergence`, the port's run read of the same frame (avionics-port.md M9 D1b):
+                ONE 16-byte burst from STATUS 0x02, the dummy bytes, the STATUS word with drdy_acc and drdy_gyr set,
+                then plan B's 12 data bytes, which must decode to the same output. Plan B's own 14-byte read stays
+                the port's bare read (setup's start-up looks and clearing read, the probe);
   * rate     -- the same bursts, the gyro in degrees per second: plan B's fixed.to_float of its floored integer,
                 which the port's exact f32 (2000/32768 dps a count) is within 0.01 of -- the floor's quantum;
   * setup    -- setup()'s transcript: the identity PAST the dummy bytes, the soft reset, ACC_CONF 0x7038 and GYR_CONF
@@ -199,15 +203,40 @@ def _bursts() -> list:
     return named
 
 
+_STATUS: int = 0x02  # STATUS, the register the port's run burst starts at (plan B never read it)
+_STATUS_READY: str = 'c000'  # the STATUS word with drdy_acc (bit 7) and drdy_gyr (bit 6) set, little-endian
+
+
+def _status_burst(transcript: list) -> list:
+    """
+    The port's run read of a decode case's frame: plan B's one burst read from ACC_DATA_X, moved to STATUS 0x02.
+
+    Args:
+        transcript - plan B's transcript of the case: one write_read of ACC_DATA_X, its 14 bytes read.
+
+    Returns:
+        The port's transcript: one write_read of STATUS, 16 bytes read -- plan B's two dummy bytes, the STATUS word
+        with both data-ready flags set, then plan B's 12 data bytes.
+    """
+    (burst,) = transcript
+    if burst['op'] != 'write_read' or burst['write'] != '%02x' % bmi323._REG_ACC_DATA or len(burst['read']) != 28:
+        raise ValueError('drivers_bmi323: a decode transcript is not one 14-byte burst from ACC_DATA_X: %r' % burst)
+    return [dict(burst, write='%02x' % _STATUS, read=burst['read'][:4] + _STATUS_READY + burst['read'][4:])]
+
+
 def _decodes() -> dict:
     """The decode section."""
     cases = []
     for name, accel, gyro in _bursts():
         transcript, (ax, ay, az, gx, gy, gz) = _read(accel, gyro)
         cases.append({'name': name, 'input': {'script': transcript},
-                      'output': {'accel_g': [ax, ay, az], 'rate_cd_s': [gx, gy, gz]}})
+                      'output': {'accel_g': [ax, ay, az], 'rate_cd_s': [gx, gy, gz]},
+                      'divergence': {'note': ('the port reads its run burst from STATUS 0x02 (avionics-port.md M9 '
+                                              'D1b): the same frame behind the STATUS word, both flags set'),
+                                     'script': _status_burst(transcript)}})
     return {'compare': {'kind': 'exact'},
-            'note': '_read(): the accel in g (raw / 2048, exact) and the gyro in centidegrees per second (floored)',
+            'note': ('_read(): the accel in g (raw / 2048, exact) and the gyro in centidegrees per second (floored); '
+                     "each case's divergence is the port's STATUS burst of the same frame, owing the same output"),
             'cases': cases}
 
 

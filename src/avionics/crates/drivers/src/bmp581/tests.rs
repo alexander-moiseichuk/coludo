@@ -1,14 +1,15 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The BMP581's unit tests: the conversion in both temperature signs (test_bmp581.py's frames), the bring-up with
-//! its ground zero and the re-arm over the scripted bus, and the operator's ground updates, re-zero fresh-only.
+//! its ground zero and the re-arm over the scripted bus, the operator's ground updates, re-zero fresh-only, the
+//! calibrate's re-captured ground (M9 D7), and freshness by changed bytes with a standby part going stale (D3).
 
 use control::commons::altitude_m;
 use serde_json::json;
 
 use super::{
-    Bmp581, CHIP_ID, CONFIGURATION, FIRST_CONVERSION_MS, GROUND_SAMPLE_MS, GROUND_SAMPLES, IDENTITY, Reading, Refusal,
-    TEMP_DATA_XLSB,
+    Bmp581, CHIP_ID, CONFIGURATION, CONVERSION_PERIOD_US, Change, FIRST_CONVERSION_MS, GROUND_SAMPLE_MS,
+    GROUND_SAMPLES, IDENTITY, ODR_CONFIG, REZERO_WINDOW_US, Reading, Refusal, TEMP_DATA_XLSB,
 };
 use crate::device::{Device, Fault};
 use crate::mock::MockBus;
@@ -203,4 +204,115 @@ fn the_probe_and_the_diagnosis() {
     assert!(barometer.diagnose(&mut mock.clone()).contains("idle-high"));
     assert!(barometer.diagnose(&mut mock.clone()).starts_with("no bus response"));
     mock.done();
+}
+
+/// 101 236 Pa, 100 Pa below [`WARM`]'s, at the same 25 degrees C (6479104 counts): about 8.4 m higher.
+const HIGHER: [u8; 6] = [0x00, 0x00, 0x19, 0x00, 0xDD, 0x62];
+
+#[test]
+fn the_configuration_already_runs_at_50_hz_in_normal_mode() {
+    // ODR_CONFIG bits 6:2 = 0x0F, the 50 Hz entry of Bosch's table (240 Hz at 0); bits 1:0 = 01, normal mode; bit 7
+    // keeps deep standby off. D2's 50 Hz needs no register change, so the setup transcript stays plan B's.
+    let (register, value) = CONFIGURATION[1];
+    assert_eq!(register, ODR_CONFIG);
+    assert_eq!((value >> 2) & 0x1F, 0x0F);
+    assert_eq!(value & 0x03, 0x01);
+    assert_eq!(value & 0x80, 0x80);
+    assert_eq!(CONVERSION_PERIOD_US, 1_000_000 / 50);
+    assert_eq!(REZERO_WINDOW_US, 60_000, "three conversion periods");
+}
+
+#[test]
+fn a_calibrate_re_captures_the_ground_from_fresh_readings() {
+    // M9 D7: the port's calibrate is capture_ground again, after setup, on the live part
+    let mock = MockBus::new();
+    let mut barometer = Bmp581::new(ADDRESS);
+    barometer.update(&json!({"ground": 12.5}), None).unwrap();
+    for _ in 0..GROUND_SAMPLES {
+        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &HIGHER)
+            .expect_delay_ms(GROUND_SAMPLE_MS);
+    }
+    let ground = barometer.capture_ground(&mut mock.clone(), &mut mock.delay()).unwrap();
+    mock.done();
+    assert_eq!(ground, barometer.ground());
+    assert!((ground - altitude_m(101_236.0)).abs() < 1e-3, "{ground}");
+    assert!(barometer.elevation(&Reading::decode(&HIGHER)).abs() < 1e-3);
+    // NEGATIVE: a calibrate whose read fails keeps the ground it had
+    mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &WARM).then_fail();
+    assert!(matches!(
+        barometer.capture_ground(&mut mock.clone(), &mut mock.delay()),
+        Err(Fault::Bus(_))
+    ));
+    assert_eq!(barometer.ground(), ground);
+    mock.done();
+}
+
+/// Read the part on a 10 ms tick from `start_us`, answering each read with the next of `frames`; the verdicts.
+fn poll(barometer: &mut Bmp581, start_us: u64, frames: &[[u8; 6]]) -> Vec<Change> {
+    let mock = MockBus::new();
+    for frame in frames {
+        mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], frame);
+    }
+    let verdicts = (0u64..)
+        .zip(frames)
+        .map(|(tick, _)| {
+            let (change, _) = barometer
+                .read_fresh(&mut mock.clone(), start_us + tick * 10_000)
+                .unwrap();
+            change
+        })
+        .collect();
+    mock.done();
+    verdicts
+}
+
+#[test]
+fn each_conversion_is_fresh_once_on_a_tick_twice_as_fast() {
+    use Change::{Fresh, Unchanged};
+    // polled every 10 ms, a 50 Hz part shows each conversion on two reads: published on the first only
+    let mut barometer = Bmp581::new(ADDRESS);
+    let verdicts = poll(&mut barometer, 0, &[WARM, WARM, HIGHER, HIGHER, FINE, FINE]);
+    assert_eq!(verdicts, [Fresh, Unchanged, Fresh, Unchanged, Fresh, Unchanged]);
+    // the reading comes back decoded either way: freshness is the bytes', not the decode's
+    let mock = MockBus::new();
+    mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &COLD);
+    let (change, reading) = barometer.read_fresh(&mut mock.clone(), 60_000).unwrap();
+    mock.done();
+    assert_eq!((change, reading.temperature), (Fresh, -10.0));
+}
+
+#[test]
+fn a_standby_part_goes_stale_after_three_conversion_periods() {
+    // NEGATIVE: a part a reset left in standby returns its last sample forever; the firmware calls it unhealthy at
+    // Stale, three conversion periods (60 ms) after the bytes last changed
+    let mut barometer = Bmp581::new(ADDRESS);
+    let verdicts = poll(&mut barometer, 1_000_000, &[WARM; 9]);
+    let first_stale = verdicts.iter().position(|change| *change == Change::Stale).unwrap();
+    assert_eq!(first_stale, 6, "{verdicts:?}");
+    assert!(verdicts[1..6].iter().all(|change| *change == Change::Unchanged));
+    assert!(verdicts[6..].iter().all(|change| *change == Change::Stale));
+    // the re-arm writes the mode again and the first new conversion is fresh at once
+    let mock = MockBus::new();
+    script_configure(&mock);
+    barometer.rearm(&mut mock.clone(), &mut mock.delay()).unwrap();
+    mock.done();
+    assert_eq!(
+        poll(&mut barometer, 1_100_000, &[WARM, HIGHER]),
+        [Change::Stale, Change::Fresh]
+    );
+}
+
+#[test]
+fn a_failed_read_is_a_bus_fault_and_judges_nothing() {
+    // NEGATIVE: a NAK is the transport's fault, never an unchanged or a stale sample
+    let mut barometer = Bmp581::new(ADDRESS);
+    poll(&mut barometer, 0, &[WARM]);
+    let mock = MockBus::new();
+    mock.expect_write_read(ADDRESS, &[TEMP_DATA_XLSB], &HIGHER).then_fail();
+    assert!(matches!(
+        barometer.read_fresh(&mut mock.clone(), 10_000),
+        Err(Fault::Bus(_))
+    ));
+    mock.done();
+    assert_eq!(poll(&mut barometer, 20_000, &[WARM]), [Change::Unchanged]);
 }

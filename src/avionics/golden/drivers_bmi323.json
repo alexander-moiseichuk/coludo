@@ -2,6 +2,17 @@
  "decode": {
   "cases": [
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000000000000008e80318fc0000",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -27,6 +38,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000ff7f00800000ff7f00800000",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -52,6 +74,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0000100ffff00000100ffff0000",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -77,6 +110,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000000000000000000000000000",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -102,6 +146,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0002c010cfe005074ffd007ddff",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -127,6 +182,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000567da2a9bb12cf13efe465f7",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -152,6 +218,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000739028b7e0857cf8a5bb24a9",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -177,6 +254,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000c303626c895ab33c78efdb82",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -202,6 +290,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000fbabb5d34f7fbac49dec91c1",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -227,6 +326,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00009d5656ab19ef98ef7b1485f",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -252,6 +362,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0003fa082ddcb0b0fbf3b460578",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -277,6 +398,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000b4f462d1b73629f4b493eb7d",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -302,6 +434,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000058020fd3deb05b208bfa094",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -327,6 +470,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0005352027ed6d6b694805ada33",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -352,6 +506,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000f4bb61296d93f61d30162377",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -377,6 +542,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000b6de897eebce69975cc236b9",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -402,6 +578,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000706d3d916ab6eb7c7ff56d77",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -427,6 +614,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000261a4bc826a428a598a19663",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -452,6 +650,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0001fbac06ebdda71ef4302e2b5",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -477,6 +686,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00038a6465437ddba8b334e1c84",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -502,6 +722,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000b06a28b7553ec3bab1713aa1",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -527,6 +758,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000595deed6bc258b7bc3f456a6",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -552,6 +794,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0008d5359799068c137cd9b8714",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -577,6 +830,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000c354dda0dbebcf63f4ade6aa",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -602,6 +866,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0003c4fc611c5730a5d59bad762",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -627,6 +902,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00007c545770f87377d5b830969",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -652,6 +938,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000ccce9a60d05a4d362ab2dad0",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -677,6 +974,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000d41d1b864b55a993bb5cc58f",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -702,6 +1010,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000c7080710fb6a07fc59b9afc8",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -727,6 +1046,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000da4caca2fadbcf5c373bf48c",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -752,6 +1082,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0003b0a1778ceec705290a05230",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -777,6 +1118,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00056d3835929ee915aef711dc4",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -802,6 +1154,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000ddf47810b27933b156054e58",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -827,6 +1190,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000141f38a7cc5536061648f38f",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -852,6 +1226,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0009cd2320a56ca98c8c2f655d6",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -877,6 +1262,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000016f52077dfabe71ddfd42f2",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -902,6 +1298,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000225b58429bbe84803b6dc5b8",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -927,6 +1334,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000fc66d7ce92aa2f21194b3680",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -952,6 +1370,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0004c969de9a9f7f7a6afe580cc",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -977,6 +1406,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000d73a6c60c0c6f6dc6c4c1e80",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -1002,6 +1442,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0000f84a8e72dfcf5925cbbc240",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -1027,6 +1478,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000609e785868fe1af2b3b81e61",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -1052,6 +1514,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000f4c2b915834d713b8b3f2be2",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -1077,6 +1550,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000115e68cb0bffcb2e445c9af7",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -1102,6 +1586,17 @@
     }
    },
    {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00079ee578e271c2c8dfaea6484",
+       "write": "02"
+      }
+     ]
+    },
     "input": {
      "script": [
       {
@@ -1130,7 +1625,7 @@
   "compare": {
    "kind": "exact"
   },
-  "note": "_read(): the accel in g (raw / 2048, exact) and the gyro in centidegrees per second (floored)"
+  "note": "_read(): the accel in g (raw / 2048, exact) and the gyro in centidegrees per second (floored); each case's divergence is the port's STATUS burst of the same frame, owing the same output"
  },
  "diagnose": {
   "cases": [
@@ -1198,7 +1693,7 @@
   "note": "diagnose() on i2c:0 at 0x69: the verdict, up to ' -- ' (the error's repr is the runtime's own)"
  },
  "meta": {
-  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "commit": "1ba7501524ec25bcd494d284a776f1fa2a8dc98d",
   "generator": "drivers_bmi323",
   "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",

@@ -107,6 +107,21 @@ static IMU_READS: AtomicU32 = AtomicU32::new(0);
 static IMU_FAILURES: AtomicU32 = AtomicU32::new(0);
 /// IMU reads that found no new conversion: about 1 - ODR/100 of the ticks on a part slower than the tick.
 static IMU_STALE: AtomicU32 = AtomicU32::new(0);
+/// IMU halves pushed by the driver's correction (a), by half (accel, rate): the data-ready flag clear but the bytes
+/// changed, a conversion that landed between the status byte and its data (M9).
+static IMU_RACED: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+/// IMU halves whose data-ready flag was set over bytes identical to the last read's, by half (accel, rate): a raced
+/// conversion's duplicate (skipped, correction (b)) or a bit-identical new conversion (pushed). What D1's residual is
+/// measured by (M9).
+static IMU_IDENTICAL: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+/// The IMU channels the consumer side watches ([`Watch`]): an IMU's `accel` and `rate`, two IMUs.
+const WATCHED: usize = 4;
+/// Each watched channel's lapses, by [`WATCH_NAMES`]' order: ticks at which the channel was not fresh in its
+/// quantity's shared window while its part was healthy -- what a consumer (the stage machine, the attitude filter) saw
+/// as a gap (M9).
+static LAPSES: [AtomicU32; WATCHED] = [const { AtomicU32::new(0) }; WATCHED];
+/// The watched channels' names, `<source>.<quantity>`, once the control thread starts.
+static WATCH_NAMES: OnceLock<Vec<String>> = OnceLock::new();
 /// The latest tick's `irq_runs`.
 static IRQ_RUNS_LAST: AtomicU32 = AtomicU32::new(0);
 /// Whether INT1 is silent (the driver's verdict: three wakes in a row with no edge).
@@ -471,6 +486,8 @@ impl Imu {
     /// unhealthy. Returns the verdict (None healthy, else why) and the clock the handle runs at (0: none).
     fn retune(&mut self, bus: &SpiBus, clock_hz: u32) -> (Option<String>, u32) {
         self.handle = None;
+        // a re-added handle reads afresh: the next read is judged by its flags alone
+        self.part.forget();
         match bus.handle_at(self.chip_select, clock_hz) {
             Ok(handle) => {
                 self.handle = Some(handle);
@@ -537,6 +554,17 @@ impl Imu {
         };
         self.failing = false;
         IMU_READS.fetch_add(1, Ordering::Relaxed);
+        for (half, raced, identical) in [
+            (0, fresh.accel_raced, fresh.accel_identical),
+            (1, fresh.rate_raced, fresh.rate_identical),
+        ] {
+            if raced {
+                IMU_RACED[half].fetch_add(1, Ordering::Relaxed);
+            }
+            if identical {
+                IMU_IDENTICAL[half].fetch_add(1, Ordering::Relaxed);
+            }
+        }
         if !fresh.accel && !fresh.rate {
             IMU_STALE.fetch_add(1, Ordering::Relaxed);
             self.stale_run = self.stale_run.saturating_add(1);
@@ -554,12 +582,10 @@ impl Imu {
         if let (true, Some(writer)) = (fresh.rate, &mut self.rate) {
             writer.push(sample.rate_degrees_per_second(), now_us);
         }
+        // measured -> reported (the operator, M9): a row for every fresh sample, never decimated
         let Some(telemetry) = &mut self.telemetry else {
             return;
         };
-        if !telemetry.due(now_us) {
-            return;
-        }
         let [gx, gy, gz] = sample.rate_centidegrees_per_second();
         let row = [
             Cell::F32(accel[0]),
@@ -578,6 +604,62 @@ impl Imu {
                     self.overflowing = true;
                 }
             }
+        }
+    }
+}
+
+/// One IMU channel the consumer side watches for lapses (M9): a tick at which the channel is not fresh in its
+/// quantity's shared window while its part is healthy, as the stage machine and the attitude filter read it. Counted
+/// from the channel's first push, so a boot's bring-up is no lapse.
+struct Watch {
+    /// The source's channel.
+    channel: &'static databoard::Channel<[f32; 3]>,
+    /// The quantity's shared freshness window, microseconds.
+    window_us: u32,
+    /// The source's table entry, whose health gates the count.
+    entry: &'static DeviceEntry<'static>,
+    /// Its counter in [`LAPSES`].
+    lapses: &'static AtomicU32,
+}
+
+impl Watch {
+    /// The `accel` and `rate` channels of each of `sources` that the databoard and the table hold, in that order, at
+    /// most [`WATCHED`]; their names published for `inspect control`.
+    fn every(sources: &[&'static str], topology: &'static Topology, table: &'static Table<'static>) -> Vec<Watch> {
+        let mut watches = Vec::new();
+        let mut names = Vec::new();
+        for source in sources {
+            for quantity in ["accel", "rate"] {
+                let Some(parameter) = topology.vector(quantity) else {
+                    continue;
+                };
+                let (Some(channel), Some(entry), Some(lapses)) = (
+                    parameter.channel(source),
+                    table.find(source),
+                    LAPSES.get(watches.len()),
+                ) else {
+                    continue;
+                };
+                names.push(format!("{source}.{quantity}"));
+                watches.push(Watch {
+                    channel,
+                    window_us: parameter.window_us(),
+                    entry,
+                    lapses,
+                });
+            }
+        }
+        let _ = WATCH_NAMES.set(names);
+        watches
+    }
+
+    /// One look at `read_us`: a lapse when the part is healthy and the channel, pushed before, is not fresh.
+    fn look(&self, read_us: u64) {
+        if self.entry.healthy()
+            && self.channel.pushed_at().is_some()
+            && self.channel.recent(self.window_us, read_us).is_none()
+        {
+            self.lapses.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -880,6 +962,7 @@ fn run(
         }
         Imu::new(member, topology, table)
     });
+    let watches = Watch::every(&imu.as_ref().map(|imu| imu.name).into_iter().collect::<Vec<_>>(), topology, table);
     let (mailbox, requests) = sync_channel(REQUESTS_PER_TICK);
     let _ = MAILBOX.set(mailbox);
     for extra in spi {
@@ -971,6 +1054,12 @@ fn run(
             follow_flight(&commit);
         }
         serve(&requests, imu.as_mut(), spi_bus.as_ref(), writer.flight().stage);
+        // the consumers' view of the IMU channels, where the stage machine reads them
+        // SAFETY: a plain read of the monotonic timer.
+        let read_us = unsafe { sys::esp_timer_get_time() } as u64;
+        for watch in &watches {
+            watch.look(read_us);
+        }
         if let Some(machine) = &mut machine {
             machine.tick(now_us as u64, period_us as u64 / 2, &mut writer);
         }
@@ -1185,7 +1274,8 @@ pub fn register_commands() {
         about: "the control tick: its rate, ticks, overruns (ticks the thread missed), lateness (the latest, the \
                 largest, and how many ticks passed the 200 us budget) and work (the latest and the largest, from the \
                 wake to the end of the tick's work); whether the flight word holds the stage machine's launch; the \
-                IMU's reads, failures, reads with no new conversion, INT1 edges at the latest tick and whether INT1 is \
+                IMU's reads, failures, reads with no new conversion, halves pushed raced and flagged over identical \
+                bytes (accel/rate), each watched channel's lapses (source.quantity:count), INT1 edges at the latest tick and whether INT1 is \
                 silent; the IMU's SPI clock; the separation latch, whether its pin is polled, the events it \
                 recorded (blips among them), whether a separation is pending, and what the thrust gate has seen since \
                 boosting began (none, seen, ended); flight-core log lines the console queue dropped",
@@ -1213,6 +1303,9 @@ pub fn register_commands() {
                     ("imu_reads", &IMU_READS.load(Ordering::Relaxed).to_string()),
                     ("imu_failures", &IMU_FAILURES.load(Ordering::Relaxed).to_string()),
                     ("imu_stale", &IMU_STALE.load(Ordering::Relaxed).to_string()),
+                    ("imu_raced", &pair(&IMU_RACED)),
+                    ("imu_identical", &pair(&IMU_IDENTICAL)),
+                    ("lapses", &lapses()),
                     ("irq_runs_last", &IRQ_RUNS_LAST.load(Ordering::Relaxed).to_string()),
                     ("int1_silent", &INTERRUPT_SILENT.load(Ordering::Relaxed).to_string()),
                     ("separated", &SEPARATED.load(Ordering::Relaxed).to_string()),
@@ -1236,4 +1329,28 @@ pub fn register_commands() {
             )
         }),
     }]);
+}
+
+/// A per-half counter pair as `accel/rate`.
+fn pair(counters: &[AtomicU32; 2]) -> String {
+    format!(
+        "{}/{}",
+        counters[0].load(Ordering::Relaxed),
+        counters[1].load(Ordering::Relaxed)
+    )
+}
+
+/// Each watched channel's lapses as `source.quantity:count`, comma-separated; empty before the thread starts.
+fn lapses() -> String {
+    WATCH_NAMES
+        .get()
+        .map(|names| {
+            names
+                .iter()
+                .zip(&LAPSES)
+                .map(|(name, count)| format!("{name}:{}", count.load(Ordering::Relaxed)))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default()
 }

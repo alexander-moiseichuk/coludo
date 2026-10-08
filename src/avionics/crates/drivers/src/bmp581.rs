@@ -3,9 +3,14 @@
 //! The BMP581 barometer on the SEN0697 (src/glider/drivers/bmp581.py): the BACKUP altitude channel. It publishes
 //! pressure (Pa), temperature (degrees C), altitude (m above the sea-level datum) and elevation (m above its own
 //! startup ground zero), exactly as the BMP280 it replaced, so nothing downstream learns a new name. `update
-//! {"rezero": true}` re-captures the ground zero (after warm-up, just before launch). Unlike the ICP-10111, plan B's
-//! BMP581 has no `calibrate`: an operator calibrate sweep answers Task's no-op success for it and never re-zeroes
-//! the backup barometer, so only setup and `update` move its ground zero, here as there.
+//! {"rezero": true}` re-captures the ground zero (after warm-up, just before launch).
+//!
+//! THE RE-ZERO (avionics-port.md M9 D7, a divergence). Plan B's BMP581 had no `calibrate`: an operator calibrate
+//! sweep answered Task's no-op success for it and never re-zeroed the backup barometer, so the two barometers' zeros
+//! split at the first re-zero. The port gives it the ICP-10111's surface, and the firmware runs it wherever it runs
+//! the ICP's: `calibrate` re-captures the ground from [`GROUND_SAMPLES`] new readings ([`Bmp581::capture_ground`],
+//! setup's own average), and so does the DONE recovery; `update {"ground": <m>}` sets it (M8's warm start rebases it to the crumb's pad); `update
+//! {"rezero": true}` takes the channel's own altitude when fresher than [`REZERO_WINDOW_US`].
 //!
 //! Simpler than the BMP280 in the way that matters: the part outputs COMPENSATED values, so there is no factory
 //! calibration to read and no compensation polynomial to carry. Pressure is a 24-bit unsigned count of 1/64 Pa;
@@ -18,6 +23,13 @@
 //! quietly stops moving. [`Device::rearm`] writes the mode again: on v1.1 the ICP's general call cannot reach it
 //! (the two barometers are on different buses, much of the redundancy's value), but on v0.1 the SEN0697 shares i2c:0
 //! with the ICP, and a later rewire must not silently reintroduce the failure.
+//!
+//! NEW CONVERSIONS ONLY (avionics-port.md M9 D2, D3). The firmware polls the part on every owner tick (100 Hz) and
+//! [`Bmp581::read_fresh`] judges each read by its 6 data bytes ([`crate::freshness::Changes`]): fresh when they
+//! changed, which every conversion does (its noise is tens of counts), so each 50 Hz conversion is published once.
+//! No data-ready register is read: the BMP581's needs INT_SOURCE written, a register plan B never wrote. A part in
+//! standby repeats its bytes, and once it has for [`crate::freshness::STALE_PERIODS`] conversion periods the read
+//! is [`Change::Stale`], where the firmware calls it unhealthy. Plan B's `period_ms` is unused.
 //!
 //! Units (decision D18): every value is f32, as plan B's float channels and telemetry columns are. The conversions
 //! are exact (power-of-two scales over 24-bit counts); the altitude is commons' ISA formula, one definition for every
@@ -33,6 +45,8 @@ use serde_json::Value;
 
 use crate::commons::{id_classify, python_float};
 use crate::device::{Device, Fault};
+pub use crate::freshness::Change;
+use crate::freshness::{Changes, STALE_PERIODS};
 
 /// The default I2C address (0x46 when the address pin is pulled the other way).
 pub const ADDRESS: u8 = 0x47;
@@ -57,8 +71,16 @@ pub type RegisterWrite = (u8, u8);
 
 /// The configuration, in plan B's order (the mode the re-arm writes again):
 ///  * OSR_CONFIG = 0x50: press_en (bit 6), osr_p = 4x (bits 5:3), osr_t = 1x;
-///  * ODR_CONFIG = 0xBD: deep standby disabled (bit 7), 50 Hz (bits 6:2), normal mode (bits 1:0).
+///  * ODR_CONFIG = 0xBD: deep standby disabled (bit 7), 50 Hz (bits 6:2 = 0x0F, the 16th of Bosch's ODR table from
+///    240 Hz down, as Linux's bmp580 driver numbers it), normal mode (bits 1:0 = 01): already the 50 Hz D2 asks for.
 pub const CONFIGURATION: [RegisterWrite; 2] = [(OSR_CONFIG, 0x50), (ODR_CONFIG, 0xBD)];
+
+/// The conversion period at the configured 50 Hz, microseconds.
+pub const CONVERSION_PERIOD_US: u64 = 20_000;
+
+/// How fresh the altitude a `rezero` takes must be: [`STALE_PERIODS`] conversion periods (plan B's three periods,
+/// at the rate the part now converts and is read).
+pub const REZERO_WINDOW_US: u64 = STALE_PERIODS * CONVERSION_PERIOD_US;
 
 /// The wait after the configuration for the first normal-mode conversion to complete.
 pub const FIRST_CONVERSION_MS: u32 = 50;
@@ -66,7 +88,7 @@ pub const FIRST_CONVERSION_MS: u32 = 50;
 /// The burst: temperature then pressure, three bytes each, little-endian.
 pub const FRAME_LENGTH: usize = 6;
 
-/// Readings averaged at setup to fix the ground-zero reference (plan B's BMP581 has no calibrate path).
+/// Readings averaged into the ground-zero reference, at setup and at a calibrate.
 pub const GROUND_SAMPLES: u32 = 8;
 
 /// The wait after each ground-zero reading: the part converts at 50 Hz, so each reading is a fresh conversion.
@@ -77,9 +99,6 @@ pub const PRESSURE_COUNTS_PER_PASCAL: f32 = 64.0;
 
 /// Temperature counts per degree C.
 pub const TEMPERATURE_COUNTS_PER_DEGREE: f32 = 65536.0;
-
-/// The default read period, ms (~10 Hz; the part converts faster than it is read).
-pub const DEFAULT_PERIOD_MS: u32 = 100;
 
 /// The sign bit of a 24-bit two's-complement count.
 const SIGN_24: i32 = 0x80_0000;
@@ -119,9 +138,9 @@ impl Reading {
 /// Why an operator `update` was refused; nothing has changed when it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// A re-zero with no altitude fresher than three periods. A re-zero LATCHES a number that every later
-    /// elevation is reported against, so a stale altitude here would bias the channel for the rest of the flight;
-    /// refused out loud so the operator sees why.
+    /// A re-zero with no altitude fresher than three periods ([`REZERO_WINDOW_US`]). A re-zero LATCHES a number that
+    /// every later elevation is reported against, so a stale altitude here would bias the channel for the rest of the
+    /// flight; refused out loud so the operator sees why.
     NoFreshAltitude,
     /// `ground` is not a number [`python_float`] reads: plan B's `float()` raised. Plan B answered with the
     /// interpreter's own text for a string, and with a TypeError its `update` command did not catch for a null, a
@@ -147,12 +166,18 @@ pub struct Bmp581 {
     address: u8,
     /// The ground zero, m above the datum: the per-sensor reference elevation is measured from. Set at setup.
     ground: f32,
+    /// The data bytes of the last [`Bmp581::read_fresh`] and when they last changed.
+    changes: Changes<FRAME_LENGTH>,
 }
 
 impl Bmp581 {
     /// A driver for the part at `address`; the ground zero is captured at setup.
     pub fn new(address: u8) -> Bmp581 {
-        Bmp581 { address, ground: 0.0 }
+        Bmp581 {
+            address,
+            ground: 0.0,
+            changes: Changes::default(),
+        }
     }
 
     /// The I2C address.
@@ -186,8 +211,23 @@ impl Bmp581 {
         Ok(Reading::decode(&frame))
     }
 
+    /// Read one conversion and whether it is new ([`Change`]): the 6-byte burst, judged by whether its bytes changed
+    /// since the last `read_fresh`, at `now_us` on the owner's clock. Only a [`Change::Fresh`] reading is published;
+    /// at [`Change::Stale`] the firmware calls the part unhealthy (a part in standby). Setup's and a calibrate's own
+    /// reads ([`Bmp581::read`]) do not touch the judge.
+    pub fn read_fresh<Bus: I2c>(&mut self, bus: &mut Bus, now_us: u64) -> Result<(Change, Reading), Fault<Bus::Error>> {
+        let mut frame = [0u8; FRAME_LENGTH];
+        bus.write_read(self.address, &[TEMP_DATA_XLSB], &mut frame)
+            .map_err(Fault::Bus)?;
+        Ok((
+            self.changes.judge(&frame, now_us, CONVERSION_PERIOD_US),
+            Reading::decode(&frame),
+        ))
+    }
+
     /// Average [`GROUND_SAMPLES`] readings, [`GROUND_SAMPLE_MS`] apart, into the ground zero (bmp581._ground_zero,
-    /// which plan B calls from setup only). Nothing changes when a read fails.
+    /// which plan B called from setup only; the port's `calibrate` and DONE recovery too, D7). Nothing changes when
+    /// a read fails.
     pub fn capture_ground<Bus: I2c>(
         &mut self,
         bus: &mut Bus,

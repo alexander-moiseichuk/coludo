@@ -18,6 +18,8 @@
 //!    consecutive-failure counter (src/glider task.py);
 //!  * [`commons`] -- the Sensirion CRC-8 and the wire-level id diagnosis (src/glider commons.py);
 //!  * [`mock`] -- the scripted bus, delay and pin the host tests drive the drivers with;
+//!  * [`freshness`] -- new conversions only: an IMU half judged by its data-ready flag and corrected by its bytes, and
+//!    a part read without a flag judged by changed bytes, with the standby rule (new, avionics-port.md M9 D1, D3);
 //!  * [`axes`] -- the optional per-sensor `axes` key: a part mounted other than per its marks (new, avionics-port.md
 //!    §7.2 Q7);
 //!  * [`debounce`] -- two stamps for a two-level input behind a latch, the first and the latest edge of an episode,
@@ -47,6 +49,7 @@ pub mod bmp581;
 pub mod commons;
 pub mod debounce;
 pub mod device;
+pub mod freshness;
 pub mod icp10111;
 pub mod ina226;
 pub mod lsm6dso32;

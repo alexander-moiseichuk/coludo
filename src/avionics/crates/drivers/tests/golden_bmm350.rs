@@ -5,11 +5,16 @@
 //! calibration): the burst decode, the operator calibration scenario by scenario -- per sample the published axes and
 //! the octants covered, then the verdict, the calibration and the corrected axes -- the NVS blob both ways, and plan
 //! B's I2C transcripts (setup with the OTP power-off, the re-arm, the probe, the diagnosis) through the mock bus.
+//! Setup and re-arm cases that reach the rate write owe the fixture's `divergence`: the port's one different byte,
+//! PMU_CMD_AGGR_SET 0x37 for plan B's 0x24 (avionics-port.md M9 D2). The calibration column's text is checked twice,
+//! from the live part and from the pure formatter the executor runs on the inspected values.
 
 mod transcript;
 
-use drivers::bmm350::{Bmm350, Calibration, Field, ProbeFailure};
+use drivers::bmm350::{Bmm350, Calibration, Field, ProbeFailure, format_instruction};
 use drivers::device::{Device, Fault};
+use drivers::mock::MockBus;
+use golden::Compare;
 use serde_json::{Value, json};
 use transcript::{bytes, check_cases, replay, section};
 
@@ -86,6 +91,10 @@ fn the_calibration_follows_plan_b_sample_by_sample() {
             covered.push(magnetometer.covered());
         }
         let before = magnetometer.instruction();
+        let pure = |magnetometer: &Bmm350| {
+            format_instruction(magnetometer.calibrated(), magnetometer.covered(), magnetometer.seen())
+        };
+        assert_eq!(pure(&magnetometer), before, "the formatter is the live part's text");
         let answer = match magnetometer.calibrate() {
             Ok(captured) => {
                 // plan B persists (no NVS here) and then puts it in force; the port leaves the order to the firmware
@@ -95,6 +104,7 @@ fn the_calibration_follows_plan_b_sample_by_sample() {
             Err(refusal) => json!(refusal),
         };
         let after = magnetometer.instruction();
+        assert_eq!(pure(&magnetometer), after, "the formatter is the live part's text");
         let corrected: Vec<[i32; 3]> = input["then"]
             .as_array()
             .expect("then")
@@ -122,24 +132,46 @@ fn the_nvs_blob_is_plan_b_s() {
     });
 }
 
-#[test]
-fn setup_makes_plan_b_s_transactions() {
-    check_cases(&part("setup"), "setup", |input| {
-        let mock = replay(&input["script"]);
-        let outcome = Bmm350::new(ADDRESS).setup(&mut mock.clone(), &mut mock.delay());
+/// Run a setup or rearm section: each case's transcript, or the one its `divergence` owes instead, through `run`;
+/// returns how many cases owed a divergence.
+fn owed_transcripts(section: &Value, run: impl Fn(&MockBus) -> bool) -> usize {
+    let compare = Compare::from_json(&section["compare"]);
+    let mut divergences = 0;
+    for case in section["cases"].as_array().expect("cases") {
+        let name = case["name"].as_str().expect("a case name");
+        let (owed_script, owed) = match case.get("divergence") {
+            Some(divergence) => {
+                divergences += 1;
+                (&divergence["script"], json!({"ok": divergence["ok"]}))
+            }
+            None => (&case["input"]["script"], case["output"].clone()),
+        };
+        let mock = replay(owed_script);
+        let ok = run(&mock);
         mock.done();
-        json!({"ok": outcome.is_ok()})
-    });
+        compare
+            .check(name, &owed, &json!({"ok": ok}))
+            .unwrap_or_else(|failure| panic!("{failure}"));
+    }
+    divergences
 }
 
 #[test]
-fn rearm_runs_the_table_again() {
-    check_cases(&part("rearm"), "rearm", |input| {
-        let mock = replay(&input["script"]);
-        let outcome = Bmm350::new(ADDRESS).rearm(&mut mock.clone(), &mut mock.delay());
-        mock.done();
-        json!({"ok": outcome.is_ok()})
+fn setup_makes_plan_b_s_transactions_but_the_rate() {
+    let divergences = owed_transcripts(&part("setup"), |mock| {
+        Bmm350::new(ADDRESS).setup(&mut mock.clone(), &mut mock.delay()).is_ok()
     });
+    // the healthy setup and the one refused at normal mode reach the rate write; the other three end before it
+    assert_eq!(divergences, 2, "the rate byte is the one divergence");
+}
+
+#[test]
+fn rearm_runs_the_table_again_but_the_rate() {
+    let divergences = owed_transcripts(&part("rearm"), |mock| {
+        Bmm350::new(ADDRESS).rearm(&mut mock.clone(), &mut mock.delay()).is_ok()
+    });
+    // the table again reaches the rate write; a dead part fails at the reset before it
+    assert_eq!(divergences, 1, "the rate byte is the one divergence");
 }
 
 #[test]

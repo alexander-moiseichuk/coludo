@@ -1,13 +1,17 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The BMI323's unit tests: the dummy-byte offset, exact scaling in both signs, the 0x8000 start-up marker, the
-//! bring-up and the re-arm over the scripted bus, and the INT1 silent verdict (counted only with a wire). Plan B's
-//! test_bmi323.py frames are in the golden fixture drivers_bmi323.json as well.
+//! bring-up and the re-arm over the scripted bus, the INT1 silent verdict (counted only with a wire), the STATUS
+//! burst's freshness (the flag decides, the bytes correct it, a 0x8000 frame never fresh) and the `axes` map over
+//! the push and the row alike. Plan B's test_bmi323.py frames are in the golden fixture drivers_bmi323.json as well.
+
+use serde_json::json;
 
 use super::{
-    ACC_DATA_X, Bmi323, CHIP_ID, CONFIGURATION, IDENTITY, INTERRUPT_SILENT_LIMIT, NO_SAMPLE, ROUTE_INTERRUPT,
-    SOFT_RESET, SOFT_RESET_SETTLE_MS, START_UP_POLL_MS, START_UP_POLLS, Sample,
+    ACC_DATA_X, Bmi323, CHIP_ID, CONFIGURATION, Fresh, IDENTITY, INTERRUPT_SILENT_LIMIT, NO_SAMPLE, ROUTE_INTERRUPT,
+    SOFT_RESET, SOFT_RESET_SETTLE_MS, START_UP_POLL_MS, START_UP_POLLS, STATUS, STATUS_FRAME_LENGTH, Sample,
 };
+use crate::axes::{Axes, AxesError};
 use crate::device::{Device, Fault};
 use crate::mock::MockBus;
 
@@ -280,4 +284,259 @@ fn the_probe_and_the_diagnosis() {
             .starts_with("no ack at i2c:0 0x69 -- bus")
     );
     mock.done();
+}
+
+/// A STATUS burst as the part sends it: two dummy bytes (not zero), the STATUS word little-endian, then the six data
+/// words (accel x, y, z, gyro x, y, z).
+fn status_burst(status: u16, words: [i16; 6]) -> [u8; STATUS_FRAME_LENGTH] {
+    let mut burst = [0u8; STATUS_FRAME_LENGTH];
+    burst[..2].copy_from_slice(&[0xA5, 0x5A]);
+    burst[2..4].copy_from_slice(&status.to_le_bytes());
+    burst[4..].copy_from_slice(&frame(words)[2..]);
+    burst
+}
+
+/// STATUS with drdy_acc (bit 7) and drdy_gyr (bit 6) set, as measured on every burst whose data changed.
+const BOTH_READY: u16 = 0x00C0;
+
+/// STATUS with drdy_acc alone.
+const ACCEL_READY: u16 = 0x0080;
+
+/// STATUS with drdy_gyr alone.
+const GYRO_READY: u16 = 0x0040;
+
+/// A part at rest: 1 g on z, a small gyro bias.
+const REST: [i16; 6] = [5, -7, 2048, 3, -2, 1];
+
+/// [`REST`] one accel conversion later.
+const ACCEL_MOVED: [i16; 6] = [6, -7, 2048, 3, -2, 1];
+
+/// [`REST`] one gyro conversion later.
+const GYRO_MOVED: [i16; 6] = [5, -7, 2048, 3, -2, 2];
+
+/// Both halves new by their flags, nothing corrected.
+const BOTH: Fresh = Fresh {
+    accel: true,
+    rate: true,
+    accel_raced: false,
+    rate_raced: false,
+    accel_identical: false,
+    rate_identical: false,
+};
+
+/// Read STATUS bursts in turn on one driver, each `(status, words)`, and return what each one judged.
+fn read_in_turn(imu: &mut Bmi323, bursts: &[(u16, [i16; 6])]) -> Vec<Fresh> {
+    let mock = MockBus::new();
+    for (status, words) in bursts {
+        mock.expect_write_read(ADDRESS, &[STATUS], &status_burst(*status, *words));
+    }
+    let verdicts = bursts
+        .iter()
+        .map(|_| imu.read_fresh(&mut mock.clone()).expect("a scripted burst").0)
+        .collect();
+    mock.done();
+    verdicts
+}
+
+#[test]
+fn the_status_burst_is_one_read_from_status_decoded_as_the_bare_one() {
+    // the register 0x02, a repeated start, then 16 bytes: the mock refuses any other shape or length
+    let mock = MockBus::new();
+    mock.expect_write_read(
+        ADDRESS,
+        &[STATUS],
+        &status_burst(BOTH_READY, [0, 0, 2048, 1000, -1000, 0]),
+    );
+    let (fresh, sample) = Bmi323::new(ADDRESS, true).read_fresh(&mut mock.clone()).unwrap();
+    mock.done();
+    assert_eq!(fresh, BOTH);
+    // the dummy bytes and the STATUS word are skipped: the sample is the bare burst's, bit for bit
+    assert_eq!(sample, Sample::decode(&frame([0, 0, 2048, 1000, -1000, 0])));
+}
+
+#[test]
+fn each_flag_speaks_for_its_own_half_and_the_others_are_ignored() {
+    // drdy_acc (bit 7) is the accel's, drdy_gyr (bit 6) the gyro's; drdy_temp (bit 5) and por_detected (bit 0) and
+    // the high byte belong to neither
+    let cases = [
+        (BOTH_READY, true, true),
+        (ACCEL_READY, true, false),
+        (GYRO_READY, false, true),
+        (0x00E1, true, true),
+        // NEGATIVE: no data-ready, the temperature's and the power-on flag alone
+        (0x0000, false, false),
+        (0x0021, false, false),
+        (0xFF00, false, false),
+    ];
+    for (status, accel, rate) in cases {
+        let verdict = read_in_turn(&mut Bmi323::new(ADDRESS, false), &[(status, REST)]);
+        assert_eq!(
+            verdict,
+            [Fresh {
+                accel,
+                rate,
+                ..Fresh::default()
+            }],
+            "status 0x{status:04x}"
+        );
+    }
+}
+
+#[test]
+fn a_raced_conversion_is_pushed_once() {
+    // M9 stage 0: reading STATUS clears the flags, so a conversion landing between the STATUS word and the data
+    // reads with its flag clear and its bytes new, and leaves its flag set for the next burst over the same bytes
+    let mut imu = Bmi323::new(ADDRESS, true);
+    let verdicts = read_in_turn(
+        &mut imu,
+        &[
+            (BOTH_READY, REST),
+            (0, ACCEL_MOVED),
+            (BOTH_READY, ACCEL_MOVED),
+            (0, ACCEL_MOVED),
+        ],
+    );
+    assert_eq!(verdicts[0], BOTH);
+    assert_eq!(
+        verdicts[1],
+        Fresh {
+            accel: true,
+            accel_raced: true,
+            ..Fresh::default()
+        }
+    );
+    // the late flag over the raced bytes is the duplicate (skipped); the gyro's flag over ITS same bytes is a
+    // conversion that repeated them (pushed, counted identical)
+    assert_eq!(
+        verdicts[2],
+        Fresh {
+            rate: true,
+            accel_identical: true,
+            rate_identical: true,
+            ..Fresh::default()
+        }
+    );
+    assert_eq!(verdicts[3], Fresh::default());
+}
+
+#[test]
+fn a_flag_with_changed_bytes_and_a_flag_alone_are_fresh() {
+    let mut imu = Bmi323::new(ADDRESS, true);
+    let verdicts = read_in_turn(
+        &mut imu,
+        &[(BOTH_READY, REST), (BOTH_READY, GYRO_MOVED), (BOTH_READY, GYRO_MOVED)],
+    );
+    assert_eq!(
+        verdicts[1],
+        Fresh {
+            accel_identical: true,
+            ..BOTH
+        }
+    );
+    // NEGATIVE of the correction: identical bytes under a flag after a FLAGGED push are a new conversion
+    assert_eq!(
+        verdicts[2],
+        Fresh {
+            accel_identical: true,
+            rate_identical: true,
+            ..BOTH
+        }
+    );
+}
+
+#[test]
+fn a_stale_part_is_not_fresh() {
+    // NEGATIVE: no flag, the same bytes: a read between two conversions, or a part that stopped (the firmware's
+    // STALE_LIMIT run turns it unhealthy)
+    let mut imu = Bmi323::new(ADDRESS, true);
+    let verdicts = read_in_turn(&mut imu, &[(BOTH_READY, REST), (0, REST), (0, REST), (0, REST)]);
+    assert_eq!(verdicts[1..], [Fresh::default(); 3]);
+}
+
+#[test]
+fn a_0x8000_frame_is_never_fresh_and_never_stored() {
+    // NEGATIVE: a reset part's frame, any gyro axis at the marker, all three accel axes at it -- under flags, and
+    // with bytes that changed
+    let frames = [
+        [NO_SAMPLE; 6],
+        [5, -7, 2048, 3, NO_SAMPLE, 1],
+        [NO_SAMPLE, NO_SAMPLE, NO_SAMPLE, 3, -2, 1],
+    ];
+    for words in frames {
+        let mut imu = Bmi323::new(ADDRESS, true);
+        let verdicts = read_in_turn(
+            &mut imu,
+            &[(BOTH_READY, REST), (BOTH_READY, words), (0, words), (0, REST)],
+        );
+        assert_eq!(verdicts[1..], [Fresh::default(); 3], "{words:?}");
+    }
+}
+
+#[test]
+fn one_accel_axis_at_0x8000_is_the_rail_and_fresh() {
+    let mut imu = Bmi323::new(ADDRESS, true);
+    let rail = [NO_SAMPLE, -7, 2048, 3, -2, 1];
+    let verdicts = read_in_turn(
+        &mut imu,
+        &[(BOTH_READY, rail), (0, [NO_SAMPLE, NO_SAMPLE, 2048, 3, -2, 1])],
+    );
+    assert_eq!(verdicts[0], BOTH);
+    // two axes on the rail and the third not: still a sample, its change under a clear flag a raced conversion
+    assert!(verdicts[1].accel && verdicts[1].accel_raced);
+}
+
+#[test]
+fn after_forget_and_after_a_rearm_a_burst_is_judged_by_its_flag() {
+    let mut imu = Bmi323::new(ADDRESS, false);
+    read_in_turn(&mut imu, &[(BOTH_READY, REST)]);
+    imu.forget();
+    // NEGATIVE: changed bytes under a clear flag are no raced conversion with nothing stored
+    assert_eq!(read_in_turn(&mut imu, &[(0, ACCEL_MOVED)]), [Fresh::default()]);
+    // the re-arm forgets as well
+    let mock = MockBus::new();
+    script_configure(&mock);
+    script_look(&mock, frame(REST));
+    imu.rearm(&mut mock.clone(), &mut mock.delay()).unwrap();
+    mock.done();
+    assert_eq!(read_in_turn(&mut imu, &[(0, GYRO_MOVED)]), [Fresh::default()]);
+    assert!(read_in_turn(&mut imu, &[(GYRO_READY, GYRO_MOVED)])[0].rate);
+}
+
+#[test]
+fn the_axes_map_the_push_and_the_row_alike() {
+    // the firmware maps the converted values (D10): the f32 push and the i32 centidegree row through one map. The
+    // gyro counts are multiples of 512, whose centidegrees are exact, so a negated column equals the column of the
+    // negated count (elsewhere the floor makes them differ by one centidegree, which is why counts are never mapped)
+    let sample = Sample::decode(&frame([100, -200, 2048, 512, -1024, 1536]));
+    for (text, accel, rate) in [
+        ("+x+y+z", [100, -200, 2048], [512, -1024, 1536]),
+        ("-y+x+z", [200, 100, 2048], [1024, 512, 1536]),
+        ("+z+y-x", [2048, -200, -100], [1536, -1024, -512]),
+    ] {
+        let axes = Axes::from_config(&json!({"axes": text})).unwrap();
+        let mapped = Sample { accel, gyro: rate };
+        assert_eq!(axes.apply(sample.accel_g()), mapped.accel_g(), "{text}");
+        assert_eq!(
+            axes.apply(sample.rate_degrees_per_second()),
+            mapped.rate_degrees_per_second(),
+            "{text}"
+        );
+        assert_eq!(
+            axes.apply(sample.rate_centidegrees_per_second()),
+            mapped.rate_centidegrees_per_second(),
+            "{text}"
+        );
+    }
+    // no key is the identity
+    assert_eq!(Axes::from_config(&json!({"driver": "bmi323"})), Ok(Axes::IDENTITY));
+    // the flat bench copy's map: a board lying flat (1 g on the sensor's z) reads +1 g on the airframe's x
+    assert_eq!(Axes::parse("+z+y-x").unwrap().apply(sample.accel_g())[0], 1.0);
+}
+
+#[test]
+fn a_mirror_axes_is_refused_naming_the_key() {
+    // NEGATIVE: two axes swapped without a sign is no mounting; the refusal the firmware's setup failure carries
+    let refusal = Axes::from_config(&json!({"axes": "+y+x+z"})).unwrap_err();
+    assert!(matches!(refusal, AxesError::Mirror(_)));
+    assert!(refusal.to_string().starts_with("axes '+y+x+z'"), "{refusal}");
 }

@@ -36,6 +36,19 @@
 //!
 //! Register values are Bosch's own (bmm350_defs.h).
 //!
+//! THE RATE (avionics-port.md M9 D2, a divergence): 12.5 Hz with averaging 8 (PMU_CMD_AGGR_SET 0x37), where plan B
+//! ran 100 Hz with averaging 4 (0x24) and read it at 10 Hz. Heading moves slowly, so every conversion is read and
+//! recorded at the rate its consumers need, with twice the averaging; the firmware polls every [`POLL_PERIOD_MS`],
+//! half a conversion period, so a sample is at most that old when it is read.
+//!
+//! NEW CONVERSIONS ONLY (D3). [`Bmm350::read_fresh`] judges each read by its 9 axis bytes
+//! ([`crate::freshness::Changes`]; the dummy bytes and the temperature are not compared): fresh when they changed,
+//! which every conversion does (a still board's noise spans hundreds of counts). Polled twice a conversion, each
+//! conversion is fresh once, and only a fresh field is [`Bmm350::observe`]d, so the evidence counts conversions,
+//! never a read twice. A SUSPENDED part repeats its bytes, and once it has for
+//! [`crate::freshness::STALE_PERIODS`] conversion periods the read is [`Change::Stale`], where the firmware calls it
+//! unhealthy. No register is written for it. Plan B's `period_ms` is unused.
+//!
 //! THE AXES ([`crate::axes`], new in the port; plan B has none). The order against the calibration is fixed here, in
 //! the driver, because it is the one place it can go wrong: the evidence ([`Bmm350::observe`]), the calibration
 //! ([`Bmm350::calibrate`]) and the NVS blob are all in the SENSOR's own frame, and the map turns only the PUBLISHED
@@ -44,6 +57,14 @@
 //! after a reflash to the other whatever the mounting; and a level turn sweeps the sensor's x/y plane only while
 //! that plane is level, so a mounting that tilts the sensor's z off the vertical is refused at construction
 //! ([`crate::axes::AxesError::Tilted`]) rather than left to refuse every calibration on coverage, forever.
+//!
+//! THE CALIBRATION'S ORDER (D9), plan B's: persist, then apply. The bus owner answers a calibrate with the
+//! [`Calibration`] [`Bmm350::calibrate`] computes, NOT applied; the executor writes its 16 bytes to NVS; only then does
+//! the owner put it in force ([`Bmm350::set_calibration`]). A refused calibration has nothing to persist, and one
+//! that could not be persisted is never applied. At boot the blob is restored after setup ([`Bmm350::restore`]: a
+//! blob of any other length leaves the axes raw). The calibration column's text is [`format_instruction`] of the
+//! values inspect carries (calibrated, sectors, samples), so the executor formats it from the owner's atomics without
+//! borrowing the live part.
 //!
 //! Not here (firmware glue): the NVS read and write of the calibration (namespace `coludo`, key [`NVS_KEY`], 16
 //! bytes, shared with plan B so a calibration survives a reflash between the two), the channel push, the telemetry
@@ -54,6 +75,8 @@ use embedded_hal::i2c::I2c;
 
 use crate::axes::{Axes, AxesError};
 use crate::device::{Device, Fault};
+pub use crate::freshness::Change;
+use crate::freshness::Changes;
 
 /// The default I2C address (I2C_ADSEL high; 0x14 when pulled low).
 pub const ADDRESS: u8 = 0x15;
@@ -96,7 +119,9 @@ pub enum Step {
 /// The bring-up (and re-arm) table, in Bosch's order (bmm350._configure):
 ///  * CMD = 0xB6, the soft reset, then 25 ms: the part reloads its OTP after a reset;
 ///  * OTP_CMD_REG = 0x80 (PWR_OFF_OTP), then 5 ms: until this is written the part never measures;
-///  * PMU_CMD_AGGR_SET = 0x24: averaging 4 (bits 5:4), 100 Hz (bits 3:0);
+///  * PMU_CMD_AGGR_SET = 0x37: averaging 8 (bits 5:4 = 3), 12.5 Hz (bits 3:0 = 7, Bosch's BMM350_DATA_RATE_12_5HZ;
+///    100 Hz is 4, and plan B wrote 0x24, averaging 4 at 100 Hz). Averaging 8 is allowed at 50 Hz and below. The one
+///    byte the port writes differently from plan B (D2), pinned in the golden fixture as a listed divergence;
 ///  * PMU_CMD = 0x02 (UPD_OAE), then 5 ms: a new rate needs its own apply command;
 ///  * PMU_CMD = 0x01 (normal mode), then 10 ms.
 pub const CONFIGURATION: [Step; 9] = [
@@ -112,7 +137,7 @@ pub const CONFIGURATION: [Step; 9] = [
     Step::Wait(5),
     Step::Write {
         register: PMU_CMD_AGGR_SET,
-        value: 0x24,
+        value: 0x37,
     },
     Step::Write {
         register: PMU_CMD,
@@ -131,6 +156,9 @@ pub const DUMMY_BYTES: usize = 2;
 
 /// The burst: the dummy bytes, three axes and the temperature, three bytes each.
 pub const FRAME_LENGTH: usize = DUMMY_BYTES + 12;
+
+/// The axis bytes a read's freshness is judged on: x, y and z, three bytes each, past the dummy bytes.
+const AXIS_BYTES: usize = 9;
 
 /// What every axis reads while the OTP is still powered: the part's own "no sample", never a field.
 pub const NO_DATA: i32 = 0x7F_7F7F;
@@ -163,8 +191,12 @@ pub const NEEDED_SECTORS: u32 = 7;
 /// Samples seen before a calibration is considered at all.
 pub const MINIMUM_SAMPLES: u32 = 100;
 
-/// The default read period, ms: 10 Hz, as heading moves slowly and the part averages 4 samples internally.
-pub const DEFAULT_PERIOD_MS: u32 = 100;
+/// The conversion period at the configured 12.5 Hz, microseconds.
+pub const CONVERSION_PERIOD_US: u64 = 80_000;
+
+/// How often the firmware reads the part, ms: half a conversion period, so each conversion is read within 40 ms of
+/// landing (and read twice, fresh once).
+pub const POLL_PERIOD_MS: u32 = 40;
 
 /// The sign bit of a 24-bit two's-complement axis.
 const SIGN_24: i32 = 0x80_0000;
@@ -224,6 +256,23 @@ pub enum ProbeFailure<BusError> {
     Fault(Fault<BusError>),
     /// The part answers but does not measure: [`not_measuring`]'s reason.
     NotMeasuring(&'static str),
+}
+
+/// The calibration column's text from the values inspect carries (plan B's calibration()): '' when a calibration
+/// is in force; the turn asked for with no sample `seen` yet; otherwise the progress, `covered` octants of
+/// [`SECTORS`] and the samples seen. Pure, so the executor formats it from the owner's atomics;
+/// [`Bmm350::instruction`] is this of the live part.
+pub fn format_instruction(calibrated: bool, covered: u32, seen: u32) -> String {
+    if calibrated {
+        return String::new();
+    }
+    if seen == 0 {
+        return "turn the airframe through a full circle, LEVEL, then calibrate (no field seen yet)".to_string();
+    }
+    format!(
+        "turn the airframe slowly through a FULL CIRCLE, keeping it level -- {covered} of {SECTORS} sectors covered, \
+         {seen} samples"
+    )
 }
 
 /// A hard/soft-iron calibration: the circle's centre and radii, in counts.
@@ -349,6 +398,8 @@ pub struct Bmm350 {
     calibration: Option<Calibration>,
     /// The sensor-to-airframe map, applied to the published vector only (see the module notes).
     axes: Axes,
+    /// The axis bytes of the last [`Bmm350::read_fresh`] and when they last changed.
+    changes: Changes<AXIS_BYTES>,
 }
 
 impl Bmm350 {
@@ -362,6 +413,7 @@ impl Bmm350 {
             seen: 0,
             calibration: None,
             axes: Axes::IDENTITY,
+            changes: Changes::default(),
         }
     }
 
@@ -391,10 +443,19 @@ impl Bmm350 {
         self.calibration
     }
 
-    /// Put a calibration in force: one restored from NVS at boot (so a power cycle does not cost the operator a
-    /// turn), or one [`Bmm350::calibrate`] computed, once the firmware has persisted it.
+    /// Put a calibration in force: one [`Bmm350::calibrate`] computed, once the firmware has persisted it (D9), or
+    /// one restored from NVS ([`Bmm350::restore`]).
     pub fn set_calibration(&mut self, calibration: Calibration) {
         self.calibration = Some(calibration);
+    }
+
+    /// Restore the calibration NVS holds, after setup (bmm350._restore), so a power cycle does not cost the operator
+    /// a turn. Returns the calibration put in force; None for a blob of any length but [`CALIBRATION_BYTES`], which is
+    /// not a calibration: nothing changes and the axes stay raw.
+    pub fn restore(&mut self, blob: &[u8]) -> Option<Calibration> {
+        let calibration = Calibration::from_bytes(blob)?;
+        self.set_calibration(calibration);
+        Some(calibration)
     }
 
     /// Whether a hard/soft-iron calibration is in force (inspect's `calibrated`).
@@ -418,25 +479,17 @@ impl Bmm350 {
         self.sectors.count_ones()
     }
 
-    /// The outstanding instruction, or '' once calibrated: what CC shows in the calibration column (plan B's text).
+    /// The outstanding instruction, or '' once calibrated: what CC shows in the calibration column (plan B's text),
+    /// [`format_instruction`] of this part's state. No sample seen is no span: both are set by the first
+    /// [`Bmm350::observe`], and the count saturates rather than wrap back to 0.
     pub fn instruction(&self) -> String {
-        if self.calibration.is_some() {
-            return String::new();
-        }
-        if self.span.is_none() {
-            return "turn the airframe through a full circle, LEVEL, then calibrate (no field seen yet)".to_string();
-        }
-        format!(
-            "turn the airframe slowly through a FULL CIRCLE, keeping it level -- {} of {SECTORS} sectors covered, {} \
-             samples",
-            self.covered(),
-            self.seen
-        )
+        format_instruction(self.calibrated(), self.covered(), self.seen)
     }
 
     /// Account one raw sample and return what the channel publishes (bmm350._read after the bus read): the raw
     /// counts while uncalibrated (so the channel works from the first boot and improves when the operator does the
-    /// turn), the corrected ones once calibrated.
+    /// turn), the corrected ones once calibrated. On the run, only a [`Change::Fresh`] field is observed (the module
+    /// notes), so the evidence never counts one conversion twice.
     ///
     /// `field` is the burst as the SENSOR reads it ([`Field::decode`]), never a remapped one: the evidence and the
     /// calibration live in the sensor frame, and only the returned vector goes through [`Bmm350::mounted`]'s map.
@@ -499,12 +552,13 @@ impl Bmm350 {
     }
 
     /// Compute the hard/soft-iron calibration from the turn the operator has just done (bmm350.calibrate's
-    /// arithmetic). Nothing is collected HERE: [`Bmm350::observe`] has been gathering the evidence all along.
+    /// arithmetic). Nothing is collected HERE: [`Bmm350::observe`] has been gathering the evidence all along, and
+    /// nothing is applied here either.
     ///
     /// Returns the calibration for the firmware to PERSIST (key [`NVS_KEY`], [`Calibration::to_bytes`]) and then
-    /// put in force with [`Bmm350::set_calibration`] -- plan B's order: a calibration that could not be persisted
+    /// put in force with [`Bmm350::set_calibration`] -- plan B's order (D9): a calibration that could not be persisted
     /// is not applied. Err carries plan B's answer, the instruction still outstanding, never a bare success for a
-    /// turn that never happened:
+    /// turn that never happened, and nothing to persist:
     ///  * no samples, or fewer than [`MINIMUM_SAMPLES`]: the instruction. That is '' when a calibration is already
     ///    in force (restored from NVS), plan B's answer to the letter, which CC shows as an empty result;
     ///  * the larger span under [`MINIMUM_SPAN`]: no field change seen -- a motionless or a dead part;
@@ -555,6 +609,22 @@ impl Bmm350 {
         bus.write_read(self.address, &[MAG_X_XLSB], &mut frame)
             .map_err(Fault::Bus)?;
         Ok(Field::decode(&frame))
+    }
+
+    /// Read one burst's raw axes and whether they are a new conversion ([`Change`]): the same 14-byte burst as
+    /// [`Bmm350::read`], judged by whether its 9 axis bytes changed since the last `read_fresh`, at `now_us` on the
+    /// owner's clock. Only a [`Change::Fresh`] field is observed and published; at [`Change::Stale`] the firmware
+    /// calls the part unhealthy (a suspended part). The probe's read does not touch the judge.
+    pub fn read_fresh<Bus: I2c>(&mut self, bus: &mut Bus, now_us: u64) -> Result<(Change, Field), Fault<Bus::Error>> {
+        let mut frame = [0u8; FRAME_LENGTH];
+        bus.write_read(self.address, &[MAG_X_XLSB], &mut frame)
+            .map_err(Fault::Bus)?;
+        let mut axes = [0u8; AXIS_BYTES];
+        axes.copy_from_slice(&frame[DUMMY_BYTES..DUMMY_BYTES + AXIS_BYTES]);
+        Ok((
+            self.changes.judge(&axes, now_us, CONVERSION_PERIOD_US),
+            Field::decode(&frame),
+        ))
     }
 
     /// The on-demand self-test (bmm350.probe): the identity reads back, then one sample is read, accounted (as

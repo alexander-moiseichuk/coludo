@@ -37,6 +37,22 @@
 //!  * a gyro that never leaves start-up after the re-arm is reported ([`Fault::Timeout`]) for the owner's log.
 //!    Plan B awaited the start-up and dropped the verdict.
 //!
+//! NEW CONVERSIONS ONLY (avionics-port.md M9 D1b), the LSM6DSO32's rule ([`crate::freshness::Flagged`]). The flight
+//! read is [`Bmi323::read_fresh`]: ONE 16-byte burst from STATUS 0x02 -- the dummy bytes, the STATUS word, then the
+//! six data words -- where plan B read 14 bytes from ACC_DATA_X on the data-ready edge. MEASURED on the taster and
+//! 7F (M9 stage 0): STATUS bit 7 is drdy_acc and bit 6 drdy_gyr (bit 5 drdy_temp, bit 0 por_detected, set once
+//! after power-on), both rise together every 10.0 ms at the configured 100 Hz, exactly on the bursts whose data
+//! changed, and reading STATUS clears them. So the flag in a burst describes that burst, and a conversion landing
+//! between the STATUS word and the data reads as raced (flag clear, bytes changed: pushed once) with its flag left
+//! set for the next burst over the same bytes (the duplicate: skipped). A flagged half is never called stale for
+//! identical bytes: the gyro's LSB is 0.061 dps, so at rest two conversions in a row often repeat. Never fresh, and
+//! never stored: a frame with any gyro axis at [`NO_SAMPLE`] or all three accel axes at it (a reset part reads
+//! 0x8000 frames, which changed bytes would otherwise push once as -16 g and -2000 dps; one accel axis at -32768 is
+//! the -16 g rail, fresh). Setup and the re-arm forget the stored bytes. The bare [`Bmi323::read`] stays plan B's
+//! 14 bytes from ACC_DATA_X (setup's start-up looks and clearing read, the probe), so setup and the re-arm make plan
+//! B's transactions; the STATUS burst is the golden fixture's one listed divergence. The firmware calls the part
+//! unhealthy after [`STALE_LIMIT`] reads in a row with neither half fresh.
+//!
 //! Not here (firmware glue): the INT1 GPIO interrupt and its wake count, the channel push, the telemetry stream, the
 //! probe's log lines and the inspect JSON. As for the LSM6DSO32, the firmware arms the GPIO edge interrupt before
 //! setup, which ends with the clearing read.
@@ -45,12 +61,18 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::I2c;
 
 use crate::device::{Device, Fault, Strikes};
+pub use crate::freshness::Fresh;
+use crate::freshness::{Flagged, HALF_LENGTH};
 
 /// The default I2C address (0x68 when the address pin is pulled the other way).
 pub const ADDRESS: u8 = 0x69;
 
 /// CHIP_ID: the identity register.
 pub const CHIP_ID: u8 = 0x00;
+
+/// STATUS: the data-ready flags, drdy_acc (bit 7) and drdy_gyr (bit 6), cleared by reading it; ACC_DATA_X follows,
+/// so one burst from here reads the flags and the sample together.
+pub const STATUS: u8 = 0x02;
 
 /// ACC_DATA_X: the first of six contiguous 16-bit words, accel x, y, z then gyro x, y, z.
 pub const ACC_DATA_X: u8 = 0x03;
@@ -97,6 +119,28 @@ pub const DUMMY_BYTES: usize = 2;
 
 /// The burst read: the dummy bytes, then six signed 16-bit words.
 pub const FRAME_LENGTH: usize = DUMMY_BYTES + 12;
+
+/// The status burst from STATUS: the dummy bytes, the STATUS word, then the six data words.
+pub const STATUS_FRAME_LENGTH: usize = DUMMY_BYTES + STATUS_WORD_LENGTH + 12;
+
+/// The STATUS word's length.
+const STATUS_WORD_LENGTH: usize = 2;
+
+/// Where the accel half sits in the status burst (accel x, y, z come first out of this part).
+const ACCEL_HALF: usize = DUMMY_BYTES + STATUS_WORD_LENGTH;
+
+/// Where the gyro half sits in the status burst.
+const GYRO_HALF: usize = ACCEL_HALF + HALF_LENGTH;
+
+/// STATUS bit 7, drdy_acc: a new accel conversion is waiting.
+const ACCEL_DATA_READY: u16 = 0x0080;
+
+/// STATUS bit 6, drdy_gyr: a new gyro conversion is waiting.
+const GYRO_DATA_READY: u16 = 0x0040;
+
+/// Consecutive reads with no new conversion (neither half fresh) before the firmware calls the part unhealthy: one
+/// such read is a tick between two conversions, three in a row are a part that stopped converting.
+pub const STALE_LIMIT: u32 = 3;
 
 /// What the gyro reports until it has a sample (0x8000): never published as a rate.
 pub const NO_SAMPLE: i16 = i16::MIN;
@@ -151,6 +195,12 @@ impl Sample {
         !self.gyro.contains(&NO_SAMPLE)
     }
 
+    /// Whether the burst is a sample at all: the gyro started, and not all three accel axes at [`NO_SAMPLE`] (a
+    /// reset part's 0x8000 frame; one accel axis there is the -16 g rail).
+    pub fn is_sample(&self) -> bool {
+        self.gyro_started() && self.accel != [NO_SAMPLE; 3]
+    }
+
     /// The accel in g: the `accel` channel and the telemetry's ax, ay, az (exact: a power-of-two scale).
     pub fn accel_g(&self) -> [f32; 3] {
         self.accel.map(|count| f32::from(count) / ACCEL_COUNTS_PER_G)
@@ -184,6 +234,8 @@ pub struct Bmi323 {
     strikes: Strikes,
     /// The operator view: a declared INT line went silent.
     interrupt_silent: bool,
+    /// The status bursts' judge: the last burst's data bytes and its raced marks (see the module notes).
+    flags: Flagged,
 }
 
 impl Bmi323 {
@@ -195,7 +247,14 @@ impl Bmi323 {
             interrupt_wired,
             strikes: Strikes::default(),
             interrupt_silent: false,
+            flags: Flagged::default(),
         }
+    }
+
+    /// Forget the stored data bytes and the raced marks, so the next [`Bmi323::read_fresh`] is judged by its flags
+    /// alone. Setup and the re-arm forget by themselves.
+    pub fn forget(&mut self) {
+        self.flags.forget();
     }
 
     /// The I2C address.
@@ -249,6 +308,36 @@ impl Bmi323 {
         bus.write_read(self.address, &[ACC_DATA_X], &mut frame)
             .map_err(Fault::Bus)?;
         Ok(Sample::decode(&frame))
+    }
+
+    /// Read one sample and which of its halves are new: ONE 16-byte burst from STATUS (the dummy bytes, the STATUS
+    /// word, then the six data words). Each half is judged by its flag, drdy_acc for the accel and drdy_gyr for the
+    /// gyro, corrected by its bytes against the last burst's (the module notes); drdy_temp and por_detected are
+    /// ignored. A frame that is no sample ([`Sample::is_sample`]) is never fresh and leaves the stored bytes as they
+    /// were. Reading STATUS clears the flags.
+    pub fn read_fresh<Bus: I2c>(&mut self, bus: &mut Bus) -> Result<(Fresh, Sample), Fault<Bus::Error>> {
+        let mut burst = [0u8; STATUS_FRAME_LENGTH];
+        bus.write_read(self.address, &[STATUS], &mut burst)
+            .map_err(Fault::Bus)?;
+        let status = u16::from_le_bytes([burst[DUMMY_BYTES], burst[DUMMY_BYTES + 1]]);
+        let mut frame = [0u8; FRAME_LENGTH];
+        frame[DUMMY_BYTES..].copy_from_slice(&burst[ACCEL_HALF..]);
+        let sample = Sample::decode(&frame);
+        if !sample.is_sample() {
+            return Ok((Fresh::default(), sample));
+        }
+        let half = |start: usize| {
+            let mut bytes = [0u8; HALF_LENGTH];
+            bytes.copy_from_slice(&burst[start..start + HALF_LENGTH]);
+            bytes
+        };
+        let fresh = self.flags.judge(
+            status & ACCEL_DATA_READY != 0,
+            &half(ACCEL_HALF),
+            status & GYRO_DATA_READY != 0,
+            &half(GYRO_HALF),
+        );
+        Ok((fresh, sample))
     }
 
     /// The on-demand self-test (bmi323.probe): the identity reads back, then one burst reads. The firmware logs the
@@ -324,8 +413,9 @@ impl<Bus: I2c> Device<Bus> for Bmi323 {
 
     /// The identity (past the dummy bytes), the reset and configuration, the start-up wait, then the INT1 routing
     /// (bmi323.setup's bus half). A gyro that never starts is [`Fault::Timeout`]: plan B's 'gyro never left its
-    /// start-up state'.
+    /// start-up state'. The stored data bytes are forgotten first ([`Bmi323::forget`]).
     fn setup(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs) -> Result<(), Fault<Bus::Error>> {
+        self.forget();
         let read = self.identity(bus)?;
         if read != IDENTITY {
             return Err(Fault::Identity {
@@ -340,8 +430,9 @@ impl<Bus: I2c> Device<Bus> for Bmi323 {
 
     /// Re-apply the configuration after a reset underneath it: a BMI323 that took the ICP's general call powers up
     /// with both sensors DISABLED and would publish nothing. The reset, the configuration, the start-up wait, and
-    /// (unlike plan B, see the module notes) the INT1 routing again.
+    /// (unlike plan B, see the module notes) the INT1 routing again; the stored data bytes are forgotten.
     fn rearm(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs) -> Result<(), Fault<Bus::Error>> {
+        self.forget();
         self.configure(bus, delay)?;
         self.await_gyro(bus, delay)?;
         self.route_interrupt(bus)
