@@ -67,12 +67,32 @@ session.csv down to this input's boots. It refuses before writing anything (exit
 --force says to replace them; under --force a second run into the same directory gives the same files.
 
     python3 tools/ring_split.py <input> <outdir> [--boot N] [--raw-capture FILE] [--format image|capture] [--force]
+    python3 tools/ring_split.py <image> --blocks [--boot N] [--format image]
 
 --boot N keeps that boot alone. --raw-capture FILE also writes one boot's lines in order, as a wire capture for
 flight_telemetry: what `GET /ring?boot=N` streams. It needs --boot when the input holds several boots. A summary
-line is printed per slot state, per run of another version's blocks, and per boot. Exit 0 on success, 1 when
-nothing this tool reads was found (or not the boot asked for), 2 for a usage error, an image longer than the
-partition, or a file that would be replaced without --force.
+line is printed per slot state, per run of another version's blocks, and per boot.
+
+--blocks lists an image's blocks instead, and writes nothing (so it takes no outdir): after the slot counts, one
+line per block in block-sequence order, every block of that boot alone under --boot N:
+
+    block #<sequence> boot <id> session <label> flight|pad: uptime <first>-<last>, rows <file>=<count> ...,
+        torn chunks <n>, damaged chunks <n>
+
+`flight` is the header's flag, set on a block opened in BOOSTING..DONE; `pad` is every other block. `uptime` spans
+the block's records, the earliest to the latest (a log line drained after a row can be older than it), `none` when
+no record decodes. `rows` counts the ROW and LOG records per file name, sorted, as they were programmed: a chunk
+programmed twice counts twice, a HEADER record is no row, and a LOG record's file is recorder.log. A name the saver
+would not file prints its control bytes as spaces and its bytes past ASCII as `\\xNN`. The chunk counts are the
+walk's: whether a torn chunk is a loss (its boot may go on past it) is the split's summary to say. A block of
+another layout version gets its header's fields and `layout version <v>, not read`. The listing shows which blocks
+carry the flight flag: every record from BOOSTING to DONE lies in a flight block, and a block opened just before
+the rise may carry the flag too (doc/specs/avionics-port.md "Ring geometry and block life cycle"). A capture holds
+no blocks, so --blocks refuses one.
+
+Exit 0 on success, 1 when nothing this tool reads was found (or not the boot asked for; under --blocks, no block
+of any version), 2 for a usage error (an outdir with --blocks or none without it, --blocks over a capture), an image
+longer than the partition, or a file that would be replaced without --force.
 """
 
 import argparse
@@ -629,6 +649,31 @@ def _classify(slot: bytes) -> tuple:
     return ('block' if header.version == _VERSION else 'other version'), header
 
 
+def read_slots(image: bytes) -> tuple:
+    """
+    Classify a ring image's slots (_classify()) and order its blocks.
+
+    Args:
+        image - the partition's bytes from its offset 0: at most its 6144 slots, which main() checks. When it ends
+            inside a slot, that slot is read up to there if a block header fits (see cut_note()).
+
+    Returns:
+        (slots, blocks): how many slots are in each state {'block', 'erased', 'foreign', 'other version': count},
+        a cut slot too short for a header not counted; and every block of any layout version as (block sequence,
+        slot, header, its bytes), in block-sequence order.
+    """
+    slots = dict.fromkeys(('block', 'erased', 'foreign', 'other version'), 0)
+    blocks = []
+    whole, rest = divmod(len(image), _BLOCK_BYTES)
+    for slot in range(whole + (rest >= _BLOCK_HEADER.size)):
+        data = image[slot * _BLOCK_BYTES : (slot + 1) * _BLOCK_BYTES]
+        state, header = _classify(data)
+        slots[state] += 1
+        if header is not None:
+            blocks.append((header.block_sequence, slot, header, data))
+    return slots, sorted(blocks)
+
+
 def read_image(image: bytes) -> tuple:
     """
     Read a ring image: classify its slots, then decode its blocks in block-sequence order.
@@ -639,31 +684,23 @@ def read_image(image: bytes) -> tuple:
             cut runs through is no loss: the read ends there, not the boot.
 
     Returns:
-        (boots, slots, others): the _Boot of each boot found, in block order; how many slots are in each state
-        {'block', 'erased', 'foreign', 'other version': count}, a cut slot too short for a header not counted;
-        and the runs of another version's blocks in sequence order, each [header of its first block, [block
-        sequences], flight blocks].
+        (boots, slots, others): the _Boot of each boot found, in block order; how many slots are in each state, as
+        read_slots() counts them; and the runs of another version's blocks in sequence order, each [header of its
+        first block, [block sequences], flight blocks].
     """
-    slots = dict.fromkeys(('block', 'erased', 'foreign', 'other version'), 0)
-    blocks, other = [], []
+    slots, found = read_slots(image)
     whole, rest = divmod(len(image), _BLOCK_BYTES)
     cut = whole if rest else None  # the slot the read ends inside
-    for slot in range(whole + (rest >= _BLOCK_HEADER.size)):
-        data = image[slot * _BLOCK_BYTES : (slot + 1) * _BLOCK_BYTES]
-        state, header = _classify(data)
-        slots[state] += 1
-        if state == 'block':
-            blocks.append((header.block_sequence, slot, header, data))
-        elif state == 'other version':
-            other.append((header.block_sequence, slot, header))
+    blocks = [block for block in found if block[2].version == _VERSION]
     others, owner = [], None
-    for _sequence, _slot, header in sorted(other):
+    for _sequence, _slot, header, _data in found:
+        if header.version == _VERSION:
+            continue
         if owner != (header.version, header.boot_id, header.session):  # the next build's, boot's or session's run
             owner = (header.version, header.boot_id, header.session)
             others.append([header, [], 0])
         others[-1][1].append(header.block_sequence)
         others[-1][2] += header.flight
-    blocks.sort()
     last = {(header.boot_id, header.session): index for index, (_sequence, _slot, header, _data) in enumerate(blocks)}
     boots, decoder = [], _Decoder()
     for index, (block_sequence, slot, header, data) in enumerate(blocks):
@@ -693,6 +730,13 @@ def cut_note(image: bytes) -> str | None:
         rest,
         whole,
     )
+
+
+def ring_summary(image: bytes, slots: dict) -> list:
+    """An image's head lines: its slots per state (read_slots()), then cut_note()'s line when it ends in a slot."""
+    counts = ', '.join('%d %s' % (count, state) for state, count in slots.items())
+    note = cut_note(image)
+    return ['ring: %d slots: %s' % (sum(slots.values()), counts)] + ([] if note is None else [note])
 
 
 def read_capture(capture: bytes) -> list:
@@ -918,6 +962,73 @@ def other_summary(header: _BlockHeader, sequences: list, flight: int) -> str:
     return '%s %s, not read: this tool reads layout version %d' % (head, blocks, _VERSION)
 
 
+def block_line(header: _BlockHeader, block: bytes) -> str:
+    """
+    One block's --blocks line (see the module notes): its header's sequence, boot, session and flight flag, then
+    what its chunks hold, walked as the decoder walks them.
+
+    Args:
+        header - its header, of any layout version: the chunks of another version's block are not read.
+        block - its bytes from offset 0.
+
+    Returns:
+        The line.
+    """
+    head = 'block #%d boot %d session %s %s:' % (
+        header.block_sequence,
+        header.boot_id,
+        header.session,
+        'flight' if header.flight else 'pad',
+    )
+    if header.version != _VERSION:
+        return '%s layout version %d, not read: this tool reads layout version %d' % (head, header.version, _VERSION)
+    rows, uptimes, torn, damaged = {}, [], 0, 0
+    for walked in _chunks(block):
+        if walked[0] == 'torn':
+            torn += 1
+            continue
+        for record in _records(walked[3]):
+            if record is None:
+                damaged += 1
+                break
+            kind, uptime_us, name, _count, _body = record
+            uptimes.append(uptime_us)
+            if kind != _HEADER_KIND:
+                rows[name] = rows.get(name, 0) + 1
+    span = '%d-%d' % (min(uptimes), max(uptimes)) if uptimes else 'none'
+    files = ' '.join(
+        '%s=%d' % (name.translate(_SPACES).decode('ascii', 'backslashreplace'), count)
+        for name, count in sorted(rows.items())
+    )
+    return '%s uptime %s, rows %s, torn chunks %d, damaged chunks %d' % (head, span, files or 'none', torn, damaged)
+
+
+def list_blocks(image: bytes, boot_id: int | None) -> int:
+    """
+    --blocks: print the image's head lines (ring_summary()), then one line per block (block_line()) in
+    block-sequence order. Nothing is written.
+
+    Args:
+        image - the partition's bytes from its offset 0, as main() checked them.
+        boot_id - list the blocks whose header names this boot alone; None lists every block.
+
+    Returns:
+        0 when a block was listed; 1 when none was (an erased or foreign ring, or no block of that boot), said on
+        stderr.
+    """
+    slots, blocks = read_slots(image)
+    print('\n'.join(ring_summary(image, slots)))
+    listed = [(header, data) for _sequence, _slot, header, data in blocks if boot_id in (None, header.boot_id)]
+    for header, data in listed:
+        print(block_line(header, data))
+    if listed:
+        return 0
+    found = ', '.join(str(boot) for boot in sorted({header.boot_id for _sequence, _slot, header, _data in blocks}))
+    wanted = '' if boot_id is None else ' for boot %d (boots found: %s)' % (boot_id, found or 'none')
+    print('no block found' + wanted, file=sys.stderr)
+    return 1
+
+
 def main(arguments: list | None = None) -> int:
     """
     Command line: see the module notes.
@@ -926,35 +1037,40 @@ def main(arguments: list | None = None) -> int:
         arguments - the arguments after the program name; None reads sys.argv.
 
     Returns:
-        0 on success, 1 when nothing this tool reads was found (or not the boot asked for). A usage error, an
-        image longer than the partition and a file the run would replace without --force exit 2, before anything
-        is written.
+        0 on success, 1 when nothing this tool reads was found (or not the boot asked for; under --blocks, no
+        block of any version). A usage error, an image longer than the partition and a file the run would replace
+        without --force exit 2, before anything is written.
     """
     parser = argparse.ArgumentParser(description='Split a flash ring dump into session directories.')
     parser.add_argument('input', help='a raw ring image (GET /ring/image, esptool read_flash) or a GET /ring dump')
-    parser.add_argument('outdir', help='where the session directories and the global session.csv go')
+    parser.add_argument('outdir', nargs='?', help='where the session directories and the global session.csv go')
     parser.add_argument('--boot', type=int, help='keep only this boot id')
     parser.add_argument('--raw-capture', metavar='FILE', help="also write one boot's lines as a wire capture")
     parser.add_argument('--format', choices=('image', 'capture'), help='override the guess from the first byte')
     parser.add_argument('--force', action='store_true', help='replace the files that are in outdir already')
-    options = parser.parse_args(arguments)
+    parser.add_argument('--blocks', action='store_true', help="list an image's blocks, one line each; write nothing")
+    options = parser.parse_intermixed_args(arguments)  # an outdir after --blocks still fills `outdir`
+    if options.blocks and (options.outdir is not None or options.raw_capture or options.force):
+        parser.error('--blocks lists the blocks and writes nothing: it takes no outdir, --raw-capture or --force')
+    if not options.blocks and options.outdir is None:
+        parser.error('the outdir is missing: only --blocks writes nothing')
     with open(options.input, 'rb') as handle:
         data = handle.read()
     image = (options.format or ('capture' if data[:1] in (b'@', b'{') else 'image')) == 'image'
+    if options.blocks and not image:
+        parser.error('--blocks reads a ring image, and a capture holds no blocks')
     if image and len(data) > _BLOCKS * _BLOCK_BYTES:
         parser.error(
             'the image is %d bytes, longer than the %d of the log partition: give the partition alone, as GET '
             '/ring/image or `esptool.py read_flash 0x800000 0x1800000 ring.bin` reads it (out of a whole-flash dump: '
             '`dd if=<dump> of=ring.bin bs=4096 skip=2048 count=6144`)' % (len(data), _BLOCKS * _BLOCK_BYTES)
         )
+    if options.blocks:
+        return list_blocks(data, options.boot)
     others = []
     if image:
         boots, slots, others = read_image(data)
-        counts = ', '.join('%d %s' % (count, state) for state, count in slots.items())
-        print('ring: %d slots: %s' % (sum(slots.values()), counts))
-        note = cut_note(data)
-        if note is not None:
-            print(note)
+        print('\n'.join(ring_summary(data, slots)))
         for header, sequences, flight in others:
             print(other_summary(header, sequences, flight))
     else:

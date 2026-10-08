@@ -17,7 +17,9 @@
 //!  * [`binding`] -- plan B's bind() defaults: the bus and address an entry's driver talks over (i2cbus.py:275-301,
 //!    spibus.py:196-219), ported once so no call site compares the raw `bus`, `id` and `addr` fields itself;
 //!  * [`stream`] -- the telemetry stream a recorded device writes: its file, columns, window and durability
-//!    (module `streams`).
+//!    (module `streams`);
+//!  * [`readiness`] -- `verify`'s flight-readiness verdict, the config choices no probe can see (cc_client.py:47-107);
+//!  * [`ring_gate`] -- the flash ring's refusal of `arm` and `verify`, under plan B's recorder probe's words.
 //!
 //! The device directory, its pins and its `provides` come from board_config's typed view, read from the post-layout
 //! document, as plan B's Controller reads the config layout.resolve has rewritten (main.py:97-101).
@@ -40,6 +42,8 @@
 //!  * A device whose loop crashed stays in plan B's `failures` in crash order; [`Table`] lists every reader in
 //!    directory order. Only the key order of a JSON object differs.
 
+mod readiness;
+mod ring_gate;
 mod streams;
 
 use std::fmt;
@@ -50,7 +54,9 @@ use board_config::Entry;
 use board_config::python::formatted;
 use serde_json::Value;
 
-pub use streams::{BAROMETER_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, Stream, stream};
+pub use readiness::readiness;
+pub use ring_gate::ring_gate;
+pub use streams::{BAROMETER_FIELDS, IMU_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, stream};
 
 /// The pause between two setup attempts of one device, in milliseconds: a flaky breadboard contact settles
 /// (controller.py:418 `asyncio.sleep_ms(200)`).

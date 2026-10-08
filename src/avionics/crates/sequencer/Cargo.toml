@@ -1,11 +1,13 @@
 [package]
 name = "sequencer"
-description = "The flight stages and the stage machine (src/glider controller.Stage, tasks/sequencer.py, commons dwell_step/apogee_step)"
+description = "The flight stages, the flight word and the stage machine (src/glider controller.py, tasks/sequencer.py, commons dwell_step/apogee_step)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[dependencies]
+serde_json.workspace = true  # Settings::from_config reads the sequencer's board-config block
+
 [dev-dependencies]
 golden.workspace = true
-serde_json.workspace = true

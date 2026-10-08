@@ -21,12 +21,17 @@ strict, recorder_flight's wrapped reader), the duplicate filter dropping exactly
 twice, and the reused label flagged as a splice. A `GET /ring` capture of the same lines splits into the same
 files, and so does one that starts mid-boot or holds a damaged `boot` row. An image cut inside a chunk reads up to
 the cut with no loss for it. A ring that a reboot in flight left in two layouts (the board came back on an older
-build) keeps the other layout's flight blocks apart: reported from their header, never filed. Negative: names and
-labels that would leave the output directory, foreign headers (torn, a label off the alphabet or with a byte after
-its end, an erased header over dirty bytes), an erased or foreign ring, an absent boot, a boot only in another
-layout, an unproven capture, a `boot` row that never names the boot before it, --raw-capture over several boots, a
-cut before a block header fits, an image longer than the partition, and a split into a directory whose files it
-would replace (an SD pull's) without --force. Stdlib only. Run by `make test`.
+build) keeps the other layout's flight blocks apart: reported from their header, never filed. --blocks lists a pad,
+flight, pad ring one line per block (sequence order past the wrap, the flight flag, the span of the records'
+uptimes with a log line from the pad drained last into the first flight block, rows per file), the same ring cut
+inside a chunk, and the board-sized ring with each block's torn and damaged chunks as the boots' summaries count
+them and a name past ASCII with a control byte escaped. Negative: names and labels that would leave the output
+directory, foreign headers (torn, a label off the alphabet or with a byte after its end, an erased header over dirty
+bytes), an erased or foreign ring, an absent boot, a boot only in another layout, an unproven capture, a `boot` row
+that never names the boot before it, --raw-capture over several boots, a cut before a block header fits, an image
+longer than the partition, a split into a directory whose files it would replace (an SD pull's) without --force,
+and under --blocks a torn block (no row counted), a torn header (no line), another layout's block (its header
+alone), a capture, an outdir, no block found (with or without boots to name). Stdlib only. Run by `make test`.
 """
 
 import binascii
@@ -313,6 +318,7 @@ def _scenario() -> tuple:
     first.program([
         first.row(b'a/b.csv', _cells(('i32', 1)), '1', routed=False),  # a path: recorder.log
         first.row(b'../evil.csv', _cells(('i32', 2)), '2', routed=False),
+        first.row(b'caf\xc3\xa9\t.csv', _cells(('i32', 3)), '3', routed=False),  # not ASCII, a control byte
         (_record(_HEADER_KIND, b'ab', first.stamp(), b'uptime;x'), recorder_wire.wrap('uptime;x').encode()),
         (_record(_HEADER_KIND, b'ab', first.stamp(), b'uptime;x'), recorder_wire.wrap('uptime;x').encode()),
         first.row(b'position.csv', _cells(('i32', 1), ('text', b'\xff\xfe'), ('i32', 2)), '1'),  # not UTF-8: ends
@@ -426,8 +432,8 @@ def test_a_ring_splits_into_its_sessions():
         # a record 22 bytes long (not a multiple of 4) damages its chunk
         'boot 42 session flightday: blocks 1 (#8001-#8001), missing blocks 0, flight blocks 0, chunks 4, records 7, '
         'lines 8, torn chunks 1, lost chunks 1, damaged chunks 1, duplicates 0',
-        'boot 7 session 000007: blocks 2 (#9000-#9001), missing blocks 0, flight blocks 0, chunks 11, records 28, '
-        'lines 28, torn chunks 2, lost chunks 1, damaged chunks 0, duplicates 3',
+        'boot 7 session 000007: blocks 2 (#9000-#9001), missing blocks 0, flight blocks 0, chunks 11, records 29, '
+        'lines 29, torn chunks 2, lost chunks 1, damaged chunks 0, duplicates 3',
         'boot 8 session 000008: blocks 3 (#9002-#9005), missing blocks 1, flight blocks 2, chunks 6, records 13, '
         'lines 14, torn chunks 2, lost chunks 1, damaged chunks 1, duplicates 0',
         'wrote 13 files under %s' % out,
@@ -504,7 +510,7 @@ def test_the_sessions_are_a_luckfox_dump():
     image, (early, _late, first, second) = _scenario()
     out = _folder()
     assert _run(_write(image), out).returncode == 0
-    for board, (imu_rows, dropped, board_log) in zip((first, second), ((7, 2, 7), (7, 0, 2))):
+    for board, (imu_rows, dropped, board_log) in zip((first, second), ((7, 2, 8), (7, 0, 2))):
         directory = os.path.join(out, board.session)
         capture = os.path.join(_folder(), 'capture.txt')
         printed = io.StringIO()
@@ -691,6 +697,168 @@ def test_a_revert_keeps_the_other_layouts_flight_apart():
         'nothing valid found; blocks of layout version 2 are not read by this tool (it reads 1)'), result.stderr
 
 
+def _flight_ring() -> bytes:
+    """
+    A short ring of boot 8 through a flight, as the writer leaves it: a pad block, two flight blocks (the writer
+    closes its block at BOOSTING, and again at DONE once the last LANDING records are programmed), then two pad
+    blocks past the wrap, the last torn by a power cut before its only chunk landed whole. A log line stamped before
+    the rise drains into the first flight block, last in its chunk (the writer merges the held log lines after it
+    drains the rows), so the block's first record is not its earliest nor its last the latest. A whole chunk after
+    DONE stops decoding. Beside them: a header
+    torn by a cut (a foreign slot) and a block of another layout version whose chunk would decode under this one.
+    Every record is stamped 10 ms after the last from 1 s on, the drained log line and the records past the damage
+    and the tear excepted.
+
+    Returns:
+        The image: 8 slots.
+    """
+    image = bytearray(b'\xff' * (8 * _BLOCK_BYTES))
+    imu = (_IMU, _imu_cells(), '0.98;0.05;0.01;12;-3;5;1')
+    board = _Board(image, 8, '000008', 1_000_000)
+    board.open(4, 500)  # the pad: the index header and the boot row, the IMU header and two rows
+    board.program(board.boot_row())
+    board.program([board.header(_IMU, _IMU_FIELDS), board.row(*imu), board.row(*imu)])
+    board.open(5, 501, flight=True)  # BOOSTING: the sequencer's header and row, two rows, then a log line from the pad
+    board.program(
+        [
+            board.header(b'sequencer.csv', 'uptime;stage;reason'),
+            board.row(b'sequencer.csv', _cells(('text', b'boosting'), ('text', b'launch')), 'boosting;launch'),
+            board.row(*imu),
+            board.row(*imu),
+            board.log(b'Recorder', b'queued before the rise', uptime_us=1_045_000),  # merged after the rows drain
+        ]
+    )
+    board.open(6, 502, flight=True)  # GLIDING, LANDING and DONE in the flight's next block
+    board.program(
+        [
+            board.row(b'sequencer.csv', _cells(('text', b'gliding'), ('text', b'separated')), 'gliding;separated'),
+            board.row(*imu),
+            board.row(b'sequencer.csv', _cells(('text', b'landing'), ('text', b'agl 3m')), 'landing;agl 3m'),
+            board.row(b'sequencer.csv', _cells(('text', b'done'), ('text', b'still')), 'done;still'),
+        ]
+    )
+    board.open(0, 503)  # after DONE, past the wrap: a row and the status line, then a chunk damaged after a row
+    board.program([board.row(*imu), board.status()])
+    board.program([board.row(*imu), (bytes(8), None), board.row(*imu)], damaged_at=1)
+    board.open(1, 504)  # the power went while its only chunk was programmed
+    board.program([board.row(*imu) for _row in range(3)], keep=False, cut=40)
+    image[2 * _BLOCK_BYTES : 2 * _BLOCK_BYTES + 20] = _block_header(1, False, 505, 8, b'000008')[:20]  # torn header
+    newer = _block_header(2, True, 499, 6, b'000006') + _chunk([_record(_ROW_KIND, _IMU, 1, b'')])
+    image[3 * _BLOCK_BYTES : 3 * _BLOCK_BYTES + len(newer)] = newer  # another build's flight block
+    return bytes(image)
+
+
+def test_blocks_lists_a_pad_flight_pad_ring():
+    """
+    --blocks lists each block in sequence order, past the wrap, with its flight flag, the span of its records'
+    uptimes from the earliest to the latest (the log line drained last into the first flight block is its earliest)
+    and its rows per file, writing nothing. An image cut inside a chunk says where it ends, and its block counts the
+    chunk the cut runs through as torn. NEGATIVE: the torn block's chunk counts no row, the damaged chunk none past
+    its damage, the torn header lists nothing (a foreign slot), and the other layout's block is listed from its
+    header alone, its chunk unread.
+    """
+    path = _write(_flight_ring())
+    result = _run(path, '--blocks')
+    assert result.returncode == 0 and not result.stderr, result.stderr
+    assert result.stdout.splitlines() == [
+        'ring: 8 slots: 5 block, 1 erased, 1 foreign, 1 other version',
+        'block #499 boot 6 session 000006 flight: layout version 2, not read: this tool reads layout version 1',
+        'block #500 boot 8 session 000008 pad: uptime 1000000-1040000, rows imu_lsm6dso32.csv=2 session.csv=1, '
+        'torn chunks 0, damaged chunks 0',
+        'block #501 boot 8 session 000008 flight: uptime 1045000-1080000, rows imu_lsm6dso32.csv=2 recorder.log=1 '
+        'sequencer.csv=1, torn chunks 0, damaged chunks 0',
+        'block #502 boot 8 session 000008 flight: uptime 1090000-1120000, rows imu_lsm6dso32.csv=1 sequencer.csv=3, '
+        'torn chunks 0, damaged chunks 0',
+        'block #503 boot 8 session 000008 pad: uptime 1130000-1150000, rows imu_lsm6dso32.csv=2 recorder.log=1, '
+        'torn chunks 0, damaged chunks 1',
+        'block #504 boot 8 session 000008 pad: uptime none, rows none, torn chunks 1, damaged chunks 0',
+    ], result.stdout
+    # --boot keeps the blocks whose header names that boot, another layout's included
+    result = _run(path, '--blocks', '--boot', '6')
+    assert result.returncode == 0 and result.stdout.splitlines()[1:] == [
+        'block #499 boot 6 session 000006 flight: layout version 2, not read: this tool reads layout version 1',
+    ], result.stdout
+    assert len(_run(path, '--blocks', '--boot', '8').stdout.splitlines()) == 1 + 5
+    # the split of the same ring counts the same flight blocks
+    assert 'blocks 5 (#500-#504), missing blocks 0, flight blocks 2,' in _run(path, _folder()).stdout
+    # cut 20 bytes into block 503's second chunk (slot 0): its first chunk is read, the one cut through is torn
+    image = _flight_ring()
+    first_chunk = struct.unpack_from('<H', image, _HEADER_BYTES)[0]
+    cut = _HEADER_BYTES + -(-(8 + first_chunk) // 8) * 8 + 20
+    result = _run(_write(image[:cut]), '--blocks')
+    assert result.returncode == 0 and result.stdout.splitlines() == [
+        'ring: 1 slots: 1 block, 0 erased, 0 foreign, 0 other version',
+        'cut: the image ends %d bytes into slot 0: that slot is read up to the cut, past which it is not' % cut,
+        'block #503 boot 8 session 000008 pad: uptime 1130000-1140000, rows imu_lsm6dso32.csv=1 recorder.log=1, '
+        'torn chunks 1, damaged chunks 0',
+    ], result.stdout
+
+
+def test_blocks_over_the_board_sized_ring():
+    """
+    --blocks over the board-sized ring: the blocks in sequence order across the wrap (slot order is not), each
+    one's flag and its torn and damaged chunks as the boots' summaries count them, a chunk programmed twice counting
+    its rows twice, and names the saver would not file counted under their own names, control bytes printed as
+    spaces and bytes past ASCII as escapes.
+    """
+    image, _boards = _scenario()
+    result = _run(_write(image), '--blocks')
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == 'ring: 6144 slots: 7 block, 6130 erased, 6 foreign, 1 other version', lines[0]
+    pattern = re.compile(
+        r'block #(\d+) boot (\d+) session \S+ (flight|pad): (?:layout version 2|.*, torn chunks '
+        r'(\d+), damaged chunks (\d+))'
+    )
+    found = [pattern.fullmatch(line.split(', not read:')[0]).groups() for line in lines[1:]]
+    assert found == [
+        ('8000', '41', 'pad', '0', '0'),
+        ('8001', '42', 'pad', '1', '1'),
+        ('8990', '6', 'flight', None, None),
+        ('9000', '7', 'pad', '0', '0'),
+        ('9001', '7', 'pad', '2', '0'),
+        ('9002', '8', 'pad', '1', '0'),
+        ('9003', '8', 'flight', '0', '1'),
+        ('9005', '8', 'flight', '1', '0'),
+    ], found
+    rows = {line.split(' ')[1]: line.split(', rows ')[1].split(', torn')[0] for line in lines[1:] if ', rows ' in line}
+    assert rows['#9000'] == 'floats.csv=1 imu_lsm6dso32.csv=5 position.csv=2 recorder.log=2 session.csv=1', rows
+    # a name's control byte prints as a space and its bytes past ASCII as escapes
+    assert rows['#9001'] == (
+        '../evil.csv=1 a/b.csv=1 caf\\xc3\\xa9 .csv=1 floats.csv=1 imu_lsm6dso32.csv=3 position.csv=2 recorder.log=1'
+    ), rows
+
+
+def test_blocks_refuses_what_it_cannot_list():
+    """
+    NEGATIVE: --blocks writes nothing, so an outdir, --raw-capture or --force with it is a usage error, as is no
+    outdir without it; a capture holds no blocks; an oversized image is refused as the split refuses it; an erased
+    ring (asked for a boot or not, it finds none) and an absent boot list no block (exit 1).
+    """
+    path, out = _write(_flight_ring()), _folder()
+    for extra in ([out], ['--raw-capture', os.path.join(out, 'raw.txt')], ['--force']):
+        result = _run(path, '--blocks', *extra)
+        assert result.returncode == 2 and 'it takes no outdir, --raw-capture or --force' in result.stderr, extra
+    assert os.listdir(out) == [], 'nothing written'
+    result = _run(path)
+    assert result.returncode == 2 and 'the outdir is missing: only --blocks writes nothing' in result.stderr
+    image, boards = _scenario()
+    capture = _write(b''.join(line for board in boards for line in board.kept))
+    for extra in ([], ['--format', 'capture']):
+        result = _run(capture, '--blocks', *extra)
+        assert result.returncode == 2 and 'a capture holds no blocks' in result.stderr, (extra, result.stderr)
+    result = _run(_write(image + b'\xff'), '--blocks')
+    assert result.returncode == 2 and 'longer than the %d of the log partition' % len(image) in result.stderr
+    erased = _write(b'\xff' * (4 * _BLOCK_BYTES))
+    result = _run(erased, '--blocks')
+    assert result.returncode == 1 and result.stderr == 'no block found\n', result.stderr
+    assert result.stdout == 'ring: 4 slots: 0 block, 4 erased, 0 foreign, 0 other version\n', result.stdout
+    result = _run(erased, '--blocks', '--boot', '3')
+    assert result.returncode == 1 and result.stderr == 'no block found for boot 3 (boots found: none)\n', result.stderr
+    result = _run(path, '--blocks', '--boot', '99')
+    assert result.returncode == 1 and result.stderr == 'no block found for boot 99 (boots found: 6, 8)\n'
+
+
 def test_demux_is_recorderds_rule_with_the_savers_routing():
     """demux() files as recorderd's processBuffer does, and refuses any routing that is not a plain file name."""
     vectors = [
@@ -737,6 +905,9 @@ test_one_boot_and_its_raw_capture()
 test_a_cut_or_oversized_image()
 test_a_ring_capture_splits_like_the_image()
 test_a_revert_keeps_the_other_layouts_flight_apart()
+test_blocks_lists_a_pad_flight_pad_ring()
+test_blocks_over_the_board_sized_ring()
+test_blocks_refuses_what_it_cannot_list()
 test_demux_is_recorderds_rule_with_the_savers_routing()
 test_nothing_valid_exits_1()
 print(
@@ -745,5 +916,6 @@ print(
     'chunk its boot goes on past, damaged chunks, a missing block, three losses stamped per boot) byte for byte, no '
     'file replaced without --force, the sessions as a Luckfox dump through the duplicate filter, one boot and its raw '
     'capture, a cut and an oversized image, a /ring capture splitting like the image (mid-boot, a damaged boot row), '
-    "a revert leaving another layout's flight apart, recorderd demux with the saver routing, nothing valid"
+    "a revert leaving another layout's flight apart, --blocks over a pad/flight/pad ring and the board-sized one (a "
+    'torn block, another layout, the refusals), recorderd demux with the saver routing, nothing valid'
 )

@@ -16,10 +16,15 @@
 //!   timeout.
 //! - Any airborne stage -> DONE: the RSO flight timeout, `flight_timeout_ms` after BOOSTING entry.
 //!
-//! [`StageMachine::step`] is `_tick`, pure: the caller passes the time, the stage the `StageCell` holds, the
-//! fresh readings and the operator hold, and gets back what to record and where to go. It reads no clock and
-//! no channel, allocates nothing, and the caller applies the advance to the `StageCell` before the next step
-//! (plan B's `_advance` set the Controller's stage on the spot).
+//! [`StageMachine::step`] is `_tick`, pure: the caller passes the time, the stage and the hold the flight word
+//! holds, and the fresh readings, and gets back what to record and where to go. It reads no clock and no channel,
+//! allocates nothing, and the caller commits the advance through the flight word's writer
+//! ([`crate::FlightWriter::advance`]) before the next step (plan B's `_advance` set the Controller's stage on the
+//! spot).
+//!
+//! [`Settings::from_config`] reads the sequencer's board-config block at bring-up and refuses a value it cannot run
+//! as written (text, a fractional or negative ms, or one longer than its clock reaches): the board then fails the
+//! entry, so `arm` refuses. Plan B crashed a detector in flight on text, and flew a fractional or negative ms.
 //!
 //! **Freshness is the whole point.** Plan B's `Databoard.value()` answered a stale channel by extrapolating its
 //! last two samples without bound, and production consumers used it: the laser only reaches about 4 m, so for
@@ -33,16 +38,20 @@
 
 use core::fmt;
 
+use serde_json::Value;
+
 use crate::commons::{self, Apogee, Dwell};
 use crate::controller::Stage;
 
-/// The stage machine's thresholds: the sequencer's board-config keys, each field named after its key (the
-/// contract), with plan B's `Sequencer.setup()` defaults for a missing one ([`Settings::default`]).
-///
-/// The loop period (`period_ms`) is not here: the control thread paces the step (every 5th tick at 100 Hz),
-/// and the machine only ever sees the time it is given. `disable_gc_flight` is not ported.
+/// The sequencer's board-config keys, each field named after its key (the contract): the step period and the
+/// stage machine's thresholds, read by [`Settings::from_config`] with plan B's `Sequencer.setup()` defaults for a
+/// missing one ([`Settings::default`]). `disable_gc_flight` is not ported.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
+    /// The step period in ms (plan B's loop sleep): the control thread steps the machine on a `period_ms` grid of
+    /// its uptime clock, on every tick when the tick is slower. The machine itself never reads it: it only ever
+    /// sees the time it is given.
+    pub period_ms: u32,
     /// The boost |accel| in g that starts the launch dwell. The measured v2 F15 stack (517 g) boosts at only
     /// ~2.84 g, so 3.0 would MISS the launch of the real airframe; config_default ships 2.5.
     pub launch_g: f32,
@@ -85,6 +94,7 @@ impl Default for Settings {
     /// Plan B's `Sequencer.setup()` defaults: what a board config without the key flies.
     fn default() -> Settings {
         Settings {
+            period_ms: 50,
             launch_g: 2.5,
             launch_ms: 100,
             launch_alt_m: 10.0,
@@ -97,6 +107,138 @@ impl Default for Settings {
             still_g: 0.3,
             ground_ms: 3000,
             land_timeout_ms: 10_000,
+        }
+    }
+}
+
+impl Settings {
+    /// Read the sequencer's board-config block: each key it carries over its [`Settings::default`].
+    ///
+    /// It takes every value plan B flies as written and refuses the rest. A g or metre key takes any JSON number, as
+    /// f32. A `*_ms` key takes a whole number of ms from 0 to 2147483647 (about 24.8 days, the longest the machine's
+    /// signed elapsed time reaches), written with a fraction of zero too (`300.0`, which plan B flies as 300).
+    /// Anything else is refused, naming the key, so the board fails the entry at bring-up and `arm` refuses. Plan B
+    /// with the same block: a text `launch_g` or `still_g` failed its setup; a text `period_ms` or `launch_alt_m`
+    /// crashed the task on the pad; a text `launch_ms` passed arm and crashed at ignition; the other keys passed arm
+    /// and crashed their stage's detector in flight; and a fractional or negative `*_ms` flew. Keys it does not know
+    /// (the entry's own, `disable_gc_flight`) are ignored, as plan B ignores them.
+    ///
+    /// Args: `config` the sequencer's entry.
+    ///
+    /// Returns: the settings, or the first key refused and why.
+    pub fn from_config(config: &Value) -> Result<Settings, SettingsError> {
+        let defaults = Settings::default();
+        Ok(Settings {
+            period_ms: milliseconds(config, "period_ms", defaults.period_ms)?,
+            launch_g: real(config, "launch_g", defaults.launch_g)?,
+            launch_ms: milliseconds(config, "launch_ms", defaults.launch_ms)?,
+            launch_alt_m: real(config, "launch_alt_m", defaults.launch_alt_m)?,
+            boost_timeout_ms: milliseconds(config, "boost_timeout_ms", defaults.boost_timeout_ms)?,
+            apogee_drop_m: real(config, "apogee_drop_m", defaults.apogee_drop_m)?,
+            apogee_arm_ms: milliseconds(config, "apogee_arm_ms", defaults.apogee_arm_ms)?,
+            flight_timeout_ms: milliseconds(config, "flight_timeout_ms", defaults.flight_timeout_ms)?,
+            land_agl_m: real(config, "land_agl_m", defaults.land_agl_m)?,
+            land_ms: milliseconds(config, "land_ms", defaults.land_ms)?,
+            still_g: real(config, "still_g", defaults.still_g)?,
+            ground_ms: milliseconds(config, "ground_ms", defaults.ground_ms)?,
+            land_timeout_ms: milliseconds(config, "land_timeout_ms", defaults.land_timeout_ms)?,
+        })
+    }
+}
+
+/// A g or metre key of `config`: any JSON number, as f32; `default` when the key is absent.
+fn real(config: &Value, key: &'static str, default: f32) -> Result<f32, SettingsError> {
+    let Some(value) = config.get(key) else {
+        return Ok(default);
+    };
+    value
+        .as_f64()
+        .map(|number| number as f32)
+        .ok_or_else(|| SettingsError::new(key, value, SettingsProblem::NotANumber))
+}
+
+/// The longest `*_ms` setting, `i32::MAX` (about 24.8 days): the machine compares a signed 32-bit elapsed time
+/// ([`commons::reached`]), which never reaches a longer threshold, so one would silently switch its detector or
+/// backstop off. Every `*_ms` key takes the same bound, `period_ms` included.
+const LONGEST_MS: u32 = i32::MAX as u32;
+
+/// A `*_ms` key of `config`: a whole number of ms up to [`LONGEST_MS`], an integer or a float with no fraction;
+/// `default` when the key is absent.
+fn milliseconds(config: &Value, key: &'static str, default: u32) -> Result<u32, SettingsError> {
+    let Some(value) = config.get(key) else {
+        return Ok(default);
+    };
+    let refused = |problem| Err(SettingsError::new(key, value, problem));
+    let Value::Number(number) = value else {
+        return refused(SettingsProblem::NotANumber);
+    };
+    if let Some(whole) = number.as_u64() {
+        return match u32::try_from(whole) {
+            Ok(whole) if whole <= LONGEST_MS => Ok(whole),
+            _ => refused(SettingsProblem::TooLong),
+        };
+    }
+    // a negative integer, or a float
+    let Some(float) = number.as_f64() else {
+        return refused(SettingsProblem::NotANumber);
+    };
+    if float < 0.0 {
+        return refused(SettingsProblem::Negative);
+    }
+    if float.fract() != 0.0 {
+        return refused(SettingsProblem::Fractional);
+    }
+    if float > f64::from(LONGEST_MS) {
+        return refused(SettingsProblem::TooLong);
+    }
+    Ok(float as u32)
+}
+
+/// A sequencer key [`Settings::from_config`] refused. [`fmt::Display`] writes `<key>: <value> <why>`, the text
+/// the board fails the entry with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingsError {
+    /// The key.
+    pub key: &'static str,
+    /// Its value as the config writes it (JSON text).
+    pub value: String,
+    /// What is wrong with it.
+    pub problem: SettingsProblem,
+}
+
+impl SettingsError {
+    /// The refusal of `key`, whose value is `value`.
+    fn new(key: &'static str, value: &Value, problem: SettingsProblem) -> SettingsError {
+        SettingsError {
+            key,
+            value: value.to_string(),
+            problem,
+        }
+    }
+}
+
+/// What is wrong with a refused sequencer key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsProblem {
+    /// Not a JSON number: text, true or false, null, a list or an object.
+    NotANumber,
+    /// A `*_ms` below zero.
+    Negative,
+    /// A `*_ms` with a fraction: plan B flew one, a clock in whole ms cannot.
+    Fractional,
+    /// A `*_ms` past 2147483647 (`i32::MAX`, about 24.8 days): the machine's signed elapsed time never reaches it.
+    TooLong,
+}
+
+impl fmt::Display for SettingsError {
+    /// `<key>: <value> <why>`.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (key, value) = (self.key, &self.value);
+        match self.problem {
+            SettingsProblem::NotANumber => write!(formatter, "{key}: {value} is not a number"),
+            SettingsProblem::Negative => write!(formatter, "{key}: {value} is negative"),
+            SettingsProblem::Fractional => write!(formatter, "{key}: {value} is not a whole number of ms"),
+            SettingsProblem::TooLong => write!(formatter, "{key}: {value} is past the longest, {LONGEST_MS} ms"),
         }
     }
 }
@@ -222,7 +364,7 @@ pub struct Transition {
 }
 
 impl Transition {
-    /// Whether the move came from outside the stage machine: the `StageCell` source field (§4.3).
+    /// Whether the move came from outside the stage machine (the separation switch, an operator, a warm start).
     pub fn external(&self) -> bool {
         self.reason == Reason::External
     }
@@ -237,7 +379,8 @@ impl Transition {
 pub struct Step {
     /// A stage someone else moved to since the last step, recorded with [`Reason::External`].
     pub external: Option<Transition>,
-    /// The stage this step advances to. The caller sets it in the `StageCell` before the next step.
+    /// The stage this step advances to. The caller commits it ([`crate::FlightWriter::advance`]) before the next
+    /// step.
     pub advance: Option<Transition>,
 }
 
@@ -327,11 +470,11 @@ impl StageMachine {
     /// ends where the machine last looked -- `stage gliding` for a fin check on the pad, then `stage setting` --
     /// is no change at all: nothing is recorded, nothing is reset, and a launch dwell credited before the hold
     /// survives it. The first boosting sample after it then spans the whole hold and completes the dwell alone:
-    /// a launch on ONE sample, and in Rust the detected ignition also turns the radio off (the M7 Wi-Fi policy).
+    /// a launch on ONE sample, and in Rust that detected launch also ends the link's reconnects.
     /// Plan B behaves so; ported as is and pinned by sequencer_trace `a_hold_hides_the_return_to_setting`. The
     /// same holds for a move back to the seen stage between an advance and the next step: it goes unrecorded.
     ///
-    /// Args: `now_ms` the caller's monotonic clock; `stage` the stage the `StageCell` holds now (with the
+    /// Args: `now_ms` the caller's monotonic clock; `stage` the stage the flight word holds now (with the
     /// previous step's advance applied); `readings` the fresh channels; `manual` the operator hold.
     pub fn step(&mut self, now_ms: u32, stage: Stage, readings: &Readings, manual: bool) -> Step {
         let mut step = Step::default();
@@ -408,7 +551,7 @@ impl StageMachine {
     /// Both inputs are FRESH or nothing. The accel is the trigger that STARTS the flight, and with the baro
     /// gated an extrapolated accel would be the only input left: a false launch on the pad from a channel no
     /// sensor feeds. Plan B paid for one with the GC off and the stage timeline running on the ground; in Rust it
-    /// also turns the radio off (the Wi-Fi policy keys on the detected ignition). A stale baro extrapolates past
+    /// also ends the link's reconnects (they key on the detected launch). A stale baro extrapolates past
     /// `launch_alt_m` the same way (the ICP-10111 read timeouts on the bench), and it must hold `launch_ms`
     /// through the same leaky dwell as the accel: one sample over the line was enough once, which a single spike
     /// or a glitched read could satisfy. And the GNSS elevation is no baro (see [`Source::Gnss`]).
@@ -531,7 +674,9 @@ impl StageMachine {
 
 #[cfg(test)]
 mod tests {
-    use super::{Reading, Readings, Reason, Settings, Source, Stage, StageMachine, Step, Transition};
+    use serde_json::json;
+
+    use super::{Reading, Readings, Reason, Settings, SettingsProblem, Source, Stage, StageMachine, Step, Transition};
 
     /// test_sequencer.py's SPEC: small thresholds for fast cases.
     fn spec() -> Settings {
@@ -1054,6 +1199,7 @@ mod tests {
     #[test]
     fn the_defaults_are_plan_b_setup_defaults() {
         let settings = Settings::default();
+        assert_eq!(settings.period_ms, 50);
         assert_eq!(
             (settings.launch_g, settings.launch_ms, settings.launch_alt_m),
             (2.5, 100, 10.0)
@@ -1075,5 +1221,149 @@ mod tests {
             (0.3, 3000, 10_000)
         );
         assert_eq!(StageMachine::new(settings).settings(), &settings);
+    }
+
+    /// Every key [`Settings::from_config`] reads.
+    const KEYS: [&str; 13] = [
+        "period_ms",
+        "launch_g",
+        "launch_ms",
+        "launch_alt_m",
+        "boost_timeout_ms",
+        "apogee_drop_m",
+        "apogee_arm_ms",
+        "flight_timeout_ms",
+        "land_agl_m",
+        "land_ms",
+        "still_g",
+        "ground_ms",
+        "land_timeout_ms",
+    ];
+
+    #[test]
+    fn an_empty_block_takes_plan_b_setup_defaults() {
+        assert_eq!(Settings::from_config(&json!({})), Ok(Settings::default()));
+        // the entry's own keys and the GC switch (not ported) are not settings, whatever they hold
+        let entry = json!({"name": "sequencer", "activity": "sequencer", "enabled": true, "disable_gc_flight": "on"});
+        assert_eq!(Settings::from_config(&entry), Ok(Settings::default()));
+    }
+
+    #[test]
+    fn the_shipped_block_reads_as_written() {
+        // src/glider config_default's sequencer entry
+        let entry = json!({
+            "name": "sequencer", "activity": "sequencer", "enabled": true, "period_ms": 50,
+            "launch_g": 2.5, "launch_ms": 100, "launch_alt_m": 10.0,
+            "apogee_drop_m": 5.0, "apogee_arm_ms": 4000, "boost_timeout_ms": 12000,
+            "land_agl_m": 5.0, "land_ms": 300, "still_g": 0.3, "ground_ms": 3000,
+            "land_timeout_ms": 10000, "flight_timeout_ms": 300000, "disable_gc_flight": true,
+        });
+        let expected = Settings {
+            boost_timeout_ms: 12_000,
+            ..Settings::default()
+        };
+        assert_eq!(Settings::from_config(&entry), Ok(expected));
+        // each key lands in its own field
+        for (index, key) in KEYS.into_iter().enumerate() {
+            let mut config = json!({});
+            config[key] = json!(index + 1);
+            let settings = Settings::from_config(&config).unwrap();
+            assert_ne!(settings, Settings::default(), "{key} was read");
+        }
+    }
+
+    #[test]
+    fn a_whole_number_of_ms_may_be_written_as_a_float() {
+        for (value, expected) in [
+            (json!(300.0), 300),
+            (json!(300), 300),
+            (json!(0), 0),
+            (json!(-0.0), 0),
+            (json!(1e3), 1000),
+            (json!(2_147_483_647), 2_147_483_647),
+            (json!(2_147_483_647.0), 2_147_483_647),
+        ] {
+            let settings = Settings::from_config(&json!({ "land_ms": value }));
+            assert_eq!(settings.map(|settings| settings.land_ms), Ok(expected), "{value}");
+        }
+        // a g or metre key takes any number, an integer included
+        let settings = Settings::from_config(&json!({"launch_g": 3, "land_agl_m": -2.5, "still_g": 1e-3})).unwrap();
+        assert_eq!(
+            (settings.launch_g, settings.land_agl_m, settings.still_g),
+            (3.0, -2.5, 0.001)
+        );
+    }
+
+    #[test]
+    fn the_longest_ms_it_takes_is_one_the_machine_reaches() {
+        let settings = Settings::from_config(&json!({"flight_timeout_ms": 2_147_483_647})).unwrap();
+        let mut machine = StageMachine::new(settings);
+        machine.step(0, Stage::Gliding, &Readings::default(), false);
+        assert_eq!(
+            machine.step(2_147_483_646, Stage::Gliding, &Readings::default(), false),
+            Step::default()
+        );
+        let step = machine.step(2_147_483_647, Stage::Gliding, &Readings::default(), false);
+        assert_eq!(rows(step), [(Stage::Done, "flight timeout".to_string())]);
+        // one ms longer, which it refuses: the signed elapsed time turns negative first, so the backstop never fires
+        let mut machine = StageMachine::new(Settings {
+            flight_timeout_ms: 2_147_483_648,
+            ..settings
+        });
+        machine.step(0, Stage::Gliding, &Readings::default(), false);
+        for now_ms in [2_147_483_647, 2_147_483_648, u32::MAX] {
+            assert_eq!(
+                machine.step(now_ms, Stage::Gliding, &Readings::default(), false),
+                Step::default(),
+                "{now_ms}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_it_cannot_run_as_written_is_refused_naming_the_key() {
+        let cases = [
+            (json!({"launch_g": "3"}), "launch_g: \"3\" is not a number"),
+            (json!({"still_g": null}), "still_g: null is not a number"),
+            (json!({"launch_alt_m": true}), "launch_alt_m: true is not a number"),
+            (json!({"land_ms": "300"}), "land_ms: \"300\" is not a number"),
+            (json!({"land_ms": -5}), "land_ms: -5 is negative"),
+            (json!({"land_ms": -0.5}), "land_ms: -0.5 is negative"),
+            (json!({"land_ms": 300.5}), "land_ms: 300.5 is not a whole number of ms"),
+            (json!({"land_ms": true}), "land_ms: true is not a number"),
+            (json!({"land_ms": null}), "land_ms: null is not a number"),
+            (json!({"land_ms": [300]}), "land_ms: [300] is not a number"),
+            (
+                json!({"flight_timeout_ms": 2_147_483_648_u64}),
+                "flight_timeout_ms: 2147483648 is past the longest, 2147483647 ms",
+            ),
+            (
+                json!({"land_timeout_ms": 2_147_483_648.0}),
+                "land_timeout_ms: 2147483648.0 is past the longest, 2147483647 ms",
+            ),
+            (
+                json!({"apogee_arm_ms": 4_294_967_295_u64}),
+                "apogee_arm_ms: 4294967295 is past the longest, 2147483647 ms",
+            ),
+            (
+                json!({"period_ms": 4_294_967_296_u64}),
+                "period_ms: 4294967296 is past the longest, 2147483647 ms",
+            ),
+            (
+                json!({"flight_timeout_ms": 1e10}),
+                "flight_timeout_ms: 10000000000.0 is past the longest, 2147483647 ms",
+            ),
+        ];
+        for (config, text) in cases {
+            let error = Settings::from_config(&config).unwrap_err();
+            assert_eq!(error.to_string(), text);
+        }
+        // every key is checked, and the refusal names it
+        for key in KEYS {
+            let mut config = json!({"launch_g": 3.0, "land_ms": 300});
+            config[key] = json!({"value": 1});
+            let error = Settings::from_config(&config).unwrap_err();
+            assert_eq!((error.key, error.problem), (key, SettingsProblem::NotANumber));
+        }
     }
 }

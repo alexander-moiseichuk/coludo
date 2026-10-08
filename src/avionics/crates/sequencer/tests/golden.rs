@@ -5,7 +5,8 @@
 //! - commons.json, sections `dwell_step` and `apogee_step` (golden/build_commons.py; the other two sections are
 //!   crates/control's): the detector primitives case by case;
 //! - sequencer_trace.json (golden/build_sequencer_trace.py): plan B's `Sequencer._tick` driven tick by tick,
-//!   where every stage and every sequencer.csv row (stage and reason text) must match EXACTLY.
+//!   where every stage and every sequencer.csv row (stage and reason text) must match EXACTLY, from settings
+//!   `Settings::from_config` reads out of each scenario's config as the firmware reads the board config.
 
 use golden::{Compare, Fixture};
 use sequencer::commons::{self, Apogee, Dwell};
@@ -134,33 +135,30 @@ fn an_unsmoothed_peak_fails() {
     });
 }
 
-/// A scenario's settings: Rust's defaults with the config's keys over them -- as the firmware builds them from
-/// the board config.
+/// A scenario's settings, read from its config as the firmware reads the sequencer's board-config block. Every key
+/// must be one the port reads: `from_config` ignores the others, as plan B does, so a key plan B's shipped entry
+/// gains later would otherwise reach the fixture and go unported unnoticed.
 fn settings(config: &Value) -> Settings {
-    let mut settings = Settings::default();
-    for (key, value) in config.as_object().expect("a config is an object") {
-        match key.as_str() {
-            "launch_g" => settings.launch_g = float(value),
-            "launch_ms" => settings.launch_ms = milliseconds(value),
-            "launch_alt_m" => settings.launch_alt_m = float(value),
-            "boost_timeout_ms" => settings.boost_timeout_ms = milliseconds(value),
-            "apogee_drop_m" => settings.apogee_drop_m = float(value),
-            "apogee_arm_ms" => settings.apogee_arm_ms = milliseconds(value),
-            "flight_timeout_ms" => settings.flight_timeout_ms = milliseconds(value),
-            "land_agl_m" => settings.land_agl_m = float(value),
-            "land_ms" => settings.land_ms = milliseconds(value),
-            "still_g" => settings.still_g = float(value),
-            "ground_ms" => settings.ground_ms = milliseconds(value),
-            "land_timeout_ms" => settings.land_timeout_ms = milliseconds(value),
-            other => panic!("a sequencer config key the port does not know: {other}"),
-        }
+    let read = settings_json(&Settings::default());
+    for key in config.as_object().expect("a config is an object").keys() {
+        assert!(
+            read.get(key).is_some(),
+            "a sequencer config key the port does not read: {key}"
+        );
     }
-    settings
+    Settings::from_config(config).unwrap_or_else(|error| panic!("a fixture config plan B flies is refused: {error}"))
+}
+
+#[test]
+#[should_panic(expected = "a sequencer config key the port does not read: apogee_vote_ms")]
+fn a_config_key_the_port_does_not_read_fails() {
+    settings(&json!({"launch_g": 2.5, "apogee_vote_ms": 250}));
 }
 
 /// Settings as the fixture's init.settings writes them.
 fn settings_json(settings: &Settings) -> Value {
     json!({
+        "period_ms": settings.period_ms,
         "launch_g": f64::from(settings.launch_g), "launch_ms": settings.launch_ms,
         "launch_alt_m": f64::from(settings.launch_alt_m), "boost_timeout_ms": settings.boost_timeout_ms,
         "apogee_drop_m": f64::from(settings.apogee_drop_m), "apogee_arm_ms": settings.apogee_arm_ms,
@@ -320,6 +318,39 @@ fn the_trace_covers_every_reason_and_a_two_row_step() {
             stage.name()
         );
     }
+}
+
+#[test]
+fn the_trace_covers_the_backstop_from_boosting_and_a_held_separation() {
+    let fixture = Fixture::parse(SEQUENCER_TRACE);
+    let steps: Vec<&Value> = fixture
+        .get("scenarios")
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|scenario| scenario["steps"].as_array().unwrap())
+        .collect();
+    let backstop_from_boosting = steps.iter().any(|step| {
+        step["in"]["stage"] == "boosting"
+            && step["out"]["records"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|record| record[1] == "flight timeout")
+    });
+    assert!(backstop_from_boosting, "no flight timeout fired from BOOSTING");
+    let held_separation = steps.iter().any(|step| {
+        let input = &step["in"];
+        input["manual"] == true
+            && input["stage"] == "gliding"
+            && input["events"]
+                .as_array()
+                .is_some_and(|events| events.iter().any(|event| event == "separation"))
+    });
+    assert!(
+        held_separation,
+        "no separation moved a held BOOSTING (and kept the hold)"
+    );
 }
 
 #[test]

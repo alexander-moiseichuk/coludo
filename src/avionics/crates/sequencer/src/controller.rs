@@ -1,8 +1,22 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The flight stages, from src/glider controller.py (`Stage`): their ids, their operator-facing names, which of
-//! them are on the ground and which airborne. The rest of plan B's Controller (bring-up, the device directory,
-//! arming, the operator hold) belongs to the firmware's control thread and its `StageCell`, not to this crate.
+//! The flight stages and the flight word, from src/glider controller.py: the stages (`Stage`: their ids, their
+//! operator-facing names, which of them are on the ground and which airborne), and the Controller's flight state
+//! (`stage`, `manual`, `armed`) with the rules its `hold`, `resume`, `arm` and `disarm` change it by.
+//!
+//! **The flight word.** Plan B kept that state in three Controller attributes, set by five writers on one asyncio
+//! loop. Rust packs it, with `launched`, into ONE `AtomicU32` ([`FlightWord`]): a reader's single load is a
+//! consistent snapshot (a stage never pairs with another moment's hold or arming), and one writer ([`FlightWriter`],
+//! not Clone, handed out once) commits every change: the stage machine's advances, the separation's, and the
+//! operator's requests, which reach it through a [`crate::slot::RequestSlot`]. That writer lives on the control
+//! thread, so a request is applied between two ticks and never races a detector.
+//!
+//! The rest of plan B's Controller (bring-up, the device directory) is the firmware's.
+
+use core::fmt;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+use crate::sequencer::Transition;
 
 /// One flight stage. The ids are plan B's, so a warm-start crumb reads the same on both firmwares; 0 is the
 /// NVS "no checkpoint" sentinel and never a live stage.
@@ -65,9 +79,311 @@ impl Stage {
     }
 }
 
+/// The flight word's stage field: bits 0-2 hold the [`Stage`] id.
+const STAGE_BITS: u32 = 0b111;
+/// The flight word's operator-hold bit.
+const MANUAL_BIT: u32 = 1 << 3;
+/// The flight word's arming bit.
+const ARMED_BIT: u32 = 1 << 4;
+/// The flight word's launch bit.
+const LAUNCHED_BIT: u32 = 1 << 5;
+/// Every bit a flight word uses: a word with any other bit set is not one. The request slot carries a flight in
+/// the byte under its refused bit, so this must stay within 7 bits.
+pub(crate) const FLIGHT_BITS: u32 = STAGE_BITS | MANUAL_BIT | ARMED_BIT | LAUNCHED_BIT;
+
+/// `bit` when `set`, else 0: one flag of a packed word.
+const fn bit_when(set: bool, bit: u32) -> u32 {
+    if set { bit } else { 0 }
+}
+
+/// The board's flight state as one value: what the flight word packs.
+///
+/// Plan B's Controller `stage`, `manual` and `armed`, plus `launched`, which plan B did not need: Rust keys the
+/// link's reconnects on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Flight {
+    /// The flight stage.
+    pub stage: Stage,
+    /// An operator hold (`stage <name>`): the stage machine leaves the stage alone (plan B `manual`).
+    pub manual: bool,
+    /// Actuation enabled: the arm gate passed (plan B `armed`). Disarmed fins hold neutral.
+    pub armed: bool,
+    /// The stage machine itself detected this flight's launch (its own SETTING -> BOOSTING advance), and no
+    /// operator hold has come since. While it is set the link never rejoins, hunts or dials
+    /// ([`Flight::reconnect_allowed`]).
+    pub launched: bool,
+}
+
+impl Flight {
+    /// A board on the pad: SETTING, no hold, disarmed, no launch. Every boot starts here; only a warm start's
+    /// restore moves the word before the threads run.
+    pub const GROUND: Flight = Flight {
+        stage: Stage::Setting,
+        manual: false,
+        armed: false,
+        launched: false,
+    };
+
+    /// The flight word: the stage id in bits 0-2, then `manual` (bit 3), `armed` (bit 4) and `launched` (bit 5).
+    pub const fn pack(self) -> u32 {
+        self.stage as u32
+            | bit_when(self.manual, MANUAL_BIT)
+            | bit_when(self.armed, ARMED_BIT)
+            | bit_when(self.launched, LAUNCHED_BIT)
+    }
+
+    /// The flight a word packs, None when it is no flight word: a stage id that is no stage (0, the warm start's
+    /// "no checkpoint" sentinel, or past DONE), or a bit set past `launched`.
+    pub fn unpack(word: u32) -> Option<Flight> {
+        if word & !FLIGHT_BITS != 0 {
+            return None;
+        }
+        Some(Flight {
+            stage: Stage::from_id((word & STAGE_BITS) as u8)?,
+            manual: word & MANUAL_BIT != 0,
+            armed: word & ARMED_BIT != 0,
+            launched: word & LAUNCHED_BIT != 0,
+        })
+    }
+
+    /// The flight after an operator request, by plan B's Controller rules (controller.py `hold`, `resume`, `arm`,
+    /// `disarm`), or why an arm is refused.
+    ///
+    /// - Hold: the stage is forced, and held unless it is SETTING: `stage setting` is a return to the ground, not a
+    ///   hold (a held SETTING suppressed every launch detector, and a board flew its whole flight recorded as
+    ///   SETTING). Every hold clears `launched`: an operator move is never the machine's launch, so a board held
+    ///   after landing (`stage gliding` from CC) gets its reconnects back.
+    /// - Resume clears the hold and nothing else: it never makes the board launched again.
+    /// - Arm enables actuation only on the ground under automatic sequencing ([`Flight::stage_problem`]), checked
+    ///   here, when the control thread applies it. Plan B awaited its probe sweep and then armed whatever the stage
+    ///   had become meanwhile, a launch detected during the sweep included.
+    /// - Disarm always clears the arming: it is how the operator recovers.
+    ///
+    /// Args: `request` the operator's request.
+    ///
+    /// Returns: the new flight; for an arm off the ground or under a hold, the stage problem, and no change.
+    pub fn apply(self, request: Request) -> Result<Flight, StageProblem> {
+        match request {
+            Request::Hold(stage) => Ok(Flight {
+                stage,
+                manual: stage != Stage::Setting,
+                launched: false,
+                ..self
+            }),
+            Request::Resume => Ok(Flight { manual: false, ..self }),
+            Request::Arm => match self.stage_problem() {
+                Some(problem) => Err(problem),
+                None => Ok(Flight { armed: true, ..self }),
+            },
+            Request::Disarm => Ok(Flight { armed: false, ..self }),
+        }
+    }
+
+    /// Why this board is not on the ground under automatic sequencing, None when it is (plan B cc_client
+    /// `_stage_problem`): `arm` refuses it and `verify` reports it, both under the key `stage`.
+    pub fn stage_problem(self) -> Option<StageProblem> {
+        if self.manual {
+            return Some(StageProblem::Held(self.stage));
+        }
+        (self.stage != Stage::Setting).then_some(StageProblem::NotSetting(self.stage))
+    }
+
+    /// Whether the link may rejoin, hunt or dial: not once the stage machine has detected the launch.
+    ///
+    /// In flight the glider leaves range and the link drops by itself; a session still up runs on until it does.
+    /// Reconnecting would chase the pad network it left, and at DONE the recovery beacon's AP is the only network.
+    /// An operator hold is no launch, so a bench `stage gliding` keeps the normal reconnects. The radio itself is
+    /// never switched off: stopping and restarting Wi-Fi through the C6 coprocessor is an unproven path that can
+    /// park the link until a reboot.
+    pub fn reconnect_allowed(self) -> bool {
+        !self.launched
+    }
+}
+
+/// An operator request the control thread applies to the flight word ([`Flight::apply`]), posted through a
+/// [`crate::slot::RequestSlot`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    /// `stage <name>`: force the stage and hold it (a ground test), except that SETTING is a return to the ground.
+    Hold(Stage),
+    /// `stage auto`: release the hold.
+    Resume,
+    /// `arm`: enable actuation, the stage re-checked when applied.
+    Arm,
+    /// `disarm`: actuation off, always.
+    Disarm,
+}
+
+/// Why a board is not on the ground under automatic sequencing ([`Flight::stage_problem`]). [`fmt::Display`]
+/// writes plan B's text exactly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StageProblem {
+    /// An operator hold, at this stage.
+    Held(Stage),
+    /// This stage, not SETTING, with no hold.
+    NotSetting(Stage),
+}
+
+impl fmt::Display for StageProblem {
+    /// Plan B's `_stage_problem` text, with the way back.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            StageProblem::Held(stage) => write!(
+                formatter,
+                "stage held at {} by an operator command -- `stage setting` to return to the ground",
+                stage.name()
+            ),
+            StageProblem::NotSetting(stage) => write!(
+                formatter,
+                "stage is {}, not setting -- `stage setting`, then power-cycle before flight",
+                stage.name()
+            ),
+        }
+    }
+}
+
+/// The flight word: the one atomic every thread reads the [`Flight`] from, written only through its
+/// [`FlightWriter`]. Release stores and Acquire loads: a reader that sees a commit sees what came before it.
+#[derive(Debug)]
+pub struct FlightWord {
+    /// [`Flight::pack`] of the flight.
+    word: AtomicU32,
+    /// Whether [`FlightWord::writer`] has handed the writer out.
+    writer_taken: AtomicBool,
+}
+
+impl FlightWord {
+    /// A word at [`Flight::GROUND`], as every boot starts, its writer not yet handed out. `const`, so the firmware's
+    /// word is a static. Any other flight is committed through the writer, a warm start's restore included.
+    pub const fn new() -> FlightWord {
+        FlightWord {
+            word: AtomicU32::new(Flight::GROUND.pack()),
+            writer_taken: AtomicBool::new(false),
+        }
+    }
+
+    /// The flight now: one load, so its stage, hold, arming and launch are of one moment.
+    pub fn load(&self) -> Flight {
+        // only Flight::pack reaches the word (new, FlightWriter::commit), so it always unpacks
+        Flight::unpack(self.word.load(Ordering::Acquire)).unwrap_or(Flight::GROUND)
+    }
+
+    /// The word's one writer: Some the first time, None ever after (even once that writer is dropped), so no
+    /// second thread can ever commit.
+    pub fn writer(&self) -> Option<FlightWriter<'_>> {
+        if self.writer_taken.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        Some(FlightWriter {
+            word: self,
+            flight: self.load(),
+        })
+    }
+}
+
+impl Default for FlightWord {
+    /// [`FlightWord::new`]: at [`Flight::GROUND`] (a zero word would be no flight).
+    fn default() -> FlightWord {
+        FlightWord::new()
+    }
+}
+
+/// The flight word's one writer: the control thread's, so the stage machine, the separation and the operator's
+/// requests commit in one order, between two ticks. Not Clone, and [`FlightWord::writer`] hands out only one.
+#[derive(Debug)]
+pub struct FlightWriter<'word> {
+    /// The word it writes.
+    word: &'word FlightWord,
+    /// The flight it last committed: the word's value, since nothing else writes it.
+    flight: Flight,
+}
+
+impl FlightWriter<'_> {
+    /// The flight as last committed: the word's value.
+    pub fn flight(&self) -> Flight {
+        self.flight
+    }
+
+    /// Commit the stage machine's own advance ([`crate::Step::advance`]): the stage moves, and the launch
+    /// detector's SETTING -> BOOSTING, the only advance into BOOSTING, sets `launched`.
+    pub fn advance(&mut self, transition: Transition) -> Commit {
+        let launched = self.flight.launched || transition.to == Stage::Boosting;
+        self.commit(Flight {
+            stage: transition.to,
+            launched,
+            ..self.flight
+        })
+    }
+
+    /// Commit a confirmed separation: BOOSTING moves to GLIDING, held or not. Plan B's driver advances a held
+    /// BOOSTING too, and the hold stays (drivers/separation.py `_apply`).
+    ///
+    /// Returns: the commit; None, with nothing committed, in any other stage.
+    pub fn separate(&mut self) -> Option<Commit> {
+        (self.flight.stage == Stage::Boosting).then(|| {
+            self.commit(Flight {
+                stage: Stage::Gliding,
+                ..self.flight
+            })
+        })
+    }
+
+    /// Apply an operator request by [`Flight::apply`]'s rules.
+    ///
+    /// Returns: the commit, or why an arm was refused (nothing committed then).
+    pub fn apply(&mut self, request: Request) -> Result<Commit, StageProblem> {
+        let after = self.flight.apply(request)?;
+        Ok(self.commit(after))
+    }
+
+    /// Store `after` in the word and report the change.
+    fn commit(&mut self, after: Flight) -> Commit {
+        let before = self.flight;
+        self.word.word.store(after.pack(), Ordering::Release);
+        self.flight = after;
+        Commit { before, after }
+    }
+}
+
+/// One committed change of the flight word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Commit {
+    /// The flight before.
+    pub before: Flight,
+    /// The flight committed.
+    pub after: Flight,
+}
+
+impl Commit {
+    /// How this commit moves the recorder's flight flag, None when it stays: the flag follows `airborne()` of each
+    /// committed stage, an operator hold's too (a bench hold makes flight blocks, which costs nothing).
+    ///
+    /// The flag marks the ring blocks newest wins gives up last, so it brackets the commit's sequencer.csv rows:
+    /// [`FlightFlag::Raise`] goes before them, so the BOOSTING row lies in a flight block, and
+    /// [`FlightFlag::Lower`] after them, so the DONE row does too. The recorder's writer applies a fall only once
+    /// everything queued before it is programmed.
+    pub fn flight_flag(&self) -> Option<FlightFlag> {
+        match (self.before.stage.airborne(), self.after.stage.airborne()) {
+            (false, true) => Some(FlightFlag::Raise),
+            (true, false) => Some(FlightFlag::Lower),
+            _ => None,
+        }
+    }
+}
+
+/// A change of the recorder's flight flag ([`Commit::flight_flag`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlightFlag {
+    /// Raise it (`Recorder::set_flight(true)`) before queuing the commit's rows.
+    Raise,
+    /// Lower it (`Recorder::set_flight(false)`) after queuing the commit's rows.
+    Lower,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Stage;
+    use super::{Commit, Flight, FlightFlag, FlightWord, Request, Stage, StageProblem};
+    use crate::sequencer::{Reason, Transition};
 
     #[test]
     fn names_round_trip_and_ids_match_plan_b() {
@@ -96,5 +412,299 @@ mod tests {
     fn airborne_is_boosting_through_landing() {
         let airborne: [bool; 5] = Stage::ALL.map(Stage::airborne);
         assert_eq!(airborne, [false, true, true, true, false]);
+    }
+
+    /// Every flight there is: 5 stages times the three flags.
+    fn every_flight() -> Vec<Flight> {
+        let mut flights = Vec::new();
+        for stage in Stage::ALL {
+            for bits in 0..8 {
+                flights.push(Flight {
+                    stage,
+                    manual: bits & 1 != 0,
+                    armed: bits & 2 != 0,
+                    launched: bits & 4 != 0,
+                });
+            }
+        }
+        flights
+    }
+
+    /// The machine's own launch, as its step reports it.
+    fn launch() -> Transition {
+        Transition {
+            to: Stage::Boosting,
+            reason: Reason::LaunchAcceleration {
+                magnitude_g: 8.0,
+                dwell_ms: 100,
+            },
+        }
+    }
+
+    /// One of the machine's own advances past the launch.
+    fn advance(to: Stage) -> Transition {
+        Transition {
+            to,
+            reason: Reason::FlightTimeout,
+        }
+    }
+
+    #[test]
+    fn the_word_packs_every_flight_and_unpacks_it_back() {
+        let flights = every_flight();
+        let mut words: Vec<u32> = flights.iter().map(|flight| flight.pack()).collect();
+        for (flight, word) in flights.iter().zip(&words) {
+            assert_eq!(Flight::unpack(*word), Some(*flight));
+            assert!(*word < 64, "a flight packs into bits 0-5: {word:#x}");
+        }
+        words.sort_unstable();
+        words.dedup();
+        assert_eq!(words.len(), 40, "every flight packs to its own word");
+        assert_eq!(Flight::GROUND.pack(), Stage::Setting as u32);
+        let launched_held = Flight {
+            stage: Stage::Gliding,
+            manual: true,
+            armed: false,
+            launched: true,
+        };
+        assert_eq!(launched_held.pack(), 3 | 1 << 3 | 1 << 5);
+    }
+
+    #[test]
+    fn a_word_that_is_no_flight_is_refused() {
+        // the warm start's sentinel, the ids past DONE, and a bit past `launched`
+        for word in [0, 6, 7, 0b1000, 1 | 1 << 6, 1 | 1 << 31, u32::MAX] {
+            assert_eq!(Flight::unpack(word), None, "{word:#x}");
+        }
+    }
+
+    #[test]
+    fn a_hold_forces_the_stage_and_holds_all_but_setting() {
+        // from every flight to every stage, its own included: the arming stays, and the launch is always cleared
+        for flight in every_flight() {
+            for stage in Stage::ALL {
+                let held = flight.apply(Request::Hold(stage)).unwrap();
+                let expected = Flight {
+                    stage,
+                    manual: stage != Stage::Setting,
+                    armed: flight.armed,
+                    launched: false,
+                };
+                assert_eq!(held, expected, "{flight:?} held at {stage:?}");
+            }
+        }
+        // `stage setting` from a held stage is a return to the ground, not a hold
+        let held = Flight::GROUND.apply(Request::Hold(Stage::Gliding)).unwrap();
+        assert_eq!(held.apply(Request::Hold(Stage::Setting)), Ok(Flight::GROUND));
+    }
+
+    #[test]
+    fn resume_clears_only_the_hold() {
+        for flight in every_flight() {
+            let resumed = flight.apply(Request::Resume).unwrap();
+            assert_eq!(
+                resumed,
+                Flight {
+                    manual: false,
+                    ..flight
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn disarm_always_clears_the_arming() {
+        for flight in every_flight() {
+            assert_eq!(flight.apply(Request::Disarm), Ok(Flight { armed: false, ..flight }));
+        }
+    }
+
+    #[test]
+    fn arm_passes_only_in_setting_without_a_hold() {
+        assert_eq!(
+            Flight::GROUND.apply(Request::Arm),
+            Ok(Flight {
+                armed: true,
+                ..Flight::GROUND
+            })
+        );
+        for flight in every_flight() {
+            let expected = if flight.manual {
+                Err(StageProblem::Held(flight.stage))
+            } else if flight.stage != Stage::Setting {
+                Err(StageProblem::NotSetting(flight.stage))
+            } else {
+                Ok(Flight { armed: true, ..flight })
+            };
+            assert_eq!(flight.apply(Request::Arm), expected, "{flight:?}");
+        }
+    }
+
+    #[test]
+    fn the_stage_problems_read_as_plan_b_writes_them() {
+        let held = Flight::GROUND.apply(Request::Hold(Stage::Gliding)).unwrap();
+        assert_eq!(
+            held.stage_problem().map(|problem| problem.to_string()).as_deref(),
+            Some("stage held at gliding by an operator command -- `stage setting` to return to the ground")
+        );
+        let landed = Flight {
+            stage: Stage::Done,
+            ..Flight::GROUND
+        };
+        assert_eq!(
+            landed.stage_problem().map(|problem| problem.to_string()).as_deref(),
+            Some("stage is done, not setting -- `stage setting`, then power-cycle before flight")
+        );
+        assert_eq!(Flight::GROUND.stage_problem(), None);
+    }
+
+    #[test]
+    fn the_word_has_one_writer() {
+        let word = FlightWord::new();
+        {
+            let writer = word.writer();
+            assert!(writer.is_some());
+            assert!(word.writer().is_none(), "a second writer while the first lives");
+        }
+        assert!(word.writer().is_none(), "nor once it is gone");
+    }
+
+    #[test]
+    fn every_reader_loads_what_the_writer_committed() {
+        let word = FlightWord::new();
+        assert_eq!(word.load(), Flight::GROUND);
+        let mut writer = word.writer().unwrap();
+        let commit = writer.apply(Request::Hold(Stage::Landing)).unwrap();
+        assert_eq!(commit.before, Flight::GROUND);
+        assert_eq!(word.load(), commit.after);
+        assert_eq!(writer.flight(), commit.after);
+        assert_eq!((commit.after.stage, commit.after.manual), (Stage::Landing, true));
+        // a refused arm commits nothing
+        assert_eq!(writer.apply(Request::Arm), Err(StageProblem::Held(Stage::Landing)));
+        assert_eq!(word.load(), commit.after);
+    }
+
+    #[test]
+    fn only_the_machines_own_launch_sets_launched() {
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        writer.apply(Request::Arm).unwrap();
+        let commit = writer.advance(launch());
+        assert!(commit.after.launched && commit.after.armed);
+        // the rest of the flight keeps it: the separation, the landing, DONE
+        assert!(writer.separate().unwrap().after.launched);
+        assert!(writer.advance(advance(Stage::Landing)).after.launched);
+        assert!(writer.advance(advance(Stage::Done)).after.launched);
+        // a disarm does not end it
+        assert!(writer.apply(Request::Disarm).unwrap().after.launched);
+    }
+
+    #[test]
+    fn an_operator_boosting_is_never_a_launch() {
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        // `stage boosting`, `stage auto`: the machine then records the move as external, which commits nothing
+        assert!(!writer.apply(Request::Hold(Stage::Boosting)).unwrap().after.launched);
+        assert!(!writer.apply(Request::Resume).unwrap().after.launched);
+        // the separation and the machine's own later advances do not make it one either
+        assert!(!writer.separate().unwrap().after.launched);
+        assert!(!writer.advance(advance(Stage::Landing)).after.launched);
+        assert!(!word.load().launched);
+    }
+
+    #[test]
+    fn the_link_reconnects_until_the_machines_launch_and_after_a_hold() {
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        assert!(writer.flight().reconnect_allowed(), "on the pad");
+        writer.apply(Request::Arm).unwrap();
+        assert!(writer.flight().reconnect_allowed(), "armed on the pad");
+        for commit in [
+            writer.advance(launch()),
+            writer.separate().unwrap(),
+            writer.advance(advance(Stage::Landing)),
+            writer.advance(advance(Stage::Done)),
+            writer.apply(Request::Disarm).unwrap(),
+        ] {
+            assert!(!commit.after.reconnect_allowed(), "{:?}", commit.after);
+        }
+        // landed, then `stage done` from the console, the false-launch recovery's first step: a hold at the stage
+        // the board is already in is still no launch
+        assert!(
+            writer
+                .apply(Request::Hold(Stage::Done))
+                .unwrap()
+                .after
+                .reconnect_allowed()
+        );
+        assert!(writer.apply(Request::Resume).unwrap().after.reconnect_allowed());
+        // an unarmed launch ends the reconnects too: they key on the detected launch alone
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        assert!(!writer.advance(launch()).after.reconnect_allowed());
+        assert!(
+            writer
+                .apply(Request::Hold(Stage::Setting))
+                .unwrap()
+                .after
+                .reconnect_allowed()
+        );
+    }
+
+    #[test]
+    fn a_separation_moves_only_boosting_and_keeps_the_hold() {
+        for stage in [Stage::Setting, Stage::Gliding, Stage::Landing, Stage::Done] {
+            // the operator's way there, unheld: `stage <name>`, then `stage auto`
+            let word = FlightWord::new();
+            let mut writer = word.writer().unwrap();
+            writer.apply(Request::Hold(stage)).unwrap();
+            writer.apply(Request::Resume).unwrap();
+            assert_eq!(writer.separate(), None, "{stage:?}");
+            assert_eq!(
+                word.load(),
+                Flight {
+                    stage,
+                    ..Flight::GROUND
+                }
+            );
+        }
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        writer.apply(Request::Hold(Stage::Boosting)).unwrap();
+        let commit = writer.separate().unwrap();
+        assert_eq!((commit.after.stage, commit.after.manual), (Stage::Gliding, true));
+    }
+
+    /// The flight flag's change for a commit from stage `from` to stage `to`.
+    fn moving(from: Stage, to: Stage) -> Option<FlightFlag> {
+        let before = Flight {
+            stage: from,
+            ..Flight::GROUND
+        };
+        Commit {
+            before,
+            after: Flight { stage: to, ..before },
+        }
+        .flight_flag()
+    }
+
+    #[test]
+    fn the_flight_flag_rises_into_flight_and_falls_back_to_the_ground() {
+        assert_eq!(moving(Stage::Setting, Stage::Boosting), Some(FlightFlag::Raise));
+        assert_eq!(moving(Stage::Landing, Stage::Done), Some(FlightFlag::Lower));
+        // a hold counts: the bench's `stage gliding` and back
+        assert_eq!(moving(Stage::Setting, Stage::Gliding), Some(FlightFlag::Raise));
+        assert_eq!(moving(Stage::Gliding, Stage::Setting), Some(FlightFlag::Lower));
+        assert_eq!(moving(Stage::Gliding, Stage::Done), Some(FlightFlag::Lower));
+        // inside the flight and on the ground, it stays
+        assert_eq!(moving(Stage::Boosting, Stage::Gliding), None);
+        assert_eq!(moving(Stage::Gliding, Stage::Landing), None);
+        assert_eq!(moving(Stage::Done, Stage::Setting), None);
+        assert_eq!(moving(Stage::Setting, Stage::Setting), None);
+        // an arming changes no stage
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        assert_eq!(writer.apply(Request::Arm).unwrap().flight_flag(), None);
+        assert_eq!(writer.advance(launch()).flight_flag(), Some(FlightFlag::Raise));
     }
 }

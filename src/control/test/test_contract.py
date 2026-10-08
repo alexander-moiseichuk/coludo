@@ -14,13 +14,16 @@ one line, an unknown error code, a value an invariant rejects -- must fail exact
 fin sweep, a config write, a stage hold, a reboot) is ever sent without its flag, nor to a board that reads
 airborne or armed, nor -- with a flag -- to one whose ground state is unreadable; a hold never follows an arm
 that was not undone. An `ok` to reboot passes only when a new boot answers. A run that stops on an exception
-undoes its writes. A not-yet answer FAILs once the claimed milestone owes the case.
+undoes its writes. A not-yet answer FAILs once the claimed milestone owes the case. The M7 gate: an arm while
+held is refused for the hold (and disarmed if it was not), verify's readiness names only plan B's checks -- the
+set read from plan B's own source -- and the bluetooth stub inspects in plan B's shape.
 
 The hub and serial transports are tested without a hub or a board: the line a hub request must carry, the
 reply it rebuilds, a stub hub's HTTP errors and its dashboard rows (the hub tier), the console's log and ROM
 banner filter and its one-line-in-one-line-out watch, and a console open that cannot reset the board.
 """
 
+import ast
 import contextlib
 import http.server
 import io
@@ -41,10 +44,13 @@ from contract import cases, normalize, transports  # noqa: E402
 
 _PLAN_B: transports.Fake = transports.Fake()  # one plan B for the whole file (tools' own runs build theirs)
 _EPOCH_2020: int = 1577836800  # Unix seconds at 2020-01-01: any real host clock reads later
-# the cases plan B on CPython cannot run: no tee, no hub, and no device set up (the M6 parts' cases)
+# the cases plan B on CPython cannot run: no tee, no hub, and no device set up (the M6 parts' and bluetooth's cases)
 _BOARD_ONLY: set = {'log_tee_trigger', 'hub', 'inspect_imu', 'inspect_barometer', 'inspect_separation',
-                    'update_barometer_ground', 'update_barometer_text_ground', 'update_barometer_rezero',
-                    'calibrate_barometer', 'calibrate_imu', 'probe_devices', 'bustune_imu_at_its_clock'}
+                    'inspect_bluetooth', 'update_barometer_ground', 'update_barometer_text_ground',
+                    'update_barometer_rezero', 'calibrate_barometer', 'calibrate_imu', 'probe_devices',
+                    'bustune_imu_at_its_clock'}
+# the bluetooth stub's snapshot in plan B's no-BLE shape (drivers/bluetooth.py inspect): radio off, no BLE
+_BLUETOOTH_STUB: dict = {'name': 'bluetooth', 'ok': True, 'healthy': True, 'radio': False, 'active': None}
 _PROBE_LAUNCH: str = cc.build('set-config', ['launch', json.dumps({'launch_id': 'contract-probe'})])
 
 
@@ -93,7 +99,10 @@ class _Tampered:
 
 
 def _fitted_answers() -> dict:
-    """The healthy M6 parts' answers, by request line: the snapshots, the ICP's update round trip, calibrate, probe."""
+    """
+    The healthy fitted parts' answers, by request line: the M6 parts' snapshots, the ICP's update round trip,
+    calibrate and probe, and the bluetooth stub's snapshot.
+    """
     ok = lambda payload: [cc.build('ok', [json.dumps(payload)])]  # noqa: E731
     update = lambda properties: cc.build('update', ['baro_icp10111', json.dumps(properties)])  # noqa: E731
     return {
@@ -103,6 +112,7 @@ def _fitted_answers() -> dict:
         'inspect baro_icp10111': ok({'name': 'baro_icp10111', 'ok': True, 'healthy': True, 'altitude_m': 42.1,
                                      'temperature_c': None, 'pressure_pa': 100810.5, 'elevation_m': 0.2}),
         'inspect separation': ok({'name': 'separation', 'ok': True, 'healthy': True, 'separated': False}),
+        'inspect bluetooth': ok(_BLUETOOTH_STUB),
         update({'ground': 100}): ok({'changed': ['ground']}),
         update({'ground': 'high'}): [cc.build('err', ['refused', "could not convert string to float: 'high'"])],
         update({'rezero': True}): ok({'changed': ['ground']}),
@@ -118,9 +128,9 @@ def _fitted_answers() -> dict:
 
 class _Fitted(_Tampered):
     """
-    Plan B with the M6 parts fitted, which plan B on CPython never sets up: `objects` lists the default config's
-    imu_lsm6dso32, baro_icp10111 and separation, and their requests get `answers` (request line -> reply lines, or
-    an exception to raise) instead of reaching plan B.
+    Plan B with the parts fitted, which plan B on CPython never sets up: `objects` lists the default config's
+    imu_lsm6dso32, baro_icp10111, separation and bluetooth, and their requests get `answers` (request line -> reply
+    lines, or an exception to raise) instead of reaching plan B.
     """
 
     def __init__(self, answers: dict) -> None:
@@ -139,7 +149,8 @@ class _Fitted(_Tampered):
         lines = _PLAN_B.exchange(line)
         if line == 'objects':
             names = json.loads(cc.parse(lines[0]).args[0])
-            return [cc.build('ok', [json.dumps(sorted(names + ['baro_icp10111', 'imu_lsm6dso32', 'separation']))])]
+            fitted = ['baro_icp10111', 'bluetooth', 'imu_lsm6dso32', 'separation']
+            return [cc.build('ok', [json.dumps(sorted(names + fitted))])]
         return lines
 
 
@@ -438,16 +449,17 @@ def test_invariants_beyond_the_core_are_checked() -> None:
 
 def test_the_m6_parts_are_held_to_plan_b_shapes() -> None:
     """
-    The M6 parts' cases pass on healthy answers, and each broken answer fails exactly its own case: a snapshot short
-    of a key or naming another part, a ground write that changed nothing, a calibrate or a probe that failed. A
-    board without the parts skips them; a run that stops after the ground write re-zeroes on its way out.
+    The fitted parts' cases (the M6 parts', and the bluetooth stub's) pass on healthy answers, and each broken M6
+    answer fails exactly its own case: a snapshot short of a key or naming another part, a ground write that changed
+    nothing, a calibrate or a probe that failed. A board without the parts skips them; a run that stops after the
+    ground write re-zeroes on its way out.
     """
     tiers, allowed = ('config', 'inspect', 'diagnostics'), ('active',)
-    results = cases.run(_Fitted(_fitted_answers()), tiers, allowed, None, milestone=6)
-    m6 = {result.name: result.outcome for result in results if result.name.split('[')[0] in _BOARD_ONLY}
-    assert set(m6.values()) == {cases.PASS}, m6
-    assert {name.split('[')[0] for name in m6} == _BOARD_ONLY - {'log_tee_trigger', 'hub'}, m6
-    assert len([name for name in m6 if name.startswith('probe_devices[')]) == 3, m6
+    results = cases.run(_Fitted(_fitted_answers()), tiers, allowed, None, milestone=7)
+    fitted = {result.name: result.outcome for result in results if result.name.split('[')[0] in _BOARD_ONLY}
+    assert set(fitted.values()) == {cases.PASS}, fitted
+    assert {name.split('[')[0] for name in fitted} == _BOARD_ONLY - {'log_tee_trigger', 'hub'}, fitted
+    assert len([name for name in fitted if name.startswith('probe_devices[')]) == 3, fitted
 
     def broken(request: str, payload: object, status: str = 'ok') -> dict:
         """The healthy answers with one replaced."""
@@ -491,6 +503,115 @@ def test_the_m6_parts_are_held_to_plan_b_shapes() -> None:
     else:
         raise AssertionError('a transport error did not abort the run')
     assert unplugged.sent[-1] == update({'rezero': True}), unplugged.sent[-3:]
+
+
+def _plan_b_readiness_checks() -> set:
+    """
+    Every readiness key plan B can report, read from its own source (src/glider/cc_client.py): the `problems[<key>]`
+    that `_readiness` sets, and the `readiness[<key>]` that verify adds.
+    """
+    with open(os.path.join(_ROOT, 'src', 'glider', 'cc_client.py')) as source:
+        tree = ast.parse(source.read())
+    owners = {'_readiness': 'problems', 'verify': 'readiness'}  # function -> the map it fills with readiness
+    keys = set()
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) or function.name not in owners:
+            continue
+        for node in ast.walk(function):
+            if (isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store) and isinstance(node.value, ast.Name)
+                    and node.value.id == owners[function.name] and isinstance(node.slice, ast.Constant)):
+                keys.add(node.slice.value)
+    return keys
+
+
+def test_the_m7_gate_is_held_to_plan_b() -> None:
+    """
+    The M7 cases pass on plan B and fail on each broken answer, exactly their own case: an arm while held that arms,
+    lacks `stage`, gives another stage reason or a non-text problem; a readiness key plan B never reports; a
+    bluetooth snapshot with a mistyped or missing radio state. An arm while held needs both flags, and whatever it
+    answers a disarm follows before the board returns to the ground -- in the undo too, when the run stops.
+    """
+    assert _plan_b_readiness_checks() == set(cases._READINESS_CHECKS), _plan_b_readiness_checks()
+    held, allowed = _Tampered(), ('stage', 'active')
+    results = {result.name: result for result in cases.run(held, ('control',), allowed, None, milestone=7)}
+    assert not _failed(results.values()), [(result.name, result.reason) for result in results.values()]
+    assert results['arm_while_held'].outcome == cases.PASS and results['disarm_after_held_arm'].outcome == cases.PASS
+    after_hold = held.sent[held.sent.index('stage gliding'):]
+    assert after_hold.index('arm') + 1 == after_hold.index('disarm') < after_hold.index('stage setting'), after_hold
+
+    for flags, missing, arms in ((('stage',), '--allow-active', 0), (('active',), '--allow-stage', 1)):
+        board = _Tampered()
+        results = {result.name: result for result in cases.run(board, ('control',), flags, None)}
+        assert results['arm_while_held'].reason == 'needs ' + missing, results['arm_while_held']
+        assert board.sent.count('arm') == arms, board.sent
+
+    def refusal(problems: dict) -> typing.Callable:
+        """A reply replacement refusing the arm with `problems`."""
+        return lambda lines: [cc.build('err', ['unsafe', json.dumps(problems)])]
+
+    lost_hold = 'stage is gliding, not setting -- `stage setting`, then power-cycle before flight'
+    scenarios = (
+        (_answer('ok', {'armed': True}), 'expected err unsafe {stage}, got ok'),
+        (refusal({'flight': 'flight -- not ported yet'}), "lacks key 'stage'"),
+        (refusal({'stage': lost_hold}), 'stage reads %r' % lost_hold),
+        (refusal({'stage': cases._HELD_STAGE_PROBLEM, 'imu_lsm6dso32': 5}), "problems['imu_lsm6dso32'] is int"),
+    )
+    for replace, reason in scenarios:
+        board = _Tampered('arm', replace, occurrence=2)  # the first arm is the arm case's, on the ground
+        results = {result.name: result for result in cases.run(board, ('control',), allowed, None)}
+        assert _failed(results.values()) == {'arm_while_held'}, [(item.name, item.reason) for item in results.values()]
+        assert reason in results['arm_while_held'].reason, results['arm_while_held'].reason
+        after_hold = board.sent[board.sent.index('stage gliding'):]
+        assert after_hold[after_hold.index('arm') + 1] == 'disarm' and 'stage setting' in after_hold, after_hold
+    unsupported = lambda lines: [cc.build('err', ['unsupported', 'no arm gate yet'])]  # noqa: E731
+    for milestone, outcome in ((None, cases.NOT_YET), (6, cases.NOT_YET), (7, cases.FAIL)):
+        results = {result.name: result for result in cases.run(_Tampered('arm', unsupported, occurrence=2),
+                                                               ('control',), allowed, None, milestone=milestone)}
+        assert results['arm_while_held'].outcome == outcome, (milestone, results['arm_while_held'])
+
+    def interrupted(lines: list) -> list:
+        """The operator pressing Ctrl-C while the disarm after the held arm is out."""
+        raise KeyboardInterrupt
+
+    stopped = _Tampered('disarm', interrupted, occurrence=3)  # disarm, disarm_after_arm, then this one
+    try:
+        cases.run(stopped, ('control',), allowed, None)
+    except cases.Aborted as error:
+        assert 'disarm: ok' in str(error) and 'stage setting: ok' in str(error), error
+    else:
+        raise AssertionError('Ctrl-C did not abort the run')
+    assert stopped.sent[-2:] == ['disarm', 'stage setting'], stopped.sent[-4:]
+
+    def foreign_readiness(payload: dict) -> None:
+        """verify with a readiness item of the board's own."""
+        payload['readiness']['not-flight-capable'] = 'flight -- not ported yet'
+
+    def every_check(payload: dict) -> None:
+        """verify tripping every check plan B makes."""
+        payload['readiness'] = {key: 'tripped' for key in cases._READINESS_CHECKS}
+
+    foreign = "readiness names ['not-flight-capable'], which plan B never reports"
+    for edit, failed in ((every_check, set()), (foreign_readiness, {'verify'})):
+        results = cases.run(_Tampered('verify', _payload_edit(edit)), ('diagnostics',), ('active',), None)
+        assert _failed(results) == failed, [(result.name, result.reason) for result in results]
+        assert all(foreign in result.reason for result in results if result.outcome == cases.FAIL), results
+
+    without_active = {key: value for key, value in _BLUETOOTH_STUB.items() if key != 'active'}
+    for snapshot, reason in (({**_BLUETOOTH_STUB, 'radio': True, 'active': True}, None),  # a board with BLE, on
+                             ({**_BLUETOOTH_STUB, 'radio': 'off'}, "key 'radio' is str, expected bool"),
+                             ({**_BLUETOOTH_STUB, 'active': 'on'}, "key 'active' is str, expected bool|null"),
+                             (without_active, "lacks key 'active'"),
+                             ({**_BLUETOOTH_STUB, 'name': 'ble'}, "inspect bluetooth names 'ble'")):
+        answers = _fitted_answers()
+        answers['inspect bluetooth'] = [cc.build('ok', [json.dumps(snapshot)])]
+        results = {result.name: result for result in cases.run(_Fitted(answers), ('config', 'inspect'), (), None)}
+        assert results['inspect_bluetooth'].outcome == (cases.PASS if reason is None else cases.FAIL), snapshot
+        assert _failed(results.values()) == ({'inspect_bluetooth'} if reason else set()), snapshot
+        assert reason is None or reason in results['inspect_bluetooth'].reason, results['inspect_bluetooth'].reason
+    bare = {result.name: result for result in cases.run(_PLAN_B, ('config', 'inspect'), (), None)}
+    assert bare['inspect_bluetooth'].outcome == cases.SKIP and 'no bluetooth' in bare['inspect_bluetooth'].reason
+    assert json.loads(cc.parse(_PLAN_B.exchange('stage')[0]).args[0]) == {'stage': 'setting', 'manual': False}
+    assert json.loads(cc.parse(_PLAN_B.exchange('health')[0]).args[0])['armed'] is False
 
 
 def test_the_hold_needs_a_disarmed_board() -> None:
@@ -1074,6 +1195,7 @@ test_nothing_active_without_its_flag()
 test_violations_are_caught()
 test_invariants_beyond_the_core_are_checked()
 test_the_m6_parts_are_held_to_plan_b_shapes()
+test_the_m7_gate_is_held_to_plan_b()
 test_the_hold_needs_a_disarmed_board()
 test_not_yet_is_reported_not_failed()
 test_a_milestone_makes_its_cases_mandatory()
@@ -1093,7 +1215,8 @@ test_command_line()
 _PLAN_B.close()
 print('ok: cc contract -- plan B passes every case of every tier in its own process (board-only cases skip), '
       'round trips restore, nothing active without its flag, violations caught (status, keys, types, empty line, '
-      'two replies, codes, every invariant), the M6 parts, the hold needs a disarmed board, preflight refusal, iam id, '
+      'two replies, codes, every invariant), the M6 parts, the M7 gate (held arm, readiness keys, bluetooth), the '
+      'hold needs a disarmed board, preflight refusal, iam id, '
       'config_source gating, the reboot proof, the tee, milestones, aborted runs undo, --diff masking + known '
       'differences, hub line fidelity + HTTP errors + the hub tier, console log/ROM filter + no-reset open, '
       'the command line')

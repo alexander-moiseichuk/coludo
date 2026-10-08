@@ -3,7 +3,7 @@
   "kind": "exact"
  },
  "meta": {
-  "commit": "1f204b57fdfa4590bde43fde9954fbafafd7925d",
+  "commit": "c18e14771f72ac9c54e6b326729ba74dd14aba02",
   "generator": "sequencer_trace",
   "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",
@@ -35,6 +35,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -514,6 +515,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -947,6 +949,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -1224,6 +1227,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -1582,6 +1586,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -2020,6 +2025,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -2362,6 +2368,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -2542,6 +2549,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "boosting"
@@ -2765,6 +2773,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "boosting"
@@ -2896,6 +2905,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -3113,6 +3123,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "landing"
@@ -3272,6 +3283,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "gliding"
@@ -3422,6 +3434,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -3648,6 +3661,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "gliding"
@@ -3821,6 +3835,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "boosting"
@@ -4098,6 +4113,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -4611,6 +4627,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -4976,6 +4993,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 300,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "boosting"
@@ -5228,6 +5246,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -5471,6 +5490,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "gliding"
@@ -5670,6 +5690,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "landing"
@@ -6169,6 +6190,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "landing"
@@ -6381,6 +6403,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "gliding"
@@ -6472,6 +6495,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 2.5,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -6661,6 +6685,240 @@
    "init": {
     "config": {
      "apogee_arm_ms": 50,
+     "boost_timeout_ms": 5000,
+     "flight_timeout_ms": 1000,
+     "ground_ms": 300,
+     "land_agl_m": 5.0,
+     "land_ms": 100,
+     "launch_g": 3.0,
+     "launch_ms": 100,
+     "still_g": 0.3
+    },
+    "settings": {
+     "apogee_arm_ms": 50,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 5000,
+     "flight_timeout_ms": 1000,
+     "ground_ms": 300,
+     "land_agl_m": 5.0,
+     "land_ms": 100,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 3.0,
+     "launch_ms": 100,
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    "stage": "setting"
+   },
+   "name": "flight_timeout_from_boosting",
+   "note": "Corner: the RSO backstop bounds BOOSTING too. A launch, then no elevation at all (no apogee) and a burnout fallback set past the backstop: flight_timeout_ms after the tick that first sees BOOSTING, DONE.",
+   "steps": [
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 0,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         8.0
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [
+       [
+        "setting",
+        "external"
+       ]
+      ],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 50,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         8.0
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 100,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         8.0
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [
+       [
+        "boosting",
+        "launch |a|=8.0g dwell=100ms"
+       ]
+      ],
+      "stage": "boosting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 150,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         0.1
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "boosting"
+     },
+     "out": {
+      "records": [],
+      "stage": "boosting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1100,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         0.1
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "boosting"
+     },
+     "out": {
+      "records": [],
+      "stage": "boosting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1149,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         0.1
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "boosting"
+     },
+     "out": {
+      "records": [],
+      "stage": "boosting"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1150,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         0.1
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "boosting"
+     },
+     "out": {
+      "records": [
+       [
+        "done",
+        "flight timeout"
+       ]
+      ],
+      "stage": "done"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 1200,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         0.1
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "done"
+     },
+     "out": {
+      "records": [],
+      "stage": "done"
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "config": {
+     "apogee_arm_ms": 50,
      "boost_timeout_ms": 500,
      "ground_ms": 300,
      "land_agl_m": 5.0,
@@ -6681,6 +6939,287 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    "stage": "setting"
+   },
+   "name": "separation_while_held",
+   "note": "Corner: an operator holds BOOSTING (`stage boosting` on the bench) and the separation switch opens. Plan B's driver advances a held BOOSTING to GLIDING and the hold stays, so the stage machine sees nothing -- not even a low laser -- until `stage auto`, which records gliding as external and starts the landing dwell.",
+   "steps": [
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 0,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "setting"
+     },
+     "out": {
+      "records": [
+       [
+        "setting",
+        "external"
+       ]
+      ],
+      "stage": "setting"
+     }
+    },
+    {
+     "in": {
+      "events": [
+       "stage boosting"
+      ],
+      "manual": true,
+      "now_ms": 50,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "boosting"
+     },
+     "out": {
+      "records": [],
+      "stage": "boosting"
+     }
+    },
+    {
+     "in": {
+      "manual": true,
+      "now_ms": 100,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "boosting"
+     },
+     "out": {
+      "records": [],
+      "stage": "boosting"
+     }
+    },
+    {
+     "in": {
+      "events": [
+       "separation"
+      ],
+      "manual": true,
+      "now_ms": 150,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": null,
+       "elevation": null
+      },
+      "stage": "gliding"
+     },
+     "out": {
+      "records": [],
+      "stage": "gliding"
+     }
+    },
+    {
+     "in": {
+      "manual": true,
+      "now_ms": 200,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": {
+        "source": "laser",
+        "value": 2.0
+       },
+       "elevation": null
+      },
+      "stage": "gliding"
+     },
+     "out": {
+      "records": [],
+      "stage": "gliding"
+     }
+    },
+    {
+     "in": {
+      "manual": true,
+      "now_ms": 400,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": {
+        "source": "laser",
+        "value": 2.0
+       },
+       "elevation": null
+      },
+      "stage": "gliding"
+     },
+     "out": {
+      "records": [],
+      "stage": "gliding"
+     }
+    },
+    {
+     "in": {
+      "events": [
+       "stage auto"
+      ],
+      "manual": false,
+      "now_ms": 450,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": {
+        "source": "laser",
+        "value": 2.0
+       },
+       "elevation": null
+      },
+      "stage": "gliding"
+     },
+     "out": {
+      "records": [
+       [
+        "gliding",
+        "external"
+       ]
+      ],
+      "stage": "gliding"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 500,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": {
+        "source": "laser",
+        "value": 2.0
+       },
+       "elevation": null
+      },
+      "stage": "gliding"
+     },
+     "out": {
+      "records": [],
+      "stage": "gliding"
+     }
+    },
+    {
+     "in": {
+      "manual": false,
+      "now_ms": 550,
+      "reads": {
+       "accel": {
+        "source": "imu",
+        "value": [
+         0.0,
+         0.0,
+         1.0
+        ]
+       },
+       "agl": {
+        "source": "laser",
+        "value": 2.0
+       },
+       "elevation": null
+      },
+      "stage": "gliding"
+     },
+     "out": {
+      "records": [
+       [
+        "landing",
+        "agl 2.0m"
+       ]
+      ],
+      "stage": "landing"
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "config": {
+     "apogee_arm_ms": 50,
+     "boost_timeout_ms": 500,
+     "ground_ms": 300,
+     "land_agl_m": 5.0,
+     "land_ms": 100,
+     "launch_g": 3.0,
+     "launch_ms": 100,
+     "still_g": 0.3
+    },
+    "settings": {
+     "apogee_arm_ms": 50,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 500,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 300,
+     "land_agl_m": 5.0,
+     "land_ms": 100,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 3.0,
+     "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -7047,6 +7586,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "gliding"
@@ -7280,6 +7820,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.5
     },
     "stage": "landing"
@@ -7530,6 +8071,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "boosting"
@@ -7763,6 +8305,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 1.5
     },
     "stage": "landing"
@@ -7875,6 +8418,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -8096,6 +8640,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -8338,6 +8883,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "boosting"
@@ -8609,6 +9155,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "landing"
@@ -8767,6 +9314,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "boosting"
@@ -8978,12 +9526,13 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
    },
    "name": "a_hold_hides_the_return_to_setting",
-   "note": "Hazard (plan B, ported as is): a hold observes nothing, so `stage gliding` (a fin check) and then `stage setting` never show the machine a stage change and nothing is recorded. The launch dwell half-credited before the hold survives it, and the first boosting sample after it spans the whole 4950 ms gap: launch on ONE sample. In Rust that detected ignition also turns the radio off.",
+   "note": "Hazard (plan B, ported as is): a hold observes nothing, so `stage gliding` (a fin check) and then `stage setting` never show the machine a stage change and nothing is recorded. The launch dwell half-credited before the hold survives it, and the first boosting sample after it spans the whole 4950 ms gap: launch on ONE sample. In Rust that detected launch also ends the link's reconnects.",
    "steps": [
     {
      "in": {
@@ -9165,6 +9714,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "gliding"
@@ -9331,6 +9881,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -9452,6 +10003,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -9765,6 +10317,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 2.5,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "settings": {
@@ -9779,6 +10332,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 2.5,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -16994,6 +17548,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 2.5,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"
@@ -28233,6 +28788,7 @@
      "launch_alt_m": 10.0,
      "launch_g": 3.0,
      "launch_ms": 100,
+     "period_ms": 50,
      "still_g": 0.3
     },
     "stage": "setting"

@@ -73,6 +73,10 @@ _REFUSED_IN_FLIGHT: str = 'refused in flight -- stage is %s (ground-only: settin
 # The Rust board's gate (doc/specs/avionics-port.md §6): every change runs only in SETTING, DONE included, and the
 # text says so. Each board answers its own true text, so the gating cases accept either.
 _REFUSED_OUTSIDE_SETTING: str = 'refused -- stage is %s (changes only in setting)' % _HOLD_STAGE
+# An arm while held is refused under `stage` with plan B's stage problem (cc_client._stage_problem), which the Rust
+# board carries verbatim
+_HELD_STAGE_PROBLEM: str = ('stage held at %s by an operator command -- `stage setting` to return to the ground'
+                            % _HOLD_STAGE)
 _PROBE_LAUNCH_ID: str = 'contract-probe'  # the launch id the launch round trip writes, then puts back
 _SHOWN: int = 100  # characters of one reply argument a report line shows
 
@@ -601,6 +605,18 @@ def _names_its_target(reply: _Reply, context: dict) -> str | None:
     return None if keys == [target] else 'probe %s answered for %s' % (target, keys)
 
 
+def _refused_for_the_hold(reply: _Reply, context: dict) -> str | None:
+    """
+    An arm while held is refused for the hold: `stage` carries plan B's held-stage problem, every problem is text.
+
+    The other refusal text, `stage is gliding, not setting`, would mean the board lost the hold's manual flag.
+    """
+    stage = reply.payload['stage']
+    if stage != _HELD_STAGE_PROBLEM:
+        return 'stage reads %r, expected %r' % (stage, _HELD_STAGE_PROBLEM)
+    return _texts(reply.payload, 'problems')
+
+
 def _verify_consistent(reply: _Reply, context: dict) -> str | None:
     """verify's verdicts agree with their maps: pass == no problems, ready == no readiness item, texts throughout."""
     report = reply.payload
@@ -613,6 +629,14 @@ def _verify_consistent(reply: _Reply, context: dict) -> str | None:
         if problem is not None:
             return problem
     return None
+
+
+def _readiness_from_plan_b(reply: _Reply, context: dict) -> str | None:
+    """verify's readiness names only checks plan B makes (_READINESS_CHECKS): a board adds no readiness of its own."""
+    unknown = sorted(set(reply.payload['readiness']) - set(_READINESS_CHECKS))
+    if not unknown:
+        return None
+    return 'readiness names %s, which plan B never reports (%s)' % (unknown, ', '.join(_READINESS_CHECKS))
 
 
 def _names_itself(reply: _Reply, context: dict) -> str | None:
@@ -770,6 +794,26 @@ def _disarm_after_arm(context: dict) -> str:
     return 'disarm'
 
 
+def _arm_while_held(context: dict) -> str:
+    """
+    `arm` while the hold took; marked as _arm marks it, and as sent while held.
+
+    Held at gliding, an armed board flies its control loop on the fins. A board that arms here anyway is disarmed
+    by the case after this one, or by the undo of a run that stops.
+    """
+    if not context.get('held'):
+        raise Blocked('the stage hold did not take')
+    context['held_arm_sent'] = True
+    return _arm(context)
+
+
+def _disarm_after_held_arm(context: dict) -> str:
+    """`disarm`, whenever an arm went out while held: before the board returns to the ground."""
+    if not context.get('held_arm_sent'):
+        raise Blocked('no arm was sent while held')
+    return 'disarm'
+
+
 def _reboot(context: dict) -> str:
     """`reboot`, once whoami told which boot it ends: the boot id a new boot must differ from."""
     if 'boot_id' not in context:
@@ -897,6 +941,8 @@ _ARMED: dict = {'armed': 'bool'}
 _REPORT: dict = {'stage': 'str', 'tasks': 'object'}
 _VERIFY: dict = {'pass': 'bool', 'devices': 'object', 'problems': 'object', 'alternatives': 'object',
                  'ready': 'bool', 'readiness': 'object'}
+# every readiness key plan B can report: cc_client._readiness's config checks, and verify's live imu_calibration
+_READINESS_CHECKS: tuple = ('watchdog', 'flight', 'gains', 'fins.limit_multiplier', 'fins', 'zone', 'imu_calibration')
 _DETECT: dict = {'detected': 'str|null', 'applied': 'str|null', 'detail': 'any'}
 _PUSH_STATUS: dict = {'uploading': 'str|null', 'orphans': 'list', 'received?': 'int', 'size?': 'int',
                       'chunks?': 'int'}
@@ -908,6 +954,8 @@ _IMU: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'interrupt': 'bool
 _BAROMETER: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'altitude_m': 'number|null',
                     'temperature_c': 'number|null', 'pressure_pa': 'number|null', 'elevation_m': 'number|null'}
 _SEPARATION: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'separated': 'bool'}
+# plan B's bluetooth.py `inspect`: the configured radio, and the radio's actual state (null on a board with no BLE)
+_BLUETOOTH: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'radio': 'bool', 'active': 'bool|null'}
 _BUSTUNE: dict = {'kind': 'str', 'id': 'str', 'freq': 'int', 'devices': 'object', 'all_ok': 'bool'}
 _M6_DRIVERS: tuple = ('lsm6dso32', 'icp10111', 'separation')
 
@@ -1030,6 +1078,8 @@ _INSPECT: tuple = (
          milestone=6),
     Case('inspect', 'inspect_separation', _on_device('inspect', 'separation'), (('ok', _SEPARATION),),
          (_names_itself,), milestone=6),
+    Case('inspect', 'inspect_bluetooth', _on_device('inspect', 'bluetooth'), (('ok', _BLUETOOTH),), (_names_itself,),
+         milestone=7, note='the Rust board is a stub in plan B\'s no-BLE shape: radio as configured, active null'),
     Case('inspect', 'update_barometer_ground', _ground_write, (('ok', {'changed': 'list'}),), (_changed_ground,),
          allow=('active',), milestone=6,
          note='sets the ground 100 m AMSL directly (the warm start\'s rebase); the re-zero below puts a live one back'),
@@ -1069,6 +1119,12 @@ _CONTROL: tuple = (
          (('err', 'unsafe', _REFUSED_IN_FLIGHT), ('err', 'unsafe', _REFUSED_OUTSIDE_SETTING)), allow=('stage',),
          milestone=6,
          note='a baro calibrate mid-air re-zeroes elevation: both boards refuse before they look the name up'),
+    Case('control', 'arm_while_held', _arm_while_held, (('err', 'unsafe', {'stage': 'str'}),),
+         (_refused_for_the_hold,), allow=('stage', 'active'), milestone=7,
+         note='a held board never arms: plan B refuses at its gate, the Rust board also when the arm applies. Held '
+              'off the ground neither board probes, so nothing sweeps'),
+    Case('control', 'disarm_after_held_arm', _disarm_after_held_arm, (('ok', _ARMED),), (_armed_is(False),),
+         allow=('stage', 'active'), remember=_mark('disarmed')),
     Case('control', 'stage_return_to_ground', _return_to_ground, (('ok', _STAGE),), (_stage_is('setting', False),),
          allow=('stage',),
          note='stage setting is a return to the ground, not a hold: manual goes false (Controller.hold)'),
@@ -1098,7 +1154,7 @@ _DIAGNOSTICS: tuple = (
          allow=('active',)),
     Case('diagnostics', 'probe_devices', _probe_devices, (('ok', _ANY_OBJECT), ('ok', _ANY_OBJECT, _ANY_OBJECT)),
          (_probe_maps, _names_its_target, _succeeded), allow=('active',), milestone=6),
-    Case('diagnostics', 'verify', 'verify', (('ok', _VERIFY),), (_verify_consistent,),
+    Case('diagnostics', 'verify', 'verify', (('ok', _VERIFY),), (_verify_consistent, _readiness_from_plan_b),
          allow=('active',)),
     Case('diagnostics', 'detect', 'detect', (('ok', _DETECT),), (), allow=('active',), milestone=5,
          note='read-only, but the spec counts it active: it re-scans both I2C buses'),

@@ -32,7 +32,8 @@ The stand-ins, none of which touches the stage machine's logic:
 Inputs are lifted from test_sequencer.py block by block (its direct pokes at the sequencer's internals become
 the real paths that produce the same state: an operator hold and release, the separation driver, a warm-start
 restore), then the regressions the plan names (a stale agl at apogee, GNSS elevation on the pad, a baro dropout,
-the warm-entry rebase, a manual hold) and the corners found while porting, then a scenario for each decision no
+the warm-entry rebase, a manual hold) and the corners found while porting (the backstop from BOOSTING and a
+separation under an operator hold among them), then a scenario for each decision no
 other one pins (each comparison's strictness, the arming edge, each stage-entry reset, the launch reason text),
 then seeded noisy flights.
 
@@ -72,15 +73,18 @@ _STAGE = controller.Stage
 _SPEC: dict = {'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 500, 'apogee_arm_ms': 50, 'land_agl_m': 5.0,
                'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300}
 
-"""The settings plan B's Sequencer.setup() resolves, by its attribute: what init.settings reports."""
-_SETTINGS: tuple = (('launch_g', '_launch_g'), ('launch_ms', '_launch_ms'), ('launch_alt_m', '_launch_alt_m'),
-                    ('boost_timeout_ms', '_boost_timeout_ms'), ('apogee_drop_m', '_apogee_drop_m'),
-                    ('apogee_arm_ms', '_apogee_arm_ms'), ('flight_timeout_ms', '_flight_timeout_ms'),
-                    ('land_agl_m', '_land_agl_m'), ('land_ms', '_land_ms'), ('still_g', '_still_g'),
-                    ('ground_ms', '_ground_ms'), ('land_timeout_ms', '_land_timeout_ms'))
+"""
+The settings plan B's Sequencer.setup() resolves, by its attribute: what init.settings reports. The loop period is
+among them: the port reads it with the thresholds (its Settings), so its default is checked against plan B's too.
+"""
+_SETTINGS: tuple = (('period_ms', '_period_ms'), ('launch_g', '_launch_g'), ('launch_ms', '_launch_ms'),
+                    ('launch_alt_m', '_launch_alt_m'), ('boost_timeout_ms', '_boost_timeout_ms'),
+                    ('apogee_drop_m', '_apogee_drop_m'), ('apogee_arm_ms', '_apogee_arm_ms'),
+                    ('flight_timeout_ms', '_flight_timeout_ms'), ('land_agl_m', '_land_agl_m'), ('land_ms', '_land_ms'),
+                    ('still_g', '_still_g'), ('ground_ms', '_ground_ms'), ('land_timeout_ms', '_land_timeout_ms'))
 
-"""The board-config keys that are not the stage machine's: the loop period and the GC switch (not ported)."""
-_NOT_THE_MACHINE: tuple = ('name', 'activity', 'enabled', 'period_ms', 'disable_gc_flight')
+"""The board-config keys the port's Settings do not read: the entry's own, and the GC switch (not ported)."""
+_NOT_SETTINGS: tuple = ('name', 'activity', 'enabled', 'disable_gc_flight')
 
 
 class _NearThreshold(Exception):
@@ -810,6 +814,36 @@ def _scripted() -> list:
             (6150, (), {}),
             (6200, (), {}),
         ]))
+    add(_scenario(
+        'flight_timeout_from_boosting',
+        'Corner: the RSO backstop bounds BOOSTING too. A launch, then no elevation at all (no apogee) and a burnout '
+        'fallback set past the backstop: flight_timeout_ms after the tick that first sees BOOSTING, DONE.',
+        dict(_SPEC, boost_timeout_ms=5000, flight_timeout_ms=1000), [
+            (0, (), {'accel': _BOOST}),
+            (50, (), {}),
+            (100, (), {}),
+            (150, (), {'accel': _imu(0.0, 0.0, 0.1)}),
+            (1100, (), {}),
+            (1149, (), {}),
+            (1150, (), {}),
+            (1200, (), {}),
+        ]))
+    add(_scenario(
+        'separation_while_held',
+        'Corner: an operator holds BOOSTING (`stage boosting` on the bench) and the separation switch opens. Plan '
+        "B's driver advances a held BOOSTING to GLIDING and the hold stays, so the stage machine sees nothing -- not "
+        'even a low laser -- until `stage auto`, which records gliding as external and starts the landing dwell.',
+        _SPEC, [
+            (0, (), {'accel': _STILL}),
+            (50, ('stage boosting',), {}),
+            (100, (), {}),
+            (150, ('separation',), {}),
+            (200, (), {'agl': _laser(2.0)}),
+            (400, (), {}),
+            (450, ('stage auto',), {}),
+            (500, (), {}),
+            (550, (), {}),
+        ]))
     scenarios += _on_the_lines()
     scenarios += _stage_entries()
     scenarios += _launch_reasons()
@@ -989,7 +1023,7 @@ def _stage_entries() -> list:
             'Hazard (plan B, ported as is): a hold observes nothing, so `stage gliding` (a fin check) and then '
             '`stage setting` never show the machine a stage change and nothing is recorded. The launch dwell '
             'half-credited before the hold survives it, and the first boosting sample after it spans the whole '
-            '4950 ms gap: launch on ONE sample. In Rust that detected ignition also turns the radio off.',
+            "4950 ms gap: launch on ONE sample. In Rust that detected launch also ends the link's reconnects.",
             _SPEC, [
                 (0, (), {'accel': _BOOST}),
                 (50, (), {}),
@@ -1055,10 +1089,10 @@ def _launch_reasons() -> list:
 
 
 def _shipped_config() -> dict:
-    """The sequencer's entry in config_default (what a board without overrides runs), minus the loop's keys."""
+    """The sequencer's entry in config_default (what a board without overrides runs), minus the keys not read."""
     for component in config_default.default()['components']:
         if component.get('name') == 'sequencer':
-            return {key: value for key, value in component.items() if key not in _NOT_THE_MACHINE}
+            return {key: value for key, value in component.items() if key not in _NOT_SETTINGS}
     raise SystemExit('sequencer_trace: config_default has no sequencer')
 
 

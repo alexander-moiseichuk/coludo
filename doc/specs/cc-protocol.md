@@ -11,6 +11,17 @@ set-config, reset-config, reboot, and the push-begin/push/push-commit uploads) a
 outside SETTING/DONE. `arm` and `verify` skip their fin-sweeping probes there: `verify` reports
 `problems.probe: not run`, and `arm` refuses on the stage.
 
+**The Rust board** (`src/avionics`, [`avionics-port.md`](avionics-port.md) §6) differs in three ways the hub sees:
+- **The link after the launch:** once its stage machine has detected the launch, the board never rejoins, hunts or
+  dials again. A connection made on the pad still runs until range ends it; at DONE the recovery beacon's AP is the
+  only network. An operator `stage` hold is no launch: the board keeps reconnecting normally, and a hold or `stage
+  setting` (from the console, once the link is gone) ends the rule.
+- **Changes run only in SETTING:** the active commands answer `err unsafe` at DONE too, except the barometers'
+  re-zero (`calibrate <barometer>`, `update <barometer> {"rezero"|"ground"}`), which also runs at DONE: the recovery
+  from a false launch is `stage done`, the re-zero, then `stage setting`.
+- **Probes only in SETTING:** `arm` and `verify` sweep their probes only in SETTING, so at DONE too `verify` reports
+  `problems.probe: not run`.
+
 ## Topology & roles
 
 - **Boards are TCP clients.** On boot a board dials out to CC (host/port from the `wifi`
@@ -110,6 +121,12 @@ marks the board **offline**. While it lasts, the hub keeps heartbeating and fans
 board like any other. That is why the board refuses active commands in flight (`err unsafe`),
 while `stage`, `disarm` and every read stay open, since those are the operator's recovery.
 
+The Rust board keeps the link too, but keys the rule on its stage machine's detected launch, not on the stage: from
+the launch it never initiates a connection again, at DONE included (the beacon AP is its network there), so a board
+whose pad session dropped stays offline for the hub. An operator hold is no launch and keeps the normal re-dial,
+and a hold or `stage setting` from the console clears the rule. Plan B stops initiating on any airborne stage, holds
+included, and hunts again at DONE.
+
 ## Heartbeat / liveness
 
 CC polls each online board roughly every **2 seconds**. The heartbeat is a normal `health`
@@ -137,7 +154,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `ping` | — | `pong` | liveness |
 | `health` | — | `ok {temp,mem_free,uptime,stage,layout,degraded[],…}` | vitals. Always: `temp`, `mem_free`, `uptime`, `stage`, `layout` (the revision this boot applied: `v1.1` detected, `v0.1 (declared)`, or `undecided`) and `degraded[]`. When the part exists: `position` (fresh GNSS fix), `clock`/`epoch` (board RTC), `launchpad`/`launchpad_set`/`site`, `agl` (fresh laser only), `calibration` ({device: instruction} still outstanding), `imu_calibration` (BNO055 sys/gyr/acc/mag), `armed`, `flight` (live panel), `tasks[]` (`{name, ok}`). `degraded[]` is empty when nominal, else any of: `attitude-backup` (the fused attitude comes from a source an enabled provider outranks -- the SEN0253's BNO055 standing in for the filter), `attitude-blind` (the attitude filter has had no fresh gyro for 100 ms, on every board: with a fresh backup below it the filter withholds and `attitude-backup` shows too; without one it keeps publishing a held roll/pitch that every staleness check passes, and this flag is the only report), `STAGE HELD`, `CONFIG FALLBACK -- <reason>`, `memory-rescued`, `needs-calibration`, `cc-less-fallback`, `WARM-STARTED (rebooted in flight)` |
 | `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
-| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position; `problems` = `{name: '<driver> -- <why>'}`, see *Device verdicts* below — an unfitted alternative is not a problem) and the stage is SETTING under automatic sequencing (`problems.stage` otherwise, so `arm` never succeeds airborne or in DONE); arming pins the live GNSS fix as the launch point (freeze — tier-2 heading survives a mid-flight fix loss). The probes run on the ground only, and they **sweep each fin over its full `min_deg`..`max_deg` travel** (0–180° by default; no airframe profile narrows it), not the ±45° control limit |
+| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position; `problems` = `{name: '<driver> -- <why>'}`, see *Device verdicts* below — an unfitted alternative is not a problem) and the stage is SETTING under automatic sequencing (`problems.stage` otherwise, so `arm` never succeeds airborne or in DONE); arming pins the live GNSS fix as the launch point (freeze — tier-2 heading survives a mid-flight fix loss). The probes run on the ground only, and they **sweep each fin over its full `min_deg`..`max_deg` travel** (0–180° by default; no airframe profile narrows it), not the ±45° control limit. **Rust board:** the probes run in SETTING only. An entry the firmware cannot run yet is a failure (`<driver> -- not connected: no driver/activity -- not ported yet`). The **ring gate** refuses too, under `recorder` in plan B's recorder-probe words (`recorder rings: <why>`), when the flash ring's bring-up scan has not run, its eraser is not running, or fewer blocks are erased ahead of the writer than its reserve (~1 % of the ring); a full ring, a saver behind and no card are not refusals. The stage is **checked again when the control thread applies the arm**: a launch detected during the probe sweep refuses it under `stage` (plan B arms whatever the stage became). A request that waited more than **25 s** on the board before it could run is refused, `err unsafe {"arm": "the request waited <n> s: send it again"}`, so an arm never lands after the hub's 30 s timeout gave up on it. The launch-point freeze comes with the GNSS (M11) |
 | `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
 | `log` | `[ms]` | `ok {lines:[...], dropped}` | poll-model: lines teed since the last `log`; re-arm teeing for `ms` more (default 1000, `0` stops). `dropped` = records the tee ring discarded |
 | `tlm` | `[ms]` | `ok {samples:[...], dropped}` | poll-model: telemetry rows teed since the last `tlm`; re-arm teeing for `ms` more (default 1000, `0` stops) |
@@ -149,7 +166,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
 | `probe` | `[name\|all]` | `ok {name: null\|'<driver> -- <why>'} [{name: '<driver> not fitted -- …'}]` | on-demand device self-tests; `all` also lists devices that never set up (`<driver> -- not connected: <reason>`) and a crashed run loop, and carries the unfitted alternatives, when there are any, in a SECOND map (*Device verdicts* below); `probe <alternative>` answers `{name: null}` then `{name: '<driver> not fitted -- …'}`, the same two maps. Active: each servo sweeps min → max → neutral over its full `min_deg`..`max_deg` travel (0/180° by default), one fin at a time, checking the INA226 rail draw when one is fitted |
 | `calibrate` | `[name]` | `ok {name: instruction}` / `ok {name: null\|error}` | no arg: the devices with OUTSTANDING calibration, each an instruction string for the OPERATOR (the BNO055 wants the airframe moved -- NDOF never converges standing still; the pitot wants still air); `{}` = nothing outstanding, and devices with no requirement never appear. With a name (ground-only): run that device's calibration where the board can do it alone -- pitot still-air tare, baro ground zero, saving the BNO055's converged profile to NVS -- `null` = done, else what is still owed. Sibling of `probe`, which asks whether the hardware WORKS -- an uncalibrated IMU passes that and is still unfit to fly |
-| `verify` | — | `ok {pass, devices, problems, alternatives, ready, readiness}` | verify board setup: every configured device (`<driver> -- up` / `<driver> -- down: <reason>` / not fitted) + probe, with an overall hardware PASS, plus the flight-readiness CONFIG gate as a separate `ready` verdict (`readiness` names each field-dangerous setting: watchdog off, flight loop off / zero gains, fin derating applied, no zone source) — the launch-pad re-check. `problems.stage` when the stage is held or not SETTING; airborne the probes are skipped and reported as `problems.probe: not run` |
+| `verify` | — | `ok {pass, devices, problems, alternatives, ready, readiness}` | verify board setup: every configured device (`<driver> -- up` / `<driver> -- down: <reason>` / not fitted) + probe, with an overall hardware PASS, plus the flight-readiness CONFIG gate as a separate `ready` verdict (`readiness` names each field-dangerous setting: watchdog off, flight loop off / zero gains, fin derating applied, no zone source) — the launch-pad re-check. `problems.stage` when the stage is held or not SETTING; airborne the probes are skipped and reported as `problems.probe: not run`. **Rust board:** the probe sweep runs in SETTING only (at DONE too `problems.probe: not run`); the ring gate refuses as in `arm` (`problems.recorder`); `readiness` is plan B's, with a missing `enabled` read as enabled |
 | `detect` | — | `ok {detected, applied, detail}` | re-scan both I²C buses and report the revision they look like (`detected`: `v0.1` or `v1.1`, or null when undecided: `v1.0` is never detected, a v1.0 board scans as v1.1) beside what this boot applied (`applied` = `health.layout`). Applies nothing: a verdict only takes effect at the next boot, and only where `board.layout` is `auto` ([`board-config.md`](board-config.md)). Ground-only |
 | `get-config` | `[name]` | `ok {config}` | fetch a named config: `board` / `running` (the running config, the default), `saved` (what the NEXT boot loads: `board.config` through the boot's own `load()`, or the default it would fall back to -- start any read-modify-write here, since the running config predates an unrebooted save), `default` (built-in board default), `launch` (the mission) |
 | `set-config` | `<name> <json>` | `ok {config_id}` / `err invalid <msg>` | save a named config: `board` validates + replaces the full snapshot (running config unchanged until reboot); `launch` merge-applies the fields into the mission + persists `launch.config` |
@@ -308,6 +325,10 @@ with a space, parsed by the same parser.
   - A command that takes the board away needs the word `confirm` (`panic confirm`, `c6reset confirm`).
 - **Long diagnostics** (`load`, `pace`, `sdtest`) answer after their `seconds=` window. The hub gives them its
   30 s exchange timeout, so keep the window under ~25 s through the hub.
+- **Video has one owner** (M7): `video start` and `video stop` go to the video thread, the only caller of the
+  camera's start and stop, and wait for its answer. It also starts the flight recording at `arm` (replacing an
+  operator's recording, logged), stops it at a `disarm` in SETTING, and stops any recording at DONE. The commands'
+  gate is unchanged (SETTING).
 
 `tools/avionics_console.py` is the operator's end on USB:
 - an interactive console with history and tab completion from `help`;

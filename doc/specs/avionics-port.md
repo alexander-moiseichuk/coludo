@@ -28,7 +28,8 @@ Decisions this plan builds on:
   ring_saver, below video). On the SD, video is priority 1 and logging priority 2: the saver yields to the video
   writer (§3).
 - Changes run only in SETTING: `update`, `set-config`, `reset-config`, `calibrate <device>`, `probe`, `detect`,
-  `bustune` and `reboot`. Reads, `stage` and `disarm` stay open, and there is no reboot at DONE (§6).
+  `bustune` and `reboot`. Reads, `stage` and `disarm` stay open, and there is no reboot at DONE (§6). From M7 the
+  barometers' re-zero also runs at DONE, the recovery from a false launch (§6).
 - Video target: **FHD@25**. The operator accepts 25 fps, and FHD@30 is encoder-bound at about 26.6 fps on P4
   rev v1.3 (`doc/benches/avionics-20261005/README.md` §camera).
 
@@ -56,7 +57,7 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `recorder` | `recorder.py` (producer side) | **exists** (`97f785f`), extended in the M3 rework. Stream registry, `Telemetry` (`due`/`push`), the binary record codec (§3.2), per-producer SPSC byte rings, the CC tees and the counters. |
 | `flash_ring` | — (new; replaces the UART + recorderd) | **exists** (`97f785f`), **in rework** for the operator's ring (§3). 4 KiB blocks, the block header and chunk codec, the bring-up scan and block table, the writer's append, the saver's walk, and the eraser's rules with newest wins. Written over two traits, `Flash` and `Fs`, so it is host-tested with an in-memory NOR flash that cuts power on demand and a temp directory. |
 | `databoard` | `databoard.py` | `no_std`, core atomics. Seqlock `Channel<T>` and `Parameter<T>` (rank, window, `read() -> Option<Reading>`). There is no extrapolating accessor. Reconcile learning runs on the writer side. |
-| `sequencer` | `controller.py` Stage, `tasks/sequencer.py`, `commons.dwell_step`/`apogee_step` | **exists** (M7; `Stage` since `83c02236`). One module per plan B module: `controller` (`Stage`, `#[repr(u8)]` ids 1..5 SETTING..DONE with names, `ground()` and `airborne()`; 0 is the NVS no-checkpoint sentinel, not a variant), `commons` (the leaky `dwell_step`, the IIR `apogee_step`) and `sequencer`, whose pure `StageMachine::step(now_ms, stage, &Readings, manual) -> Step` takes the stage the `StageCell` holds; the caller writes the step's advance into the `StageCell` before the next step. A `Step` carries up to two sequencer.csv rows, the external move seen first and then the machine's own advance, because one tick can record both (a hold released past the flight timeout). The crate is `std`, for the `f32::sqrt` of the reason text, which `core` lacks on stable. Golden: `commons.json` (`dwell_step`, `apogee_step`) and `sequencer_trace.json`. |
+| `sequencer` | `controller.py` Stage, `tasks/sequencer.py`, `commons.dwell_step`/`apogee_step` | **exists** (M7; `Stage` since `83c02236`). One module per plan B module: `controller` (`Stage`, `#[repr(u8)]` ids 1..5 SETTING..DONE with names, `ground()` and `airborne()`; 0 is the NVS no-checkpoint sentinel, not a variant), `commons` (the leaky `dwell_step`, the IIR `apogee_step`) and `sequencer`, whose pure `StageMachine::step(now_ms, stage, &Readings, manual) -> Step` takes the stage the flight word holds (§4.1); the caller writes the step's advance into the flight word before the next step. M7 adds `Settings::from_config` (§6), the flight word with its apply rules, and the request slot (§4.3, step 4). A `Step` carries up to two sequencer.csv rows, the external move seen first and then the machine's own advance, because one tick can record both (a hold released past the flight timeout). The crate is `std`, for the `f32::sqrt` of the reason text, which `core` lacks on stable. Golden: `commons.json` (`dwell_step`, `apogee_step`) and `sequencer_trace.json`. |
 | `warmstart` | `warmstart.py` | The crumb serde (the same NVS keys), `should_restore(...) -> (bool, Reason)` with the boot rules (§4.6), and the apply plan as data. |
 | `control` | `pid.py`, `mixer.py`, `governor.py`, `airspeed.py`, `wind.py`, `navigation.py`, `guidance.py`, `tasks/attitude.py` (filter), `commons` fin table and `altitude_m` | **exists** in part (M1: the navigation subset; the rest in M9/M13). f32 flight math with one module per Python file. Every function takes time as an argument; nothing reads a clock. |
 | `gnss` | `gnss.py`, `drivers/neo6mv2.py`, `drivers/atgm336h.py` | NMEA checksum and parse with integer ddmm→e7, GSV/sky row, CASIC/PUBX/UBX command bytes, and a thin wrapper over the `ublox` crate (NAV-PVT) for the NEO-M8N. |
@@ -601,10 +602,10 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - **ICP-10111** on whichever bus owner `layout.resolve()` assigns: i2c:1 on v1.x (taster, 7F), i2c:0 on v0.1
   (7C, next to the SEN0697). A two-phase measurement, the general call, and the **re-init of every device on
   that bus** (M5; §7, R6).
-- **Separation:** GPIO33 with pull-down. A both-edge ISR stamps the first and the last edge since the tick took
-  them (esp_timer us, u32). The control thread steps drivers::debounce with one read per tick and those stamps.
-  Armed, a quiet read a debounce after the last edge decides, 10-20 ms at the default 10 ms debounce on the 10 ms
-  tick. Polled (the arm failed), three agreeing reads spanning the debounce.
+- **Separation:** GPIO33 with pull-down. A both-edge ISR stamps the first and the latest edge of the contact's
+  episode into two atomics (esp_timer us, u32; drivers::debounce `StampPair`). The control thread reads the pin every
+  tick and takes the pair once no edge came for a quiet (`debounce_ms`, default 10 ms): 10-20 ms after the last edge
+  on the 10 ms tick. Polled (the arm failed), the tick's reads feed the same pair.
 - Streams `imu_lsm6dso32.csv`, `baro_icp10111.csv` and `separation.csv`.
 - `inspect`, `update{rezero,ground}`, `probe`, `diagnose` and `calibrate` through owner mailboxes.
 - `health.calibration` becomes real. `degraded` gains `needs-calibration`.
@@ -643,17 +644,21 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
 - **Separation (operator, 2026-10-07).** The contact is a copper ring on the booster, 5 mm wide, bridging two copper
   strips on the glider, 2 cm long, laid across it like a П. At separation the glider slides out (П, Н, U, out); while
   the strips' 2 cm pass over the ring the contact may wobble 1->0->1 (the tubes do not fit perfectly), for under
-  10 ms and less than 2 cm at 3 m/s (~7 ms), since the blast and the drag slow the booster as the glider is pushed on. The driver is a thin latch over a generic two-level
+  10 ms and less than 2 cm at 3 m/s (~7 ms), since the blast and the drag slow the booster as the glider is pushed on. The driver is a thin latch over a generic
   debounce (drivers::debounce, in the drivers' pattern: `Settings::from_config` infallible, `new(&settings)`), on the
-  caller's microsecond clock. With the interrupt armed the hold is timed from the edge stamps: a quiet read a debounce
-  after the last edge decides; the default debounce is 10 ms ("10 ms or less"), above the wobble's gaps (a shorter one
-  could split one separation into several rows). A polled pin keeps plan B's three agreeing reads. Every event
-  records its **moment** (the first 1->0 of the run that ended at 0 for good, in uptime us) and its **duration**
-  (from that first 1->0 to the start of the sustained 0, in us: the pads' wobble, 0 for a clean edge), in
-  `separation.csv` (`event;stage;moment;duration`, durable) and in its log line. The board's config validator refuses
-  a `debounce_ms` outside 0..=1000 (tools/provision.sh too). Plan B's built-in default document still writes 20: a
-  board that falls back to it debounces 20 ms; real boards carry 10 in their saved configs. The GPIO interrupt service
-  is installed once by the control thread, which latches every GPIO interrupt on core 1.
+  caller's microsecond clock. **Revised (operator, 2026-10-07, a ring buffer of edges rejected as too complex):** two
+  stamps, start and finish: the ISR's first edge of an episode sets the start, every edge the finish. The tick takes
+  the pair once the finish is a quiet old (`debounce_ms`, default 10 ms, "10 ms or less", above the wobble's gaps) and
+  decides by the level it reads: `separated` (the latch nested, the pin 0), `nested` (the reverse) or `blip` (the
+  latch's own level: the contact moved and came back). The tick's read is evidence too: with no episode open, a read
+  off the latch opens one (a change before the arm, a lost edge, a board powered up unassembled and then assembled,
+  which ends nested at 1). A polled pin feeds the same pair from its reads. Every event records its **moment** (the
+  episode's first edge, in uptime us) and its **duration** (to its last edge, in us: the wobble, 0 for a clean edge),
+  in `separation.csv` (`event;stage;moment;duration`, durable, blips included) and in its log line. The board's
+  config validator refuses a `debounce_ms` outside 0..=1000 (tools/provision.sh too). Plan B's built-in default
+  document still writes 20: a board that falls back to it debounces 20 ms; real boards carry 10 in their saved
+  configs. The GPIO interrupt service is installed once by the control thread, which latches every GPIO interrupt on
+  core 1.
 - **The CC surface.** Every device that came up is an inspectable object (plan B's `Task.inspect`), its own keys read
   off the databoard: the IMU's `rate_dps` is in deg/s (D18; plan B's held centideg/s ints under that name). In M6 only the ICP-10111 has a calibration (it asks for its
   ground until it holds one, and setup captures it); the SDP810's tare and the BMM350's hard iron join `calibrate` and
@@ -729,6 +734,13 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   10,066-19,667 us after the sustained level began (mean 15,135 us): the hold plus the tick's phase. Two wiggles held a
   contact gap past 10 ms and so made their own pair (30.7 ms and 125.7 ms after the previous event), as the hold
   intends.
+- The two-stamp separation on the taster (the operator's model: the interrupt stamps an episode's first and latest
+  edge, the tick concludes it 10 ms after the latest by the pin's level; the operator's hands, 2026-10-07, session
+  000418): 55 rows, the stage SETTING throughout, separated and nested strictly alternating with every wiggle that came
+  back in between as a blip. Separated 17 (wobble median 1,161 us, at most 17,447 us, 2 clean single edges), nested 16
+  (median 224 us, at most 18,000 us), blips 22 (median 2 us, at most 62,090 us, 11 single edges). Every decision came
+  10.0-19.9 ms after the episode's last edge: the 10 ms quiet plus the tick's phase. Session 000419: powered up with the
+  pin out, the latch started separated, and 22 touches that never held stayed blips at 0, the latch unmoved.
 
 **Carried into M9 (measured at the M6 close):** both boards' LSM6DSO32 run below the tick (98.86 and 98.39 Hz), so
 the fresh-only rows skip a tick about 1.5 % of the time and two in a row about 8-9 times a minute: a 30 ms gap that
@@ -736,6 +748,11 @@ lapses the 20 ms `accel`/`rate` window for ~10 ms, about every 7 s (taster 121 i
 reads those channels in flight in M6; the attitude filter (M9) and the D term (M13) will, and the databoard would hand
 over to the BMI323 for a tick. Choose with M9: run the part at 208 Hz (a fresh conversion every tick, twice the noise
 bandwidth), widen the IMU windows to 30 ms, or close the status-read race.
+From M7 the stage machine and the separation's thrust gate read `accel` in flight, so the gaps reach them. A missed
+read drains the leaky launch dwell for its step instead of feeding it (`commons::dwell_step`), so a launch can come up
+to two steps (~100 ms) later; the stillness dwell is contiguous, so a missed read restarts it
+(`StageMachine::detect_stationary`); the gate's two dwells are leaky like the launch's. Accepted until M9's
+choice ends it. M9's optional `axes` key then reaches the gate's +x as well.
 
 **Carried into M7 (from the M6 review):**
 - The control thread's mailbox answers through std mpsc, which takes a mutex and a condvar on core 1 when the
@@ -751,15 +768,17 @@ for these parts.
 ### M7. Stage machine and a real arm/verify gate (2 days)
 
 **Scope**
-- **`crates/sequencer`** (the stage machine joins the existing `Stage`) in the control thread at 20 Hz:
-  launch, apogee and burnout, land, still, and the flight-timeout backstop, all gated by `read().source`.
+- **`crates/sequencer`** (the stage machine joins the existing `Stage`) in the control thread, every `period_ms`
+  (default 50 ms: 20 Hz) on the uptime clock: launch, apogee and burnout, land, still, and the flight-timeout
+  backstop, all gated by `read().source` (§4.3, step 6). The entry's keys are read by `Settings::from_config`: what
+  plan B flies is taken, what plan B cannot fly fails the entry at bring-up, so `arm` refuses (§6).
 - **Separation gated on thrust end (operator, 2026-10-07):** the real separation completes within ~7 ms, so the 10 ms
   hold is too coarse; what it guarded was a contact blip under thrust. A separation now counts only after the IMU sees
   thrust end (the booster cannot separate while it pushes), so vibration under thrust can never deploy, and the hold
   drops to about 1 ms (`debounce_ms`; the decision still lands on the next tick). If the pads are already open when the
   gate opens, the separation counts then, its moment the recorded first departure. Plan B accepted a held separation
-  anywhere in BOOSTING (§6). Every edge stays recorded in us (`separation_edges.csv`), so a flight shows the blast and
-  the boost's vibration.
+  anywhere in BOOSTING (§6). Every episode of the contact stays recorded in us (`separation.csv`, its blips too), so a
+  flight shows the blast and the boost's vibration.
   - **Early separation (operator):** a destabilized stack can lose the glider early, for aerodynamic reasons, while the
     booster still burns. Thrust end is therefore the GLIDER's own: its IMU's axial specific force, which drops from
     +several g to drag deceleration the moment the glider stops being pushed -- by burnout, or by an early separation.
@@ -768,23 +787,56 @@ for these parts.
   - **Backstop:** a contact held open for a long run (about 100 ms, far beyond any wobble or blip) counts whatever the
     IMU says, so a dead or confused IMU can never hide a real separation.
   - **Kept simple (operator):** the nominal separation is the ejection charge, about 4 s after thrust end. No coast
-    window: the interrupt reads the pin's level with a us stamp and pushes it as an event; the control thread drains
-    the events every tick, records each, and decides by one rule -- the last event is 0 and no event came for the hold
-    (one `debounce_ms`, ~1 ms) -- gated as above.
-- The `StageCell` single writer is the control thread. Hold/resume/arm/disarm arrive as mailbox requests.
-- `sequencer.csv`.
+    window and no queue: the interrupt stamps the episode's first and latest edge (two words); the control thread
+    takes them once no edge came for the hold (one `debounce_ms`) and decides by the level it reads then --
+    separated, nested or a blip, each recorded -- gated as above.
+  - **The gate's numbers:** the axis is the body frame's +x, the nose (the body frame, operator 2026-10-07: +x nose,
+    +y left, +z up; §7.2, IMU axes), read from the fresh `accel` beside the stage machine's read. Thrust is seen when a_x
+    stays above the sequencer's `launch_g` for its `launch_ms` of net time (the launch's own leaky dwell; plan B's
+    defaults without a sequencer entry), and has ended when a_x then stays below 0 g for 20 ms of net time; both
+    start afresh at each BOOSTING entry. A separation concluded in BOOSTING before the gate opens is pending: it
+    counts when the gate opens, or once the pin has stayed 0 for 100 ms after the episode's last edge (the
+    backstop), dated by the episode's first edge either way; a re-nest clears it. A wrong axis or sign, no IMU, or a
+    bench hold never sees thrust, so only the backstop decides: a mis-mounted IMU can never open the gate under
+    thrust. `control` shows `thrust` (none, seen, ended) and `pending`.
+- **One writer of the flight state:** the control thread commits the stage, the hold, the arming and `launched` to
+  the flight word (§4.1): the stage machine's advances, the separation's, and the operator's hold, resume, arm and
+  disarm, which reach it through a polled request slot (§4.3, step 4). This closes both carry-overs from the M6
+  review.
+- `sequencer.csv` (the entry's `<name>.csv`, `stage;reason`): durable and never decimated (§6). The recorder's
+  flight flag follows the committed stage (§4.3, step 6).
 - **Arm and verify:**
-  - `arm` refuses on failures, a stage problem, or any failing `probe_all` on the ground; it freezes the
-    launch point.
-  - `verify` gets the readiness gate. The Rust version uses `.get('enabled', true)`, the Controller's meaning
-    (§6).
-  - `probe` returns the two-map reply.
+  - `arm` refuses on failures (an entry the firmware cannot run yet included: plan B's rule), a stage problem, the
+    ring gate, or any failing probe in SETTING. The control thread checks the stage again when it applies the arm,
+    and a request that waited over 25 s on the board is refused (§4.4).
+  - The launch-point freeze moves to M11: before the GNSS is ported there is no fix to freeze (`atgm336h` and
+    `neo6mv2` are not ported, `firmware/src/sensors.rs:64-81`), and a CC-set position already wins in `launch_point`
+    (`crates/mission/src/lib.rs:297-307`).
+  - `verify` gets the readiness gate, plan B's `_readiness` with its texts. The Rust version uses
+    `.get('enabled', true)`, the Controller's meaning (§6). `fins` waits for M13, the BNO055's `imu_calibration` for
+    M18.
+  - Both sweep their probes only in SETTING (§6).
   - `not-flight-capable` is removed from `degraded`.
-- **The camera entry** (an `ov5647` component, board-config.md) is a known implementation in the Rust registry.
-  `arm` and `verify` must not count it as a failed device, which is what plan B does with it.
+  - `bluetooth` becomes a stub in plan B's no-BLE shape (§6).
 - **Ring gate:** `arm` and `verify` also require the eraser to hold its reserve: at least ~1 % of the ring erased
   ahead of the writer (§3.7). No card is a `no-sd` warning, not a refusal: newest wins keeps the flight's
   blocks over the pad's.
+  - It refuses when the bring-up scan has not run, when the eraser is not running, or when fewer blocks are erased
+    ahead of the writer than the reserve (`reserve_blocks`, `crates/flash_ring/src/geometry.rs:46-56`). A full ring
+    and a saver behind are not refusals either. Newest wins erases the oldest unsaved block once no more than the
+    reserve is free (`crates/flash_ring/src/eraser.rs:279-283`), one block above the gate's line, so the gate does
+    not flicker on a board without a card.
+  - It is reported as plan B's recorder probe (`tasks/recorder.py:30-48`): under `recorder`, with its three log
+    lines and the verdict `recorder rings: <why>`. It is keyed on the recorder, not on a config entry: the ring runs
+    whenever the recorder opened. A recorder that never opened has nothing to probe, and a configured `recorder`
+    entry is then already a failure. It never advances health's backlog trend.
+- **False-launch recovery (operator, 2026-10-07):** an elevation offset above `launch_alt_m` (the weather's drift,
+  or a glider carried up from a lower assembly point) fires BOOSTING within ~150 ms of `stage setting`, and every
+  fix ran only in SETTING, so only a power cycle recovered. The barometers' re-zero (`calibrate <barometer>`,
+  `update <barometer> {"rezero"|"ground"}`) now also runs at DONE: `stage done` (a hold), then the re-zero, then
+  `stage setting`. `reboot` stays SETTING-only (§6).
+- **SETTING-only requests are checked again where they are served** (an owner's mailbox, the control thread's): a
+  launch detected during a probe sweep then never runs a probe in BOOSTING (§4.4).
 - **The link by stage (operator, 2026-10-07; replaces the radio-off policy):** the radio is never switched off. In
   flight the glider leaves range and the link drops by itself; once the stage machine has detected the launch, the
   link never rejoins, hunts or dials again, and a session still up runs until it drops. At DONE the recovery beacon's
@@ -792,11 +844,18 @@ for these parts.
   normal reconnects. This avoids stopping and restarting Wi-Fi through esp_hosted on the C6, an unproven path that can
   park the link until a reboot. Plan B keeps hunting on the pad link through the flight (it only pauses) (§6).
 - **Video by stage:** recording starts when the glider stands **vertical on the rod** (attitude-based, from
-  M9; until then arm is the trigger) at 1920×1080@25, 8 Mbit/s, and stops at DONE (M11b). The console default
-  is 25 fps (GCL `video start`, done).
-  - **Segments (operator, 2026-10-06):** on the pad the recorder starts a new file every 5 minutes, bounding what
-    one damaged file can cost. Once ignition is detected the current file keeps running through the whole
-    flight: a file switch never happens in the air.
+  M9; until then arm is the trigger) at 1920×1080@25, 8 Mbit/s, and stops at DONE (M7; it was M11b's). The console
+  default is 25 fps (GCL `video start`, done).
+  - **One owner, the `video` thread** (core 0, low priority, PSRAM stack; it runs only when a camera and a card are
+    configured). It is the only caller of `coludo_video_start` and `coludo_video_stop`, whose C side assumes one
+    caller ("starts and stops never overlap", `components/coludo_video/coludo_video.c:92-93`). It reads the flight
+    word every 250 ms: arming in SETTING starts the flight recording, replacing an operator's recording (logged); a
+    disarm in SETTING stops its own flight recording; DONE stops whatever records, without the free-space scan. It
+    never starts outside SETTING, so the camera's register traffic on i2c:0 stays pre-flight (§7.1, the shared port 0). A start
+    that fails at arm is logged once and not retried before the next arm: a dead camera never blocks arm. The GCL
+    `video start` and `video stop` post to it and wait with a deadline; their gates are unchanged. The supervisor
+    makes no blocking camera call (it feeds the TWDT from M8).
+  - **Segments and the preview:** M7b.
   - **Image tuning (done 2026-10-06, components/coludo_video):** the first taster clip was sharp, but
     rotated 90° (the module sits sideways), flat and lavender-cast, with 24 % of the frame clipped and grain
     indoors. Espressif's esp_ipa does not run on rev v1.3, so nothing tuned the ISP. Now:
@@ -828,9 +887,10 @@ for these parts.
       camera closes for another mode or Bayer order, and after a failed start, without the encoder.
     - A failed STREAMOFF wedges the recorder until a reboot: DMA may still be writing the buffers, so nothing is
       freed.
-    - This also suits the 5-minute segments above.
+    - This also suits the 5-minute segments (M7b).
   - **Open: sporadic single missed frames:** about 1 in 300, with Wi-Fi up. At FHD@25 the encoder takes 36 of the
-    40 ms on core 0, beside esp_hosted and lwIP. The radio is off in flight (from BOOSTING).
+    40 ms on core 0, beside esp_hosted and lwIP. In flight the link carries nothing once it drops with range, and
+    nothing rejoins it (the link by stage, above).
   - **Wi-Fi vs camera RAM:** with the encoder's internal block held, a full-speed download asserted inside
     esp_hosted (`transport_drv.c:267 copy_buff`: every TX frame is copied into a fresh INTERNAL|DMA buffer) and
     rebooted the board. The same would happen to any heavy pad traffic while recording. Fix:
@@ -841,6 +901,59 @@ for these parts.
     (64 KB writes plus an fsync each second, ~2.9 MB/s effective through FAT; `video stats` reports
     `sd_busy_pct`). The 2 MB ring peaked at 0.4–0.9 MB. Headroom without pre-cooking the card; pre-cooking stays
     the operator's option for latency.
+- **Camera preview in CC:** M7b.
+- **Pad sequence** (the operator's; the gates fit it): (1) assemble glider and booster, plug the battery,
+  close the cover; (2) CC check, time sync and probe; (3) if there is time, wait 5 min for GNSS; (4) place on
+  the rod; (5) tie to the ignition system; (6) launch.
+  - The board boots at (1). The ring_eraser runs in the background from then on, and the hub's clock sync
+    on connect is normally done before (2).
+  - (2) is `verify`, `probe` and the ring gate, all on the ground with the pad link up.
+  - `arm` freezes the launch point (from M11, with the GNSS), so it belongs after (3).
+  - Video starts at (4) on the attitude trigger (M9); until then it starts at arm.
+  - The link stays up through (5). From the launch detected at (6) it never rejoins (the link by stage, above).
+
+**Proof**
+- Golden `sequencer_trace.json`: plan B's `Sequencer._tick` driven with scripted `(value, source)` reads. It
+  includes stale agl at apogee, GNSS elevation on the pad, a baro dropout, and the warm-entry rebase, and from M7
+  the flight timeout from BOOSTING and a separation while held (it advances, and the hold stays). Stage and reason
+  must match EXACTLY.
+- Golden `commons.json` (`dwell_step`, `apogee_step`).
+- Contract tier `control`: arm, verify and probe shapes; `cc.py verify` exit codes 0/1/3.
+- On the taster: after a hand-shaken launch (accel) the link, once dropped (the hub stopped), never rejoins or
+  dials; `stage setting` on the console brings it back. A `stage gliding` hold from CC keeps the normal reconnects.
+
+**Already met at the M7 start (proof lines):**
+- The stage machine's goldens pass: `cargo test -p sequencer` ran 41 unit tests and 9 golden tests at `52ff0cd`,
+  over the 41 scenarios `sequencer_trace.json` held then (the crate and both fixtures unchanged up to `c18e147`), and
+  `StageMachine::step` is pure.
+- `probe` answers the two-map reply (M5, `002ff9a`: `firmware/src/commands/diagnostics.rs:83-89, 113-118`; the
+  contract reads the second map, `src/control/contract/cases.py:590`).
+- The camera entry (an `ov5647` component, board-config.md) is a native implementation in the Rust registry (M5,
+  `002ff9a`: `firmware/src/sensors.rs:61`), so `arm` and `verify` never count it as a failed device, which plan B
+  does (§6).
+- `cc.py`'s exit codes 0/1/3 are host-tested (`tools/cc.py:102-133`, `src/control/test/test_tools.py:224-248`).
+
+**Operator gains.** The pre-flight gate is real: verify, arm, and readiness from the dashboard. A dummy flight
+(drop or throw test) produces staged data and video.
+
+### M7b. Camera preview and segments (after M7, before the first field day)
+
+Both rework the encode and write loops (`components/coludo_video/coludo_video.c:332-476`), so they are built and
+proven once. Neither is on the HITL path.
+
+**Scope**
+- **Segments (operator, 2026-10-06):** on the pad the recorder starts a new file every 5 minutes, bounding what
+  one damaged file can cost. Once ignition is detected the current file keeps running through the whole
+  flight: a file switch never happens in the air.
+  - The cut is in-band, at the first natural IDR at or after 300 s, and each file is zero-padded to the 64 KB chunk
+    boundary (`tools/video_sei.py:39` strips the padding).
+  - Copy the directory into memory the recorder owns (PSRAM) at start: `recorder->config = *config` keeps only the
+    path's pointer (`coludo_video.c:772`), and the CString behind it dies when `video::start` returns
+    (`firmware/src/video.rs:147-151`). Today the path is read only at the first open (`coludo_video.c:781`).
+  - Give C a direct view of the flight word (a `*const AtomicU32` in `coludo_video_config_t`); a flag the
+    supervisor sets would be up to a second stale.
+  - The writer reads the word again before it closes a file: once the board has left SETTING it ignores the cut and
+    keeps the old file, so a switch never happens in the air.
 - **Camera preview in CC (operator, 2026-10-06; the pad's killer feature):** check where the camera points
   without touching the airframe.
   - Board: once a second, the latest captured frame is scaled to 640×480 by the P4's PPA (which can also turn
@@ -848,28 +961,21 @@ for these parts.
     load and the flight core is untouched. `GET /camera/preview.jpg` on the file server serves it. With no
     recording running, the camera runs preview-only (capture on, H.264 off).
   - CC: the hub proxies the image; the dashboard's board panel shows it, refreshed at 1 Hz.
-  - Gated to SETTING: the preview stops at BOOSTING (Wi-Fi is off from then on anyway).
-- **Pad sequence** (the operator's; the gates fit it): (1) assemble glider and booster, plug the battery,
-  close the cover; (2) CC check, time sync and probe; (3) if there is time, wait 5 min for GNSS; (4) place on
-  the rod; (5) tie to the ignition system; (6) launch.
-  - The board boots at (1). The ring_eraser runs in the background from then on, and the hub's clock sync
-    on connect is normally done before (2).
-  - (2) is `verify`, `probe` and the ring gate, all on the ground with the pad link up.
-  - `arm` freezes the launch point, so it belongs after (3).
-  - Video starts at (4) on the attitude trigger (M9); until then it starts at arm.
-  - The radio stays up through (5) and goes off at BOOSTING, that is at (6).
+  - Gated to SETTING: the preview stops at BOOSTING (and after the detected launch the link never rejoins).
+  - **What the hardware allows** (IDF v5.5.5, P4 rev v1.3): the PPA scales in steps of 1/16
+    (`esp_driver_ppa/src/ppa_srm.c:226-227`, `PPA_LL_SRM_SCALING_FRAG_MAX` 16), so 640×480 is not reachable from
+    1920×1080 and 720×405 (6/16) is; PPA SRM writes no YUV422 before rev 3.0
+    (`hal/esp32p4/include/hal/ppa_ll.h:240-259`), and the JPEG encoder takes no YUV420 before rev 3.0
+    (`esp_driver_jpeg/jpeg_encode.c:211-220`). So: PPA SRM to RGB565 at 720×405, then the hardware JPEG.
+  - Unverified until the board shows it: the packing, the byte order and the colour range. Check with `bars`.
+  - Cost (an estimate): ~1-1.5 days; ~3-4 KB internal RAM; ~0.6 MB PSRAM plus two JPEG buffers; 1-3 ms of core 0
+    a frame; nothing in flight.
 
 **Proof**
-- Golden `sequencer_trace.json`: plan B's `Sequencer._tick` driven with scripted `(value, source)` reads. It
-  includes stale agl at apogee, GNSS elevation on the pad, a baro dropout, and the warm-entry rebase. Stage
-  and reason must match EXACTLY.
-- Golden `commons.json` (`dwell_step`, `apogee_step`).
-- Contract tier `control`: arm, verify and probe shapes; `cc.py verify` exit codes 0/1/3.
-- On the taster: a hand-shaken launch (accel) goes BOOSTING and the radio goes off; `stage setting` on the
-  console brings it back. A `stage gliding` hold from CC keeps the link up.
-
-**Operator gains.** The pre-flight gate is real: verify, arm, and readiness from the dashboard. A dummy flight
-(drop or throw test) produces staged data and video.
+- Segments: a pad recording of over 10 minutes splits at the first IDR past each 5 minutes, every file decodes
+  (`video_sei.py`), and a launch detected mid-file keeps that file to DONE.
+- Preview: the dashboard shows the taster's camera at 1 Hz, `bars` confirming the packing, byte order and colour
+  range; a hand-shaken launch stops the preview.
 
 ### M8. Warm start, checkpoint, supervisor watchdog (1-2 days)
 
@@ -887,6 +993,12 @@ for these parts.
   event and calls `esp_restart`.
 - The P4 reset-reason mapping (§4.6).
 - `degraded` gains `WARM-STARTED (rebooted in flight)`.
+- **From M7's flight word:** the restore commits the stage and the arming through the flight word's writer before
+  any thread spawns, and a restore into BOOSTING..LANDING sets `launched`, so a warm-started board does not rejoin
+  the link (watch it on the console). The crumb reads the one word. The gate's separation latch is the counted one:
+  a separation still pending under the closed thrust gate is not a separation.
+- **`panic` is SETTING-only** (`firmware/src/main.rs:295`), but the proof below calls it in a held GLIDING: open it
+  there, or reboot the board another way.
 
 **Proof**
 - Golden `warmstart.json`: `should_restore` over every crumb, cause and age boundary, plus a torn crumb, exact
@@ -911,8 +1023,9 @@ board can no longer hang silently.
 - **Attitude complementary filter** (`control::attitude`) at 50 Hz in the control thread. It publishes
   attitude at p1, writes `attitude.csv` with centidegree integer columns, and drives `attitude-blind` and
   `attitude-backup`.
-- **Axes:** the IMUs are mounted per their marks (x forward, y left, z up). The optional per-sensor `axes` key
-  in the board config covers an exception (§7.2, Q7); it is a schema addition, and old files stay valid.
+- **Axes:** the IMUs are mounted per their marks, in the body frame (+x nose, +y left, +z up). The optional
+  per-sensor `axes` key in the board config covers an exception (§7.2, Q7); it is a schema addition, and old files
+  stay valid. It reaches the separation's thrust gate (+x, M7) too.
 - **Video start** moves from arm to the attitude trigger: the glider standing vertical on the rod (M7).
 
 **Proof**
@@ -953,7 +1066,12 @@ the dashboard 'calibrate' button.
   - `position` as i32 e7 into the mission's local metric frame;
   - the three legacy CSV streams, with lat/lon text formatted from the integers.
 - **gnss_calib:** drift averaging in SETTING, reset at the first armed tick, frozen at BOOSTING.
-- **field:** CC-less site selection and auto-arm with the accel gate.
+- **field:** CC-less site selection and auto-arm with the accel gate. Plan B's auto-arm calls the Controller's arm
+  directly, past every gate of the CC `arm` (`tasks/field.py:103-104`); the Rust auto-arm goes through the control
+  thread's request slot like the CC `arm`, and which of `arm`'s gates it keeps is decided here.
+- **`freeze_launch`** (moved from M7, where there was no fix to freeze): `arm` pins the live fix as the launch point,
+  and BOOSTING entry pins a fix that arrived after the arm (plan B `warmstart.py:359`). An operator-set position
+  still wins. `probe_mission` then reads the live fix (`firmware/src/commands/diagnostics.rs:170, 174` pass none).
 - Health gains `position`, and the `flight` block is minimal (attitude, airspeed).
 - The UBX NAV-PVT path follows when the NEO-M8N arrives (M16).
 
@@ -969,8 +1087,8 @@ the dashboard 'calibrate' button.
 
 **Scope**
 - **At DONE:**
-  - the camera and the non-essential sensors stop (the IMUs, the pitot, the fins). The GNSS drops to 1 Hz, and
-    the other sources the beacon page shows (the baros, the laser, the INA226) keep a slow rate;
+  - the non-essential sensors stop (the IMUs, the pitot, the fins); the camera already stops there from M7. The GNSS
+    drops to 1 Hz, and the other sources the beacon page shows (the baros, the laser, the INA226) keep a slow rate;
   - logging drops to a trickle, and the ring_saver keeps emptying the flash to the SD while the board is powered
     (§3.9);
   - nothing reboots the board: `reboot` and every other change are SETTING-only (§6).
@@ -982,6 +1100,9 @@ the dashboard 'calibrate' button.
     in a tree);
   - the battery voltage and the remaining time, where an INA226 is fitted;
   - the flash→SD progress (`ring_unsaved_s` and the blocks left).
+- The link thread brings the AP up: it is the radio's one owner, and after the detected launch it never rejoins
+  (M7). The switch from station to AP goes through esp_hosted on the C6, the restart path M7 chose not to take in
+  flight, so it is proven on the taster first and on 7F with the operator present.
 - Power-off or reset ends it. Any power-up after DONE is a new session in SETTING (§4.6), and every boot resumes
   the flash→SD copy when a card is present.
 
@@ -1008,6 +1129,11 @@ airframe after landing (even without a fix, the phone's signal strength helps).
   SESSION/STAGE/DONE lines that `hitl_collect.sh` parses. Both `set-config` and `reboot` are SETTING-only, so
   between scenarios the host first returns the board from DONE with `stage setting`.
 - The real mid-glide reboot (console `panic`) replaces the simulated one.
+- **The link and the gates (from M7):** plan B's HITL config turns the radios and the separation off
+  (`config_hitl.py:6-7, 30`); here the sim-link and CC ride the Wi-Fi. A simulated launch is a detected launch, so
+  a hub link that drops mid-scenario comes back only with `stage setting` from the console or the next boot. HITL
+  configs disable the entries the firmware cannot run yet, so `arm` passes. The separation pin is not simulated:
+  the thrust gate stays proven on the host and by the first flight.
 
 **Proof**
 - A passive scenario flies to DONE with the warm gate passing.
@@ -1024,7 +1150,11 @@ before.
 - Servos on LEDC at 50 Hz with ≥14-bit duty. Pins are held LOW until configured, and boot centring is
   staggered by `fins.concurrency`.
 - `set_angle` compare-and-set, the fin probe sweep as a control-thread state machine (SETTING, disarmed only),
-  and `update <servo name> {trim|angle}` (SETTING-only, like every `update`).
+  and `update <servo name> {trim|angle}` (SETTING-only, like every `update`). The fin requests reach the control
+  thread through request slots like M7's hold and arm. The sweep checks the stage again before each fin, where it
+  is served, and stops once the flight word says launched (M7: a launch detected during an `arm` or `verify`
+  sweep must not move a fin).
+- `verify`'s readiness gains `fins` (plan B's `_readiness`).
 - `flight.csv` at 10 Hz with plan B units.
 - `health.flight` vitals complete: reach, r_min_m, fins, wind, heading_error.
 
@@ -1103,7 +1233,11 @@ Invariants:
    Everywhere else the operator's rule holds: "better to have duplicates in both than lost data" (§3.8).
 3. **No mutex on any producer path.**
 4. **Text is made only off the flight path.** Producers and the writer move binary records; the saver (and the
-   `cc` executor, for the tees) turns them into text.
+   `cc` executor, for the tees) turns them into text. The one exception off the pad is the control thread's log line for an
+   event it decides itself: a stage machine transition (with its reason text, six or fewer a flight; M7) and a
+   separation-switch event (M6). An operator's hold, resume, arm or disarm is logged by the executor from the
+   request's result (§4.4); the IMU's probe and `bustune`, whose verdicts the control thread does write as text, run
+   only in SETTING.
 
 The whole 24 MiB flash ring serves logging. The eraser runs in the background, so boot is never blocked, and
 PSRAM holds the records while a block erases.
@@ -1700,7 +1834,9 @@ The saver prints records by these rules, and so does the `cc` executor for the t
   the saver's text with its routing) in `block_sequence` order: a byte-exact wire capture.
 - **`GET /ring/image`** streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
 - `tools/ring_split.py` turns either into session directories. This is the recovery path when the card failed
-  in flight.
+  in flight. `--blocks` lists an image's blocks instead, one line each and nothing written: the sequence, boot,
+  session and flight flag, the span of the records' uptimes, the rows per file, and the torn and damaged chunks. It
+  shows that every record from BOOSTING to DONE lies in a flight block ("Ring geometry and block life cycle").
 
 ### 3.13 Budget (v0.1 sensor set at the true Rust rates)
 
@@ -1728,8 +1864,9 @@ or becomes a wrapping u32 in milliseconds (M1's log tee does that).
 | `Task` subclass + `@task.driver` registry by import | `DeviceEntry` + a `match` on the config `driver`/`activity` string; the owner thread runs the device's slot |
 | `Controller.setup` serial with retries, `diagnose` on the last try | `controller.rs` bring-up, the same rules, on the main thread before any spawn |
 | `_supervise`: a crashed loop goes DOWN and the board keeps flying | Device errors are `Result` → `DeviceEntry::Crashed` (the thread serves the others); a panic reboots (`PANIC_PRINT_REBOOT`) and the warm start is the crash path |
-| `Controller.stage` int, 5 writers | `StageCell(AtomicU32)` = stage u8 \| source u8 \| epoch u16, single writer = control thread; others post requests |
-| `armed` / `manual` / `warm_started` | AtomicBool; `armed` and `manual` written only by the control thread (and `warm.rs` before spawn) |
+| `Controller.stage` int, 5 writers; `armed`, `manual` | **the flight word** (M7): one `AtomicU32` in internal .bss, stage (bits 0-2) \| manual (3) \| armed (4) \| launched (5), with plan B's meanings (`controller.py:89-91`). One Acquire load is a consistent snapshot, so no reader (health, inspect, the link, the video thread) sees a torn state. **One writer, the control thread** (and `warm.rs` before any spawn, M8): the stage machine's advances, the separation's, and the operator's hold, resume, arm and disarm, which reach it through a polled request slot (§4.3, step 4). No source byte and no epoch: the machine already tells its own moves from external ones, and M8 adds an epoch if its checkpoint needs one. Apply rules, plan B's Controller (`controller.py:572-620`): a hold at `s` sets the stage `s` and manual = (s ≠ SETTING); resume clears manual; disarm always clears armed; arm applies only in SETTING unheld, else it is refused with the stage problem's text (plan B arms whatever the stage became during its sweep, §6) |
+| — (plan B pauses its Wi-Fi hunt on any airborne stage) | `launched`, the flight word's bit 5: set only by the stage machine's own SETTING→BOOSTING advance (the launch by altitude or by acceleration); cleared by every commit to SETTING and by every hold, since an operator's move is never the machine's launch; never set by a hold, by `stage auto` into an airborne stage, or by a separation. M8's warm restore into BOOSTING..LANDING sets it. While it is set the link never rejoins, hunts or dials (§4.4) |
+| `warm_started` | AtomicBool, written by `warm.rs` before any spawn |
 | `machine.Timer` + `ThreadSafeFlag` (flight 100 Hz) | gptimer alarm ISR on core 1 → `xTaskNotifyFromISR` (integer-only ISR) |
 | `commons.Waiter`, IRQ + `wait_for_ms` | GPIO ISR → notify with timeout; `count > 1` → overrun counter |
 | `Databoard` (latest value, rank, window; `value()` extrapolates) | `crates/databoard` seqlock channels; **no extrapolating accessor**; `read() -> Option<Reading{value, source, age_us}>` |
@@ -1749,15 +1886,16 @@ or becomes a wrapping u32 in milliseconds (M1's log tee does that).
 | thread | core | prio | owns / does | paced by |
 |---|---|---|---|---|
 | gptimer ISR | 1 | ISR | notify control + bus owners (`eIncrement`) | alarm at `schedule_hz` |
-| `control` | 1 | 20 | SPI2 IMU devices, StageCell, armed/manual, the attitude filter, sequencer, separation debounce, flight law, LEDC fins | ISR notify |
+| `control` | 1 | 20 | SPI2 IMU devices, the flight word (its one writer) and the request slot, the stage machine, the separation and its thrust gate, the attitude filter, flight law, LEDC fins | ISR notify |
 | `i2c0` | 1 | 18 | I2C port 0 sensor devices (SEN0697, INA226 on v1.x; ICP, SDP810, laser on v0.1, …); the camera SCCB shares the bus handle | ISR notify + rate-monotonic table by tick count |
 | `i2c1` | 1 | 17 | I2C port 1 (ICP, SDP810, laser on v1.x; INA226 on v0.1) | same |
 | `gnss` | 1 | 14 | UART2 receiver, NMEA/UBX | blocking read with timeout |
-| esp_hosted, Wi-Fi, lwIP | 0* | 18-23 | IDF; off from BOOSTING through LANDING (M7); the beacon AP at DONE (M11b) | — |
+| esp_hosted, Wi-Fi, lwIP | 0* | 18-23 | IDF; never switched off: after the detected launch the link never rejoins (M7); the beacon AP at DONE (M11b) | — |
 | `video encoder` | 0 | 10 | exists | camera |
 | `supervisor` | 0 | 9 | TWDT feed, health 1 Hz, checkpoint (NVS), gnss_calib, field, Mission | 100 ms base tick |
 | `ring_writer` | 0 | 7 | programs the `log` partition; ring consumers, tees | ~10 ms tick, or a durable record's notify |
 | `video SD writer` | 0 | 6 | exists | — |
+| `video` (M7; only with a camera and a card configured) | 0 | low | the only caller of `coludo_video_start`/`stop`: the flight recording by stage, GCL `video start`/`stop` by mailbox; PSRAM stack | the flight word every 250 ms |
 | `cc` executor, `link`, `console`, httpd | 0 | 5 | command table; Wi-Fi + hub socket; UART0; HTTP | blocking |
 | `ring_saver` | 0 | 4 | reads the `log` partition; SD recording files | batches |
 | `ring_eraser` | 0 | 3 | erases the `log` partition | the saver's progress and the erased reserve |
@@ -1777,16 +1915,41 @@ R5).
    `dt = now - last`, clamped to nominal if ≤ 0 or > 0.5 s (`flight.py:265-266`).
 2. **IMU:** one 16 B burst from the LSM6DSO32's STATUS_REG (+6 B from the ADXL375 on v0.1). Push `accel` on XLDA
    and `rate` on GDA, only a new conversion; write the IMU telemetry row on either, if `due`.
-3. **Separation:** take the edge stamps, sample GPIO33, read the clock, and step the debounce. The rules: armed,
-   one quiet read >= debounce_ms (default 10) after the last edge; polled, >= 3 agreeing reads spanning it. A
-   confirmed separation in BOOSTING sets the stage to GLIDING and writes `separation.csv` as
-   `event;stage;moment;duration`: the stage after the transition, the first 1->0 in uptime us, and the wobble to the
-   sustained level in us.
-4. **Mailbox:** pop at most 2 requests (Arm, Disarm, Hold, Resume, SetTrim, SetAngle, ProbeSweep step) and fill
-   their reply slots.
+3. **Separation:** sample GPIO33, read the clock, offer the read to the stamp pair (with no episode open, a read off
+   the latch opens one; polled, a changed read is an edge), and take the pair once its latest edge is debounce_ms
+   (default 10) old: the level read decides `separated`, `nested` or `blip`. A separation in BOOSTING sets the stage
+   to GLIDING; every event writes `separation.csv` as `event;stage;moment;duration`: the stage after it, the
+   episode's first edge in uptime us, and its span to the last edge in us.
+   **The thrust gate (M7):** in BOOSTING a separation counts only once the gate is open. It reads a_x, the body
+   frame's +x (the nose), from a fresh `accel`: open once thrust was seen (a_x above `launch_g` for `launch_ms` of net
+   time) and then ended (a_x below 0 g for 20 ms of net time), both afresh at each BOOSTING entry. A separation
+   concluded before that is pending, and counts when the gate opens or once the pin has stayed 0 for 100 ms after the
+   episode's last edge (the backstop), dated by the episode's first edge; a re-nest clears it. A counted separation
+   commits GLIDING to the flight word and logs the console line `controller :: stage -> gliding` (§4.4).
+4. **Requests** (M7):
+   - **The request slot**, served first: one `AtomicU32` per requesting thread (in M7 only the executor), seq (bits
+     16-31) \| phase (14-15: idle, posted, taken, done) \| kind (8-13: Hold, Resume, Arm, Disarm) \| argument or
+     result (0-7). The tick claims a posted request (posted → taken), commits it to the flight word by the apply
+     rules (§4.1), and stores done with the result. Polled, never notified: the control task's one notification
+     entry counts ticks. Every slot access is SeqCst (a handful per request, so the cost is nil and no ordering has
+     to be argued). Core 1 takes no lock, allocates nothing and makes no kernel call for a request: the executor
+     logs it. M13's fin requests get slots of their own.
+   - **The mailbox** (std mpsc) stays for the SETTING-only `probe` and `bustune`, at most 2 a tick. Each is checked
+     against the stage again here and refused outside SETTING (`refused -- stage is X (changes only in setting)`),
+     so a launch detected during a probe sweep never runs the IMU's probe in BOOSTING.
 5. **Every 2nd tick:** the attitude filter (50 Hz; the 5-cycle blind window kept) publishes `attitude` at p1.
-6. **Every 5th tick:** the sequencer (20 Hz) may transition, writing `sequencer.csv` (`reason`, `external` →
-   the source field).
+6. **Every `period_ms` (default 50) on the uptime clock:** the stage machine, built from the first enabled entry
+   whose implementation is `sequencer` (none: no machine, as in plan B). `now_ms` is the uptime in ms as a wrapping
+   u32 (`commons::elapsed_ms` takes the wrap). When the tick is slower than the period, it steps every tick, with a
+   log line. It reads `accel`, `elevation` and `agl` at a fresh esp_timer value after the IMU and the separation (the
+   databoard refuses a stamp from the future); the source name `gnss` maps to `Source::Gnss`. A transition commits
+   to the flight word, then logs `controller :: stage -> X` (console only), then records `<entry> :: stage -> X
+   (reason)` and the `<entry>.csv` row `stage;reason` (durable, never decimated), as plan B's `_advance` does
+   (`tasks/sequencer.py:128-135`). An external move writes its row only, with no log line, before the advance's
+   row; a full ring is logged once, never fatal. The recorder's flight flag follows `airborne()` of each committed
+   stage, holds included: raised before the transition's rows, lowered after the DONE row (the writer applies a fall
+   once everything queued before it is programmed). When `control::start` or its timer fails, the entry is crashed:
+   "the control thread did not start".
 7. **If `flight` is enabled:** governor → guidance → PID → mixer → LEDC duty, compare-and-set. `flight.csv`
    every 100 ms, sampled before the gates. Disarmed or no setpoint gives neutral once (gated on `_active`).
    Stale attitude and the on-rod guidance gate apply neutral on every tick and leave `_active` set;
@@ -1813,6 +1976,32 @@ Bus owners run their tables on the same notify:
 - Anything that touches a device or the stage is a request to the owner, waited for with a deadline: ≤ 8 s
   normally, ≤ 25 s for arm/verify/probe/calibrate. A reply therefore always beats the hub's 10 s and 30 s
   timeouts.
+- **The arrival stamp and the 25 s rule (M7).** Each line is stamped when it arrives, before the queue send
+  (`firmware/src/commands/mod.rs:295-305`). Before it posts an arm, the executor refuses one older than 25 s, `err
+  unsafe {"arm": "the request waited <n> s: send it again"}`; the slot adds at most 2 s, so the answer beats the
+  hub's 30 s (`src/control/board.py:22`) whatever queued ahead, and an arm never lands after the hub gave up.
+- **The request slot's deadline (M7).** The executor polls its slot every 1 ms (FreeRTOS at 1000 Hz). At 2 s it
+  withdraws a request still posted (posted → idle) and answers that it was not applied; one already taken is waited
+  for, a matter of microseconds. A flag the control thread sets before its first tick lets the executor answer at once
+  when the thread never started: armed is then false by construction, so `disarm` answers ok.
+- **No fast lane for `disarm`:** the executor serialises commands, so on the pad a console `disarm` can wait behind a
+  hub probe sweep, ~18 s at worst (the IMU's probe ≤ 2 s, then each I2C owner ≤ 8 s).
+- **SETTING-only requests are checked again where they are served** (M7): an owner's serve (`firmware/src/owner.rs`)
+  and the control thread's mailbox answer `refused -- stage is X (changes only in setting)` outside the stages
+  their command may run in (the barometers' re-zero also at DONE, §6). The executor checks the gate once, and a sweep
+  then takes seconds, so a launch detected mid-sweep never runs a probe in BOOSTING.
+- **The controller's log lines (M7)** are the executor's, from the slot's result, in plan B's order
+  (`controller.py:561-620`): `controller :: stage -> X`, then `controller :: stage X (held|auto)`;
+  `controller :: stage auto`; `controller :: armed`, `controller :: disarmed`. A hold logs even when the stage is
+  unchanged. `controller :: stage -> X` goes to the `console` log target, which the recorder.log tee skips: plan B
+  printed its Controller's lines to the console only (`main.py:75, 101`), and the tools find stage events in the
+  recording by the text `stage ->` (`tools/flight_kpi.py:95`, `tools/flight_report.py:81`,
+  `tools/flight_video.py:332`), which must stay the stage machine's `<entry> :: stage -> X (reason)`. The hold,
+  arm and disarm lines stay in recorder.log, as M6 records them (§6).
+- **The link (M7):** it checks `launched` (§4.1) before every join, hunt and dial; while it is set the link never
+  initiates a connection, and a session still up runs until it drops. The dial is bounded (a 3 s connect timeout:
+  today `TcpStream::connect` has none, `firmware/src/link.rs:120`, and a dead hub would hold it for over a minute),
+  so a dead hub never delays the check. The radio itself is never switched off.
 
 ### 4.5 Bring-up order (`main.rs`)
 
@@ -1918,7 +2107,7 @@ What holds it together:
   video and the saver. **The networking bar (operator, 2026-10-07):**
   - the board is controllable from CC, over a stable link;
   - an OTA image uploads within ~5 minutes (M15; a 1.6–3 MB image takes seconds at these rates);
-  - the camera preview shows in CC's window at 1 fps at least (M7's preview).
+  - the camera preview shows in CC's window at 1 fps at least (M7b's preview).
 
   Anything past that bar is not worth internal RAM, CPU or SD time.
 - **For the two-partition layout:** a second volume on the same card shares the bounce buffer, so every card call
@@ -1961,8 +2150,8 @@ hashed against a reference read, the host's TCP checksum-error counters, and 20 
 With stage 2b the low-water mark during the stress stays where boot left it. The taster (card AB58, its own camera)
 gave the same with the final build: low-water at boot's values, every hash matching, 0 internal fallbacks. Pace
 (gptimer, core 1) under the full stress: p99 17-23 µs, max 35-60 µs, 0 missed. The core-0 esp_timer path is noisier under Wi-Fi bursts (max 0.02 to
-6.1 ms): esp_hosted's tasks run at priority 23, above esp_timer's. That is not the flight path, and Wi-Fi is off in
-flight.
+6.1 ms): esp_hosted's tasks run at priority 23, above esp_timer's. That is not the flight path, and in flight the link
+carries no traffic once the pad session drops (it never rejoins after the detected launch, M7).
 
 What each stage is:
 - **1a** (`sdkconfig.defaults`): `RINGBUF_PLACE_FUNCTIONS_INTO_FLASH` and its ISR variant, `LIBC_LOCKS_PLACE_IN_IRAM=n`,
@@ -2208,9 +2397,9 @@ be fatal or not.
 | system | reboot (SETTING-only, `ok` with no payload, then a whoami from a new boot: another boot_id, or an uptime shorter than the time since the `ok`) | M1 |
 | stream | log/tlm window semantics; a window open across `probe mission` drains a line (a board only); samples `split()` GOOD with `recorder_wire` | M1 (log), M3 (tlm) |
 | config | get-config (5 names, `saved` → ok or **badargs**), set-config, reset-config | M1 (launch), M2 (board) |
-| inspect | objects, inspect (mission, gnss, servo_* `props.trim` numeric), update (`changed`), stats | M1 (mission), M13 (servos) |
-| control | stage, arm/disarm, report; gating | M1 (stage; arm's refusal), M7 (a real arm) |
-| diagnostics | probe (two maps), verify (keys; cc.py exit 0/1/3), calibrate, detect, bustune | M1 (probe, verify, calibrate answers), M5 (detect, bustune) |
+| inspect | objects, inspect (mission, gnss, servo_* `props.trim` numeric, bluetooth `radio` bool and `active` null or bool), update (`changed`), stats | M1 (mission), M7 (bluetooth), M13 (servos) |
+| control | stage, arm/disarm, report; gating; an arm while held refused with plan B's held-stage text under `stage`, then disarmed | M1 (stage; arm's refusal), M7 (a real arm; the arm while held) |
+| diagnostics | probe (two maps), verify (keys; readiness names only plan B's checks; cc.py exit 0/1/3), calibrate, detect, bustune | M1 (probe, verify, calibrate answers), M5 (detect, bustune) |
 | ota | push-* | M15 (redesigned) |
 | hub | the dashboard row (GET /api/boards): registered, fields filled, online and fresh across `--beats` heartbeats, a clock past 2000 in setting | M1 |
 
@@ -2243,7 +2432,9 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 - `push-*` `.mpy` OTA, `tools/ota_push.sh` and the hub `push` composite for the Rust image. A Rust board answers
   `err badcmd`; these stay as plan B tools. A firmware OTA is M15.
 - Servo coalescing (built, off, no measured benefit). The `led` driver (no pin, no user LED). `bluetooth`
-  becomes a stub reporting `radio:false`.
+  becomes a stub in plan B's no-BLE shape (`drivers/bluetooth.py:67-77`; M7): `inspect` adds `radio` (the config's,
+  default false) and `active: null`; `update bluetooth {"radio": X}` stores a changed value and answers
+  `["radio"]`, else `[]`; its probe logs plan B's `ble radio` lines and passes.
 - The Luckfox path: UART recorder output and recorderd stay frozen and unchanged (the logger recorderd freeze
   stands). Fallback 1.a (C6 + SD logger) is not built.
 - The `layout` scan re-clock dance: `i2c_master` speed is per device.
@@ -2253,10 +2444,14 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
   `calibrate <device>`, `probe`, `detect`, `bustune` and `reboot` answer `err unsafe` in every other stage, DONE
   included; reads, `stage` and `disarm` stay open (M1). Plan B leaves `update` open in flight and allows the
   rest at DONE. There is no reboot at DONE: the beacon and the flash→SD copy run until power-off (M11b).
+  - **The barometers' re-zero also runs at DONE** (operator, 2026-10-07; M7): `calibrate <barometer>` and `update
+    <barometer> {"rezero"|"ground"}`, nothing else. Any elevation offset above `launch_alt_m` fires BOOSTING within
+    ~150 ms of `stage setting`, and `stage setting` is never a hold, so with every fix SETTING-only only a power cycle
+    recovered. Now: `stage done` (a hold), the re-zero, then `stage setting`.
 - **Storage:** binary records in a flash ring that the board copies to its own SD (§3), instead of text lines
   over the UART to the Luckfox. With a full ring and no SD progress the newest data wins (§3.7). A line can
   reach the SD twice; the tools drop duplicates (§3.8, a filter added in M3).
-- **DONE:** the camera and the non-essential sensors stop, the GNSS drops to 1 Hz, and the beacon AP comes up
+- **DONE:** the camera stops (M7), the non-essential sensors stop, the GNSS drops to 1 Hz, and the beacon AP comes up
   (M11b). Plan B has neither.
 - **SD layout:** one directory per session instead of a flat directory (§3.10).
 - **uptime:** u64 µs with no 2³⁰ wrap. `recorder_wire.fit` reduces to k = 0 (`recorder_wire.py:268-281`);
@@ -2274,9 +2469,40 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 
 - **Crash semantics:** a panic reboots and warm-starts, instead of marking a loop DOWN and flying on with dead
   data.
-- **Wi-Fi in flight:** the radio is **off** from the detected ignition through LANDING and resumed at DONE for
-  recovery, as the beacon AP (M7, M11b; an operator stage hold leaves it up). Plan B keeps the pad link up in
-  flight and only stops new connections. This loses in-flight CC; the operator accepted that.
+- **The link after the launch** (operator, 2026-10-07; M7): the radio is never switched off. Once the stage machine
+  has detected the launch (`launched`, §4.1), the link never rejoins, hunts or dials; a session still up runs until
+  range ends it, and at DONE the beacon AP is the only network (M11b). A commit to SETTING or an operator hold
+  clears `launched`, so a held board keeps its normal reconnects. Plan B keeps the pad link too, but keys its pause
+  on the stage: it stops initiating connections on any airborne stage, an operator hold included, and hunts again
+  at DONE (`drivers/wifi.py:197-200`).
+- **The stage machine's record:** `<entry>.csv` (`sequencer.csv`) is durable and never decimated; plan B wrote it
+  through the global window (`tasks/sequencer.py:110`) (M7).
+- **The stage machine's clock:** it steps on an exact `period_ms` grid of the uptime clock; plan B sleeps a period,
+  then ticks (`tasks/sequencer.py:455-458`), so its steps drift. HITL allows for it (M14).
+- **The sequencer's keys** (`Settings::from_config`, M7): the g and m keys take any JSON number (f32), a `*_ms`
+  key a whole number from 0 to 2147483647, about 24.8 days (`300.0` included, which plan B flies alike): the machine
+  compares a signed 32-bit elapsed time, which never reaches a longer threshold. A non-number, a fractional, a
+  negative or a longer `*_ms`, or a non-number g or m key fails the entry at bring-up with `<key>: <why>`, so `arm`
+  refuses. An absent key takes plan B's `setup()` default (`boost_timeout_ms` 6000; the config files ship 12000).
+  Plan B, with the same files: a text `launch_g` or `still_g` fails setup; a text `period_ms` or `launch_alt_m`
+  crashes the task on the pad, so arm refuses there too; a text `launch_ms` passes arm and crashes at ignition; the
+  other keys pass arm and crash in their stage's detector in flight; a fractional or negative `*_ms` flies.
+- **Arm is checked again when it applies** (M7): on the control thread, SETTING and not held, else refused with the
+  stage problem's text. Plan B awaits its probe sweep and then arms whatever the stage has become
+  (`cc_client.py:567-576`).
+- **Arm and verify sweep their probes only in SETTING** (M7); plan B also sweeps at DONE (`_GROUND`,
+  `cc_client.py:352-375`). `verify` at DONE answers `problems.probe: not run`.
+- **The ring gate** (M7) is a refusal plan B never had: `arm` and `verify` refuse when the bring-up scan has not run,
+  the eraser is not running, or the erased reserve is short, reported as plan B's recorder probe under `recorder`.
+- **The camera entry:** `ov5647 -- up` means configured (the bring-up never asks the sensor), and a camera never
+  blocks `arm`, video being a utility; the video thread logs a start that fails at arm. Plan B has no `ov5647`
+  implementation, fails the entry (`no driver/activity`) and refuses arm.
+- **The separation in BOOSTING** (operator, 2026-10-07; M7) counts only once the thrust gate is open (thrust seen,
+  then ended, on the body frame's +x) or by the 100 ms backstop (§4.3, step 3); plan B counts any open held for its
+  20 ms debounce anywhere in BOOSTING (`drivers/separation.py:84`). `separation.csv` also records a `blip` (the
+  contact moved and came back), beside plan B's `separated` and `nested`.
+- **The controller's lines:** the hold, arm and disarm lines are recorded (recorder.log); `controller :: stage -> X`
+  stays on the console, as plan B prints all of them (§4.4; M7).
 - **Stale values in inspect:** a stale channel reads null instead of plan B's extrapolated `value()`.
 - **HITL sensor mask:** after masking the `_SIM_SENSORS` sensors by config name, `sim_link.rs` refuses to start
   if one is still enabled; plan B only masks (M12).
@@ -2307,13 +2533,13 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 | R2 | The loss bound (§3.3: ~11 ms typical, ≤ ~45 ms worst for rows) needs short flash-lock holds. NVS writes (checkpoint, ring positions, calibrations), saver reads, eraser erases and the writer share the esp_flash lock. The writer at priority 7 can briefly delay the video writer. B4 was 10 s without video. | R3: a 10 min soak at the real flight rate with FHD@25, the 1 kHz `pace`, and a chunk-to-chunk maximum ≤ 45 ms. The crumb stays in NVS (§7.2, Q11). |
 | R3 | FatFs is not journaled. A power cut during FAT updates (saver or video) can damage the FAT itself, not just a file tail. | The ring keeps every block until the saver has fsynced it, and the saver re-saves from its position after a cut (duplicates, §3.8). `GET /ring` + `ring_split.py` recovery. Host fsck on bad cards. |
 | R4 | The first Rust boot carries nothing from MicroPython's VFS (board.config, launch.config, `*.creds`). TMS-7F is sealed and Wi-Fi only. | `tools/provision.sh` writes the `cfg` partition (config, launch, creds) over USB with esptool, after `flash.sh` and **before** the seal. Never flash a sealed board without it. |
-| R5 | esp_hosted 2.7.0 tasks run at priority 23, unpinned (plain `xTaskCreate`); the streaming-mode length assert is still open. | lwIP's TCP/IP task is pinned to core 0 already (M1). M1b pins esp_hosted by wrapping `g_hosted_osi_funcs._h_thread_create`, the hook `components/hosted_no_reboot` uses for `_h_restart_host`. From M7 the radio is actually off from BOOSTING through LANDING in Rust (a deliberate divergence, §6; plan B keeps the pad link up). |
+| R5 | esp_hosted 2.7.0 tasks run at priority 23, unpinned (plain `xTaskCreate`); the streaming-mode length assert is still open. | lwIP's TCP/IP task is pinned to core 0 already (M1). M1b pins esp_hosted by wrapping `g_hosted_osi_funcs._h_thread_create`, the hook `components/hosted_no_reboot` uses for `_h_restart_host`. From M7 the radio stays on in Rust, but after the detected launch the link never rejoins, hunts or dials (§6), so esp_hosted carries no traffic once the pad session drops. |
 | R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Rust re-initializes every device registered on the bus after a general call (M5). Plan B is patched the same way (commit 76c138c, §7.2 Q9). |
 | R7 | `gettimeofday` surviving SW, panic and TWDT resets on the P4 is unverified, and step 1's age check (plan B's gate) depends on it. | Measured in M8. Q19's step 2 drops the age check, which closes it. |
 | R8 | base64 strictness differs: CPython is lenient, Rust is strict. A bad token could answer differently from the fake. | Rust answers `err badargs` (strict). The contract runner records the fake's deviation as known. |
 | R9 | Detector drift vs the host sim: `virtual_flight.py` grades the Python detectors once the board runs Rust. | `commons.json`, `sequencer_trace.json`, `control_trace_*.json` are the only guards. `generate.py --check` in CI. |
 | R10 | HITL masking: a fresh bench sensor silently becomes the only source (pitot 7/27, mag 9/16). | `sim_link.rs` masks the `_SIM_SENSORS` sensors by config name (they are sensor names, not drivers), as plan B does, and re-applies the mask after layout. It then refuses to start if one is still enabled, which is new (plan B only masks). |
-| R11 | Per-sensor axes: the LSM6DSO32 and BMI323 publish raw axes into one channel, and a failover may flip axes. gx/gy and the signs are unverified on any airframe. | The IMUs are mounted per their marks (x forward, y left, z up), and the optional `axes` key covers an exception (§7.2, Q7). M9 move-and-hold check. |
+| R11 | Per-sensor axes: the LSM6DSO32 and BMI323 publish raw axes into one channel, and a failover may flip axes. gx/gy and the signs are unverified on any airframe. | The IMUs are mounted per their marks in the body frame (+x nose, +y left, +z up), and the optional `axes` key covers an exception (§7.2, Q7). From M7 the separation's thrust gate rests on +x: a wrong axis or sign fails safe (thrust is never seen, and the 100 ms backstop decides), and each airframe's mount is checked nose up (+x reads about +1 g). M9 move-and-hold check. |
 | R12 | Two physics implementations would repeat the sim-mirrors-flight-code trap. | `sim_model.py` stays the only physics. Rust never ports it. |
 | R13 | Silent-success harness traps (1 of 12 flown reported done; empty streams passed). | Every new runner counts artefacts and fails loudly. |
 | R14 | Port 0 is shared with the camera SCCB, and `i2c_master`'s internal mutex arbitrates. | Camera register traffic only pre-flight. Measure the bus-owner jitter with video on in M6. |
@@ -2326,7 +2552,8 @@ The operator's decisions on the earlier questions, one line each:
   video at `/sdcard/videos/<session>/<start uptime ms>.h264`, on a partition of its own (§3.10).
 - **Q2. Changes in flight:** `update`, `set-config`, `reset-config`, `calibrate <device>`, `probe`, `detect`,
   `bustune` and `reboot` run only in SETTING; reads, `stage` and `disarm` stay open; no reboot at DONE. A
-  deliberate divergence from plan B (§6).
+  deliberate divergence from plan B (§6). One exception (operator, 2026-10-07): the barometers' re-zero also runs at
+  DONE, so a false launch is recovered without a power cycle (M7).
 - **Q3. Reset at DONE:** any power-up after DONE is a new session in SETTING, never a warm start; a crumb in
   BOOSTING..LANDING means a warm start; no crumb and speed 0 means SETTING (§4.6).
 - **Q4. `config_id` before vs after layout:** keep plan B's split, which is plan B behaviour: `set-config`
@@ -2336,8 +2563,10 @@ The operator's decisions on the earlier questions, one line each:
   followed on 2026-10-07 (§4.8).
 - **Q6. Watchdog timeout:** keep 5000 ms in board files (Python `validate` rejects < 4000) until Rust measures
   its own floor.
-- **Q7. IMU axes:** the IMUs are mounted per their marks (x forward, y left, z up); an optional per-sensor `axes`
-  key in the board config (a signed permutation such as `'-y+x+z'`, default identity) covers exceptions (M9).
+- **Q7. IMU axes and the body frame:** the body frame is +x nose, +y left, +z up (operator, 2026-10-07); the IMUs
+  are mounted per their marks to match it, and an optional per-sensor `axes` key in the board config (a signed
+  permutation such as `'-y+x+z'`, default identity) covers exceptions (M9). The separation's thrust gate reads +x
+  from M7.
 - **Q8. f64 (D18):** f32 by default. f64 needs a clear written reason and only goes into absolutely critical
   spots: lat/lon at the JSON boundary and the config document's fidelity (its internal `serde_json` f64, for
   hash and bytes only, never computed with); the ICP-10111 polynomial only if the golden f32-vs-f64
@@ -2352,7 +2581,7 @@ The operator's decisions on the earlier questions, one line each:
   directory and never committed: it carries Wi-Fi credentials.
 - **Q13. Video:** FHD@25 (FHD@30 is encoder-bound at about 26.6 fps on P4 rev v1.3), 8 Mbit/s, IDR every 1 s.
   Recording starts when the glider stands vertical on the rod (attitude, M9; arm until then) and stops at DONE
-  (M11b). On the SD, video is priority 1 and logging priority 2.
+  (M7). On the SD, video is priority 1 and logging priority 2.
 - **Q14. Apogee dwell:** port plan B's reuse of `launch_ms` faithfully (`sequencer.py:364-366`), to stay
   comparable with the HITL baselines.
 - **Q15. Post-landing beacon:** before the first passive Rust flight, as M11b: an open AP `<BOARD>_glider` on
@@ -2366,7 +2595,8 @@ The operator's decisions on the earlier questions, one line each:
   a reboot on the pad then needs a fresh `arm` (§6).
 - **Q18. The hold hazard (operator, 2026-10-06):** kept as plan B. In plan B a pad bump, then `stage gliding` (a fin
   check), then `stage setting` launches on the first boosting sample after the hold, because the launch dwells are
-  not reset; with the Rust Wi-Fi policy that launch also turns the radio off. The operator's call:
+  not reset; with the Rust link policy that launch also stops the link from reconnecting once it drops (M7). The
+  operator's call:
   - while the board is in SETTING, the pad is CC's and the operator's to watch and handle;
   - once out of SETTING the flight must go on, so the firmware adds no guard that could stop one.
   - The golden test `a_hold_hides_the_return_to_setting` pins the behaviour.
