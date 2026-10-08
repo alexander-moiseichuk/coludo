@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use super::{Code, Context, Fault, Reply};
 use crate::clock;
-use crate::status::STATUS;
+use crate::status::FLIGHT;
 
 /// The inspectable objects every board has, sorted (plan B `Inspector.names()`).
 const OBJECTS: [&str; 2] = ["controller", "mission"];
@@ -133,10 +133,11 @@ pub fn inspect(message: &Message, context: &mut Context) -> Reply {
     match name.as_str() {
         "controller" => {
             let inspection = context.devices.inspect();
+            let flight = FLIGHT.load();
             super::ok_json(&json!({
-                "stage": STATUS.stage().name(),
-                "armed": STATUS.armed(),
-                "manual": STATUS.manual(),
+                "stage": flight.stage.name(),
+                "armed": flight.armed,
+                "manual": flight.manual,
                 "tasks": inspection.tasks,
                 "failures": inspection.failures.into_iter().collect::<BTreeMap<_, _>>(),
                 "alternatives": inspection.alternatives.into_iter().collect::<BTreeMap<_, _>>(),
@@ -148,8 +149,14 @@ pub fn inspect(message: &Message, context: &mut Context) -> Reply {
     }
 }
 
-/// `update <object> <json>`: apply the writable properties; replies {changed: [names actually changed]}.
+/// `update <object> <json>`: apply the writable properties; replies {changed: [names actually changed]}. A change: only
+/// in SETTING, and at DONE too for a barometer's re-zero (super::change_refused), checked first as the table's gate
+/// is.
 pub fn update(message: &Message, context: &mut Context) -> Reply {
+    let target = message.args.first().map_or("", String::as_str);
+    if let Some(refusal) = super::change_refused(context, target) {
+        return Err(Fault::new(Code::Unsafe, refusal));
+    }
     let [name, properties, ..] = message.args.as_slice() else {
         return Err(Fault::new(Code::BadArguments, "update <object> <json>"));
     };
@@ -231,7 +238,7 @@ pub fn stats(message: &Message, context: &mut Context) -> Reply {
         .first()
         .ok_or_else(|| Fault::new(Code::BadArguments, "stats <object>"))?;
     match name.as_str() {
-        "controller" => super::ok_json(&json!({"stage": STATUS.stage().name(), "tasks": {}})),
+        "controller" => super::ok_json(&json!({"stage": FLIGHT.load().stage.name(), "tasks": {}})),
         "mission" => super::ok_json(&json!({})),
         RECORDER => super::ok_json(&crate::recorder::stats_report().ok_or_else(|| no_object(RECORDER))?),
         // a device: plan B's Inspectable.stats() default

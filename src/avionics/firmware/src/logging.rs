@@ -21,6 +21,8 @@
 //! kilobytes), and a blocked control tick ran 4.5 ms late (M6, measured). It goes into a bounded FreeRTOS queue with
 //! a non-blocking send instead, dropped and counted when the queue is full, and a printer thread on core 0 writes it
 //! out. Its recorder.log copy is unchanged: the thread's own ring, lock-free.
+//!
+//! A line logged to the [`CONSOLE_ONLY`] target reaches the console (and the panic capture) and never recorder.log.
 
 use core::fmt::Write;
 use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
@@ -35,6 +37,13 @@ const LINE_BYTES: usize = 1024;
 
 /// The core the flight threads run on: their lines go through the printer's queue, never straight to the console.
 const FLIGHT_CORE: usize = 1;
+
+/// The log target whose lines reach the console only: never recorder.log, so neither the recording nor the CC `log`
+/// tee, which reads recorder.log. Plan B printed its Controller's lines to the console only (main.py:75, 101), and
+/// the tools find the stage events in a recording by the text `stage ->` (tools/flight_kpi.py, flight_report.py,
+/// flight_video.py), which must stay the stage machine's: so the controller's `controller :: stage -> X` logs here
+/// (doc/specs/avionics-port.md §4.4).
+pub const CONSOLE_ONLY: &str = "console";
 
 /// A queued console line's room, bytes: two of them carry the length, the rest the line, cut at a character
 /// boundary.
@@ -181,6 +190,9 @@ impl log::Log for Logger {
         // the same shape is the console's: the printer writes it for the flight core
         if queued {
             enqueue(queue, &tail.0);
+        }
+        if record.target() == CONSOLE_ONLY {
+            return;
         }
         let Some(recorder) = crate::recorder::get() else {
             return;

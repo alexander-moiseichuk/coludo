@@ -6,12 +6,13 @@ use std::collections::BTreeMap;
 
 use cc_protocol::Message;
 use esp_idf_svc::sys;
+use sequencer::Flight;
 use serde::Serialize;
 
 use super::{Context, Reply};
 use crate::board;
 use crate::clock;
-use crate::status::STATUS;
+use crate::status::FLIGHT;
 
 /// The `iam` payload. Replies are typed structs, not `json!` values: a Value widens every f32 to f64 (a 33.3 °C
 /// reading prints as 33.29999923706055); a struct field serialises as f32.
@@ -37,7 +38,7 @@ pub fn whoami(_message: &Message, context: &mut Context) -> Reply {
         firmware_version: board::FIRMWARE_VERSION,
         config_id: &context.config_id,
         config_source: &context.config.source,
-        stage: STATUS.stage().name(),
+        stage: FLIGHT.load().stage.name(),
         uptime: board::uptime_ms(),
         boot_id: context.board.boot_id,
         session: &context.board.session,
@@ -101,9 +102,10 @@ struct Task<'a> {
     ok: bool,
 }
 
-/// `ok <json>`: the heartbeat vitals.
+/// `ok <json>`: the heartbeat vitals. The stage, the arming and the hold come from one snapshot of the flight word.
 pub fn health(_message: &Message, context: &mut Context) -> Reply {
     let mission = &context.mission;
+    let flight = FLIGHT.load();
     let info = Health {
         temp: context.board.celsius(),
         mem_free: board::heap_free(sys::MALLOC_CAP_8BIT),
@@ -114,7 +116,7 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
             None
         },
         uptime: board::uptime_ms(),
-        stage: STATUS.stage().name(),
+        stage: flight.stage.name(),
         layout: &context.layout,
         position: None,
         agl: None,
@@ -124,7 +126,7 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         launchpad: mission.launch_point(None).map(|point| point.degrees()),
         launchpad_set: mission.position_set(),
         site: Some(mission.site.clone()).filter(|site| !site.is_empty()),
-        armed: STATUS.armed(),
+        armed: flight.armed,
         tasks: context
             .devices
             .tasks()
@@ -133,13 +135,14 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
             .collect(),
         calibration: Some(crate::owner::calibrations().into_iter().collect::<BTreeMap<_, _>>())
             .filter(|pending| !pending.is_empty()),
-        degraded: degraded(context),
+        degraded: degraded(context, flight),
     };
     super::ok_json(&info)
 }
 
-/// The non-nominal states, one operator signal (src/glider cc_client health `degraded`). Empty = nominal.
-fn degraded(context: &Context) -> Vec<String> {
+/// The non-nominal states, one operator signal (src/glider cc_client health `degraded`), `flight` the snapshot the
+/// rest of the reply shows. Empty = nominal.
+fn degraded(context: &Context, flight: Flight) -> Vec<String> {
     let (board, mission) = (&context.board, &context.mission);
     let mut degraded = Vec::new();
     // SAFETY: plain reads of flags hosted_no_reboot keeps.
@@ -163,7 +166,7 @@ fn degraded(context: &Context) -> Vec<String> {
     }
     // the flash ring: ring-unformatted, ring-low, ring-full, saver-behind (crate::recorder::degraded)
     degraded.extend(crate::recorder::degraded().into_iter().map(String::from));
-    if STATUS.manual() {
+    if flight.manual {
         degraded.push("STAGE HELD".into()); // an operator hold suppresses every stage detector
     }
     if context.config.source.starts_with("default(fallback") {

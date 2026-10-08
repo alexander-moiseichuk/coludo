@@ -137,10 +137,11 @@ pub fn verify(_message: &Message, context: &mut Context) -> Reply {
     let devices = context.devices;
     let mut problems: BTreeMap<&str, String> = devices.failures().into_iter().collect();
     problems.insert("flight", super::control::NOT_PORTED.into());
-    if let Some(problem) = super::stage_problem() {
-        problems.insert("stage", problem);
+    let flight = crate::status::FLIGHT.load();
+    if let Some(problem) = flight.stage_problem() {
+        problems.insert("stage", problem.to_string());
     }
-    match super::outside_setting() {
+    match flight.stage.change_refused(false) {
         Some(airborne) => {
             problems.insert("probe", format!("not run: {airborne} (the probes sweep the fins)"));
         }
@@ -179,16 +180,16 @@ pub fn probe_mission(context: &Context) -> Option<String> {
 }
 
 /// `calibrate`: what needs calibrating, {name: instruction} (plan B `Inspector.calibration_all()`, possibly {});
-/// `calibrate <device>` runs one, on the ground only, answering {device: null} on success, else why (plan B
-/// cc_client.py:873-904). A device that came up with nothing to calibrate succeeds (plan B's default); one that
-/// never came up, or no device, has no calibrate.
+/// `calibrate <device>` runs one, in SETTING (a barometer's also at DONE: the false launch's recovery), answering
+/// {device: null} on success, else why (plan B cc_client.py:873-904). A device that came up with nothing to calibrate
+/// succeeds (plan B's default); one that never came up, or no device, has no calibrate.
 pub fn calibrate(message: &Message, context: &mut Context) -> Reply {
     let Some(target) = message.args.first() else {
         return super::ok_json(&crate::owner::calibrations().into_iter().collect::<BTreeMap<_, _>>());
     };
-    if let Some(airborne) = super::outside_setting() {
+    if let Some(refusal) = super::change_refused(context, target) {
         // a baro calibrate mid-air re-zeroes elevation: the ground, to the stage machine
-        return Err(Fault::new(Code::Unsafe, airborne));
+        return Err(Fault::new(Code::Unsafe, refusal));
     }
     if !context.devices.find(target).is_some_and(|entry| entry.active()) {
         return Err(Fault::new(Code::BadArguments, format!("no calibrate for {target}")));

@@ -188,7 +188,10 @@ fn main() -> anyhow::Result<()> {
             log::error!("i2c:{id} :: {error}");
         }
     }
-    // the flight tick on core 1, which wakes the owners too (§4.2, §4.3)
+    // the flight tick on core 1, which wakes the owners too (§4.2, §4.3), and owns the flight word's one writer
+    let writer = status::FLIGHT
+        .writer()
+        .expect("main takes the flight word's writer, once");
     if let Err(error) = control::start(
         board_config::schedule_hz(&loaded.document),
         spi_bus,
@@ -196,6 +199,7 @@ fn main() -> anyhow::Result<()> {
         separation,
         topology,
         table,
+        writer,
     ) {
         log::error!("control :: the control thread did not start: {error}");
     }

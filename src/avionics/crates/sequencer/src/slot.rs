@@ -17,9 +17,13 @@
 //!
 //! Every operation is SeqCst: a request costs a handful of them, so the cost is nil, and no ordering has to be
 //! argued.
+//!
+//! The requesting thread's whole exchange is [`RequestSlot::request`]: post, poll, and withdraw at the deadline.
 
+use core::fmt;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::SeqCst;
+use std::time::{Duration, Instant};
 
 use crate::controller::{Commit, FLIGHT_BITS, Flight, FlightWriter, Request, Stage, StageProblem};
 
@@ -153,6 +157,29 @@ pub struct Ticket {
     sequence: u16,
 }
 
+/// Why [`RequestSlot::request`] brought no answer back. [`fmt::Display`] says whether the request was applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unanswered {
+    /// The slot still held an earlier request, posted or taken: nothing was posted.
+    Busy,
+    /// The control thread did not take the request before the deadline: withdrawn, never applied.
+    Withdrawn,
+    /// The control thread took the request and did not answer within a second deadline: it is applied or refused,
+    /// and which is unknown.
+    Lost,
+}
+
+impl fmt::Display for Unanswered {
+    /// One line for the operator, ending on what became of the request.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Unanswered::Busy => "an earlier request is still in the slot: not applied",
+            Unanswered::Withdrawn => "the control thread did not take the request in time: not applied",
+            Unanswered::Lost => "the control thread took the request and never answered: the outcome is unknown",
+        })
+    }
+}
+
 /// One requesting thread's slot (see the module notes): that thread posts, polls and withdraws; the control
 /// thread serves. A second requesting thread gets a slot of its own.
 #[derive(Debug, Default)]
@@ -214,6 +241,42 @@ impl RequestSlot {
         self.word.compare_exchange(current, idle, SeqCst, SeqCst).is_ok()
     }
 
+    /// Post `request` and wait for its answer (the requesting thread): poll every `poll`, and at `deadline` withdraw
+    /// the request if the control thread has not taken it yet. One it took is applied or refused, and its answer
+    /// follows within microseconds: it gets `deadline` once more before it counts as lost.
+    ///
+    /// Args: `request` the operator's request; `deadline` how long it may wait to be taken; `poll` the pause between
+    /// two looks at the slot (the firmware's is one FreeRTOS tick).
+    ///
+    /// Returns: the control thread's answer.
+    ///
+    /// Errors: [`Unanswered`]: the slot was busy or the request was withdrawn (not applied either way), or it was
+    /// taken and never answered.
+    pub fn request(&self, request: Request, deadline: Duration, poll: Duration) -> Result<Answer, Unanswered> {
+        let ticket = self.post(request).ok_or(Unanswered::Busy)?;
+        if let Some(answer) = self.await_answer(ticket, deadline, poll) {
+            return Ok(answer);
+        }
+        if self.withdraw(ticket) {
+            return Err(Unanswered::Withdrawn);
+        }
+        self.await_answer(ticket, deadline, poll).ok_or(Unanswered::Lost)
+    }
+
+    /// `ticket`'s answer, looked for every `poll` until `deadline` has passed: None when it did not come by then.
+    fn await_answer(&self, ticket: Ticket, deadline: Duration, poll: Duration) -> Option<Answer> {
+        let start = Instant::now();
+        loop {
+            if let Some(answer) = self.answer(ticket) {
+                return Some(answer);
+            }
+            if start.elapsed() >= deadline {
+                return None;
+            }
+            std::thread::sleep(poll);
+        }
+    }
+
     /// Serve the waiting request, if any (the control thread, once a tick): claim it, apply it through `writer`,
     /// and leave the answer in the slot.
     ///
@@ -242,8 +305,32 @@ mod tests {
     use std::sync::atomic::Ordering::SeqCst;
     use std::time::{Duration, Instant};
 
-    use super::{HOLD, Phase, RequestSlot, decode_answer, encode_answer, slot_word};
+    use super::{
+        HOLD, Phase, RequestSlot, Unanswered, VALUE_BITS, decode_answer, encode_answer, phase, slot_word, with_phase,
+    };
     use crate::controller::{Flight, FlightWord, Request, Stage, StageProblem};
+
+    /// The requester's deadline in the [`RequestSlot::request`] tests: long beside a spinning control thread's claim,
+    /// short for a test that waits it out.
+    const DEADLINE: Duration = Duration::from_millis(300);
+
+    /// The requester's poll in those tests: the firmware's, one FreeRTOS tick.
+    const POLL: Duration = Duration::from_millis(1);
+
+    /// A control thread's claim and nothing more: spins until a request is posted, takes it (posted -> taken) as
+    /// [`RequestSlot::serve`] does, and returns the taken word.
+    fn claim_when_posted(slot: &RequestSlot) -> u32 {
+        loop {
+            let current = slot.word.load(SeqCst);
+            if phase(current) == Phase::Posted {
+                let taken = with_phase(current, Phase::Taken);
+                if slot.word.compare_exchange(current, taken, SeqCst, SeqCst).is_ok() {
+                    return taken;
+                }
+            }
+            std::hint::spin_loop();
+        }
+    }
 
     /// Every request there is.
     fn every_request() -> Vec<Request> {
@@ -392,6 +479,100 @@ mod tests {
         assert_eq!(ticket.sequence, 0);
         slot.serve(&mut writer);
         assert!(slot.answer(ticket).unwrap().unwrap().armed);
+    }
+
+    #[test]
+    fn a_request_the_control_thread_serves_is_answered() {
+        let word = FlightWord::new();
+        let slot = RequestSlot::new();
+        let stop = AtomicBool::new(false);
+        let (held, armed) = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut writer = word.writer().unwrap();
+                while !stop.load(SeqCst) {
+                    slot.serve(&mut writer);
+                    std::thread::sleep(POLL);
+                }
+            });
+            let held = slot.request(Request::Hold(Stage::Gliding), DEADLINE, POLL);
+            let armed = slot.request(Request::Arm, DEADLINE, POLL);
+            stop.store(true, SeqCst);
+            (held, armed)
+        });
+        let held = held.unwrap().unwrap();
+        assert_eq!((held.stage, held.manual), (Stage::Gliding, true));
+        assert_eq!(word.load(), held);
+        assert_eq!(
+            armed,
+            Ok(Err(StageProblem::Held(Stage::Gliding))),
+            "a refused arm is an answer"
+        );
+    }
+
+    #[test]
+    fn a_request_taken_at_the_deadline_waits_for_its_answer() {
+        let slot = RequestSlot::new();
+        let after = Flight {
+            armed: true,
+            ..Flight::GROUND
+        };
+        let answer = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                // taken at once, answered only past the requester's deadline: its withdrawal then fails
+                let taken = claim_when_posted(&slot);
+                std::thread::sleep(DEADLINE + DEADLINE / 2);
+                let done = (with_phase(taken, Phase::Done) & !VALUE_BITS) | encode_answer(Ok(after));
+                slot.word.store(done, SeqCst);
+            });
+            slot.request(Request::Arm, DEADLINE, POLL)
+        });
+        assert_eq!(answer, Ok(Ok(after)));
+    }
+
+    #[test]
+    fn a_request_nobody_takes_is_withdrawn_at_its_deadline_and_never_applied() {
+        let word = FlightWord::new();
+        let mut writer = word.writer().unwrap();
+        let slot = RequestSlot::new();
+        let start = Instant::now();
+        assert_eq!(
+            slot.request(Request::Hold(Stage::Done), DEADLINE, POLL),
+            Err(Unanswered::Withdrawn)
+        );
+        assert!(start.elapsed() >= DEADLINE, "it waited its deadline out");
+        assert!(slot.serve(&mut writer).is_none(), "nothing is left to apply");
+        assert_eq!(word.load(), Flight::GROUND);
+        assert!(slot.post(Request::Disarm).is_some(), "the slot is free again");
+    }
+
+    #[test]
+    fn a_request_behind_an_unanswered_one_posts_nothing() {
+        let slot = RequestSlot::new();
+        let earlier = slot.post(Request::Hold(Stage::Gliding)).unwrap();
+        assert_eq!(slot.request(Request::Disarm, DEADLINE, POLL), Err(Unanswered::Busy));
+        assert!(slot.withdraw(earlier), "the earlier request is still posted, untouched");
+    }
+
+    #[test]
+    fn a_request_taken_and_never_answered_is_lost_not_withdrawn() {
+        let slot = RequestSlot::new();
+        let lost = std::thread::scope(|scope| {
+            scope.spawn(|| claim_when_posted(&slot));
+            slot.request(Request::Hold(Stage::Landing), DEADLINE, POLL)
+        });
+        assert_eq!(lost, Err(Unanswered::Lost));
+        assert_eq!(
+            slot.post(Request::Disarm),
+            None,
+            "the taken request holds the slot until its answer"
+        );
+    }
+
+    #[test]
+    fn each_unanswered_says_what_became_of_the_request() {
+        assert!(Unanswered::Busy.to_string().ends_with(": not applied"));
+        assert!(Unanswered::Withdrawn.to_string().ends_with(": not applied"));
+        assert!(Unanswered::Lost.to_string().ends_with(": the outcome is unknown"));
     }
 
     /// The protocol's logic under a real race: a requester posts a hold, waits a varying moment and withdraws,

@@ -19,6 +19,15 @@
 //! each tick reads the pin, offers the read (observed, or polled when the arm failed), takes the pair once no edge came
 //! for `debounce_ms` and concludes it by that read -- separated, nested or a blip, each recorded with its moment and
 //! wobble in the durable separation.csv; a separation in BOOSTING moves the stage to GLIDING.
+//!
+//! The flight word's one writer lives here (M7, crate::status): this thread commits every change of the stage, the
+//! hold, the arming and the launch, between two ticks' work, so no change races a detector. The separation's GLIDING
+//! commits through it, and so do the operator's requests: the executor posts each one to its request slot, which the
+//! tick serves first among its requests (§4.3, step 4), and logs it from the answer, so this thread takes no lock and
+//! makes no kernel call for a request. The mailbox after the slot carries the SETTING-only `probe` and `bustune`, each
+//! checked against the stage again where it is served: a launch detected during a probe sweep never runs a probe. The
+//! recorder's flight flag follows each commit. `control` shows the tick's work time (from the wake to the end of its
+//! work) and whether the flight word holds the machine's launch.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
@@ -36,10 +45,12 @@ use esp_idf_svc::sys;
 use firmware::buses::spi::{SpiBus, SpiHandle};
 use firmware::gcl::{self, Command, Gate, Reach};
 use recorder::{Cell, Telemetry};
+use sequencer::{ChangeRefused, Commit, FlightFlag, FlightWriter, RequestSlot, Stage};
 
 use crate::devices::{SeparationMember, SpiMember, Topology};
+use crate::logging::CONSOLE_ONLY;
 use crate::recorder::Producer;
-use crate::status::STATUS;
+use crate::status::FLIGHT;
 
 /// The control thread's priority: above the bus owners (18, 17), below esp_hosted's (§4.2).
 const PRIORITY: u8 = 20;
@@ -82,15 +93,35 @@ static INTERRUPT_SILENT: AtomicBool = AtomicBool::new(false);
 static IMU_NAME: OnceLock<&'static str> = OnceLock::new();
 /// Whether the IMU's INT1 is wired (its `int_pin` names a GPIO).
 static INTERRUPT_WIRED: AtomicBool = AtomicBool::new(false);
+/// The latest tick's work, microseconds: from the wake to the end of its work.
+static WORK_LAST_US: AtomicU32 = AtomicU32::new(0);
+/// The longest tick's work so far, microseconds.
+static WORK_MAX_US: AtomicU32 = AtomicU32::new(0);
 
-/// What the control thread is asked between its tick's work (§4.3, step 4), each answer going back through its sender.
+/// Set as the thread enters its tick loop, never cleared: until then, and for good when the thread or its timer did
+/// not start, nothing serves the request slot, and nothing commits to the flight word.
+static RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// The executor's request slot (§4.3, step 4): its `stage` and `disarm` reach the flight word's writer through it.
+/// The executor's alone: another requesting thread gets a slot of its own.
+static EXECUTOR_SLOT: RequestSlot = RequestSlot::new();
+
+/// How long the executor waits for the tick to take its request before withdrawing it (§4.4): two hundred ticks at
+/// the default 100 Hz, and two at the slowest rate a config may set (1 Hz), so a thread that took none has stalled.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(2);
+
+/// How often the executor looks for its answer: one FreeRTOS tick (CONFIG_FREERTOS_HZ is 1000).
+const REQUEST_POLL: Duration = Duration::from_millis(1);
+
+/// What the control thread's mailbox asks between its tick's work (§4.3, step 4), each answer going back through its
+/// sender: the outcome, or the stage's refusal outside SETTING (a value: the executor makes its text).
 enum Request {
     /// Probe the IMU: None healthy, else why.
-    ProbeImu(SyncSender<Option<String>>),
+    ProbeImu(SyncSender<Result<Option<String>, ChangeRefused>>),
     /// Run the IMU's SPI handle at `clock_hz` and probe it (a bustune rung): the verdict and the clock it runs at.
     BustuneSpi {
         clock_hz: u32,
-        reply: SyncSender<(Option<String>, u32)>,
+        reply: SyncSender<Result<(Option<String>, u32), ChangeRefused>>,
     },
 }
 
@@ -103,7 +134,7 @@ const MAXIMUM_SPI_HZ: u32 = 10_000_000;
 /// The clock the IMU's SPI handle runs at, Hz (0 without one).
 static SPI_CLOCK_HZ: AtomicU32 = AtomicU32::new(0);
 
-/// How many requests a tick serves at most (§4.3: two).
+/// How many mailbox requests a tick serves at most (§4.3: two), after the request slot's one.
 const REQUESTS_PER_TICK: usize = 2;
 
 /// How long a probe waits for the control thread's answer: a tick and a frame, with a wide margin.
@@ -178,9 +209,10 @@ impl Switch {
     }
 
     /// One tick: the pin's level, then the clock, offered to the stamp pair (observed, or polled when the arm failed);
-    /// once the pair is quiet, its episode is concluded by that same level (drivers::debounce): the stage advances on a
-    /// separation in BOOSTING, the row is written with the moment and the wobble, the event is logged.
-    fn tick(&mut self) {
+    /// once the pair is quiet, its episode is concluded by that same level (drivers::debounce): a separation in
+    /// BOOSTING commits GLIDING through `writer` and logs the controller's console line, then the row is written with
+    /// the moment and the wobble, and the event is logged (plan B's order, drivers/separation.py `_apply`).
+    fn tick(&mut self, writer: &mut FlightWriter<'static>) {
         // the level first, then the clock: the level decides the episode this tick concludes
         // SAFETY: a plain read of the input bring-up configured.
         let high = unsafe { sys::gpio_get_level(i32::from(self.gpio)) } != 0;
@@ -197,9 +229,12 @@ impl Switch {
         let Some(episode) = SEPARATION.take(read_us, self.part.quiet_us()) else {
             return;
         };
-        let event = self.part.conclude(episode, high, STATUS.stage());
-        if event.advanced {
-            STATUS.set_stage(event.stage);
+        let event = self.part.conclude(episode, high, writer.flight().stage);
+        if event.advanced
+            && let Some(commit) = writer.separate()
+        {
+            follow_flight(&commit);
+            log::info!(target: CONSOLE_ONLY, "controller :: stage -> {}", commit.after.stage.name());
         }
         SEPARATED.store(self.part.separated(), Ordering::Relaxed);
         SEPARATION_EPISODES.fetch_add(1, Ordering::Relaxed);
@@ -533,11 +568,11 @@ unsafe extern "C" fn alarm(
 }
 
 /// Starts the control thread (core 1, priority 20) ticking at `schedule_hz`, waking the I2C owners that run on each
-/// tick too, with the SPI parts that came up (`spi`: the primary IMU), the databoard's `topology` and the device
-/// `table` whose entries' health the tick writes. Call it after the owners started (their task handles are taken
-/// here).
+/// tick too, with the SPI parts that came up (`spi`: the primary IMU), the databoard's `topology`, the device `table`
+/// whose entries' health the tick writes, and the flight word's one `writer`, which the thread owns from here on.
+/// Call it after the owners started (their task handles are taken here).
 ///
-/// Errors: the thread would not spawn.
+/// Errors: the thread would not spawn (the writer is gone with it, and the flight word stays as it is).
 pub fn start(
     schedule_hz: u32,
     spi_bus: Option<SpiBus>,
@@ -545,6 +580,7 @@ pub fn start(
     separation: Option<SeparationMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
+    writer: FlightWriter<'static>,
 ) -> anyhow::Result<()> {
     ThreadSpawnConfiguration {
         name: Some(c"control"),
@@ -556,7 +592,7 @@ pub fn start(
     .set()?;
     let spawned = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || run(schedule_hz, spi_bus, spi, separation, topology, table));
+        .spawn(move || run(schedule_hz, spi_bus, spi, separation, topology, table, writer));
     ThreadSpawnConfiguration::default().set()?;
     spawned?;
     Ok(())
@@ -570,6 +606,7 @@ fn run(
     separation: Option<SeparationMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
+    mut writer: FlightWriter<'static>,
 ) {
     let period_us = (TIMER_RESOLUTION_HZ / schedule_hz.max(1)) as i64;
     // this thread's own producer ring: its rows and log lines never contend with another thread's
@@ -626,6 +663,7 @@ fn run(
     );
     let mut first_us = None;
     let mut ticks: i64 = 0;
+    RUNNING.store(true, Ordering::Release);
     loop {
         // SAFETY: this task's own notification value, index 0, cleared on take.
         let pending = unsafe { sys::ulTaskGenericNotifyTake(0, 1, u32::MAX) };
@@ -651,30 +689,77 @@ fn run(
         }
         if let Some(switch) = &mut switch {
             // the switch reads its own clock after the level: the IMU's SPI work runs between the wake and here
-            switch.tick();
+            switch.tick(&mut writer);
         }
-        serve(&requests, imu.as_mut(), spi_bus.as_ref());
+        // the operator's request first: lock-free, and its answer is the executor's to log
+        if let Some(Ok(commit)) = EXECUTOR_SLOT.serve(&mut writer) {
+            follow_flight(&commit);
+        }
+        serve(&requests, imu.as_mut(), spi_bus.as_ref(), writer.flight().stage);
+        // SAFETY: a plain read of the monotonic timer.
+        let work = (unsafe { sys::esp_timer_get_time() } - now_us).clamp(0, i64::from(u32::MAX)) as u32;
+        WORK_LAST_US.store(work, Ordering::Relaxed);
+        WORK_MAX_US.fetch_max(work, Ordering::Relaxed);
     }
 }
 
-/// Serves at most [`REQUESTS_PER_TICK`] requests waiting in the mailbox.
-fn serve(requests: &Receiver<Request>, mut imu: Option<&mut Imu>, bus: Option<&SpiBus>) {
+/// Moves the recorder's flight flag as `commit` moves it (sequencer::Commit::flight_flag): it follows `airborne()` of
+/// each committed stage, an operator hold's too.
+fn follow_flight(commit: &Commit) {
+    if let (Some(flag), Some(recorder)) = (commit.flight_flag(), crate::recorder::get()) {
+        recorder.set_flight(flag == FlightFlag::Raise);
+    }
+}
+
+/// Serves at most [`REQUESTS_PER_TICK`] requests waiting in the mailbox, each refused unless `stage` is SETTING: the
+/// executor checked its gate once, and a probe sweep then takes seconds, during which a launch may be detected. A
+/// refusal is the stage as a value, so off the pad this thread makes no text (§3.1: text only off the flight path).
+fn serve(requests: &Receiver<Request>, mut imu: Option<&mut Imu>, bus: Option<&SpiBus>, stage: Stage) {
     for _ in 0..REQUESTS_PER_TICK {
-        match requests.try_recv() {
-            Ok(Request::ProbeImu(reply)) => {
-                let verdict = imu.as_deref_mut().and_then(Imu::probe);
-                let _ = reply.send(verdict);
-            }
-            Ok(Request::BustuneSpi { clock_hz, reply }) => {
-                let answer = match (imu.as_deref_mut(), bus) {
-                    (Some(imu), Some(bus)) => imu.retune(bus, clock_hz),
-                    _ => (Some("no SPI IMU".to_string()), 0),
+        let request = match requests.try_recv() {
+            Ok(request) => request,
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return,
+        };
+        let refusal = stage.change_refused(false);
+        match request {
+            Request::ProbeImu(reply) => {
+                let answer = match refusal {
+                    Some(refusal) => Err(refusal),
+                    None => Ok(imu.as_deref_mut().and_then(Imu::probe)),
                 };
                 let _ = reply.send(answer);
             }
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => return,
+            Request::BustuneSpi { clock_hz, reply } => {
+                let answer = match (refusal, imu.as_deref_mut(), bus) {
+                    (Some(refusal), ..) => Err(refusal),
+                    (None, Some(imu), Some(bus)) => Ok(imu.retune(bus, clock_hz)),
+                    (None, ..) => Ok((Some("no SPI IMU".to_string()), 0)),
+                };
+                let _ = reply.send(answer);
+            }
         }
     }
+}
+
+/// Applies an operator `request` (the executor's `stage`, `disarm`) to the flight word through its one writer, this
+/// thread: posted to the executor's slot, served at the next tick, withdrawn when not taken in [`REQUEST_DEADLINE`].
+/// While the thread is not running nothing commits, so a request that would change nothing (a disarm of a disarmed
+/// board) is answered with the flight as it stands, at once, and any other is not applied. The executor's alone.
+///
+/// Returns: the answer: the flight committed, or why an arm was refused.
+///
+/// Errors: why there is no answer, saying whether the request was applied.
+pub fn request(request: sequencer::Request) -> Result<sequencer::Answer, String> {
+    if !RUNNING.load(Ordering::Acquire) {
+        let flight = FLIGHT.load();
+        return match flight.apply(request) {
+            Ok(after) if after == flight => Ok(Ok(flight)),
+            _ => Err("the control thread is not running: not applied".to_string()),
+        };
+    }
+    EXECUTOR_SLOT
+        .request(request, REQUEST_DEADLINE, REQUEST_POLL)
+        .map_err(|unanswered| unanswered.to_string())
 }
 
 /// A `bustune spi` rung's outcome: the IMU's name, its verdict at the asked clock (None healthy, else why), and the
@@ -690,7 +775,7 @@ pub struct SpiRung {
 /// [`MAXIMUM_SPI_HZ`] is the IMU failing the rung, answered here and never sent: the handle is not touched, and the
 /// CC's ladder (5, 8, 10, 16, 20 MHz) still finds the part's ceiling.
 ///
-/// Errors: the control thread is busy or did not answer in time.
+/// Errors: the control thread is busy, did not answer in time, or refused the rung outside SETTING.
 pub fn bustune_spi(clock_hz: u32) -> Option<Result<SpiRung, String>> {
     let name = *IMU_NAME.get()?;
     if clock_hz > MAXIMUM_SPI_HZ {
@@ -707,22 +792,22 @@ pub fn bustune_spi(clock_hz: u32) -> Option<Result<SpiRung, String>> {
     if mailbox.try_send(Request::BustuneSpi { clock_hz, reply }).is_err() {
         return Some(Err("the control thread is busy".to_string()));
     }
-    Some(
-        answer
-            .recv_timeout(PROBE_DEADLINE)
+    Some(match answer.recv_timeout(PROBE_DEADLINE) {
+        Ok(rung) => rung
             .map(|(verdict, running_hz)| SpiRung {
                 name,
                 verdict,
                 running_hz,
             })
-            .map_err(|_| "the control thread did not answer".to_string()),
-    )
+            .map_err(|refusal| refusal.to_string()),
+        Err(_) => Err("the control thread did not answer".to_string()),
+    })
 }
 
 /// The IMU's probe on the control thread (CC `probe`): its name and verdict (None healthy, else why); None when the
 /// thread drives no IMU.
 ///
-/// Errors: the control thread did not answer in time.
+/// Errors: the control thread is busy, did not answer in time, or refused the probe outside SETTING.
 pub fn probe_imu() -> Option<Result<(&'static str, Option<String>), String>> {
     let name = *IMU_NAME.get()?;
     let mailbox = MAILBOX.get()?;
@@ -730,12 +815,12 @@ pub fn probe_imu() -> Option<Result<(&'static str, Option<String>), String>> {
     if mailbox.try_send(Request::ProbeImu(reply)).is_err() {
         return Some(Err("the control thread is busy".to_string()));
     }
-    Some(
-        answer
-            .recv_timeout(PROBE_DEADLINE)
+    Some(match answer.recv_timeout(PROBE_DEADLINE) {
+        Ok(verdict) => verdict
             .map(|verdict| (name, verdict))
-            .map_err(|_| "the control thread did not answer".to_string()),
-    )
+            .map_err(|refusal| refusal.to_string()),
+        Err(_) => Err("the control thread did not answer".to_string()),
+    })
 }
 
 /// What `inspect` shows of the IMU the control thread drives (plan B lsm6dso32.py:300-308, beyond the channels and
@@ -786,10 +871,12 @@ pub fn register_commands() {
     gcl::register(vec![Command {
         owner: "control",
         words: "control",
-        about: "the control tick: its rate, ticks, overruns (ticks the thread missed) and lateness (the latest, the \
-                largest, and how many ticks passed the 200 us budget); the IMU's reads, failures, reads with no new \
-                conversion, INT1 edges at the latest tick and whether INT1 is silent; the IMU's SPI clock; the separation latch, whether its pin is polled, and the episodes it concluded (blips among them); flight-core log lines the console queue \
-                dropped",
+        about: "the control tick: its rate, ticks, overruns (ticks the thread missed), lateness (the latest, the \
+                largest, and how many ticks passed the 200 us budget) and work (the latest and the largest, from the \
+                wake to the end of the tick's work); whether the flight word holds the stage machine's launch; the \
+                IMU's reads, failures, reads with no new conversion, INT1 edges at the latest tick and whether INT1 is \
+                silent; the IMU's SPI clock; the separation latch, whether its pin is polled, and the episodes it \
+                concluded (blips among them); flight-core log lines the console queue dropped",
         gate: Gate::Open,
         reach: Reach::Everywhere,
         parameters: &[],
@@ -808,6 +895,9 @@ pub fn register_commands() {
                         "late_over_budget",
                         &LATE_OVER_BUDGET.load(Ordering::Relaxed).to_string(),
                     ),
+                    ("work_last_us", &WORK_LAST_US.load(Ordering::Relaxed).to_string()),
+                    ("work_max_us", &WORK_MAX_US.load(Ordering::Relaxed).to_string()),
+                    ("launched", &FLIGHT.load().launched.to_string()),
                     ("imu_reads", &IMU_READS.load(Ordering::Relaxed).to_string()),
                     ("imu_failures", &IMU_FAILURES.load(Ordering::Relaxed).to_string()),
                     ("imu_stale", &IMU_STALE.load(Ordering::Relaxed).to_string()),

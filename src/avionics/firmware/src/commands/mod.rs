@@ -10,9 +10,12 @@
 //!
 //! Changes run only in SETTING (the operator's rule, 2026-10-06): every command that changes the board --
 //! `update`, `set-config`, `reset-config`, `probe`, `detect`, `bustune`, `reboot`, `calibrate <device>` -- answers
-//! `err unsafe` in any other stage, DONE included (no reboot there: the beacon and the flash-to-SD copy run on).
-//! Reads, `stage` and `disarm` stay open: they are how the operator recovers. Plan B left `update` open in flight
-//! and allowed the rest at DONE (doc/specs/avionics-port.md §6).
+//! `err unsafe` in any other stage, DONE included (no reboot there: the beacon and the flash-to-SD copy run on). The
+//! one exception is a barometer's re-zero, its `update` and `calibrate`, which also run at DONE: the way back from a
+//! false launch without a power cycle (`stage done`, the re-zero, `stage setting`). Reads, `stage` and `disarm` stay
+//! open: they are how the operator recovers. Plan B left `update` open in flight and allowed the rest at DONE
+//! (doc/specs/avionics-port.md §6). The thread that serves a change checks the stage again (the bus owners, the
+//! control thread's mailbox), since a probe sweep takes seconds and a launch may be detected meanwhile.
 
 mod config;
 mod control;
@@ -30,10 +33,9 @@ use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use firmware::gcl::Origin;
 use mission::Mission;
-use sequencer::Stage;
 
 use crate::board::Board;
-use crate::status::STATUS;
+use crate::status::FLIGHT;
 
 /// What the handlers share: the board, the settings store, and the state the executor owns.
 pub struct Context {
@@ -121,6 +123,9 @@ enum Gate {
     Open,
     /// Only in SETTING: it changes the board -- moves fins, rewrites state the flight reads, or reboots.
     Setting,
+    /// A change to a named device: only in SETTING, and at DONE too when it re-zeroes a barometer ([`change_refused`]).
+    /// The handler checks it, since it depends on the target (and `calibrate` with no target is a read).
+    Rezero,
 }
 
 /// The command table: name, gate, handler (src/glider cc_client `_register_*`). `push-*` is plan B's `.mpy`
@@ -135,14 +140,14 @@ const TABLE: &[(&str, Gate, Handler)] = &[
     ("report", Gate::Open, control::report),
     ("objects", Gate::Open, inspection::objects),
     ("inspect", Gate::Open, inspection::inspect),
-    ("update", Gate::Setting, inspection::update),
+    ("update", Gate::Rezero, inspection::update),
     ("stats", Gate::Open, inspection::stats),
     ("get-config", Gate::Open, config::get_config),
     ("set-config", Gate::Setting, config::set_config),
     ("reset-config", Gate::Setting, config::reset_config),
     ("probe", Gate::Setting, diagnostics::probe),
     ("verify", Gate::Open, diagnostics::verify),
-    ("calibrate", Gate::Open, diagnostics::calibrate),
+    ("calibrate", Gate::Rezero, diagnostics::calibrate),
     ("detect", Gate::Setting, diagnostics::detect),
     ("bustune", Gate::Setting, diagnostics::bustune),
     ("log", Gate::Open, streaming::log),
@@ -180,8 +185,25 @@ pub fn names() -> Vec<&'static str> {
 
 /// Why a command that changes the board must not run now, or None in SETTING (plan B's `_in_flight`, narrowed).
 pub fn outside_setting() -> Option<String> {
-    let stage = STATUS.stage();
-    (stage != Stage::Setting).then(|| format!("refused -- stage is {} (changes only in setting)", stage.name()))
+    FLIGHT
+        .load()
+        .stage
+        .change_refused(false)
+        .map(|refusal| refusal.to_string())
+}
+
+/// Why a change to the device `target` must not run now, or None when it may: in SETTING, and at DONE when the
+/// target is a barometer that re-zeroes (crate::sensors::rezeroes), its `update` and `calibrate`.
+pub fn change_refused(context: &Context, target: &str) -> Option<String> {
+    let rezero = context
+        .devices
+        .find(target)
+        .is_some_and(|entry| crate::sensors::rezeroes(entry.implementation));
+    FLIGHT
+        .load()
+        .stage
+        .change_refused(rezero)
+        .map(|refusal| refusal.to_string())
 }
 
 /// The `err <code> <detail>` line.
@@ -224,24 +246,6 @@ pub fn ok_json(value: &impl serde::Serialize) -> Reply {
     serde_json::to_string(value)
         .map(|json| cc_protocol::build("ok", &[&json], &[]))
         .map_err(|error| Fault::new(Code::Internal, error.to_string()))
-}
-
-/// Why this board is not on the ground under automatic sequencing, or None when it is (src/glider cc_client
-/// `_stage_problem`): a stage left forced or held on the pad means the flight's stage record will be wrong.
-pub fn stage_problem() -> Option<String> {
-    let stage = STATUS.stage();
-    if STATUS.manual() {
-        return Some(format!(
-            "stage held at {} by an operator command -- `stage setting` to return to the ground",
-            stage.name()
-        ));
-    }
-    (stage != Stage::Setting).then(|| {
-        format!(
-            "stage is {}, not setting -- `stage setting`, then power-cycle before flight",
-            stage.name()
-        )
-    })
 }
 
 /// One line to run, who sent it, and where its reply goes.

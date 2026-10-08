@@ -6,7 +6,9 @@
 //! `Controller.setup`, nothing else running), then hands it back ([`start`]); from then the owner serves its mailbox
 //! ([`ask`]): the commands that need the bus (`i2c touch`, `i2c general-call`, `detect`'s scan, `probe`, `bustune`)
 //! run on the owner, never beside it, over the parts that came up on its port (crate::devices). M6 adds the owner's
-//! read table to the same thread.
+//! read table to the same thread. Every request is a change, run only in SETTING (a barometer's re-zero at DONE too):
+//! the owner checks the stage again as it serves one, since the executor checked its gate once and a probe sweep then
+//! takes seconds, so a launch detected meanwhile never runs a probe in flight.
 //!
 //! The stacks are internal: the bus threads are flight-path threads (§4.7, internal RAM budget), and an internal
 //! stack also keeps the thread's allocations internal (crate::allocator's rule).
@@ -26,6 +28,7 @@ use esp_idf_svc::sys;
 use firmware::buses::i2c::{I2cError, I2cPort, PortFigures};
 use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
 use layout::Addresses;
+use sequencer::ChangeRefused;
 
 use crate::devices::{Member, Topology};
 use crate::sensors::{Event, Run};
@@ -117,6 +120,9 @@ pub enum Answer {
     Updated(Option<Result<Vec<&'static str>, String>>),
     /// None when no part of that name is on this port; else plan B's calibrate answer (None success, else why).
     Calibrated(Option<Option<String>>),
+    /// Not served in this stage ([`refusal`]): a value, so the owner makes no text off the pad. [`ask`] answers its
+    /// text as its error.
+    Refused(ChangeRefused),
 }
 
 /// The calibrations the parts wait for, by name: what `health.calibration` and `calibrate` list (plan B
@@ -257,7 +263,10 @@ fn own(
         for _ in 0..REQUESTS_PER_WAKE {
             match requests.try_recv() {
                 Ok(envelope) => {
-                    let answer = serve(&mut port, &mut members, &mut delay, envelope.request);
+                    let answer = match refusal(&envelope.request, &members) {
+                        Some(refusal) => Answer::Refused(refusal),
+                        None => serve(&mut port, &mut members, &mut delay, envelope.request),
+                    };
                     let _ = envelope.reply.send(answer);
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
@@ -302,6 +311,20 @@ fn probe(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay) -> Vec<V
         .iter_mut()
         .map(|member| (member.name, member.part.probe(member.name, port, delay)))
         .collect()
+}
+
+/// Why the owner must not serve `request` in the flight word's stage now, None when it may: every request is a
+/// change, run only in SETTING, and an update or a calibrate of a part that re-zeroes a barometer at DONE too
+/// (sequencer::Stage::change_refused). One that names a part this port does not hold is served whatever the stage:
+/// it changes nothing here, and its answer says so, so the part's own owner decides.
+fn refusal(request: &Request, members: &[Member]) -> Option<ChangeRefused> {
+    let rezero = match request {
+        Request::Update { name, .. } | Request::Calibrate { name } => {
+            members.iter().find(|member| member.name == name)?.part.rezeroes()
+        }
+        _ => false,
+    };
+    crate::status::FLIGHT.load().stage.change_refused(rezero)
 }
 
 /// One request, on the owner.
@@ -447,7 +470,8 @@ fn walk(rearmed: &[Rearmed]) -> String {
 
 /// Asks port `port`'s owner to run `request`, and waits up to `deadline` for its answer.
 ///
-/// Errors: no such port, its owner not started (yet) or gone, or no answer in time.
+/// Errors: no such port, its owner not started (yet) or gone, no answer in time, or the owner refused the request in
+/// this stage (the refusal's text).
 pub fn ask(port: u8, request: Request, deadline: Duration) -> Result<Answer, String> {
     let mailbox = MAILBOXES
         .get(port as usize)
@@ -461,9 +485,14 @@ pub fn ask(port: u8, request: Request, deadline: Duration) -> Result<Answer, Str
         // SAFETY: the owner's task lives for the program; a notify only wakes it early
         unsafe { sys::xTaskGenericNotify(task, 0, 0, sys::eNotifyAction_eIncrement, core::ptr::null_mut()) };
     }
-    answer
-        .recv_timeout(deadline)
-        .map_err(|_| format!("i2c port {port}'s owner did not answer in {} s", deadline.as_secs()))
+    match answer.recv_timeout(deadline) {
+        Ok(Answer::Refused(refusal)) => Err(refusal.to_string()),
+        Ok(answer) => Ok(answer),
+        Err(_) => Err(format!(
+            "i2c port {port}'s owner did not answer in {} s",
+            deadline.as_secs()
+        )),
+    }
 }
 
 /// Port `port`'s scan, on its owner (the `detect` command): what acknowledges.

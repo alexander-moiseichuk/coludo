@@ -70,8 +70,9 @@ _CONFIG_ID: re.Pattern = re.compile(r'[0-9a-f]{12}|[0-9a-f]{8}')  # SHA-256 pref
 _LAYOUT: re.Pattern = re.compile(r'v\d+\.\d+( \(declared\))?|undecided')  # health.layout, as layout.RESOLVED
 _HOLD_STAGE: str = 'gliding'  # the stage the gating checks hold: airborne, and quiet on a disarmed bench board
 _REFUSED_IN_FLIGHT: str = 'refused in flight -- stage is %s (ground-only: setting/done)' % _HOLD_STAGE
-# The Rust board's gate (doc/specs/avionics-port.md §6): every change runs only in SETTING, DONE included, and the
-# text says so. Each board answers its own true text, so the gating cases accept either.
+# The Rust board's gate (doc/specs/avionics-port.md §6): every change runs only in SETTING, refused at DONE too but
+# for a barometer's re-zero, and the text says so. Each board answers its own true text, so the gating cases accept
+# either.
 _REFUSED_OUTSIDE_SETTING: str = 'refused -- stage is %s (changes only in setting)' % _HOLD_STAGE
 # An arm while held is refused under `stage` with plan B's stage problem (cc_client._stage_problem), which the Rust
 # board carries verbatim

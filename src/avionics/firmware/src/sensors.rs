@@ -96,6 +96,12 @@ pub fn classify(entry: &Entry) -> Kind {
     }
 }
 
+/// Whether the implementation re-zeroes a barometer's ground: the ICP-10111, whose `calibrate` and `update` (`ground`,
+/// `rezero`) also run at DONE, the way back from a false launch ([`Part::rezeroes`] says it of a built part).
+pub fn rezeroes(implementation: &str) -> bool {
+    implementation == "icp10111"
+}
+
 /// The datasheet address an I2C part's driver binds when its entry has no `addr` (plan B i2cbus.py:301).
 pub fn default_address(implementation: &str) -> Option<u8> {
     match implementation {
@@ -515,6 +521,12 @@ impl Part {
             }
             _ => Ok(Vec::new()),
         }
+    }
+
+    /// Whether the part re-zeroes a barometer's ground, as [`rezeroes`] says of its implementation: its `update` and
+    /// `calibrate` also run at DONE.
+    pub fn rezeroes(&self) -> bool {
+        matches!(self, Part::Icp10111(_))
     }
 
     /// Whether the part sent a general call since the last ask: only the ICP-10111 sends one, to free itself.

@@ -1,7 +1,8 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The flight stages and the flight word, from src/glider controller.py: the stages (`Stage`: their ids, their
-//! operator-facing names, which of them are on the ground and which airborne), and the Controller's flight state
+//! operator-facing names, which of them are on the ground and which airborne, and in which a command that changes the
+//! board may run: plan B's cc_client `_in_flight`, narrowed), and the Controller's flight state
 //! (`stage`, `manual`, `armed`) with the rules its `hold`, `resume`, `arm` and `disarm` change it by.
 //!
 //! **The flight word.** Plan B kept that state in three Controller attributes, set by five writers on one asyncio
@@ -76,6 +77,39 @@ impl Stage {
     /// which let a stale timer force DONE from SETTING on a board sitting on the pad.
     pub fn airborne(self) -> bool {
         !self.ground()
+    }
+
+    /// Why a command that changes the board must not run in this stage, None when it may.
+    ///
+    /// Changes run only in SETTING (the operator's rule; plan B's cc_client `_in_flight` allowed them at DONE too). A
+    /// barometer's re-zero (`rezero`: its `calibrate`, its `update` of `ground` or `rezero`) also runs at DONE: it
+    /// is the way back from a false launch without a power cycle (`stage done`, the re-zero, then `stage setting`).
+    /// The executor checks it before a command runs, and the thread that serves the command checks it again, since a
+    /// probe sweep takes seconds and a launch may be detected meanwhile. It allocates nothing: that thread may be the
+    /// control thread or a bus owner off the pad, and the refusal's text is made where the operator is answered.
+    ///
+    /// Args: `rezero` the command re-zeroes a barometer.
+    ///
+    /// Returns: the refusal, naming this stage; None in SETTING, and at DONE for a re-zero.
+    pub fn change_refused(self, rezero: bool) -> Option<ChangeRefused> {
+        let allowed = self == Stage::Setting || (rezero && self == Stage::Done);
+        (!allowed).then_some(ChangeRefused(self))
+    }
+}
+
+/// A change refused in a stage ([`Stage::change_refused`]): the stage as a value, so the thread that refuses makes no
+/// text. [`fmt::Display`] writes `refused -- stage is <stage> (changes only in setting)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChangeRefused(Stage);
+
+impl fmt::Display for ChangeRefused {
+    /// The refusal's text, naming the stage.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "refused -- stage is {} (changes only in setting)",
+            self.0.name()
+        )
     }
 }
 
@@ -382,7 +416,7 @@ pub enum FlightFlag {
 
 #[cfg(test)]
 mod tests {
-    use super::{Commit, Flight, FlightFlag, FlightWord, Request, Stage, StageProblem};
+    use super::{ChangeRefused, Commit, Flight, FlightFlag, FlightWord, Request, Stage, StageProblem};
     use crate::sequencer::{Reason, Transition};
 
     #[test]
@@ -412,6 +446,39 @@ mod tests {
     fn airborne_is_boosting_through_landing() {
         let airborne: [bool; 5] = Stage::ALL.map(Stage::airborne);
         assert_eq!(airborne, [false, true, true, true, false]);
+    }
+
+    #[test]
+    fn changes_run_in_setting_and_a_rezero_at_done_too() {
+        assert_eq!(Stage::Setting.change_refused(false), None);
+        assert_eq!(Stage::Setting.change_refused(true), None);
+        assert_eq!(Stage::Done.change_refused(true), None, "the false launch's recovery");
+    }
+
+    #[test]
+    fn changes_are_refused_off_the_pad_with_the_stage_named() {
+        for stage in [Stage::Boosting, Stage::Gliding, Stage::Landing] {
+            for rezero in [false, true] {
+                let refusal = stage.change_refused(rezero);
+                assert_eq!(refusal, Some(ChangeRefused(stage)), "{stage:?}, rezero {rezero}");
+                assert_eq!(
+                    refusal.map(|refusal| refusal.to_string()),
+                    Some(format!(
+                        "refused -- stage is {} (changes only in setting)",
+                        stage.name()
+                    )),
+                    "{stage:?}, rezero {rezero}"
+                );
+            }
+        }
+        assert_eq!(
+            Stage::Done
+                .change_refused(false)
+                .map(|refusal| refusal.to_string())
+                .as_deref(),
+            Some("refused -- stage is done (changes only in setting)"),
+            "at DONE only the re-zero runs"
+        );
     }
 
     /// Every flight there is: 5 stages times the three flags.

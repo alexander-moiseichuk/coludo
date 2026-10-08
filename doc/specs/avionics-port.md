@@ -799,10 +799,21 @@ for these parts.
     backstop), dated by the episode's first edge either way; a re-nest clears it. A wrong axis or sign, no IMU, or a
     bench hold never sees thrust, so only the backstop decides: a mis-mounted IMU can never open the gate under
     thrust. `control` shows `thrust` (none, seen, ended) and `pending`.
+  - **How a pending separation is recorded:** it writes no row while it waits, and the latch the warm-start gate
+    reads stays nested. It counts only on a tick that reads the pin 0 with no episode open, by the gate and the
+    backstop alike, so a gate that opens on a contact closing again counts nothing, even on a bounce that reads 0:
+    that episode's conclusion decides. A touch that lets go again is part of it: the backstop runs from the touch's
+    last edge, and an open gate counts it when the touch concludes. A re-nest makes the open one `blip` row, from its
+    first edge to the re-nest's last. When BOOSTING ends otherwise (apogee, burnout, the flight timeout, a hold), it
+    counts on the next such tick, as a separation outside BOOSTING: the row in the new stage, nothing advanced. A
+    `debounce_ms` of 100 or more meets the backstop when the episode concludes. Costs at the defaults: an early
+    separation counts 20-30 ms after a_x goes negative, a held open under a shut gate 100-110 ms after its last edge,
+    and an open of up to 100 ms under thrust is a blip.
 - **One writer of the flight state:** the control thread commits the stage, the hold, the arming and `launched` to
   the flight word (§4.1): the stage machine's advances, the separation's, and the operator's hold, resume, arm and
   disarm, which reach it through a polled request slot (§4.3, step 4). This closes both carry-overs from the M6
-  review.
+  review. `control` shows `launched` and the tick's work, `work_last_us` and `work_max_us` (from the wake to the end of
+  the tick's work, which the lateness figures do not see).
 - `sequencer.csv` (the entry's `<name>.csv`, `stage;reason`): durable and never decimated (§6). The recorder's
   flight flag follows the committed stage (§4.3, step 6).
 - **Arm and verify:**
@@ -1237,7 +1248,8 @@ Invariants:
    event it decides itself: a stage machine transition (with its reason text, six or fewer a flight; M7) and a
    separation-switch event (M6). An operator's hold, resume, arm or disarm is logged by the executor from the
    request's result (§4.4); the IMU's probe and `bustune`, whose verdicts the control thread does write as text, run
-   only in SETTING.
+   only in SETTING. A thread that refuses a change off the pad answers with the stage as a value
+   (`sequencer::ChangeRefused`), and the executor writes the refusal.
 
 The whole 24 MiB flash ring serves logging. The eraser runs in the background, so boot is never blocked, and
 PSRAM holds the records while a block erases.
@@ -1924,8 +1936,11 @@ R5).
    frame's +x (the nose), from a fresh `accel`: open once thrust was seen (a_x above `launch_g` for `launch_ms` of net
    time) and then ended (a_x below 0 g for 20 ms of net time), both afresh at each BOOSTING entry. A separation
    concluded before that is pending, and counts when the gate opens or once the pin has stayed 0 for 100 ms after the
-   episode's last edge (the backstop), dated by the episode's first edge; a re-nest clears it. A counted separation
-   commits GLIDING to the flight word and logs the console line `controller :: stage -> gliding` (§4.4).
+   episode's last edge (the backstop), either way on a tick that reads 0 with no episode open, dated by the episode's
+   first edge; a re-nest clears it, as one `blip` row
+   (the M7 scope says how a pending separation is recorded). A counted separation commits GLIDING to the flight word
+   and logs the console line `controller :: stage -> gliding` (§4.4). In code: `drivers::separation::ThrustGate`,
+   stepped with the uptime's ms and the fresh a_x, and `Separation::tick`, which takes the pair and decides.
 4. **Requests** (M7):
    - **The request slot**, served first: one `AtomicU32` per requesting thread (in M7 only the executor), seq (bits
      16-31) \| phase (14-15: idle, posted, taken, done) \| kind (8-13: Hold, Resume, Arm, Disarm) \| argument or
@@ -1935,8 +1950,9 @@ R5).
      to be argued). Core 1 takes no lock, allocates nothing and makes no kernel call for a request: the executor
      logs it. M13's fin requests get slots of their own.
    - **The mailbox** (std mpsc) stays for the SETTING-only `probe` and `bustune`, at most 2 a tick. Each is checked
-     against the stage again here and refused outside SETTING (`refused -- stage is X (changes only in setting)`),
-     so a launch detected during a probe sweep never runs the IMU's probe in BOOSTING.
+     against the stage again here and refused outside SETTING, so a launch detected during a probe sweep never
+     runs the IMU's probe in BOOSTING. The refusal goes back as the stage, a value; the executor writes
+     `refused -- stage is X (changes only in setting)`.
 5. **Every 2nd tick:** the attitude filter (50 Hz; the 5-cycle blind window kept) publishes `attitude` at p1.
 6. **Every `period_ms` (default 50) on the uptime clock:** the stage machine, built from the first enabled entry
    whose implementation is `sequencer` (none: no machine, as in plan B). `now_ms` is the uptime in ms as a wrapping
@@ -1987,9 +2003,10 @@ Bus owners run their tables on the same notify:
 - **No fast lane for `disarm`:** the executor serialises commands, so on the pad a console `disarm` can wait behind a
   hub probe sweep, ~18 s at worst (the IMU's probe ≤ 2 s, then each I2C owner ≤ 8 s).
 - **SETTING-only requests are checked again where they are served** (M7): an owner's serve (`firmware/src/owner.rs`)
-  and the control thread's mailbox answer `refused -- stage is X (changes only in setting)` outside the stages
-  their command may run in (the barometers' re-zero also at DONE, §6). The executor checks the gate once, and a sweep
-  then takes seconds, so a launch detected mid-sweep never runs a probe in BOOSTING.
+  and the control thread's mailbox refuse a request outside the stages its command may run in (the barometers'
+  re-zero also at DONE, §6), answering the stage as a value: off the pad they make no text, and the executor answers
+  `refused -- stage is X (changes only in setting)`. The executor checks the gate once, and a sweep then takes
+  seconds, so a launch detected mid-sweep never runs a probe in BOOSTING.
 - **The controller's log lines (M7)** are the executor's, from the slot's result, in plan B's order
   (`controller.py:561-620`): `controller :: stage -> X`, then `controller :: stage X (held|auto)`;
   `controller :: stage auto`; `controller :: armed`, `controller :: disarmed`. A hold logs even when the stage is
