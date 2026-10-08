@@ -1041,7 +1041,11 @@ each barometer's climb rate for the multi-source detectors, and the launch rate 
 are never decimated, and plan B's `telemetry_ms` thinning (its MicroPython-era economy) is dropped (§6). The barometer
 row is altitude;temperature;pressure;elevation;change.
 **Measured before M8 (R7):** the wall clock survives a panic reset but returns off by the drift since boot -- +25.3 s
-on the taster and -22.6 s on TMS-7F after ~9.7 h (~700 ppm, the RTC slow clock).
+on the taster and -22.6 s on TMS-7F after ~9.7 h (~700 ppm, the RTC slow clock). A software reboot keeps the clock as
+it was (the offsets unchanged across it); a power-on reset loses it (2000-01-01). The hub sets only an unset clock, in
+SETTING (`src/control/server.py:298-322`), so a drifted clock stays drifted until a power-on: the crumb's re-anchoring
+(sync the timekeeping timers, then set the time from the RTC, before each stamp) is what keeps a warm start's time
+honest. TMS-7F arms on a bench copy of its config (the not-ported entries removed), as the taster did in M7.
 
 **Scope**
 - `crates/warmstart` plus `warm.rs`. Restore runs **before** any thread spawns: stage, armed, ground for all
