@@ -29,7 +29,8 @@
 //!  * [`ina226`] -- the power monitor: bus voltage, current and power;
 //!  * [`vl53l1x`] and [`vl53l4cx`] -- the two laser rangers that share one socket at 0x29;
 //!  * [`separation`] -- the stage-separation switch: its latch over [`debounce`] (separated, nested or a blip), the
-//!    separation moment and the contact's wobble;
+//!    separation moment and the contact's wobble, and the thrust gate that holds a separation in BOOSTING pending
+//!    until the glider's a_x shows the boost ended (or the backstop);
 //!  * [`lsm6dso32`] -- the primary IMU on SPI: accel and gyro `rate`, its write-then-verify bring-up;
 //!  * [`bmi323`] -- the SEN0697's IMU on I2C: the same `accel` and `rate`, behind the LSM6DSO32;
 //!  * [`icp10111`] -- the primary barometer: the TDK polynomial, the two-phase measurement, the general call;

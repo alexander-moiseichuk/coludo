@@ -7,7 +7,9 @@
 //! flagged read is an edge recorded at the read's own time (plan B's flag carries no time of its own) and every read
 //! is observed; test_separation.py's own timelines (`irq` first: its scripted pin raises no interrupt after the one
 //! that starts the settle) are a polled pin, each read polled against the previous. Each read then takes the pair with
-//! the scenario's `debounce_ms` as the quiet and concludes an episode by its own level.
+//! the scenario's `debounce_ms` as the quiet and concludes an episode by its own level, through the firmware's
+//! `Separation::tick` with the thrust gate held open: plan B has no gate, and with it open the tick is the bare
+//! take and conclusion, read by read ([`the_gate_held_open_is_the_bare_conclusion_on_every_read`]).
 //!
 //! The port decides by its own model (drivers::debounce): an episode concludes on the first read a quiet after its
 //! latest edge, by that read's level, and an episode that ends on the latch's own level is a `blip` row plan B never
@@ -122,8 +124,15 @@ fn quiet_us(scenario: &Value) -> u32 {
     u32::try_from(scenario["init"]["debounce_ms"].as_u64().unwrap()).unwrap() * MICROSECONDS_PER_MILLISECOND
 }
 
-/// Replay one scenario as the firmware's tick: per read the event it concluded, then the final latch and stage.
+/// Replay one scenario as the firmware's tick, the thrust gate held open: per read the event it recorded, then the final
+/// latch and stage.
 fn replay(scenario: &Value) -> (Vec<Answer>, Value) {
+    replay_through(scenario, true)
+}
+
+/// Replay one scenario as the firmware's tick: `gated` through `Separation::tick` with the thrust gate held open, else
+/// the bare take and `Separation::conclude`. Per read the event it recorded, then the final latch and stage.
+fn replay_through(scenario: &Value, gated: bool) -> (Vec<Answer>, Value) {
     let init = &scenario["init"];
     let debounce_ms = u32::try_from(init["debounce_ms"].as_u64().unwrap()).unwrap();
     let mut stage = Stage::from_name(init["stage"].as_str().unwrap()).expect("a stage name");
@@ -143,9 +152,12 @@ fn replay(scenario: &Value) -> (Vec<Answer>, Value) {
             pair.observe(now_us, high, switch.latched());
         }
         previous = high;
-        let event = pair
-            .take(now_us, switch.quiet_us())
-            .map(|episode| switch.conclude(episode, high, stage));
+        let event = if gated {
+            switch.tick(&pair, high, now_us, stage, true)
+        } else {
+            pair.take(now_us, switch.quiet_us())
+                .map(|episode| switch.conclude(episode, high, stage))
+        };
         if let Some(event) = event {
             stage = event.stage;
         }
@@ -571,4 +583,25 @@ fn a_one_read_shift_fails_the_fixture() {
         .map(|step| step["out"]["event"].clone())
         .collect();
     assert_ne!(found, owed);
+}
+
+#[test]
+fn the_gate_held_open_is_the_bare_conclusion_on_every_read() {
+    // plan B's parity through the firmware's gated tick: with the gate open, every read of every scenario records the
+    // bare conclusion's event, and the latch and the stage end alike
+    let fixture = Fixture::parse(SEPARATION);
+    let (mut reads, mut events) = (0, 0);
+    for scenario in fixture.get("scenarios").as_array().unwrap() {
+        let name = scenario["name"].as_str().unwrap();
+        let (gated, gated_last) = replay_through(scenario, true);
+        let (bare, bare_last) = replay_through(scenario, false);
+        assert_eq!(gated, bare, "{name}");
+        assert_eq!(gated_last, bare_last, "{name}");
+        reads += gated.len();
+        events += gated.iter().flatten().count();
+    }
+    assert!(
+        reads > 1000 && events > 100,
+        "only {reads} reads and {events} events replayed"
+    );
 }

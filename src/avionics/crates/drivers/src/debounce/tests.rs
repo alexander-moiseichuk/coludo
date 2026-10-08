@@ -1,10 +1,10 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! Unit tests of the generic debounce: the pair's stamps (the first edge, the later ones, the empty stamp), the quiet
-//! measured from the latest edge, the take that empties it, the clock's wrap, the tick's own read and the polled read,
-//! the take/record race scripted point by point (and its residual, across the wrap too), a record split across cores
-//! (the order kept, the duplicate pinned), and two threads that lose no episode's start. The separation switch's own
-//! physics are in separation/tests.rs.
+//! measured from the latest edge, the take that empties it, whether an episode is open, the clock's wrap, the tick's own
+//! read and the polled read, the take/record race scripted point by point (and its residual, across the wrap too), a
+//! record split across cores (the order kept, the duplicate pinned), and two threads that lose no episode's start. The
+//! separation switch's own physics are in separation/tests.rs.
 
 use super::{EMPTY, Episode, Point, StampPair, elapsed_us};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -89,6 +89,35 @@ fn a_take_empties_the_pair_for_the_next_episode() {
     // the next edge starts afresh: the concluded episode's finish is never its start or its finish
     pair.record(500_000);
     assert_eq!(pair.take(510_000, QUIET_US), episode(500_000, 500_000));
+}
+
+#[test]
+fn an_episode_is_open_from_its_first_edge_until_a_take_concludes_it() {
+    let pair = StampPair::new();
+    // NEGATIVE: a new pair, a read of the latch's own level, and an early take leave no episode open
+    assert!(!pair.episode_open(), "a new pair");
+    pair.observe(1000, true, true);
+    assert!(!pair.episode_open(), "a read of the latch's level");
+    pair.record(2000);
+    assert!(pair.episode_open(), "an edge opens one");
+    assert_eq!(pair.take(11_999, QUIET_US), None);
+    assert!(pair.episode_open(), "not quiet yet: still open");
+    assert_eq!(pair.take(12_000, QUIET_US), episode(2000, 2000));
+    assert!(!pair.episode_open(), "concluded");
+    // the tick's own read off the latch opens one too, and a take concludes it
+    pair.observe(50_000, false, true);
+    assert!(pair.episode_open(), "a read off the latch");
+    assert_eq!(pair.take(60_000, QUIET_US), episode(50_000, 50_000));
+    assert!(!pair.episode_open());
+    // an edge during the take re-seeds the next episode: open again at once
+    pair.record(70_000);
+    let taken = pair.take_interrupted(80_000, QUIET_US, |point| {
+        if point == Point::Released {
+            pair.record(80_000);
+        }
+    });
+    assert_eq!(taken, episode(70_000, 70_000));
+    assert!(pair.episode_open(), "the edge during the take opened the next one");
 }
 
 #[test]

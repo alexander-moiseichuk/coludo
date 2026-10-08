@@ -185,6 +185,13 @@ impl StampPair {
         }
     }
 
+    /// Whether an episode is open: an edge, or a read off the latch, came and no take has concluded it yet. The owner
+    /// asks it after its take, to know the input has held its level since the last episode concluded (an edge an
+    /// instant later is the next tick's to see).
+    pub fn episode_open(&self) -> bool {
+        self.start.load(ORDER) != EMPTY
+    }
+
     /// Take the open episode once it is quiet at `now_us`: its latest edge `quiet_us` old or more.
     ///
     /// Returns None while no episode is open, or while it is not quiet (an edge stamped after `now_us` is younger than

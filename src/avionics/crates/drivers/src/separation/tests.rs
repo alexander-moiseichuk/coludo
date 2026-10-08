@@ -6,9 +6,15 @@
 //! of about 7 ms as the strips slide out at 3 m/s, dated by its first edge and measured to its last), boost blips that
 //! are recorded and never deploy, the quiet exact from the stamps, a gap past the quiet that splits a wobble, chatter
 //! that keeps one episode, the polled pin and the tick's own read (a board powered up unassembled, then assembled),
-//! the clock's wrap, and the settings. The generic stamps and their race are tested in debounce/tests.rs.
+//! the clock's wrap, and the settings. Then the thrust gate on its own (seen, then ended, leaky, afresh at each
+//! BOOSTING entry, shut for a wrong axis or sign or no IMU) and the switch under it: the ejection after thrust end
+//! counts as ungated, pads open before the gate opens count when it does, an early separation opens the gate itself,
+//! the backstop, opens and chatter under thrust that never deploy (a wobbly open cleared by its re-nest included), a
+//! touch while pending, a pending separation when BOOSTING ends otherwise, and the gate or the stage's end meeting a
+//! contact closing again, which waits for its episode. The generic stamps and their race are tested in
+//! debounce/tests.rs.
 
-use super::{DEFAULT_DEBOUNCE_MS, Event, Kind, Separation, Settings};
+use super::{BACKSTOP_US, DEFAULT_DEBOUNCE_MS, Event, Kind, Separation, Settings, THRUST_END_MS, Thrust, ThrustGate};
 use crate::debounce::{Episode, StampPair};
 use board_config::LONGEST_DEBOUNCE_MS;
 use sequencer::Stage;
@@ -61,6 +67,53 @@ fn ticks(tick_us: u32, phase_us: u32, end_us: u32) -> impl Iterator<Item = u32> 
     (phase_us..=end_us).step_by(tick_us as usize)
 }
 
+/// A pin's timeline replayed read by read into a stamp pair, as the firmware's interrupt and tick feed it.
+struct Line<'timeline> {
+    /// The level (true = HIGH = nested) from each time on, µs, ascending from 0.
+    timeline: &'timeline [(u32, bool)],
+    /// How the switch learns that the line moved.
+    pin: Pin,
+    /// The level now.
+    level: bool,
+    /// The previous read's level: a polled pin's edges are the reads that differ from it.
+    previous: bool,
+    /// The next change to replay.
+    next: usize,
+}
+
+impl<'timeline> Line<'timeline> {
+    /// `timeline` before its first read, at its first level.
+    fn new(timeline: &'timeline [(u32, bool)], pin: Pin) -> Line<'timeline> {
+        Line {
+            timeline,
+            pin,
+            level: timeline[0].1,
+            previous: timeline[0].1,
+            next: 1,
+        }
+    }
+
+    /// The tick's read at `read_us` (µs, after the previous one): the changes up to it recorded into `pair` at their
+    /// own times with the interrupt ([`Pin::Interrupt`]), then the level observed, or polled, against `latched`.
+    /// Returns the level read.
+    fn read(&mut self, pair: &StampPair, read_us: u32, latched: bool) -> bool {
+        while self.next < self.timeline.len() && self.timeline[self.next].0 <= read_us {
+            let (change_us, level) = self.timeline[self.next];
+            if level != self.level && self.pin == Pin::Interrupt {
+                pair.record(change_us);
+            }
+            self.level = level;
+            self.next += 1;
+        }
+        match self.pin {
+            Pin::Interrupt | Pin::Lost => pair.observe(read_us, self.level, latched),
+            Pin::Polled => pair.poll(read_us, self.level, self.previous, latched),
+        }
+        self.previous = self.level;
+        self.level
+    }
+}
+
 /// Read a pin in `stage` with a `debounce_ms` quiet, its latch set up from the timeline's first level (bring-up's
 /// read): `timeline` is the level (true = HIGH = nested) from each time on, µs, ascending from 0, and `reads` the
 /// read times, µs, ascending. Each read is the firmware's tick: the interrupt's edges up to it recorded at their own
@@ -72,20 +125,9 @@ fn fly(debounce_ms: u32, stage: Stage, timeline: &[(u32, bool)], pin: Pin, reads
         stage,
         switch: Separation::new(&Settings { debounce_ms }, timeline[0].1),
     };
-    let (mut level, mut previous, mut next) = (timeline[0].1, timeline[0].1, 1);
+    let mut line = Line::new(timeline, pin);
     for read_us in reads {
-        while next < timeline.len() && timeline[next].0 <= read_us {
-            if timeline[next].1 != level && pin == Pin::Interrupt {
-                pair.record(timeline[next].0);
-            }
-            level = timeline[next].1;
-            next += 1;
-        }
-        match pin {
-            Pin::Interrupt | Pin::Lost => pair.observe(read_us, level, flight.switch.latched()),
-            Pin::Polled => pair.poll(read_us, level, previous, flight.switch.latched()),
-        }
-        previous = level;
+        let level = line.read(&pair, read_us, flight.switch.latched());
         if let Some(episode) = pair.take(read_us, flight.switch.quiet_us()) {
             let event = flight.switch.conclude(episode, level, flight.stage);
             flight.stage = event.stage;
@@ -600,4 +642,915 @@ fn settings_and_the_setup_read() {
     assert!(open.separated() && !open.latched());
     assert!(!nested.separated() && nested.latched());
     assert_eq!(nested.quiet_us(), 10_000);
+}
+
+/// The boost's a_x on an IMU mounted per the body frame (+x at the nose), g: well above plan B's `launch_g` of 2.5.
+const BOOST_G: f32 = 5.0;
+
+/// The coast's a_x once nothing pushes the glider, g: drag decelerates it.
+const COAST_G: f32 = -0.4;
+
+/// The burn of the nominal flight, µs: thrust from the first read to 1 s.
+const BURNOUT_US: u32 = 1_000_000;
+
+/// The ejection charge's delay after thrust end, µs: the nominal separation, about 4 s.
+const EJECTION_DELAY_US: u32 = 4_000_000;
+
+/// The gate's ms clock at a read, from the read's µs: the firmware's uptime ms, which the tests' reads never wrap.
+fn milliseconds(read_us: u32) -> u32 {
+    read_us / 1000
+}
+
+/// A burn until `burnout_us`, then the coast, as an IMU mounted per the body frame reads a_x, g.
+fn burn(burnout_us: u32) -> impl Fn(u32) -> Option<f32> {
+    move |at_us| Some(if at_us < burnout_us { BOOST_G } else { COAST_G })
+}
+
+/// The same burn on an IMU mounted with +x to the tail: the thrust reads negative, the coast positive.
+fn reversed(burnout_us: u32) -> impl Fn(u32) -> Option<f32> {
+    move |at_us| Some(if at_us < burnout_us { -BOOST_G } else { -COAST_G })
+}
+
+/// An a_x profile: the glider's a_x in g at a read's time in µs, None when no source is fresh.
+type Profile = Box<dyn Fn(u32) -> Option<f32>>;
+
+/// No IMU, or none fresh: no a_x at any read.
+fn no_accel(_: u32) -> Option<f32> {
+    None
+}
+
+/// Steps `gate` every 10 ms from `from_ms` up to `to_ms` in `stage`, with the same a_x each time.
+fn feed(gate: &mut ThrustGate, from_ms: u32, to_ms: u32, stage: Stage, axial_g: Option<f32>) {
+    for now_ms in (from_ms..to_ms).step_by(10) {
+        gate.step(now_ms, stage, axial_g);
+    }
+}
+
+/// What a switch under the thrust gate did over a timeline.
+struct Gated {
+    /// The events, each with the time of the read that recorded it.
+    events: Vec<(u32, Event)>,
+    /// The stage after the last read.
+    stage: Stage,
+    /// The switch after the last read.
+    switch: Separation,
+    /// The gate after the last read.
+    gate: ThrustGate,
+    /// The first read the gate was open at, µs.
+    opened_us: Option<u32>,
+    /// The reads after which a separation was pending, µs.
+    pending_us: Vec<u32>,
+}
+
+impl Gated {
+    /// The events' kinds, in order.
+    fn kinds(&self) -> Vec<Kind> {
+        self.events.iter().map(|(_, event)| event.kind).collect()
+    }
+}
+
+/// [`fly_gated_until`] at the default quiet, BOOSTING ended only by the switch.
+fn fly_gated(timeline: &[(u32, bool)], pin: Pin, phase_us: u32, axial: impl Fn(u32) -> Option<f32>) -> Gated {
+    fly_gated_until(timeline, pin, phase_us, axial, DEFAULT_DEBOUNCE_MS, u32::MAX)
+}
+
+/// A switch with a `debounce_ms` quiet under the thrust gate on plan B's sequencer defaults, read on the 10 ms tick
+/// from `phase_us` until the quiet and 300 ms past the timeline's last change, in BOOSTING from the first read (the
+/// launch just detected). Each read is the firmware's tick: the line read ([`Line::read`]), the gate stepped with
+/// `axial` at the read, then the switch's tick by the gate's verdict. An advanced event moves the stage to GLIDING,
+/// and so does the stage machine at the first read from `boost_end_us` (its apogee or burnout; u32::MAX for never).
+fn fly_gated_until(
+    timeline: &[(u32, bool)],
+    pin: Pin,
+    phase_us: u32,
+    axial: impl Fn(u32) -> Option<f32>,
+    debounce_ms: u32,
+    boost_end_us: u32,
+) -> Gated {
+    let pair = StampPair::new();
+    let mut line = Line::new(timeline, pin);
+    let mut flight = Gated {
+        events: Vec::new(),
+        stage: Stage::Boosting,
+        switch: Separation::new(&Settings { debounce_ms }, timeline[0].1),
+        gate: ThrustGate::new(&sequencer::Settings::default()),
+        opened_us: None,
+        pending_us: Vec::new(),
+    };
+    let end_us = timeline.last().expect("a timeline").0 + debounce_ms * 1000 + 300_000;
+    for read_us in ticks(TICK_US, phase_us, end_us) {
+        if read_us >= boost_end_us && flight.stage == Stage::Boosting {
+            flight.stage = Stage::Gliding;
+        }
+        let high = line.read(&pair, read_us, flight.switch.latched());
+        flight.gate.step(milliseconds(read_us), flight.stage, axial(read_us));
+        if flight.gate.open() && flight.opened_us.is_none() {
+            flight.opened_us = Some(read_us);
+        }
+        if let Some(event) = flight
+            .switch
+            .tick(&pair, high, read_us, flight.stage, flight.gate.open())
+        {
+            flight.stage = event.stage;
+            flight.events.push((read_us, event));
+        }
+        if flight.switch.pending() {
+            flight.pending_us.push(read_us);
+        }
+    }
+    flight
+}
+
+#[test]
+fn the_gate_opens_once_thrust_is_seen_and_then_ended() {
+    // plan B's defaults on the 10 ms tick: a_x above 2.5 g for 100 ms of net time, then below 0 g for 20 ms
+    let mut gate = ThrustGate::new(&sequencer::Settings::default());
+    assert_eq!(
+        (gate.thrust(), gate.open()),
+        (Thrust::Unseen, false),
+        "shut before any BOOSTING"
+    );
+    let (mut changes, mut thrust) = (Vec::new(), gate.thrust());
+    for now_ms in (0..2000).step_by(10) {
+        gate.step(now_ms, Stage::Boosting, burn(1_000_000)(now_ms * 1000));
+        if gate.thrust() != thrust {
+            thrust = gate.thrust();
+            changes.push((now_ms, thrust, gate.open()));
+        }
+    }
+    assert_eq!(changes, [(100, Thrust::Seen, false), (1020, Thrust::Ended, true)]);
+    // the sequencer entry's own numbers: 3 g for 200 ms
+    let settings = sequencer::Settings::from_config(&json!({"launch_g": 3.0, "launch_ms": 200})).expect("valid");
+    let mut gate = ThrustGate::new(&settings);
+    feed(&mut gate, 0, 1000, Stage::Boosting, Some(2.9));
+    assert_eq!(gate.thrust(), Thrust::Unseen, "2.9 g is no thrust at 3 g");
+    feed(&mut gate, 1000, 1200, Stage::Boosting, Some(3.1));
+    assert_eq!(gate.thrust(), Thrust::Unseen, "190 ms of net time");
+    gate.step(1200, Stage::Boosting, Some(3.1));
+    assert_eq!(gate.thrust(), Thrust::Seen, "200 ms");
+    // NEGATIVE: both levels are strict, and NaN is neither thrust nor its end
+    let mut gate = ThrustGate::new(&sequencer::Settings::default());
+    feed(&mut gate, 0, 1000, Stage::Boosting, Some(2.5));
+    feed(&mut gate, 1000, 2000, Stage::Boosting, Some(f32::NAN));
+    assert_eq!(gate.thrust(), Thrust::Unseen, "exactly launch_g, then NaN");
+    feed(&mut gate, 2000, 2110, Stage::Boosting, Some(BOOST_G));
+    assert_eq!(gate.thrust(), Thrust::Seen);
+    feed(&mut gate, 2110, 3000, Stage::Boosting, Some(0.0));
+    feed(&mut gate, 3000, 4000, Stage::Boosting, Some(f32::NAN));
+    assert_eq!(
+        (gate.thrust(), gate.open()),
+        (Thrust::Seen, false),
+        "exactly 0 g, then NaN"
+    );
+    // the faintest drag below 0 g ends it, after the same 20 ms
+    feed(&mut gate, 4000, 4020, Stage::Boosting, Some(-0.01));
+    assert!(!gate.open(), "10 ms of net time");
+    gate.step(4020, Stage::Boosting, Some(-0.01));
+    assert_eq!((gate.thrust(), gate.open()), (Thrust::Ended, true), "-0.01 g for 20 ms");
+}
+
+#[test]
+fn the_gate_s_dwells_are_leaky_like_the_launch_s() {
+    // a missing a_x drains the thrust's credit for its step rather than restarting it: 60 ms, two misses, then 90 ms
+    let mut gate = ThrustGate::new(&sequencer::Settings::default());
+    feed(&mut gate, 0, 70, Stage::Boosting, Some(BOOST_G));
+    feed(&mut gate, 70, 90, Stage::Boosting, None);
+    feed(&mut gate, 90, 140, Stage::Boosting, Some(BOOST_G));
+    assert_eq!(gate.thrust(), Thrust::Unseen, "90 ms of net time");
+    gate.step(140, Stage::Boosting, Some(BOOST_G));
+    assert_eq!(gate.thrust(), Thrust::Seen, "100 ms of net time at 140 ms");
+    // the end's dwell alike, on a 1 kHz tick: 15 ms of drag, a 2 ms shudder of push, then drag: open at 24 ms
+    for now_ms in 1000..=1015 {
+        gate.step(now_ms, Stage::Boosting, Some(COAST_G));
+    }
+    for now_ms in 1016..=1017 {
+        gate.step(now_ms, Stage::Boosting, Some(BOOST_G));
+    }
+    for now_ms in 1018..1024 {
+        gate.step(now_ms, Stage::Boosting, Some(COAST_G));
+        assert!(!gate.open(), "{now_ms} ms");
+    }
+    gate.step(1024, Stage::Boosting, Some(COAST_G));
+    assert!(gate.open(), "20 ms of net time at 1024 ms");
+    // NEGATIVE: a lone spike drains to nothing and restarts, however often it comes
+    let mut spiked = ThrustGate::new(&sequencer::Settings::default());
+    for now_ms in (0..2000).step_by(10) {
+        let axial_g = if now_ms % 50 == 0 { BOOST_G } else { 1.0 };
+        spiked.step(now_ms, Stage::Boosting, Some(axial_g));
+    }
+    assert_eq!(spiked.thrust(), Thrust::Unseen);
+}
+
+#[test]
+fn the_gate_starts_afresh_at_each_boosting_entry_and_holds_still_elsewhere() {
+    let mut gate = ThrustGate::new(&sequencer::Settings::default());
+    // NEGATIVE: on the pad the gate steps nothing, a shake and a drop included
+    feed(&mut gate, 0, 500, Stage::Setting, Some(BOOST_G));
+    feed(&mut gate, 500, 1000, Stage::Setting, Some(COAST_G));
+    assert_eq!(gate.thrust(), Thrust::Unseen);
+    // a boost credited 50 ms, a hold out of BOOSTING and back: afresh, the full 100 ms again
+    feed(&mut gate, 1000, 1060, Stage::Boosting, Some(BOOST_G));
+    feed(&mut gate, 1060, 1100, Stage::Setting, Some(BOOST_G));
+    feed(&mut gate, 1100, 1200, Stage::Boosting, Some(BOOST_G));
+    assert_eq!(gate.thrust(), Thrust::Unseen, "the credit before the hold is gone");
+    gate.step(1200, Stage::Boosting, Some(BOOST_G));
+    assert_eq!(gate.thrust(), Thrust::Seen);
+    feed(&mut gate, 1210, 1240, Stage::Boosting, Some(COAST_G));
+    assert!(gate.open());
+    // NEGATIVE: open, it stays open for the rest of this BOOSTING, a fresh push of twice launch_ms included
+    feed(&mut gate, 1240, 1500, Stage::Boosting, Some(BOOST_G));
+    assert_eq!(
+        (gate.thrust(), gate.open()),
+        (Thrust::Ended, true),
+        "a push after the end"
+    );
+    // GLIDING and beyond: it keeps what it saw, whatever a_x does
+    feed(&mut gate, 1500, 3000, Stage::Gliding, Some(BOOST_G));
+    feed(&mut gate, 3000, 4000, Stage::Done, Some(1.0));
+    assert_eq!((gate.thrust(), gate.open()), (Thrust::Ended, true));
+    // the next BOOSTING entry (an operator hold, or the next flight) shuts it at once, whatever a_x says
+    gate.step(4000, Stage::Boosting, Some(COAST_G));
+    assert_eq!((gate.thrust(), gate.open()), (Thrust::Unseen, false));
+}
+
+#[test]
+fn a_wrong_axis_or_sign_or_no_imu_never_opens_the_gate() {
+    // NEGATIVE, the fail-safe: +x to the tail (the burn reads negative, the coast positive), a lateral axis, no IMU,
+    // and a bench hold nose up or flat never see thrust, so the gate stays shut through a whole boost and coast
+    let profiles: [(&str, Profile); 5] = [
+        ("+x to the tail", Box::new(reversed(BURNOUT_US))),
+        ("a lateral axis", Box::new(|_| Some(0.3))),
+        ("no IMU", Box::new(no_accel)),
+        ("a bench hold nose up", Box::new(|_| Some(1.0))),
+        ("a bench hold flat", Box::new(|_| Some(0.0))),
+    ];
+    for (name, axial) in &profiles {
+        let mut gate = ThrustGate::new(&sequencer::Settings::default());
+        for read_us in ticks(TICK_US, 0, 6_000_000) {
+            gate.step(milliseconds(read_us), Stage::Boosting, axial(read_us));
+            assert_eq!(
+                (gate.thrust(), gate.open()),
+                (Thrust::Unseen, false),
+                "{name} at {read_us} µs"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_thrust_is_named_for_control() {
+    let named = [
+        (Thrust::Unseen, "none"),
+        (Thrust::Seen, "seen"),
+        (Thrust::Ended, "ended"),
+    ];
+    for (thrust, name) in named {
+        assert_eq!(thrust.name(), name);
+    }
+}
+
+#[test]
+fn outside_boosting_or_with_the_gate_open_the_tick_is_the_bare_conclusion() {
+    // every stage, latch and level, either gate: the tick's event and switch are the bare conclusion's -- but for a
+    // separation in BOOSTING under the shut gate, which is pending: no event, in the latch, not counted
+    let table = [
+        (true, false, Kind::Separated),
+        (true, true, Kind::Blip),
+        (false, true, Kind::Nested),
+        (false, false, Kind::Blip),
+    ];
+    for stage in Stage::ALL {
+        for gate_open in [false, true] {
+            for (setup_high, high, kind) in table {
+                let pair = StampPair::new();
+                pair.record(1000);
+                pair.record(4500);
+                let mut gated = Separation::new(&Settings { debounce_ms: 10 }, setup_high);
+                let mut bare = gated;
+                let found = gated.tick(&pair, high, 14_500, stage, gate_open);
+                let owed = bare.conclude(episode(1000, 4500), high, stage);
+                let case = format!("{stage:?}, gate open {gate_open}, set up {setup_high}, read {high}");
+                if stage == Stage::Boosting && !gate_open && kind == Kind::Separated {
+                    assert_eq!(found, None, "{case}");
+                    assert!(gated.pending() && !gated.separated() && !gated.latched(), "{case}");
+                } else {
+                    assert_eq!(found, Some(owed), "{case}");
+                    assert_eq!(gated, bare, "{case}");
+                    assert!(!gated.pending(), "{case}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_pending_separation_is_in_the_latch_but_not_counted() {
+    // an edge at 100 ms in BOOSTING under the shut gate: concluded at 110 ms and pending -- the latch follows the pin,
+    // so the tick's LOW reads open no episode, but the counted latch waits -- until the backstop at 200 ms
+    let pair = StampPair::new();
+    let mut switch = Separation::new(&Settings::from_config(&json!({})), true);
+    pair.record(100_000);
+    for read_us in (110_000..200_000).step_by(10_000) {
+        pair.observe(read_us, false, switch.latched());
+        assert_eq!(
+            switch.tick(&pair, false, read_us, Stage::Boosting, false),
+            None,
+            "{read_us} µs"
+        );
+        assert!(!pair.episode_open(), "{read_us} µs: a LOW read agrees with the latch");
+        assert!(
+            switch.pending() && !switch.separated() && !switch.latched(),
+            "{read_us} µs"
+        );
+    }
+    pair.observe(200_000, false, switch.latched());
+    assert_eq!(
+        switch.tick(&pair, false, 200_000, Stage::Boosting, false),
+        Some(Event {
+            kind: Kind::Separated,
+            stage: Stage::Gliding,
+            advanced: true,
+            moment_us: 100_000,
+            duration_us: 0,
+        }),
+        "the backstop, 100 ms after the edge"
+    );
+    assert!(switch.separated() && !switch.pending() && !switch.latched());
+    // NEGATIVE: once counted, LOW reads record nothing more
+    pair.observe(300_000, false, switch.latched());
+    assert_eq!(switch.tick(&pair, false, 300_000, Stage::Gliding, true), None);
+}
+
+#[test]
+fn the_ejection_after_thrust_end_counts_at_its_conclusion_as_ungated() {
+    // the nominal flight: a 1 s burn, the gate open 20 ms after the first coast read, and the ejection charge's seeded
+    // wobble 4 s later, at every phase: the bare conclusion's events on the same reads, never a pending separation
+    let mut state = 0x5eed_0101;
+    for _ in 0..10 {
+        let departure_us = BURNOUT_US + EJECTION_DELAY_US + within(&mut state, 0, 50_000);
+        let mut timeline = vec![(0, true)];
+        let last_us = wobble(&mut state, &mut timeline, departure_us, true);
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, burn(BURNOUT_US));
+            let reads = ticks(TICK_US, phase_us, last_us + QUIET_US + 300_000);
+            let bare = fly(DEFAULT_DEBOUNCE_MS, Stage::Boosting, &timeline, Pin::Interrupt, reads);
+            assert_eq!(gated.events, bare.events, "{timeline:?} at phase {phase_us}");
+            assert_eq!(gated.kinds(), [Kind::Separated]);
+            let (read_us, event) = gated.events[0];
+            assert_eq!(
+                (read_us, dated(&event)),
+                (
+                    first_tick_from(last_us + QUIET_US, phase_us),
+                    (departure_us, last_us - departure_us)
+                )
+            );
+            assert!(event.advanced && gated.stage == Stage::Gliding && gated.switch.separated());
+            assert_eq!(
+                gated.opened_us,
+                Some(first_tick_from(BURNOUT_US, phase_us) + THRUST_END_MS * 1000)
+            );
+            assert!(gated.pending_us.is_empty(), "never pending");
+        }
+    }
+}
+
+#[test]
+fn pads_open_before_the_gate_opens_count_when_it_opens_dated_by_the_first_edge() {
+    // a seeded wobble 20-60 ms before thrust end, left open: pending from its conclusion, it counts on the read the
+    // gate opens at (20 ms after the first coast read, before the backstop's 100 ms), its moment the first edge
+    let mut state = 0x5eed_0102;
+    for _ in 0..20 {
+        let departure_us = BURNOUT_US - within(&mut state, 20_000, 60_000);
+        let mut timeline = vec![(0, true)];
+        let last_us = wobble(&mut state, &mut timeline, departure_us, true);
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, burn(BURNOUT_US));
+            let opened_us = first_tick_from(BURNOUT_US, phase_us) + THRUST_END_MS * 1000;
+            assert_eq!(gated.opened_us, Some(opened_us));
+            assert_eq!(gated.kinds(), [Kind::Separated], "{timeline:?} at phase {phase_us}");
+            let (read_us, event) = gated.events[0];
+            assert_eq!(
+                (read_us, dated(&event)),
+                (opened_us, (departure_us, last_us - departure_us))
+            );
+            assert!(event.advanced && gated.stage == Stage::Gliding);
+            assert_eq!(
+                (gated.pending_us.first(), gated.pending_us.last()),
+                (
+                    Some(&first_tick_from(last_us + QUIET_US, phase_us)),
+                    Some(&(opened_us - TICK_US))
+                ),
+                "pending from the conclusion until the gate opened"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_early_separation_opens_the_gate_itself_and_counts_within_its_20_ms() {
+    // a destabilized stack loses the glider at a seeded moment mid-burn: the pads open with a wobble and the glider's
+    // a_x drops to drag at once (the booster burns on, but no longer pushes it). The gate opens 20 ms after the first
+    // read of the drop, and the separation counts then, or at its own conclusion if that is later: within 30 ms of
+    // its first edge on the 10 ms tick
+    let mut state = 0x5eed_0103;
+    let (mut by_the_gate, mut by_the_conclusion) = (0, 0);
+    for _ in 0..40 {
+        let separation_us = within(&mut state, 300_000, 900_000);
+        let mut timeline = vec![(0, true)];
+        let last_us = wobble(&mut state, &mut timeline, separation_us, true);
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, burn(separation_us));
+            let opened_us = first_tick_from(separation_us, phase_us) + THRUST_END_MS * 1000;
+            let concluded_us = first_tick_from(last_us + QUIET_US, phase_us);
+            assert_eq!(gated.opened_us, Some(opened_us));
+            assert_eq!(gated.kinds(), [Kind::Separated], "{timeline:?} at phase {phase_us}");
+            let (read_us, event) = gated.events[0];
+            assert_eq!(
+                (read_us, dated(&event)),
+                (opened_us.max(concluded_us), (separation_us, last_us - separation_us))
+            );
+            assert!(read_us - separation_us <= THRUST_END_MS * 1000 + TICK_US);
+            assert!(event.advanced && gated.stage == Stage::Gliding);
+            if opened_us > concluded_us {
+                by_the_gate += 1;
+            } else {
+                by_the_conclusion += 1;
+            }
+        }
+    }
+    assert!(
+        by_the_gate > 0 && by_the_conclusion > 0,
+        "{by_the_gate} by the gate, {by_the_conclusion} by the conclusion"
+    );
+}
+
+#[test]
+fn the_backstop_counts_a_held_open_when_no_thrust_was_ever_seen() {
+    // no IMU (or a dead one): a seeded wobble left open is pending from its conclusion until a read finds the pin LOW
+    // 100 ms after its last edge, then counts, dated by its first edge
+    let mut state = 0x5eed_0104;
+    for _ in 0..20 {
+        let departure_us = within(&mut state, 200_000, 600_000);
+        let mut timeline = vec![(0, true)];
+        let last_us = wobble(&mut state, &mut timeline, departure_us, true);
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, no_accel);
+            let counted_us = first_tick_from(last_us + BACKSTOP_US, phase_us);
+            assert_eq!(gated.kinds(), [Kind::Separated], "{timeline:?} at phase {phase_us}");
+            let (read_us, event) = gated.events[0];
+            assert_eq!(
+                (read_us, dated(&event)),
+                (counted_us, (departure_us, last_us - departure_us))
+            );
+            assert!(event.advanced && gated.stage == Stage::Gliding);
+            assert_eq!(
+                (gated.pending_us.first(), gated.pending_us.last()),
+                (
+                    Some(&first_tick_from(last_us + QUIET_US, phase_us)),
+                    Some(&(counted_us - TICK_US))
+                )
+            );
+            assert!(gated.opened_us.is_none() && gated.switch.separated() && !gated.switch.pending());
+        }
+    }
+    // the tick's own read and the polled pin alike, dated by the first read of LOW: counted 100 ms after it
+    let timeline = [(0, true), (250_300, false)];
+    for pin in [Pin::Lost, Pin::Polled] {
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, pin, phase_us, no_accel);
+            let moment_us = first_read_of(&timeline, false, phase_us);
+            let found: Vec<(u32, Kind, (u32, u32))> = gated
+                .events
+                .iter()
+                .map(|(read_us, event)| (*read_us, event.kind, dated(event)))
+                .collect();
+            assert_eq!(
+                found,
+                [(moment_us + BACKSTOP_US, Kind::Separated, (moment_us, 0))],
+                "{pin:?} at phase {phase_us}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_reversed_axis_or_no_accel_leaves_only_the_backstop() {
+    // NEGATIVE, the fail-safe in flight: the nominal flight with +x to the tail, and with no accel. The gate never
+    // opens, so a 50 ms open mid-burn is one blip that never deploys, and the ejection counts by the backstop, 100 ms
+    // after its last edge instead of a quiet after it
+    let mut state = 0x5eed_0105;
+    for _ in 0..10 {
+        let departure_us = BURNOUT_US + EJECTION_DELAY_US + within(&mut state, 0, 50_000);
+        let mut timeline = vec![(0, true), (400_000, false), (450_000, true)];
+        let last_us = wobble(&mut state, &mut timeline, departure_us, true);
+        for phase_us in phases() {
+            let flights = [
+                (
+                    "+x to the tail",
+                    fly_gated(&timeline, Pin::Interrupt, phase_us, reversed(BURNOUT_US)),
+                ),
+                ("no accel", fly_gated(&timeline, Pin::Interrupt, phase_us, no_accel)),
+            ];
+            for (name, gated) in flights {
+                assert!(
+                    gated.opened_us.is_none() && gated.gate.thrust() == Thrust::Unseen,
+                    "{name}"
+                );
+                assert_eq!(
+                    gated.kinds(),
+                    [Kind::Blip, Kind::Separated],
+                    "{name} at phase {phase_us}"
+                );
+                assert_eq!(dated(&gated.events[0].1), (400_000, 50_000), "{name}");
+                assert!(!gated.events[0].1.advanced, "{name}");
+                let (read_us, event) = gated.events[1];
+                assert_eq!(
+                    (read_us, dated(&event)),
+                    (
+                        first_tick_from(last_us + BACKSTOP_US, phase_us),
+                        (departure_us, last_us - departure_us)
+                    ),
+                    "{name}"
+                );
+                assert!(event.advanced && gated.stage == Stage::Gliding, "{name}");
+            }
+        }
+    }
+}
+
+#[test]
+fn an_open_under_thrust_up_to_the_backstop_never_deploys() {
+    // NEGATIVE: thrust that never ends, and a clean open from 300 ms for 1 µs up to 100 ms, at every phase: one blip
+    // from the open to the re-nest, BOOSTING kept, the latch and the count nested. An open longer than the quiet was
+    // pending first, and its re-nest cleared it
+    for open_us in [1, 500, 7000, QUIET_US, 20_000, 50_000, 99_000, BACKSTOP_US] {
+        let timeline = [(0, true), (300_000, false), (300_000 + open_us, true)];
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, burn(u32::MAX));
+            let case = format!("open {open_us} µs at phase {phase_us}");
+            assert_eq!(gated.kinds(), [Kind::Blip], "{case}");
+            assert_eq!(dated(&gated.events[0].1), (300_000, open_us), "{case}");
+            assert_eq!(gated.stage, Stage::Boosting, "{case}");
+            assert!(
+                !gated.switch.separated() && gated.switch.latched() && !gated.switch.pending(),
+                "{case}"
+            );
+            assert_eq!(
+                gated.pending_us.is_empty(),
+                open_us <= QUIET_US,
+                "{case}: pending first"
+            );
+        }
+    }
+    // the tick's own read and the polled pin alike: a 50 ms open is one blip
+    let timeline = [(0, true), (300_000, false), (350_000, true)];
+    for pin in [Pin::Lost, Pin::Polled] {
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, pin, phase_us, burn(u32::MAX));
+            assert_eq!(gated.kinds(), [Kind::Blip], "{pin:?} at phase {phase_us}");
+            assert_eq!(gated.stage, Stage::Boosting);
+        }
+    }
+    // a contact held open a tick past the backstop counts by it whatever the IMU says (the stack came apart and the
+    // a_x never showed it), and its re-nest is a nested row that leaves GLIDING alone
+    let timeline = [(0, true), (300_000, false), (300_000 + BACKSTOP_US + TICK_US, true)];
+    for phase_us in phases() {
+        let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, burn(u32::MAX));
+        assert_eq!(gated.kinds(), [Kind::Separated, Kind::Nested], "phase {phase_us}");
+        assert_eq!(gated.events[0].0, first_tick_from(300_000 + BACKSTOP_US, phase_us));
+        assert!(gated.events[0].1.advanced && !gated.events[1].1.advanced);
+        assert_eq!(gated.stage, Stage::Gliding);
+    }
+}
+
+#[test]
+fn a_wobbly_open_cleared_by_its_re_nest_is_one_blip_from_its_first_edge() {
+    // NEGATIVE: under thrust, a seeded wobble left open past the quiet (pending), then a re-nest before the backstop,
+    // at every phase: one blip from the wobble's first edge to the re-nest, BOOSTING kept, the latch nested
+    let mut state = 0x5eed_0107;
+    let mut wobbled = 0;
+    for _ in 0..20 {
+        let departure_us = within(&mut state, 200_000, 500_000);
+        let mut timeline = vec![(0, true)];
+        let last_us = wobble(&mut state, &mut timeline, departure_us, true);
+        let re_nest_us = last_us + within(&mut state, 25_000, 95_000);
+        timeline.push((re_nest_us, true));
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, burn(u32::MAX));
+            let case = format!("{timeline:?} at phase {phase_us}");
+            assert_eq!(
+                gated.events,
+                [(
+                    first_tick_from(re_nest_us + QUIET_US, phase_us),
+                    Event {
+                        kind: Kind::Blip,
+                        stage: Stage::Boosting,
+                        advanced: false,
+                        moment_us: departure_us,
+                        duration_us: re_nest_us - departure_us,
+                    }
+                )],
+                "{case}"
+            );
+            assert!(!gated.pending_us.is_empty(), "{case}: pending first");
+            assert!(
+                !gated.switch.separated() && gated.switch.latched() && !gated.switch.pending(),
+                "{case}"
+            );
+        }
+        wobbled += usize::from(last_us > departure_us);
+    }
+    assert!(wobbled > 0, "no open wobbled");
+}
+
+#[test]
+fn chatter_under_thrust_never_deploys_and_left_open_counts_by_the_backstop() {
+    // seeded chatter under thrust, toggling every 0.5-2 ms for 50-200 ms: one episode, which never concludes while it
+    // chatters. Ending nested it is one blip, never pending; ending open it is pending, and counts by the backstop
+    // 100 ms after its last edge, dated by its first
+    let mut state = 0x5eed_0106;
+    for run in 0..20 {
+        let ends_open = run % 2 == 0;
+        let start_us = within(&mut state, 200_000, 500_000);
+        let end_us = start_us + within(&mut state, 50_000, 200_000);
+        let mut timeline = vec![(0, true)];
+        let (mut at_us, mut level) = (start_us, true);
+        while at_us < end_us {
+            level = !level;
+            timeline.push((at_us, level));
+            at_us += within(&mut state, 500, 2000);
+        }
+        if level == ends_open {
+            timeline.push((at_us, !ends_open));
+        }
+        let last_us = timeline.last().unwrap().0;
+        let gated = fly_gated(&timeline, Pin::Interrupt, 0, burn(u32::MAX));
+        let (read_us, event) = gated.events[0];
+        assert_eq!(dated(&event), (start_us, last_us - start_us), "run {run}");
+        if ends_open {
+            assert_eq!(gated.kinds(), [Kind::Separated], "run {run}");
+            assert_eq!(read_us, first_tick_from(last_us + BACKSTOP_US, 0));
+            assert!(event.advanced && gated.stage == Stage::Gliding);
+        } else {
+            assert_eq!(gated.kinds(), [Kind::Blip], "run {run}");
+            assert!(gated.pending_us.is_empty() && gated.stage == Stage::Boosting);
+        }
+    }
+}
+
+#[test]
+fn a_touch_while_pending_restarts_the_backstop_from_its_last_edge() {
+    // no thrust: the pads open at 300 ms and stay open but for a 3 ms touch, which is part of the pending separation:
+    // the backstop runs from the touch's last edge, and the row spans to it. A touch just before the first backstop
+    // would come (395 ms) is still an open episode at 400 ms, so it holds the backstop too
+    for touch_us in [350_000, 395_000] {
+        let timeline = [(0, true), (300_000, false), (touch_us, true), (touch_us + 3000, false)];
+        for phase_us in phases() {
+            let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, no_accel);
+            assert_eq!(
+                gated.kinds(),
+                [Kind::Separated],
+                "touch at {touch_us} µs, phase {phase_us}"
+            );
+            let (read_us, event) = gated.events[0];
+            assert_eq!(
+                (read_us, dated(&event)),
+                (
+                    first_tick_from(touch_us + 3000 + BACKSTOP_US, phase_us),
+                    (300_000, touch_us + 3000 - 300_000)
+                ),
+                "touch at {touch_us} µs, phase {phase_us}"
+            );
+            assert!(event.advanced);
+        }
+    }
+}
+
+#[test]
+fn a_pending_separation_counts_when_boosting_ends_otherwise() {
+    // no thrust: the pads open at 300 ms, pending; the stage machine moves BOOSTING to GLIDING at 350 ms (its apogee or
+    // burnout), before the backstop: the first read in GLIDING counts it there, dated by its first edge, nothing
+    // advanced
+    let timeline = [(0, true), (300_000, false)];
+    for phase_us in phases() {
+        let gated = fly_gated_until(
+            &timeline,
+            Pin::Interrupt,
+            phase_us,
+            no_accel,
+            DEFAULT_DEBOUNCE_MS,
+            350_000,
+        );
+        assert_eq!(
+            gated.events,
+            [(
+                first_tick_from(350_000, phase_us),
+                Event {
+                    kind: Kind::Separated,
+                    stage: Stage::Gliding,
+                    advanced: false,
+                    moment_us: 300_000,
+                    duration_us: 0,
+                }
+            )],
+            "phase {phase_us}"
+        );
+        assert!(gated.switch.separated() && !gated.switch.pending());
+    }
+    // NEGATIVE: re-closed at 345 ms, before BOOSTING ended: the re-nest, concluded in GLIDING, clears it -- one blip
+    // from the open to the re-nest, and the counted latch never moved
+    let timeline = [(0, true), (300_000, false), (345_000, true)];
+    for phase_us in phases() {
+        let gated = fly_gated_until(
+            &timeline,
+            Pin::Interrupt,
+            phase_us,
+            no_accel,
+            DEFAULT_DEBOUNCE_MS,
+            350_000,
+        );
+        assert_eq!(
+            gated.events,
+            [(
+                first_tick_from(355_000, phase_us),
+                Event {
+                    kind: Kind::Blip,
+                    stage: Stage::Gliding,
+                    advanced: false,
+                    moment_us: 300_000,
+                    duration_us: 45_000,
+                }
+            )],
+            "phase {phase_us}"
+        );
+        assert!(!gated.switch.separated() && gated.switch.latched() && !gated.switch.pending());
+    }
+    // the contact closing again across the end, with a 3 ms bounce (LOW 343-346 ms): a read of the bounce in GLIDING
+    // is no held LOW, so the separation waits for that episode. NEGATIVE: ending closed, its conclusion clears it, one
+    // blip from the open to the last edge; ending open (a touch), it folds in and counts at its conclusion, spanning it
+    let mut bounces_read = 0;
+    for (timeline, ends_open, last_us) in [
+        (
+            &[
+                (0, true),
+                (300_000, false),
+                (338_000, true),
+                (343_000, false),
+                (346_000, true),
+            ][..],
+            false,
+            346_000,
+        ),
+        (
+            &[(0, true), (300_000, false), (338_000, true), (343_000, false)][..],
+            true,
+            343_000,
+        ),
+    ] {
+        for phase_us in phases() {
+            let gated = fly_gated_until(
+                timeline,
+                Pin::Interrupt,
+                phase_us,
+                no_accel,
+                DEFAULT_DEBOUNCE_MS,
+                345_000,
+            );
+            let kind = if ends_open { Kind::Separated } else { Kind::Blip };
+            assert_eq!(
+                gated.events,
+                [(
+                    first_tick_from(last_us + QUIET_US, phase_us),
+                    Event {
+                        kind,
+                        stage: Stage::Gliding,
+                        advanced: false,
+                        moment_us: 300_000,
+                        duration_us: last_us - 300_000,
+                    }
+                )],
+                "ends open {ends_open}, phase {phase_us}"
+            );
+            assert_eq!(gated.switch.separated(), ends_open);
+            assert!(!gated.switch.pending());
+            bounces_read += usize::from(!ends_open && !level_at(timeline, first_tick_from(345_000, phase_us)));
+        }
+    }
+    assert!(bounces_read > 0, "no read in GLIDING fell on the bounce");
+}
+
+#[test]
+fn a_quiet_of_the_backstop_or_longer_counts_at_the_conclusion() {
+    // a debounce_ms of 100 ms or more: by the conclusion the pin has held LOW for the backstop, so a separation in
+    // BOOSTING counts there even under a shut gate, and is never left pending after a tick
+    let timeline = [(0, true), (300_000, false)];
+    for debounce_ms in [100, 150, 1000] {
+        for phase_us in phases() {
+            let gated = fly_gated_until(&timeline, Pin::Interrupt, phase_us, no_accel, debounce_ms, u32::MAX);
+            let found: Vec<(u32, Kind)> = gated
+                .events
+                .iter()
+                .map(|(read_us, event)| (*read_us, event.kind))
+                .collect();
+            assert_eq!(
+                found,
+                [(first_tick_from(300_000 + debounce_ms * 1000, phase_us), Kind::Separated)],
+                "debounce {debounce_ms} ms at phase {phase_us}"
+            );
+            assert!(gated.pending_us.is_empty() && gated.stage == Stage::Gliding);
+        }
+    }
+}
+
+#[test]
+fn the_gate_opening_on_a_closed_contact_counts_nothing_and_the_re_nest_clears_it() {
+    // NEGATIVE: the pads open 50 ms before thrust end and close again at 1015 ms, just before the gate opens: the gate
+    // finds the pin HIGH and counts nothing, and the re-nest makes the open one blip. BOOSTING goes on, and the
+    // ejection 4 s later counts at its conclusion under the open gate
+    let ejection_us = BURNOUT_US + EJECTION_DELAY_US;
+    let timeline = [(0, true), (950_000, false), (1_015_000, true), (ejection_us, false)];
+    for phase_us in phases() {
+        let gated = fly_gated(&timeline, Pin::Interrupt, phase_us, burn(BURNOUT_US));
+        let found: Vec<(u32, Kind, (u32, u32), bool)> = gated
+            .events
+            .iter()
+            .map(|(read_us, event)| (*read_us, event.kind, dated(event), event.advanced))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    first_tick_from(1_025_000, phase_us),
+                    Kind::Blip,
+                    (950_000, 65_000),
+                    false
+                ),
+                (
+                    first_tick_from(ejection_us + QUIET_US, phase_us),
+                    Kind::Separated,
+                    (ejection_us, 0),
+                    true
+                ),
+            ],
+            "phase {phase_us}"
+        );
+        assert!(gated.opened_us.is_some_and(|opened_us| opened_us < ejection_us));
+    }
+}
+
+#[test]
+fn a_gate_opening_inside_a_closing_contact_s_episode_waits_for_its_conclusion() {
+    // pending from the 950 ms open, the contact closes again at 1012 ms with a 3 ms bounce (LOW from 1015 ms) across
+    // the gate's opening (1020 ms at phase 0): a read of the bounce is no held LOW, so the separation waits for that
+    // episode. NEGATIVE: re-closed at 1022 ms, its conclusion clears it, one blip from the open to the last edge,
+    // BOOSTING kept; left open (a touch), it folds in and counts at its conclusion, or at the gate's opening if that
+    // is later, spanning it
+    let mut bounces_read = 0;
+    for (timeline, ends_open, last_us) in [
+        (
+            &[
+                (0, true),
+                (950_000, false),
+                (1_012_000, true),
+                (1_015_000, false),
+                (1_022_000, true),
+            ][..],
+            false,
+            1_022_000,
+        ),
+        (
+            &[(0, true), (950_000, false), (1_012_000, true), (1_015_000, false)][..],
+            true,
+            1_015_000,
+        ),
+    ] {
+        for phase_us in phases() {
+            let gated = fly_gated(timeline, Pin::Interrupt, phase_us, burn(BURNOUT_US));
+            let opened_us = first_tick_from(BURNOUT_US, phase_us) + THRUST_END_MS * 1000;
+            assert_eq!(gated.opened_us, Some(opened_us));
+            let (kind, stage) = if ends_open {
+                (Kind::Separated, Stage::Gliding)
+            } else {
+                (Kind::Blip, Stage::Boosting)
+            };
+            assert_eq!(
+                gated.events,
+                [(
+                    first_tick_from(last_us + QUIET_US, phase_us).max(opened_us),
+                    Event {
+                        kind,
+                        stage,
+                        advanced: ends_open,
+                        moment_us: 950_000,
+                        duration_us: last_us - 950_000,
+                    }
+                )],
+                "ends open {ends_open}, phase {phase_us}"
+            );
+            assert_eq!((gated.stage, gated.switch.separated()), (stage, ends_open));
+            assert!(!gated.switch.pending());
+            bounces_read += usize::from(!ends_open && !level_at(timeline, opened_us));
+        }
+    }
+    assert!(bounces_read > 0, "the gate never opened on the bounce");
 }
