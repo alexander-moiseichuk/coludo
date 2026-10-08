@@ -18,7 +18,22 @@
 //! GPIO interrupt on core 1 records the contact's episode (its first and latest edge, esp_timer us) into a stamp pair;
 //! each tick reads the pin, offers the read (observed, or polled when the arm failed), takes the pair once no edge came
 //! for `debounce_ms` and concludes it by that read -- separated, nested or a blip, each recorded with its moment and
-//! wobble in the durable separation.csv; a separation in BOOSTING moves the stage to GLIDING.
+//! wobble in the durable separation.csv. In BOOSTING a separation counts only once the thrust gate is open (M7,
+//! drivers::separation): the glider's own +x specific force, read from a fresh `accel` each tick, showed the thrust and
+//! then its end; before that it is pending, and counts when the gate opens or by the backstop (the pin held open
+//! 100 ms). A counted one moves the stage to GLIDING.
+//!
+//! The stage machine (M7, sequencer::StageMachine), built from the first enabled `sequencer` entry: stepped every
+//! `period_ms` on the uptime clock (every tick when the tick is slower), after the requests, with `accel`, `elevation`
+//! and `agl` read fresh at that moment. Its own advance commits to the flight word, then logs `controller :: stage ->
+//! X` to the console only, then records `<entry> :: stage -> X (reason)` and the `<entry>.csv` row `stage;reason`; a
+//! move made from outside (the separation, an operator) writes its row only, before any advance's, as plan B's `_tick`
+//! and `_advance` do. The reason text is made here, on core 1, only for the machine's own transition (six or fewer a
+//! flight): with the separation's event line, the one exception to "text only off the flight path" (§3.1).
+//!
+//! When the thread or its tick does not start, each entry it drives (the IMU, the separation switch, the stage
+//! machine) is crashed with "the control thread did not start": nothing reads or steps them this boot, so `arm`
+//! refuses.
 //!
 //! The flight word's one writer lives here (M7, crate::status): this thread commits every change of the stage, the
 //! hold, the arming and the launch, between two ticks' work, so no change races a detector. The separation's GLIDING
@@ -26,28 +41,31 @@
 //! tick serves first among its requests (§4.3, step 4), and logs it from the answer, so this thread takes no lock and
 //! makes no kernel call for a request. The mailbox after the slot carries the SETTING-only `probe` and `bustune`, each
 //! checked against the stage again where it is served: a launch detected during a probe sweep never runs a probe. The
-//! recorder's flight flag follows each commit. `control` shows the tick's work time (from the wake to the end of its
-//! work) and whether the flight word holds the machine's launch.
+//! recorder's flight flag follows each commit: raised before a transition's rows, lowered after them. `control` shows
+//! the tick's work time (from the wake to the end of its work), whether the flight word holds the machine's launch,
+//! and what the thrust gate has seen.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::OnceLock;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use std::time::Duration;
 
 use controller::{DeviceEntry, Table};
-use databoard::Writer;
+use databoard::{Parameter, Writer};
 use drivers::debounce::StampPair;
 use drivers::lsm6dso32::{Lsm6dso32, OverSpi, STALE_LIMIT};
-use drivers::separation::Kind;
+use drivers::separation::{Kind, Thrust, ThrustGate};
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
 use firmware::buses::spi::{SpiBus, SpiHandle};
 use firmware::gcl::{self, Command, Gate, Reach};
 use recorder::{Cell, Telemetry};
-use sequencer::{ChangeRefused, Commit, FlightFlag, FlightWriter, RequestSlot, Stage};
+use sequencer::{
+    ChangeRefused, Commit, FlightFlag, FlightWriter, Readings, RequestSlot, Source, Stage, StageMachine, Transition,
+};
 
-use crate::devices::{SeparationMember, SpiMember, Topology};
+use crate::devices::{SeparationMember, SequencerMember, SpiMember, Topology};
 use crate::logging::CONSOLE_ONLY;
 use crate::recorder::Producer;
 use crate::status::FLIGHT;
@@ -143,10 +161,15 @@ const PROBE_DEADLINE: Duration = Duration::from_secs(2);
 /// The separation pin's open episode, its first and latest edge (esp_timer's us truncated to u32): the GPIO interrupt
 /// records into it, the tick takes it once quiet (drivers::debounce).
 static SEPARATION: StampPair = StampPair::new();
-/// Episodes the separation switch concluded since boot (`control`).
-static SEPARATION_EPISODES: AtomicU32 = AtomicU32::new(0);
+/// Events the separation switch recorded since boot, separation.csv's rows (`control`): an episode concluded, or
+/// under the thrust gate a pending separation counted or cleared.
+static SEPARATION_EVENTS: AtomicU32 = AtomicU32::new(0);
 /// Of those, the blips: the contact moved and came back (`control`).
 static SEPARATION_BLIPS: AtomicU32 = AtomicU32::new(0);
+/// A separation concluded in BOOSTING waits for the thrust gate or the backstop (`control`'s `pending`).
+static SEPARATION_PENDING: AtomicBool = AtomicBool::new(false);
+/// What the thrust gate has seen since BOOSTING entry, as its index in [`THRUSTS`] (`control`'s `thrust`).
+static THRUST: AtomicU8 = AtomicU8::new(0);
 /// Arming the separation pin's edge interrupt failed: the tick polls it (`control`).
 static SEPARATION_POLLED: AtomicBool = AtomicBool::new(false);
 /// The separation switch's debounced latch, for the console and (M8) the warm-start gate: true = separated.
@@ -154,6 +177,20 @@ static SEPARATED: AtomicBool = AtomicBool::new(false);
 
 /// The separation switch's entry name and GPIO, once the control thread drives it (its probe reads the pin).
 static SWITCH: OnceLock<(&'static str, u8)> = OnceLock::new();
+
+/// The thrust gate's verdicts, in the order [`THRUST`] indexes them.
+const THRUSTS: [Thrust; 3] = [Thrust::Unseen, Thrust::Seen, Thrust::Ended];
+
+/// The body frame's +x, the nose, in an `accel` vector (x, y, z): the axis the thrust gate reads (the body frame is
+/// +x nose, +y left, +z up; each airframe's mount is checked nose up, where +x reads about +1 g).
+const AXIAL: usize = 0;
+
+/// The device name the GNSS publishes `elevation` under (plan B tasks/sequencer.py `_GNSS_SOURCE`): the stage machine
+/// never starts a flight on it (sequencer::Source::Gnss).
+const GNSS_SOURCE: &str = "gnss";
+
+/// Why an entry this thread drives is crashed when the thread or its tick did not start (`verify`, `arm`).
+const NOT_STARTED: &str = "the control thread did not start";
 
 /// Publishes the separation latch: bring-up seeds it from the level it read, the tick keeps it.
 pub fn publish_separated(separated: bool) {
@@ -167,7 +204,7 @@ pub fn switch_level() -> Option<(&'static str, bool)> {
     Some((name, unsafe { sys::gpio_get_level(i32::from(gpio)) } != 0))
 }
 
-/// The separation switch as the control thread drives it: its pin, its debounce and its stream.
+/// The separation switch as the control thread drives it: its pin, its debounce, its thrust gate and its stream.
 struct Switch {
     /// Its GPIO.
     gpio: u8,
@@ -175,13 +212,32 @@ struct Switch {
     polled: Option<bool>,
     /// The latch.
     part: drivers::separation::Separation,
+    /// The thrust gate: in BOOSTING a separation counts only once it is open, or by the backstop.
+    gate: ThrustGate,
+    /// The `accel` quantity the gate reads its a_x from, when a provider of it came up.
+    accel: Option<&'static Parameter<[f32; 3]>>,
     /// separation.csv, with a recorder.
     telemetry: Option<Telemetry<'static>>,
 }
 
 impl Switch {
-    /// The switch of `member`, its edge interrupt armed on this thread (core 1).
-    fn new(member: SeparationMember) -> Switch {
+    /// The switch of `member`, its edge interrupt armed on this thread (core 1), its thrust gate on `launch`'s
+    /// `launch_g` and `launch_ms` (the stage machine's; `origin` says whose) reading `accel` from `topology`.
+    fn new(
+        member: SeparationMember,
+        launch: &sequencer::Settings,
+        origin: &str,
+        topology: &'static Topology,
+    ) -> Switch {
+        let accel = topology.vector("accel");
+        match accel {
+            Some(_) => log::info!(
+                "separation :: thrust gate on +x: thrust above {} g for {} ms, from {origin}",
+                launch.launch_g,
+                launch.launch_ms
+            ),
+            None => log::warn!("separation :: no accel on the databoard: in boosting only the backstop counts"),
+        }
         let polled = match arm_edges(member.gpio) {
             Ok(()) => None,
             Err(error) => {
@@ -202,6 +258,8 @@ impl Switch {
             gpio: member.gpio,
             polled,
             part: member.part,
+            gate: ThrustGate::new(launch),
+            accel,
             telemetry: crate::recorder::get()
                 .zip(crate::recorder::device_stream(member.name))
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
@@ -209,9 +267,11 @@ impl Switch {
     }
 
     /// One tick: the pin's level, then the clock, offered to the stamp pair (observed, or polled when the arm failed);
-    /// once the pair is quiet, its episode is concluded by that same level (drivers::debounce): a separation in
-    /// BOOSTING commits GLIDING through `writer` and logs the controller's console line, then the row is written with
-    /// the moment and the wobble, and the event is logged (plan B's order, drivers/separation.py `_apply`).
+    /// the thrust gate stepped with the glider's a_x from a fresh `accel`; then the switch's tick under the gate
+    /// (drivers::separation `Separation::tick`): a quiet episode concluded by that same level, or a pending separation
+    /// counted or cleared. A separation that advances BOOSTING commits GLIDING through `writer` and logs the
+    /// controller's console line, then the row is written with the moment and the wobble, and the event is logged
+    /// (plan B's order, drivers/separation.py `_apply`).
     fn tick(&mut self, writer: &mut FlightWriter<'static>) {
         // the level first, then the clock: the level decides the episode this tick concludes
         // SAFETY: a plain read of the input bring-up configured.
@@ -226,10 +286,22 @@ impl Switch {
             }
             None => SEPARATION.observe(read_us, high, self.part.latched()),
         }
-        let Some(episode) = SEPARATION.take(read_us, self.part.quiet_us()) else {
+        let stage = writer.flight().stage;
+        // read at the clock taken after the IMU's push this tick: the databoard refuses a stamp from the future
+        let axial_g = self
+            .accel
+            .and_then(|accel| accel.read(now_us))
+            .map(|reading| reading.value[AXIAL]);
+        // the uptime's ms as a wrapping u32, the stage machine's clock (ThrustGate::step)
+        self.gate.step((now_us / 1000) as u32, stage, axial_g);
+        let thrust = self.gate.thrust();
+        let index = THRUSTS.iter().position(|seen| *seen == thrust).unwrap_or_default();
+        THRUST.store(index as u8, Ordering::Relaxed);
+        let event = self.part.tick(&SEPARATION, high, read_us, stage, self.gate.open());
+        SEPARATION_PENDING.store(self.part.pending(), Ordering::Relaxed);
+        let Some(event) = event else {
             return;
         };
-        let event = self.part.conclude(episode, high, writer.flight().stage);
         if event.advanced
             && let Some(commit) = writer.separate()
         {
@@ -237,7 +309,7 @@ impl Switch {
             log::info!(target: CONSOLE_ONLY, "controller :: stage -> {}", commit.after.stage.name());
         }
         SEPARATED.store(self.part.separated(), Ordering::Relaxed);
-        SEPARATION_EPISODES.fetch_add(1, Ordering::Relaxed);
+        SEPARATION_EVENTS.fetch_add(1, Ordering::Relaxed);
         if event.kind == Kind::Blip {
             SEPARATION_BLIPS.fetch_add(1, Ordering::Relaxed);
         }
@@ -493,6 +565,127 @@ impl Imu {
     }
 }
 
+/// The stage machine as the control thread steps it (plan B's Sequencer task): the machine, the quantities it reads,
+/// its stream and its pace.
+struct Sequencer {
+    /// The entry's name: the descriptor of its recorded line, and its stream's.
+    name: &'static str,
+    /// The machine.
+    machine: StageMachine,
+    /// The `accel` quantity (g), when a provider of it came up.
+    accel: Option<&'static Parameter<[f32; 3]>>,
+    /// The `elevation` quantity (m above the pad).
+    elevation: Option<&'static Parameter<f32>>,
+    /// The `agl` quantity (the laser's m above the ground).
+    height_above_ground: Option<&'static Parameter<f32>>,
+    /// `<name>.csv`, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// A row was refused and logged: once, never again (plan B's `note`, which this task never re-arms).
+    refusal_logged: bool,
+    /// Its step period, microseconds (`period_ms`).
+    period_us: u64,
+    /// When the next step is due, microseconds.
+    next_due_us: u64,
+}
+
+impl Sequencer {
+    /// The machine of `member`, its quantities found in `topology`, its stream opened.
+    fn new(member: SequencerMember, topology: &'static Topology) -> Sequencer {
+        Sequencer {
+            name: member.name,
+            machine: StageMachine::new(member.settings),
+            accel: topology.vector("accel"),
+            elevation: topology.scalar("elevation"),
+            height_above_ground: topology.scalar("agl"),
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(member.name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            refusal_logged: false,
+            period_us: u64::from(member.settings.period_ms) * 1000,
+            next_due_us: 0,
+        }
+    }
+
+    /// One tick: when its period is due (within half a tick, `slack_us`, of `now_us`, the wake), one step of the
+    /// machine on the flight as `writer` last committed it, with the quantities read fresh now (plan B `_tick`). A move
+    /// made from outside since the last step writes its row only; the machine's own advance commits through `writer`,
+    /// then logs `controller :: stage -> X` to the console, then records `<name> :: stage -> X (reason)` and the row
+    /// (plan B `_advance`). The recorder's flight flag rises before those rows and falls after them.
+    fn tick(&mut self, now_us: u64, slack_us: u64, writer: &mut FlightWriter<'static>) {
+        if now_us + slack_us < self.next_due_us {
+            return;
+        }
+        // the next step a period on, or a period from now when the steps fell behind
+        self.next_due_us = (self.next_due_us + self.period_us).max((now_us + self.period_us).saturating_sub(slack_us));
+        // after the IMU's push and the separation's commit: the databoard refuses a stamp from the future
+        // SAFETY: a plain read of the monotonic timer.
+        let read_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let readings = Readings {
+            acceleration: fresh_reading(self.accel, read_us),
+            elevation: fresh_reading(self.elevation, read_us),
+            height_above_ground: fresh_reading(self.height_above_ground, read_us),
+        };
+        let flight = writer.flight();
+        let step = self
+            .machine
+            .step((read_us / 1000) as u32, flight.stage, &readings, flight.manual);
+        if let Some(external) = step.external {
+            // a constant text: core 1 formats nothing for a move it did not make
+            self.record(read_us, external.to, "external");
+        }
+        if let Some(transition) = step.advance {
+            self.advance(read_us, transition, writer);
+        }
+    }
+
+    /// The machine's own `transition` at `now_us`: the commit, the controller's console line, the recorded line and
+    /// the row, in plan B's order, the flight flag around them.
+    fn advance(&mut self, now_us: u64, transition: Transition, writer: &mut FlightWriter<'static>) {
+        let flag = writer.advance(transition).flight_flag();
+        if flag == Some(FlightFlag::Raise) {
+            set_flight(true);
+        }
+        let stage = transition.to.name();
+        log::info!(target: CONSOLE_ONLY, "controller :: stage -> {stage}");
+        // the reason's text, made on core 1: a machine transition is the one exception (see the module notes)
+        let reason = transition.reason.to_string();
+        log::info!("{} :: stage -> {stage} ({reason})", self.name);
+        self.record(now_us, transition.to, &reason);
+        if flag == Some(FlightFlag::Lower) {
+            set_flight(false);
+        }
+    }
+
+    /// One `<name>.csv` row at `now_us`: `stage` and `reason`. A refused row is logged once and never stops the
+    /// machine: the stage has moved either way (plan B `_record`).
+    fn record(&mut self, now_us: u64, stage: Stage, reason: &str) {
+        let Some(telemetry) = &mut self.telemetry else {
+            return;
+        };
+        if let Err(overflow) = telemetry.push(now_us, &[Cell::Text(stage.name()), Cell::Text(reason)])
+            && !self.refusal_logged
+        {
+            log::warn!("{} :: record {overflow}", self.name);
+            self.refusal_logged = true;
+        }
+    }
+}
+
+/// The fresh reading of `parameter` at `now_us` as the stage machine takes it (plan B's `read()` with a source),
+/// its source told apart only as the GNSS or not; None without the quantity, or with no source fresh.
+fn fresh_reading<T: databoard::Sample>(parameter: Option<&Parameter<T>>, now_us: u64) -> Option<sequencer::Reading<T>> {
+    let reading = parameter?.read(now_us)?;
+    let source = if reading.source == GNSS_SOURCE {
+        Source::Gnss
+    } else {
+        Source::Other
+    };
+    Some(sequencer::Reading {
+        value: reading.value,
+        source,
+    })
+}
+
 /// The INT1 data-ready interrupt: count the edge. Integer only.
 unsafe extern "C" fn interrupt_edge(_: *mut core::ffi::c_void) {
     INTERRUPT_EDGES.fetch_add(1, Ordering::Relaxed);
@@ -568,42 +761,83 @@ unsafe extern "C" fn alarm(
 }
 
 /// Starts the control thread (core 1, priority 20) ticking at `schedule_hz`, waking the I2C owners that run on each
-/// tick too, with the SPI parts that came up (`spi`: the primary IMU), the databoard's `topology`, the device `table`
-/// whose entries' health the tick writes, and the flight word's one `writer`, which the thread owns from here on.
-/// Call it after the owners started (their task handles are taken here).
+/// tick too, with the SPI parts that came up (`spi`: the primary IMU), the separation switch, the stage machine, the
+/// databoard's `topology`, the device `table` whose entries' health the tick writes, and the flight word's one
+/// `writer`, which the thread owns from here on. Call it after the owners started (their task handles are taken here).
 ///
-/// Errors: the thread would not spawn (the writer is gone with it, and the flight word stays as it is).
+/// Errors: the thread would not spawn (the writer is gone with it, and the flight word stays as it is); the entries it
+/// would drive are crashed then.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what the bring-up hands the flight thread, each taken once"
+)]
 pub fn start(
     schedule_hz: u32,
     spi_bus: Option<SpiBus>,
     spi: Vec<SpiMember>,
     separation: Option<SeparationMember>,
+    sequencer: Option<SequencerMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
     writer: FlightWriter<'static>,
 ) -> anyhow::Result<()> {
-    ThreadSpawnConfiguration {
+    let driven = [
+        spi.first().map(|member| member.name),
+        separation.as_ref().map(|member| member.name),
+        sequencer.as_ref().map(|member| member.name),
+    ];
+    let spawned = ThreadSpawnConfiguration {
         name: Some(c"control"),
         stack_size: STACK_SIZE,
         priority: PRIORITY,
         pin_to_core: Some(Core::Core1),
         ..Default::default()
     }
-    .set()?;
-    let spawned = std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(move || run(schedule_hz, spi_bus, spi, separation, topology, table, writer));
-    ThreadSpawnConfiguration::default().set()?;
+    .set()
+    .map_err(anyhow::Error::from)
+    .and_then(|()| {
+        std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn(move || {
+                run(
+                    schedule_hz,
+                    spi_bus,
+                    spi,
+                    separation,
+                    sequencer,
+                    topology,
+                    table,
+                    writer,
+                )
+            })
+            .map_err(anyhow::Error::from)
+    });
+    // the default back for the threads spawned after this one
+    let reset = ThreadSpawnConfiguration::default().set();
+    if spawned.is_err() {
+        not_started(table, driven);
+    }
     spawned?;
+    reset?;
     Ok(())
 }
 
-/// The control thread: the IMU, the timer, then the tick forever.
+/// Crashes each entry this thread drives (`driven`: the IMU, the separation switch, the stage machine) with
+/// [`NOT_STARTED`]: nothing reads or steps them this boot, so verify lists them and `arm` refuses.
+fn not_started(table: &Table, driven: [Option<&str>; 3]) {
+    for entry in driven.into_iter().flatten().filter_map(|name| table.find(name)) {
+        entry.crash(NOT_STARTED.to_string());
+    }
+}
+
+/// The control thread: the IMU, the separation switch, the stage machine, the timer, then the tick forever.
+#[expect(clippy::too_many_arguments, reason = "start's arguments, moved into the thread")]
 fn run(
     schedule_hz: u32,
     spi_bus: Option<SpiBus>,
     spi: Vec<SpiMember>,
     separation: Option<SeparationMember>,
+    sequencer: Option<SequencerMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
     mut writer: FlightWriter<'static>,
@@ -642,7 +876,23 @@ fn run(
     for extra in spi {
         log::warn!("control :: {} not driven: one SPI IMU only", extra.name);
     }
-    let mut switch = separation.map(Switch::new);
+    // the gate takes the stage machine's launch numbers: the entry's, else plan B's defaults
+    let (launch, origin) = sequencer.as_ref().map_or_else(
+        || (sequencer::Settings::default(), "plan B's defaults"),
+        |member| (member.settings, member.name),
+    );
+    let mut switch = separation.map(|member| Switch::new(member, &launch, origin, topology));
+    let mut machine = sequencer.map(|member| {
+        if u64::from(member.settings.period_ms) * 1000 < period_us as u64 {
+            log::warn!(
+                "control :: {} wants a step every {} ms, the tick comes every {} ms: a step every tick",
+                member.name,
+                member.settings.period_ms,
+                period_us / 1000
+            );
+        }
+        Sequencer::new(member, topology)
+    });
     let mut tasks = [core::ptr::null_mut(); 3];
     // SAFETY: a plain read of this task's own handle.
     tasks[0] = unsafe { sys::xTaskGetCurrentTaskHandle() };
@@ -654,6 +904,13 @@ fn run(
     let wakers: &'static Wakers = Box::leak(Box::new(Wakers { tasks, count }));
     if let Err(error) = start_timer(period_us as u64, wakers) {
         log::error!("control :: no tick ({error}): the control thread stops");
+        // the switch's name is in SWITCH once Switch::new ran
+        let driven = [
+            imu.as_ref().map(|imu| imu.name),
+            SWITCH.get().map(|(name, _)| *name),
+            machine.as_ref().map(|machine| machine.name),
+        ];
+        not_started(table, driven);
         return;
     }
     SCHEDULE_HZ.store(schedule_hz, Ordering::Relaxed);
@@ -696,6 +953,9 @@ fn run(
             follow_flight(&commit);
         }
         serve(&requests, imu.as_mut(), spi_bus.as_ref(), writer.flight().stage);
+        if let Some(machine) = &mut machine {
+            machine.tick(now_us as u64, period_us as u64 / 2, &mut writer);
+        }
         // SAFETY: a plain read of the monotonic timer.
         let work = (unsafe { sys::esp_timer_get_time() } - now_us).clamp(0, i64::from(u32::MAX)) as u32;
         WORK_LAST_US.store(work, Ordering::Relaxed);
@@ -703,11 +963,19 @@ fn run(
     }
 }
 
-/// Moves the recorder's flight flag as `commit` moves it (sequencer::Commit::flight_flag): it follows `airborne()` of
-/// each committed stage, an operator hold's too.
+/// Moves the recorder's flight flag as `commit` moves it (sequencer::Commit::flight_flag), at once: a commit whose
+/// rows are not the stage machine's (an operator's request, which writes none; the separation, which never changes
+/// `airborne()`). It follows `airborne()` of each committed stage, an operator hold's too.
 fn follow_flight(commit: &Commit) {
-    if let (Some(flag), Some(recorder)) = (commit.flight_flag(), crate::recorder::get()) {
-        recorder.set_flight(flag == FlightFlag::Raise);
+    if let Some(flag) = commit.flight_flag() {
+        set_flight(flag == FlightFlag::Raise);
+    }
+}
+
+/// Raises (`flight`) or lowers the recorder's flight flag, with a recorder.
+fn set_flight(flight: bool) {
+    if let Some(recorder) = crate::recorder::get() {
+        recorder.set_flight(flight);
     }
 }
 
@@ -875,8 +1143,9 @@ pub fn register_commands() {
                 largest, and how many ticks passed the 200 us budget) and work (the latest and the largest, from the \
                 wake to the end of the tick's work); whether the flight word holds the stage machine's launch; the \
                 IMU's reads, failures, reads with no new conversion, INT1 edges at the latest tick and whether INT1 is \
-                silent; the IMU's SPI clock; the separation latch, whether its pin is polled, and the episodes it \
-                concluded (blips among them); flight-core log lines the console queue dropped",
+                silent; the IMU's SPI clock; the separation latch, whether its pin is polled, the events it \
+                recorded (blips among them), whether a separation is pending, and what the thrust gate has seen since \
+                boosting began (none, seen, ended); flight-core log lines the console queue dropped",
         gate: Gate::Open,
         reach: Reach::Everywhere,
         parameters: &[],
@@ -909,13 +1178,15 @@ pub fn register_commands() {
                         &SEPARATION_POLLED.load(Ordering::Relaxed).to_string(),
                     ),
                     (
-                        "separation_episodes",
-                        &SEPARATION_EPISODES.load(Ordering::Relaxed).to_string(),
+                        "separation_events",
+                        &SEPARATION_EVENTS.load(Ordering::Relaxed).to_string(),
                     ),
                     (
                         "separation_blips",
                         &SEPARATION_BLIPS.load(Ordering::Relaxed).to_string(),
                     ),
+                    ("pending", &SEPARATION_PENDING.load(Ordering::Relaxed).to_string()),
+                    ("thrust", THRUSTS[usize::from(THRUST.load(Ordering::Relaxed))].name()),
                     ("console_dropped", &crate::logging::console_dropped().to_string()),
                     ("spi_clock_hz", &SPI_CLOCK_HZ.load(Ordering::Relaxed).to_string()),
                 ],

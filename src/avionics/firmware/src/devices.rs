@@ -13,6 +13,8 @@
 //!   (the first-use discard follows the peripheral, not the handle). Its owner is M6's control thread.
 //! - A general call during a setup (the ICP-10111 frees a latched bus with one) re-arms every part of that port
 //!   already up, the sender excepted, and is written as an oops record (§4.8).
+//! - The stage machine (M7): the first enabled `sequencer` entry's settings, read by sequencer::Settings::from_config;
+//!   a key it refuses fails the entry, naming the key, so `arm` refuses. Its steps are the control thread's.
 //! - The topology: one Parameter per quantity with a provider that came up, its sources registered in setup order
 //!   (plan B's `provide` at the end of each successful setup), then frozen.
 
@@ -64,6 +66,14 @@ pub struct SeparationMember {
     pub gpio: u8,
     /// The debounced latch.
     pub part: Separation,
+}
+
+/// The stage machine once its entry came up: the control thread steps it (crate::control).
+pub struct SequencerMember {
+    /// The entry's name: its stream's (`<name>.csv`) and its log lines'.
+    pub name: &'static str,
+    /// Its thresholds and step period, read from the entry.
+    pub settings: sequencer::Settings,
 }
 
 /// The LSM6DSO32's sampling period when its entry gives none, ms (plan B lsm6dso32.py:39 `period_ms` 10).
@@ -233,6 +243,8 @@ pub struct Devices {
     pub spi_bus: Option<SpiBus>,
     /// The separation switch, when it came up.
     pub separation: Option<SeparationMember>,
+    /// The stage machine, when its entry came up.
+    pub sequencer: Option<SequencerMember>,
 }
 
 /// Brings every enabled entry of `document` (the post-layout config) up, in config order, on the ports main holds on
@@ -246,6 +258,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut members: [Vec<Member>; 2] = [Vec::new(), Vec::new()];
     let mut spi = Vec::new();
     let mut separation = None;
+    let mut sequencer = None;
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -285,6 +298,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::I2c => set_up_i2c(document, entry, attempts, ports, &mut members, &mut delay),
             Kind::Spi => set_up_spi(document, entry, attempts, spi_bus.as_ref(), &mut spi, &mut delay),
             Kind::Separation => set_up_separation(document, entry, attempts, &mut separation),
+            Kind::Sequencer => set_up_sequencer(entry, &mut sequencer),
         };
         outcomes.push((controller::candidate(document, entry), outcome));
     }
@@ -301,7 +315,42 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         spi,
         spi_bus,
         separation,
+        sequencer,
     }
+}
+
+/// The stage machine's bring-up (plan B tasks/sequencer.py `setup`): its settings read from the entry, in one attempt,
+/// since a config read again reads the same. A key [`sequencer::Settings::from_config`] refuses fails the entry as
+/// plan B's setup raised (`controller :: task '<name>' setup raised: <key>: <value> <why>`), so verify lists it and
+/// `arm` refuses. The first entry's machine runs on the control thread; another fails, since one stage machine commits
+/// to the flight word (plan B would run both against one Controller).
+fn set_up_sequencer(entry: &Entry<'static>, sequencer: &mut Option<SequencerMember>) -> Result<(), String> {
+    let settings = sequencer::Settings::from_config(&Value::Object(entry.fields.clone()));
+    let running = sequencer.as_ref().map(|member| member.name);
+    controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| match (&settings, running) {
+            (Err(refused), _) => Attempt::Raised {
+                error: refused.to_string(),
+                diagnosis: None,
+            },
+            (Ok(_), Some(running)) => Attempt::Raised {
+                error: format!("one stage machine only: '{running}' runs it"),
+                diagnosis: None,
+            },
+            (Ok(settings), None) => {
+                *sequencer = Some(SequencerMember {
+                    name: entry.name,
+                    settings: *settings,
+                });
+                Attempt::Up
+            }
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    )
 }
 
 /// The separation switch's bring-up (plan B separation.py:49-64): its pin (the entry's `pin`, else the board's

@@ -48,6 +48,8 @@ pub enum Kind {
     Spi,
     /// The separation switch: a GPIO the control thread reads.
     Separation,
+    /// The stage machine: its settings read from the entry, its steps on the control thread.
+    Sequencer,
     /// Run natively by the firmware, with nothing to set up: up.
     Native,
     /// A plan B implementation not ported yet: failed with [`NOT_PORTED_YET`].
@@ -61,7 +63,7 @@ pub enum Kind {
 const NATIVE: [&str; 5] = ["recorder", "cc", "wifi", "health", "ov5647"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 16] = [
+const NOT_PORTED: [&str; 15] = [
     "adxl375",
     "bno055",
     "bmp280",
@@ -72,7 +74,6 @@ const NOT_PORTED: [&str; 16] = [
     "field",
     "sg90",
     "mg90s",
-    "sequencer",
     "checkpoint",
     "watchdog",
     "flight",
@@ -90,6 +91,7 @@ pub fn classify(entry: &Entry) -> Kind {
             _ => Kind::Spi,
         },
         "separation" => Kind::Separation,
+        "sequencer" => Kind::Sequencer,
         implementation if NATIVE.contains(&implementation) => Kind::Native,
         implementation if NOT_PORTED.contains(&implementation) => Kind::NotPorted,
         _ => Kind::Unknown,

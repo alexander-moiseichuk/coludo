@@ -180,6 +180,7 @@ fn main() -> anyhow::Result<()> {
         spi,
         spi_bus,
         separation,
+        sequencer,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     for (parked, port) in lent {
         let id = port.id();
@@ -188,7 +189,8 @@ fn main() -> anyhow::Result<()> {
             log::error!("i2c:{id} :: {error}");
         }
     }
-    // the flight tick on core 1, which wakes the owners too (§4.2, §4.3), and owns the flight word's one writer
+    // the flight tick on core 1, which wakes the owners too (§4.2, §4.3), steps the stage machine and owns the flight
+    // word's one writer
     let writer = status::FLIGHT
         .writer()
         .expect("main takes the flight word's writer, once");
@@ -197,6 +199,7 @@ fn main() -> anyhow::Result<()> {
         spi_bus,
         spi,
         separation,
+        sequencer,
         topology,
         table,
         writer,
