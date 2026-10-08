@@ -25,8 +25,10 @@ mod inspection;
 mod streaming;
 mod system;
 
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::time::{Duration, Instant};
 
 use cc_protocol::Message;
 use esp_idf_svc::hal::cpu::Core;
@@ -248,14 +250,27 @@ pub fn ok_json(value: &impl serde::Serialize) -> Reply {
         .map_err(|error| Fault::new(Code::Internal, error.to_string()))
 }
 
-/// One line to run, who sent it, and where its reply goes.
+/// One line to run, who sent it, when it arrived, and where its reply goes.
 struct Request {
     /// The request line, trimmed.
     line: String,
     /// The console or the hub: a console-only command refuses the hub.
     origin: Origin,
+    /// When it arrived, stamped before the queue send: what it waits behind counts too (§4.4).
+    arrived: Instant,
     /// The reply (None: no reply for this line).
     reply: SyncSender<Option<String>>,
+}
+
+std::thread_local! {
+    /// When the line the executor runs now arrived; None before its first. The executor's own: set before each line.
+    static ARRIVED: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// How long the line the executor runs now has waited since it arrived: in the queue and in its own handler so far
+/// (`arm` refuses one that waited too long, controller::stale_arm). Zero off the executor.
+pub fn waited() -> Duration {
+    ARRIVED.with(|arrived| arrived.get().map_or(Duration::ZERO, |arrived| arrived.elapsed()))
 }
 
 /// The executor's stack: replies are JSON documents (get-config is ~10 KB), built on the heap.
@@ -295,13 +310,15 @@ impl Executor {
         Ok(Self { queue })
     }
 
-    /// Run one line from `origin` and wait for its reply; None for a line with no reply.
+    /// Run one line from `origin` and wait for its reply; None for a line with no reply. The line is stamped as it
+    /// arrives, before it queues behind the lines ahead of it.
     pub fn ask(&self, line: &str, origin: Origin) -> Option<String> {
         let (reply, answer) = sync_channel(1);
         self.queue
             .send(Request {
                 line: line.to_string(),
                 origin,
+                arrived: Instant::now(),
                 reply,
             })
             .ok()?;
@@ -319,6 +336,7 @@ fn serve(requests: Receiver<Request>, mut context: Context) {
             .ok()
     });
     for request in requests {
+        ARRIVED.with(|arrived| arrived.set(Some(request.arrived)));
         let reply = handle(&request.line, &mut context, request.origin);
         let _ = request.reply.send(reply); // the caller may have gone (a dropped link); nothing to do
     }

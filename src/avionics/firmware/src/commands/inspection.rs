@@ -4,23 +4,28 @@
 //! inspector.Inspector). The registry: the controller (the flight state), the mission, the recorder (with the flash
 //! ring and the ring_saver) when it opened, and every device that came up (plan B registers each task as it comes
 //! up), whose snapshot is plan B's `Task.inspect` -- name, ok, healthy -- and, for the parts the port drives so far,
-//! their own keys read off the databoard (the IMU, the barometer, the separation switch), null once stale.
+//! their own keys read off the databoard (the IMU, the barometer, the separation switch), null once stale. The
+//! bluetooth stub (drivers::bluetooth) adds plan B's `radio`, which `update` changes, and `active`, always null.
 
 use std::collections::BTreeMap;
+use std::sync::{Mutex, PoisonError};
 
 use cc_protocol::Message;
+use drivers::bluetooth::Bluetooth;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::{Code, Context, Fault, Reply};
 use crate::clock;
+use crate::recorder::NAME as RECORDER;
 use crate::status::FLIGHT;
 
 /// The inspectable objects every board has, sorted (plan B `Inspector.names()`).
 const OBJECTS: [&str; 2] = ["controller", "mission"];
 
-/// The recorder's object name (plan B `Recorder.name`), listed while a recorder runs.
-const RECORDER: &str = "recorder";
+/// Each bluetooth stub by its entry's name, made from its config entry when first inspected or updated. Only the
+/// executor's commands reach it, one at a time, so the lock is never contended.
+static BLUETOOTH: Mutex<BTreeMap<String, Bluetooth>> = Mutex::new(BTreeMap::new());
 
 /// The object names `inspect`/`update`/`stats` accept now, sorted: the fixed ones, the recorder when it opened, and
 /// every device that came up.
@@ -74,6 +79,9 @@ enum Own {
     },
     /// The separation switch: its debounced latch.
     Separation { separated: bool },
+    /// The bluetooth stub (plan B bluetooth.py:67-77): the radio state asked for, and the radio's own, always null:
+    /// this firmware starts no BLE radio, plan B's answer on a board with none.
+    Bluetooth { radio: Value, active: Option<bool> },
     /// Any other device: nothing of its own yet.
     None {},
 }
@@ -113,6 +121,10 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
         },
         "separation" => Own::Separation {
             separated: crate::control::separated(),
+        },
+        "bluetooth" => Own::Bluetooth {
+            radio: with_bluetooth(context, name, |stub| stub.radio().clone()),
+            active: None,
         },
         _ => Own::None {},
     };
@@ -173,6 +185,7 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
         "mission" => apply_mission(context, properties),
         RECORDER => apply_recorder(properties),
         "controller" => Vec::new(), // nothing on it is writable
+        device if is_bluetooth(context, device) => with_bluetooth(context, device, |stub| stub.update(properties)),
         // a device: the part on its owner (the barometer's ground and rezero); the others change nothing
         device => crate::owner::update(device, &Value::Object(properties.clone()))
             .map_err(|error| Fault::new(Code::Internal, error))?
@@ -180,6 +193,27 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
             .map_err(|refusal| Fault::new(Code::Refused, refusal))?,
     };
     super::ok_json(&json!({"changed": changed}))
+}
+
+/// Whether the device `name` is a bluetooth stub.
+fn is_bluetooth(context: &Context, name: &str) -> bool {
+    context
+        .devices
+        .find(name)
+        .is_some_and(|entry| entry.implementation == "bluetooth")
+}
+
+/// Runs `action` on the bluetooth stub of the device `name`, made from its config entry the first time (plan B's
+/// setup reads `radio` from it).
+fn with_bluetooth<T>(context: &Context, name: &str, action: impl FnOnce(&mut Bluetooth) -> T) -> T {
+    let mut stubs = BLUETOOTH.lock().unwrap_or_else(PoisonError::into_inner);
+    let stub = stubs.entry(name.to_string()).or_insert_with(|| {
+        let entry = board_config::directory(&context.config.document)
+            .into_iter()
+            .find(|entry| entry.name == name);
+        Bluetooth::from_config(entry.map_or(&Map::new(), |entry| entry.fields))
+    });
+    action(stub)
 }
 
 /// Apply a mission update (plan B Mission.update): the launch fields, and `epoch` sets the wall clock.

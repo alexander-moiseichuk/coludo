@@ -1,9 +1,9 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! probe / verify / calibrate / detect / bustune -- the self-tests and the pre-flight check (src/glider cc_client
-//! `_register_diagnostics`). The I2C parts are probed on their bus owners (crate::owner); the SPI part's probe and
-//! the calibrations arrive with the control thread and their drivers (port plan M6-M10), and until then the answers
-//! say so instead of passing.
+//! `_register_diagnostics`). The I2C parts are probed on their bus owners (crate::owner), the SPI IMU on the control
+//! thread; the separation switch, the bluetooth stub and the recorder's flash ring here, on the executor. `verify`
+//! answers the hardware `pass` and, apart, plan B's flight-readiness verdict over the config (controller::readiness).
 
 use std::collections::BTreeMap;
 
@@ -13,9 +13,14 @@ use serde_json::json;
 
 use super::{Code, Context, Fault, Reply};
 
-/// The I2C parts probed on both ports' owners, the one named or every one, in port order (plan B's
-/// `Inspector.probe_all` over the device tasks), and why an owner did not answer, under its port's name.
-fn probe_parts(name: Option<&str>) -> (Vec<crate::owner::Verdict>, Vec<(&'static str, String)>) {
+/// The parts with a self-test, the one named or every one (plan B's `Inspector.probe_all` over its objects): the SPI
+/// IMU, the separation switch, the I2C parts on both ports' owners in port order, the bluetooth stubs and the
+/// recorder's flash ring (the ring gate); and why a thread did not answer, under its name. `table` is the device table
+/// the stubs are found in.
+fn probe_parts(
+    table: &'static controller::Table<'static>,
+    name: Option<&str>,
+) -> (Vec<crate::owner::Verdict>, Vec<(&'static str, String)>) {
     let mut verdicts = Vec::new();
     let mut errors = Vec::new();
     // the SPI IMU, on the control thread (SPI2's owner): asked only when it is the one named, or for all
@@ -50,14 +55,27 @@ fn probe_parts(name: Option<&str>) -> (Vec<crate::owner::Verdict>, Vec<(&'static
             }
         }
     }
+    // the bluetooth stubs: plan B's probe on a board with no BLE radio, which passes (bluetooth.py:20-31)
+    for entry in table.entries().iter().filter(|entry| {
+        entry.active() && entry.implementation == "bluetooth" && name.is_none_or(|name| name == entry.name)
+    }) {
+        log::info!("{} :: probe: ble radio ...", entry.name);
+        log::info!("{} :: probe: ble radio ok (active=None)", entry.name);
+        verdicts.push((entry.name, None));
+    }
+    // the recorder's object, whenever a recorder runs
+    if name.is_none_or(|name| name == crate::recorder::NAME)
+        && let Some(verdict) = crate::recorder::probe()
+    {
+        verdicts.push((crate::recorder::NAME, verdict));
+    }
     (verdicts, errors)
 }
 
 /// `probe [name|all]`: {name: null | problem} for the objects with a self-test, as plan B answers it
-/// (cc_client.py:729-780). `probe all` lists every device that came up (null, or its crash) and every one that never
-/// did (its failure line), and, when there are alternatives, their not-fitted lines in a second map; `probe
-/// <alternative>` answers null for it, then that map. The SPI LSM6DSO32's probe waits for SPI2's owner (M6): `probe
-/// all` lists it as up, `probe imu_lsm6dso32` says so.
+/// (cc_client.py:729-780). `probe all` lists every device that came up (null, or its crash), every one that never
+/// did (its failure line) and the recorder (its ring gate), and, when there are alternatives, their not-fitted lines in
+/// a second map; `probe <alternative>` answers null for it, then that map.
 pub fn probe(message: &Message, context: &mut Context) -> Reply {
     let table = context.devices;
     let target = message.args.first().map_or("all", String::as_str);
@@ -65,7 +83,7 @@ pub fn probe(message: &Message, context: &mut Context) -> Reply {
     if target == "all" {
         let mut results: BTreeMap<&str, Option<String>> = BTreeMap::new();
         results.insert("mission", probe_mission(context));
-        let (verdicts, errors) = probe_parts(None);
+        let (verdicts, errors) = probe_parts(table, None);
         for (name, verdict) in verdicts {
             results.insert(name, table.probed(name, verdict.as_deref()));
         }
@@ -92,15 +110,18 @@ pub fn probe(message: &Message, context: &mut Context) -> Reply {
         return super::ok_json(&json!({"mission": probe_mission(context)}));
     }
     let entry = table.find(target);
-    let (verdicts, errors) = if entry.is_some_and(|entry| entry.active()) {
-        probe_parts(Some(target))
+    // an object: a device that came up, or the recorder, which needs no config entry of its own
+    let is_object = entry.is_some_and(|entry| entry.active())
+        || (target == crate::recorder::NAME && crate::recorder::get().is_some());
+    let (verdicts, errors) = if is_object {
+        probe_parts(table, Some(target))
     } else {
         (Vec::new(), Vec::new())
     };
     if let Some((name, verdict)) = verdicts.into_iter().next() {
         return super::ok_json(&json!({name: table.probed(name, verdict.as_deref())}));
     }
-    if entry.is_some_and(|entry| entry.active()) {
+    if is_object {
         if !errors.is_empty() {
             let errors: Vec<String> = errors.into_iter().map(|(_, error)| error).collect();
             return Err(Fault::new(Code::Internal, errors.join("; ")));
@@ -120,10 +141,10 @@ pub fn probe(message: &Message, context: &mut Context) -> Reply {
     Err(Fault::new(Code::BadArguments, format!("no probe for {target}")))
 }
 
-/// The failing probes of the I2C parts, named as plan B's verify and arm name them (`_named`), and an owner that did
-/// not answer, under its port's name.
+/// The failing probes of every part with a self-test and of the recorder's ring, named as plan B's verify and arm name
+/// them (`_named`), and a thread that did not answer, under its name.
 pub fn probe_problems(context: &Context) -> Vec<(&'static str, String)> {
-    let (verdicts, errors) = probe_parts(None);
+    let (verdicts, errors) = probe_parts(context.devices, None);
     verdicts
         .into_iter()
         .filter_map(|(name, verdict)| Some((name, context.devices.probed(name, Some(&verdict?))?)))
@@ -131,12 +152,13 @@ pub fn probe_problems(context: &Context) -> Vec<(&'static str, String)> {
         .collect()
 }
 
-/// `verify`: the pre-flight check -- devices, problems, and the flight-readiness verdict. Never passes until the
-/// flight loop exists.
+/// `verify`: the pre-flight check (plan B cc_client.py:782-845) -- every device's line; the problems: the failures (an
+/// entry the firmware cannot run yet included), the stage problem, and in SETTING the probe sweep with the mission's
+/// and the ring gate's (elsewhere `probe: not run`); `pass` when there is none; and apart from them the config's
+/// flight-readiness verdict (`ready`, `readiness`), which bench and HITL sessions trip on purpose.
 pub fn verify(_message: &Message, context: &mut Context) -> Reply {
     let devices = context.devices;
     let mut problems: BTreeMap<&str, String> = devices.failures().into_iter().collect();
-    problems.insert("flight", super::control::NOT_PORTED.into());
     let flight = crate::status::FLIGHT.load();
     if let Some(problem) = flight.stage_problem() {
         problems.insert("stage", problem.to_string());
@@ -152,13 +174,18 @@ pub fn verify(_message: &Message, context: &mut Context) -> Reply {
             problems.extend(probe_problems(context));
         }
     }
-    let readiness = json!({"flight": "not ported yet: fins hold neutral -- ballistic"});
+    let mission = &context.mission;
+    let readiness = controller::readiness(
+        &context.config.document,
+        mission.zone.is_some(),
+        !mission.sites.is_empty(),
+    );
     super::ok_json(&json!({
         "pass": problems.is_empty(),
         "devices": devices.devices().into_iter().collect::<BTreeMap<_, _>>(),
         "problems": problems,
         "alternatives": devices.alternatives().into_iter().collect::<BTreeMap<_, _>>(),
-        "ready": false,
+        "ready": readiness.is_empty(),
         "readiness": readiness,
     }))
 }

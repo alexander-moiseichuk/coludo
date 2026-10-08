@@ -58,12 +58,13 @@ pub enum Kind {
     Unknown,
 }
 
-/// Implementations the firmware runs natively: the recorder, the CC link, Wi-Fi, the supervisor's health and the
-/// camera.
-const NATIVE: [&str; 5] = ["recorder", "cc", "wifi", "health", "ov5647"];
+/// Implementations the firmware runs natively: the recorder, the CC link, Wi-Fi, the supervisor's health, the camera,
+/// and the BLE radio switch, a stub in plan B's no-BLE shape (drivers::bluetooth; its inspect, update and probe are
+/// the commands').
+const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "bluetooth"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 15] = [
+const NOT_PORTED: [&str; 14] = [
     "adxl375",
     "bno055",
     "bmp280",
@@ -77,7 +78,6 @@ const NOT_PORTED: [&str; 15] = [
     "checkpoint",
     "watchdog",
     "flight",
-    "bluetooth",
     "hitl",
 ];
 

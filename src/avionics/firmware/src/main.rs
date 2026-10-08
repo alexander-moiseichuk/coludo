@@ -225,8 +225,17 @@ fn main() -> anyhow::Result<()> {
     link::register_commands();
     if sd_mounted {
         firmware::sd::register_commands();
-        if let Some(camera) = camera {
-            firmware::video::register_commands(board.session.clone(), board.boot_id.unwrap_or(0) as u32, camera);
+        // the camera's one owner: the flight recording by the flight word, and `video start`/`stop` through its
+        // mailbox
+        if let Some(camera) = camera
+            && let Err(error) = firmware::video::start(
+                board.session.clone(),
+                board.boot_id.unwrap_or(0) as u32,
+                camera,
+                &status::FLIGHT,
+            )
+        {
+            log::error!("video :: the video thread did not start, no video this boot: {error}");
         }
     }
     let executor = commands::Executor::start(commands::Context {

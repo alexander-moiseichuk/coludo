@@ -327,8 +327,9 @@ with a space, parsed by the same parser.
   30 s exchange timeout, so keep the window under ~25 s through the hub.
 - **Video has one owner** (M7): `video start` and `video stop` go to the video thread, the only caller of the
   camera's start and stop, and wait for its answer. It also starts the flight recording at `arm` (replacing an
-  operator's recording, logged), stops it at a `disarm` in SETTING, and stops any recording at DONE. The commands'
-  gate is unchanged (SETTING).
+  operator's recording, logged), stops it at a `disarm` in SETTING, and stops any recording at DONE. `video start`
+  stays SETTING-only; `video stop` also runs at DONE and is refused in the air; each answers within 10 s (a busy or
+  silent video thread is answered as such).
 
 `tools/avionics_console.py` is the operator's end on USB:
 - an interactive console with history and tab completion from `help`;

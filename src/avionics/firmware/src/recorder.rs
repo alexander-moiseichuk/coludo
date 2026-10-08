@@ -224,6 +224,10 @@ struct Recording {
 /// The recorder once [`open`] built it.
 static RECORDING: OnceLock<Recording> = OnceLock::new();
 
+/// The recorder's object name (plan B `Recorder.name`): `inspect`, `stats`, `update` and `probe` reach it by it while
+/// a recorder runs, whatever its config entry is called, and its probe lines start with it.
+pub const NAME: &str = "recorder";
+
 /// The microSD card as the ring knows it at boot: mounted, and named by its FAT volume serial (spec "Bring-up", step
 /// 4: the saver hint is trusted only for the card it was saved to).
 #[derive(Clone, Copy, Debug)]
@@ -619,6 +623,10 @@ fn start_eraser(
 /// When newest wins last erased an unsaved block (uptime ms, wrapping), for `ring-full`; the table counts the losses.
 static LOST_MS: AtomicU32 = AtomicU32::new(0);
 
+/// Set as the ring_eraser thread starts, never cleared (its loop runs forever): an eraser that would not open the
+/// ring or spawn only logs, and then the ring gate refuses `arm` and `verify` ([`probe`]).
+static ERASER_RUNNING: AtomicBool = AtomicBool::new(false);
+
 /// The ring_eraser thread: one [`Eraser::erase_step`] after another, forever. A step erases a foreign slot, else a
 /// block the saver passed 100-200 ms ago (the saver's published position, or behind a trusted hint), else, once no
 /// more than ~1 % of the ring is free, the oldest block unsaved (newest wins, pad blocks before flight blocks), each a
@@ -629,6 +637,7 @@ static LOST_MS: AtomicU32 = AtomicU32::new(0);
 /// program nothing meanwhile, past the power-cut bound of spec "The ring_writer"; the eraser, the lowest of the ring
 /// tasks, can wait without harm (the erased reserve lasts ~15 s at the flight rate).
 fn erase(mut eraser: Eraser<'static, Partition>, recorder: &'static Recorder, store: Option<RecorderStore>) {
+    ERASER_RUNNING.store(true, Ordering::Release);
     let _attachment = recorder
         .attach(Producer::Eraser as usize)
         .inspect_err(|error| log::warn!("ring :: the eraser shares the misc ring: {error:?}"))
@@ -1492,6 +1501,32 @@ pub fn inspect_report() -> Option<InspectReport> {
         ring: ring().map(|view| RingReport::new(view, recorder)),
         saver: SaverReport::new(ring(), recorder),
     })
+}
+
+/// The recorder's probe, the ring gate (controller::ring_gate): the flash ring can take a flight once its bring-up
+/// scan has run, its eraser runs and the eraser holds its reserve erased ahead of the writer. Logged as plan B's
+/// recorder probe logs (tasks/recorder.py:30-48): `recorder :: probe: recorder rings ...`, then `probe: rings ok (<the
+/// figures judged>)` or `probe FAILED: recorder rings: <why>`. It walks the block table as `health` does, but never
+/// moves health's backlog trend ([`degraded`]).
+///
+/// Returns: None without a recorder (nothing to probe); else None when the ring can take a flight, or the verdict.
+pub fn probe() -> Option<Option<String>> {
+    let recorder = get()?;
+    log::info!("{NAME} :: probe: recorder rings ...");
+    let figures = ring().map(|view| {
+        let erased_ahead = view.table.figures(recorder.saver_position()).erased_ahead;
+        (erased_ahead, view.table.geometry().reserve_blocks())
+    });
+    let (erased_ahead, reserve_blocks) = figures.unwrap_or_default();
+    let eraser_running = ERASER_RUNNING.load(Ordering::Acquire);
+    let verdict = controller::ring_gate(figures.is_some(), eraser_running, erased_ahead, reserve_blocks);
+    match &verdict {
+        None => log::info!(
+            "{NAME} :: probe: rings ok ({erased_ahead} blocks erased ahead of the writer, the reserve {reserve_blocks})"
+        ),
+        Some(why) => log::warn!("{NAME} :: probe FAILED: {why}"),
+    }
+    Some(verdict)
 }
 
 /// The flash-to-SD backlog's trend from one `health` read to the next, for `saver-behind` (flash_ring's

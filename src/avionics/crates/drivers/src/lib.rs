@@ -36,9 +36,11 @@
 //!  * [`icp10111`] -- the primary barometer: the TDK polynomial, the two-phase measurement, the general call;
 //!  * [`bmp581`] -- the SEN0697's backup barometer;
 //!  * [`bmm350`] -- the SEN0697's magnetometer and its hard/soft-iron calibration;
-//!  * [`sg90`] and [`mg90s`] -- the fin servos' degree-to-pulse map.
+//!  * [`sg90`] and [`mg90s`] -- the fin servos' degree-to-pulse map;
+//!  * [`bluetooth`] -- the BLE radio switch, a stub in plan B's no-BLE shape: the requested state and its `update`.
 
 pub mod axes;
+pub mod bluetooth;
 pub mod bmi323;
 pub mod bmm350;
 pub mod bmp581;

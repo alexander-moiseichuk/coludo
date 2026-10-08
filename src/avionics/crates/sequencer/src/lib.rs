@@ -9,7 +9,9 @@
 //! - [`commons`]: the detector primitives, the leaky dwell and the apogee tracker (src/glider commons.py,
 //!   `dwell_step`/`apogee_step`);
 //! - [`sequencer`]: the stage machine (src/glider tasks/sequencer.py), a pure `step` the control thread runs every
-//!   `period_ms` (20 Hz by default), and its settings, read from the board config.
+//!   `period_ms` (20 Hz by default), and its settings, read from the board config;
+//! - [`video`]: the camera by stage, the rules the firmware's video thread follows from the flight word (new in Rust:
+//!   plan B records no video).
 //!
 //! The machine allocates nothing and reads no clock. The crate is `std` for `f32::sqrt`, which the reason text's
 //! |accel| takes and which `core` lacks on stable Rust, for serde_json, which reads the settings, and for the
@@ -19,6 +21,7 @@ pub mod commons;
 pub mod controller;
 pub mod sequencer;
 pub mod slot;
+pub mod video;
 
 pub use controller::{
     ChangeRefused, Commit, Flight, FlightFlag, FlightWord, FlightWriter, Request, Stage, StageProblem,

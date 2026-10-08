@@ -864,7 +864,9 @@ for these parts.
     disarm in SETTING stops its own flight recording; DONE stops whatever records, without the free-space scan. It
     never starts outside SETTING, so the camera's register traffic on i2c:0 stays pre-flight (§7.1, the shared port 0). A start
     that fails at arm is logged once and not retried before the next arm: a dead camera never blocks arm. The GCL
-    `video start` and `video stop` post to it and wait with a deadline; their gates are unchanged. The supervisor
+    `video start` and `video stop` post to it and wait with a deadline (10 s; a busy or silent thread is answered
+    as such): `video start` stays SETTING-only, while `video stop` also runs at DONE and is refused in the air. A
+    return to SETTING while still armed (the false-launch recovery) starts the flight recording again. The supervisor
     makes no blocking camera call (it feeds the TWDT from M8).
   - **Segments and the preview:** M7b.
   - **Image tuning (done 2026-10-06, components/coludo_video):** the first taster clip was sharp, but
@@ -2015,10 +2017,10 @@ Bus owners run their tables on the same notify:
   recording by the text `stage ->` (`tools/flight_kpi.py:95`, `tools/flight_report.py:81`,
   `tools/flight_video.py:332`), which must stay the stage machine's `<entry> :: stage -> X (reason)`. The hold,
   arm and disarm lines stay in recorder.log, as M6 records them (§6).
-- **The link (M7):** it checks `launched` (§4.1) before every join, hunt and dial; while it is set the link never
-  initiates a connection, and a session still up runs until it drops. The dial is bounded (a 3 s connect timeout:
-  today `TcpStream::connect` has none, `firmware/src/link.rs:120`, and a dead hub would hold it for over a minute),
-  so a dead hub never delays the check. The radio itself is never switched off.
+- **The link (M7):** it checks `launched` (§4.1) before every join, hunt, association and dial; while it is set the
+  link never initiates a connection, and a session still up runs until it drops. The dial is bounded (a 3 s connect
+  timeout in `firmware/src/link.rs` `dial()`: lwIP's 12 SYN retries would otherwise hold a dial to a dead hub for over
+  a minute), so a dead hub never delays the check. The radio itself is never switched off.
 
 ### 4.5 Bring-up order (`main.rs`)
 
@@ -2491,7 +2493,9 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
   range ends it, and at DONE the beacon AP is the only network (M11b). A commit to SETTING or an operator hold
   clears `launched`, so a held board keeps its normal reconnects. Plan B keeps the pad link too, but keys its pause
   on the stage: it stops initiating connections on any airborne stage, an operator hold included, and hunts again
-  at DONE (`drivers/wifi.py:197-200`).
+  at DONE (`drivers/wifi.py:197-200`). A join already waiting for its address when the launch lands finishes that
+  wait (up to 15 s) and is never cancelled, though it is never dialed; plan B abandons the wait and clears the
+  pending attempt (`drivers/wifi.py:255-262`).
 - **The stage machine's record:** `<entry>.csv` (`sequencer.csv`) is durable and never decimated; plan B wrote it
   through the global window (`tasks/sequencer.py:110`) (M7).
 - **The stage machine's clock:** it steps on an exact `period_ms` grid of the uptime clock; plan B sleeps a period,

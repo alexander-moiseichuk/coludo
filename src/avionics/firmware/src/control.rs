@@ -120,7 +120,8 @@ static WORK_MAX_US: AtomicU32 = AtomicU32::new(0);
 /// not start, nothing serves the request slot, and nothing commits to the flight word.
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
-/// The executor's request slot (§4.3, step 4): its `stage` and `disarm` reach the flight word's writer through it.
+/// The executor's request slot (§4.3, step 4): its `stage`, `arm` and `disarm` reach the flight word's writer
+/// through it.
 /// The executor's alone: another requesting thread gets a slot of its own.
 static EXECUTOR_SLOT: RequestSlot = RequestSlot::new();
 
@@ -1009,7 +1010,7 @@ fn serve(requests: &Receiver<Request>, mut imu: Option<&mut Imu>, bus: Option<&S
     }
 }
 
-/// Applies an operator `request` (the executor's `stage`, `disarm`) to the flight word through its one writer, this
+/// Applies an operator `request` (the executor's `stage`, `arm`, `disarm`) to the flight word through its one writer, this
 /// thread: posted to the executor's slot, served at the next tick, withdrawn when not taken in [`REQUEST_DEADLINE`].
 /// While the thread is not running nothing commits, so a request that would change nothing (a disarm of a disarmed
 /// board) is answered with the flight as it stands, at once, and any other is not applied. The executor's alone.

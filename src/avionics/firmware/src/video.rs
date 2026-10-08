@@ -7,9 +7,25 @@
 //! beside the session directories. A card whose videos partition is not mounted (it would not mount, or the table
 //! is unsound) records no video at all, rather than fill the recordings partition the ring_saver needs
 //! (sd::Layout::VideosFailed).
+//!
+//! **One owner, the `video` thread** (core 0, low priority, PSRAM stack), started only when the board config declares
+//! a camera and the card mounts ([`start`]). It is the only caller of `coludo_video_start` and `coludo_video_stop`,
+//! whose C side assumes one caller (its starts and stops never overlap). It looks at the flight word every
+//! [`LOOK_PERIOD`] and follows the camera-by-stage rules (crates/sequencer `video`): armed in SETTING starts the
+//! flight recording, replacing an operator's; a disarm in SETTING stops it; DONE stops whatever records; nothing
+//! starts outside SETTING. The GCL `video start` and `video stop` post to its mailbox and wait for the answer at most
+//! [`ANSWER_DEADLINE`], so a recorder call that never returns cannot hold the CC executor. `video stats` only copies
+//! the counters, on the executor. Video is a utility: none of this blocks `arm` or takes anything from the flight.
 
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SendError, SyncSender, sync_channel};
+use std::time::{Duration, Instant};
+
+use esp_idf_svc::hal::cpu::Core;
+use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::sys;
 use recorder::layout;
+use sequencer::video::{Duty, Owner, Refusal};
+use sequencer::{Flight, FlightWord, Stage};
 
 use crate::buses::i2c;
 use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach, Word};
@@ -62,8 +78,9 @@ impl Camera {
 
 /// What to record.
 pub struct Settings {
-    /// Sensor mode: 1920x1080 (crop) or 1280x960 (binned, full field of view).
+    /// Sensor mode width: 1920 (1080p crop) or 1280 (960p binned, the full field of view).
     pub width: u16,
+    /// Sensor mode height: 1080 or 960.
     pub height: u16,
     /// Frames per second (at most the mode's native 30 / 45).
     pub fps: u8,
@@ -130,11 +147,11 @@ fn configure(
     }
 }
 
-/// Start recording; returns the file's path.
+/// Start recording; returns the file's path. Only the video thread calls it.
 ///
 /// Errors: the card's videos partition is not mounted (no video then, see the module notes), the directory would not
 /// be made, or the recorder would not start.
-pub fn start(session: &str, boot_id: u32, camera: Camera, settings: &Settings) -> anyhow::Result<String> {
+fn start_recording(session: &str, boot_id: u32, camera: Camera, settings: &Settings) -> anyhow::Result<String> {
     anyhow::ensure!(
         sd::layout() != Some(sd::Layout::VideosFailed),
         "the card's videos partition is not mounted: no video, so the recordings partition stays the ring_saver's"
@@ -146,17 +163,25 @@ pub fn start(session: &str, boot_id: u32, camera: Camera, settings: &Settings) -
     let path = format!("{directory}/{uptime}.h264");
     let c_path = std::ffi::CString::new(path.clone())?;
     let config = configure(settings, camera.clock_hz, boot_id, i2c::port0()?, c_path.as_ptr());
-    // SAFETY: the config and the path outlive the call (the recorder copies what it keeps).
+    // SAFETY: the config and the path outlive the call (the recorder copies what it keeps); the video thread is the
+    // only caller, so no start or stop overlaps it.
     sys::esp!(unsafe { sys::coludo_video_start(&config) })?;
     Ok(path)
 }
 
-/// Stop: flush, fsync, close.
-pub fn stop() -> anyhow::Result<()> {
-    // SAFETY: stops the running recorder (an error when none runs).
+/// Stop: flush, fsync, close; then, when `scan`, measure the card's free space and log it. Only the video thread
+/// calls it.
+///
+/// The scan is slow (each volume's lock, and possibly megabytes of FAT), so it is skipped where something waits for
+/// the card: at DONE, where the ring_saver catches up with the flight, and at arm, where the flight recording starts
+/// next.
+fn stop_recording(scan: bool) -> anyhow::Result<()> {
+    // SAFETY: stops the running recorder (an error when none runs); the video thread is the only caller.
     sys::esp!(unsafe { sys::coludo_video_stop() })?;
-    let volumes = sd::measure_free();
-    log::info!("sd :: after the recording: {}", sd::describe(&volumes));
+    if scan {
+        let volumes = sd::measure_free();
+        log::info!("sd :: after the recording: {}", sd::describe(&volumes));
+    }
     Ok(())
 }
 
@@ -208,10 +233,285 @@ const START_PARAMETERS: &[Parameter] = &[
     },
 ];
 
-/// The camera's console commands (the Glider Command Language, crate::gcl), registered when the board config declares
-/// a camera and the card mounts: recording needs both. `session` and `boot_id` name and stamp the files this boot
-/// writes.
-pub fn register_commands(session: String, boot_id: u32, camera: Camera) {
+/// How often the video thread looks at the flight word: an arm starts the flight recording within this, plus the start
+/// itself.
+const LOOK_PERIOD: Duration = Duration::from_millis(250);
+
+/// How long `video start` and `video stop` wait for the video thread's answer. A start (the first one opens the
+/// camera) and a stop (one capture timeout, 1 s, the writer's flush of up to the 2 MB ring, and the free-space scan)
+/// take a few seconds at most. The recorder's own waits are unbounded, so a call that never returns costs the
+/// executor this long, well inside the hub's 30 s.
+const ANSWER_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The orders that may wait for the video thread. The executor posts one at a time and waits for its answer, so a
+/// second finds the mailbox full only behind an order whose asker gave up.
+const MAILBOX_DEPTH: usize = 1;
+
+/// The video thread's priority on core 0: low, beside the panic log's thread and under every ring task. The recorder's
+/// own encode (10) and write (6) tasks keep their priorities: this thread only starts and stops them.
+const PRIORITY: u8 = 2;
+
+/// The video thread's stack (PSRAM): the recorder's start and stop calls, the FAT calls behind the directory and the
+/// free-space scan, the log lines, and the counters' text after a stop.
+const STACK_SIZE: usize = 8 << 10;
+
+/// What the operator asks of the video thread.
+enum Order {
+    /// `video start`, with these settings.
+    Start(Settings),
+    /// `video stop`.
+    Stop,
+}
+
+impl Order {
+    /// The command's words, for the log.
+    fn words(&self) -> &'static str {
+        match self {
+            Order::Start(_) => "video start",
+            Order::Stop => "video stop",
+        }
+    }
+}
+
+/// One order posted to the video thread, and where its answer goes.
+struct Posted {
+    /// What is asked.
+    order: Order,
+    /// When its asker stops waiting: an order taken later is dropped, so nothing runs after the operator was told it
+    /// did not.
+    deadline: Instant,
+    /// The answer, one CC line.
+    answer: SyncSender<String>,
+}
+
+/// Starts the video thread (core 0, priority 2, PSRAM stack), the camera's one owner, and registers the camera's
+/// console commands, which post to it. Call it when the board config declares a camera and the card mounts:
+/// recording needs both. The thread's control block is internal RAM, so after the encoder's reservation
+/// ([`reserve`]).
+///
+/// Args:
+/// * `session` - this boot's session: the videos directory the files go to;
+/// * `boot_id` - this boot's id, stamped into every frame;
+/// * `camera` - the camera the board config declares;
+/// * `flight` - the flight word the flight recording follows.
+///
+/// Errors: the thread would not spawn. Nothing is registered then, so `help` lists no `video`.
+pub fn start(session: String, boot_id: u32, camera: Camera, flight: &'static FlightWord) -> anyhow::Result<()> {
+    let (orders, posted) = sync_channel(MAILBOX_DEPTH);
+    let owner = VideoThread {
+        session,
+        boot_id,
+        camera,
+        flight,
+        recording: None,
+        seen: Flight::GROUND,
+    };
+    ThreadSpawnConfiguration {
+        name: Some(c"video"),
+        stack_size: STACK_SIZE,
+        priority: PRIORITY,
+        pin_to_core: Some(Core::Core0),
+        // stack in PSRAM (avionics-port.md "Internal RAM budget"): a slow core-0 thread that never calls
+        // esp_mmu_map/unmap, the one runtime path that turns the cache off
+        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
+        ..Default::default()
+    }
+    .set()?;
+    let spawned = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(move || owner.run(posted));
+    ThreadSpawnConfiguration::default().set()?;
+    spawned?;
+    register_commands(orders);
+    Ok(())
+}
+
+/// The video thread: the camera's one owner, the recording it runs, and the flight word it follows.
+struct VideoThread {
+    /// This boot's session: the videos directory the files go to.
+    session: String,
+    /// This boot's id, stamped into every frame.
+    boot_id: u32,
+    /// The camera the board config declares.
+    camera: Camera,
+    /// The flight word it follows.
+    flight: &'static FlightWord,
+    /// The running recording: who started it, and its file.
+    recording: Option<(Owner, String)>,
+    /// The flight at the last look.
+    seen: Flight,
+}
+
+impl VideoThread {
+    /// The thread, forever: a look at the flight word every [`LOOK_PERIOD`], and each order as it comes.
+    fn run(mut self, orders: Receiver<Posted>) {
+        let mut next_look = Instant::now();
+        loop {
+            if Instant::now() >= next_look {
+                self.look();
+                next_look = Instant::now() + LOOK_PERIOD;
+            }
+            let wait = next_look.saturating_duration_since(Instant::now());
+            match orders.recv_timeout(wait) {
+                Ok(posted) => self.serve(posted),
+                Err(RecvTimeoutError::Timeout) => {}
+                // the commands withdrawn: only the flight word is left to follow
+                Err(RecvTimeoutError::Disconnected) => std::thread::sleep(wait),
+            }
+        }
+    }
+
+    /// Who started the running recording, None when nothing records.
+    fn owner(&self) -> Option<Owner> {
+        self.recording.as_ref().map(|(owner, _)| *owner)
+    }
+
+    /// One look at the flight word, and the duty it asks for (crates/sequencer `video::look`).
+    fn look(&mut self) {
+        let now = self.flight.load();
+        let duty = sequencer::video::look(self.seen, now, self.owner());
+        self.seen = now;
+        match duty {
+            None => {}
+            Some(Duty::StartFlight) => self.start_flight(),
+            Some(Duty::StopFlight) => {
+                if let Some((_, path)) = self.stop_running(true) {
+                    log::info!("video :: disarmed: the flight recording {path} stopped");
+                }
+            }
+            Some(Duty::StopLanded) => {
+                if let Some((owner, path)) = self.stop_running(false) {
+                    log::info!("video :: done: {} recording {path} stopped", whose(owner));
+                }
+            }
+        }
+    }
+
+    /// Armed in SETTING: the flight recording, after the operator's stops (logged). A start that fails is logged
+    /// here, once: the next try is the next arm, and a dead camera never blocks one.
+    fn start_flight(&mut self) {
+        if let Some((_, path)) = self.stop_running(false) {
+            log::info!("video :: armed: the operator's recording {path} stopped for the flight's");
+        }
+        match start_recording(&self.session, self.boot_id, self.camera, &FLIGHT) {
+            Ok(path) => {
+                log::info!("video :: armed: the flight recording {path}");
+                self.recording = Some((Owner::Flight, path));
+            }
+            Err(error) => log::error!(
+                "video :: armed, but the flight recording did not start: {error} -- not retried before the next arm"
+            ),
+        }
+    }
+
+    /// Stop the running recording, with the free-space scan after it when `scan`.
+    ///
+    /// Returns: who ran it and its file; None when nothing records.
+    fn stop_running(&mut self, scan: bool) -> Option<(Owner, String)> {
+        let recording = self.recording.take()?;
+        if let Err(error) = stop_recording(scan) {
+            log::warn!("video :: stopping {}: {error}", recording.1);
+        }
+        Some(recording)
+    }
+
+    /// Serve one order, unless its asker has stopped waiting: then it is dropped, logged, and never run.
+    fn serve(&mut self, posted: Posted) {
+        let words = posted.order.words();
+        if Instant::now() >= posted.deadline {
+            log::warn!("video :: `{words}` waited past its deadline behind an earlier one: dropped, not run");
+            return;
+        }
+        let answer = match posted.order {
+            Order::Start(settings) => self.operator_start(&settings),
+            Order::Stop => self.operator_stop(),
+        };
+        if let Err(SendError(answer)) = posted.answer.send(answer) {
+            log::warn!("video :: `{words}` finished after its asker stopped waiting: {answer}");
+        }
+    }
+
+    /// `video start`: the operator's recording, in SETTING (the gate is checked again here, since the order may have
+    /// waited) while nothing records.
+    fn operator_start(&mut self, settings: &Settings) -> String {
+        if let Some(refusal) = sequencer::video::start_refused(self.flight.load(), self.owner()) {
+            return refused(refusal);
+        }
+        match start_recording(&self.session, self.boot_id, self.camera, settings) {
+            Ok(path) => {
+                let answer = cc_protocol::build("ok", &["video", &path], &[]);
+                self.recording = Some((Owner::Operator, path));
+                answer
+            }
+            Err(error) => failure(&error.to_string()),
+        }
+    }
+
+    /// `video stop`: whatever records, on the ground; the free-space scan follows in SETTING only.
+    fn operator_stop(&mut self) -> String {
+        let flight = self.flight.load();
+        if let Some(refusal) = sequencer::video::stop_refused(flight, self.owner()) {
+            return refused(refusal);
+        }
+        match self.stop_running(flight.stage == Stage::Setting) {
+            Some((Owner::Flight, path)) => {
+                log::warn!(
+                    "video :: `video stop` stopped the flight recording {path}: no flight video before the next arm"
+                );
+                counters("stopped")
+            }
+            Some((Owner::Operator, _)) => counters("stopped"),
+            None => refused(Refusal::NotStarted),
+        }
+    }
+}
+
+/// Whose recording it is, for the log.
+fn whose(owner: Owner) -> &'static str {
+    match owner {
+        Owner::Flight => "the flight",
+        Owner::Operator => "the operator's",
+    }
+}
+
+/// Post `order` to the video thread and wait for its answer, at most [`ANSWER_DEADLINE`]: the executor's side of
+/// `video start` and `video stop`.
+fn ask(orders: &SyncSender<Posted>, order: Order) -> String {
+    let deadline = Instant::now() + ANSWER_DEADLINE;
+    let (answer, answered) = sync_channel(1);
+    let posted = Posted {
+        order,
+        deadline,
+        answer,
+    };
+    if orders.try_send(posted).is_err() {
+        // full: an order whose asker gave up still waits for a thread busy in the recorder
+        return failure("the video thread is busy with an earlier request: try again");
+    }
+    answered
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .unwrap_or_else(|_| {
+            failure(&format!(
+                "the video thread did not answer within {} s (`video stats` shows whether it records)",
+                ANSWER_DEADLINE.as_secs()
+            ))
+        })
+}
+
+/// A refusal's line: `err <code> <why>`.
+fn refused(refusal: Refusal) -> String {
+    cc_protocol::build("err", &[refusal.code(), &refusal.to_string()], &[])
+}
+
+/// A recorder failure's line: `err video <why>`.
+fn failure(problem: &str) -> String {
+    cc_protocol::build("err", &["video", problem], &[])
+}
+
+/// The camera's console commands (the Glider Command Language, crate::gcl): `video start` and `video stop` post to the
+/// video thread through `orders` and wait for its answer; `video stats` reads the counters itself.
+fn register_commands(orders: SyncSender<Posted>) {
+    let stop_orders = orders.clone();
     gcl::register(vec![
         Command {
             owner: "camera",
@@ -234,24 +534,20 @@ pub fn register_commands(session: String, boot_id: u32, camera: Camera) {
                     bayer: arguments.integer("bayer") as i8,
                     exposure_target: arguments.integer("ae") as u8,
                 };
-                match start(&session, boot_id, camera, &settings) {
-                    Ok(path) => cc_protocol::build("ok", &["video", &path], &[]),
-                    Err(error) => cc_protocol::build("err", &["video", &error.to_string()], &[]),
-                }
+                ask(&orders, Order::Start(settings))
             }),
         },
         Command {
             owner: "camera",
             words: "video stop",
-            about: "stop recording: flush, fsync and close the file; the counters stay readable",
-            gate: Gate::Setting,
+            about: "stop recording, the flight's included: flush, fsync and close the file; the counters stay \
+                    readable. On the ground only: in setting, and at done",
+            // open, so it runs at DONE too; the video thread refuses it in the air
+            gate: Gate::Open,
             reach: Reach::Everywhere,
             parameters: &[],
             bare_words: &[],
-            run: Box::new(|_| match stop() {
-                Ok(()) => counters("stopped"),
-                Err(error) => cc_protocol::build("err", &["video", &error.to_string()], &[]),
-            }),
+            run: Box::new(move |_| ask(&stop_orders, Order::Stop)),
         },
         Command {
             owner: "camera",

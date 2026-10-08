@@ -179,7 +179,5 @@ fn degraded(context: &Context, flight: Flight) -> Vec<String> {
     if mission.site == "fallback" {
         degraded.push("cc-less-fallback".into());
     }
-    // the flight loop is not ported yet: say so, so the dashboard's NOT READY carries a true reason
-    degraded.push("not-flight-capable".into());
     degraded
 }

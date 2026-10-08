@@ -3,9 +3,9 @@
 //! stage / arm / disarm / report -- the stage hold and the actuation gate (src/glider cc_client
 //! `_register_control`, controller.hold/resume/arm/disarm).
 //!
-//! The flight word has one writer, the control thread: `stage` and `disarm` post their request to the executor's
-//! request slot (crate::control::request), which the next tick applies by plan B's Controller rules, and log the
-//! controller's lines from its answer, in plan B's order.
+//! The flight word has one writer, the control thread: `stage`, `arm` and `disarm` post their request to the
+//! executor's request slot (crate::control::request), which the next tick applies by plan B's Controller rules, and
+//! log the controller's lines from its answer, in plan B's order.
 
 use std::collections::BTreeMap;
 
@@ -16,9 +16,6 @@ use serde_json::json;
 use super::{Code, Context, Fault, Reply};
 use crate::logging::CONSOLE_ONLY;
 use crate::status::FLIGHT;
-
-/// What blocks the arm gate until the flight loop is ported (port plan M7): the gate is honest, never open.
-pub const NOT_PORTED: &str = "flight -- not ported yet";
 
 /// `stage` reports the stage; `stage <name>` forces it and holds it (a ground test), except that `stage setting`
 /// is a return to the ground, not a hold; `stage auto` releases a hold. Replies {stage, manual}, the flight as the
@@ -62,12 +59,18 @@ fn applied(request: Request) -> Result<Flight, Fault> {
         .map_err(|problem| Fault::new(Code::Unsafe, problem.to_string()))
 }
 
-/// `arm`: enable actuation only when nothing is wrong; refused with every problem otherwise. Until the flight
-/// loop exists it always refuses, naming that first.
+/// `arm`: enable actuation only when nothing is wrong (plan B cc_client.py:547-576); replies {armed}, the arming the
+/// control thread committed, and logs `controller :: armed`.
+///
+/// Refused, `err unsafe` with every problem as {name: why}: each device that is not up (an entry the firmware cannot
+/// run yet included, plan B's rule), the stage problem (off the ground, or held), and in SETTING each failing probe of
+/// the sweep: the mission, the parts, the recorder's ring gate. A request that waited on the board until the hub may
+/// have given up on its answer is refused under `arm` (controller::stale_arm), checked last, after the sweep. The
+/// control thread checks the stage again when it applies the arm, since a launch may be detected during the sweep:
+/// refused then under `stage` alone.
 pub fn arm(_message: &Message, context: &mut Context) -> Reply {
     // every device that is not up, as plan B's arm lists its controller's failures (cc_client.py:566)
     let mut problems: BTreeMap<&str, String> = context.devices.failures().into_iter().collect();
-    problems.insert("flight", NOT_PORTED.into());
     let flight = FLIGHT.load();
     if let Some(problem) = flight.stage_problem() {
         problems.insert("stage", problem.to_string());
@@ -79,8 +82,21 @@ pub fn arm(_message: &Message, context: &mut Context) -> Reply {
         }
         problems.extend(super::diagnostics::probe_problems(context));
     }
-    let json = serde_json::to_string(&problems).map_err(|error| Fault::new(Code::Internal, error.to_string()))?;
-    Err(Fault::new(Code::Unsafe, json))
+    if let Some(stale) = controller::stale_arm(super::waited()) {
+        problems.insert("arm", stale);
+    }
+    if !problems.is_empty() {
+        return Err(refusal(&problems));
+    }
+    let answer = crate::control::request(Request::Arm).map_err(|unanswered| Fault::new(Code::Internal, unanswered))?;
+    let flight = answer.map_err(|problem| refusal(&BTreeMap::from([("stage", problem.to_string())])))?;
+    log::info!("controller :: armed");
+    super::ok_json(&json!({"armed": flight.armed}))
+}
+
+/// `arm`'s refusal: `err unsafe {name: why}`.
+fn refusal(problems: &BTreeMap<&str, String>) -> Fault {
+    Fault::new(Code::Unsafe, json!(problems).to_string())
 }
 
 /// `disarm`: actuation off -- always allowed, it is how the operator recovers. Replies {armed}, the arming the control

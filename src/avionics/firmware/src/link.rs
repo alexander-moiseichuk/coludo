@@ -1,7 +1,14 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The CC link: join Wi-Fi through the on-board ESP32-C6 (esp_hosted over SDIO), dial the hub, serve its lines,
-//! and re-dial forever (src/glider drivers/wifi.py + tasks/cc_link.py + cc_client.Client).
+//! and re-dial forever (src/glider drivers/wifi.py + tasks/cc_link.py + cc_client.Client) -- until the stage machine
+//! detects the launch.
+//!
+//! **After the launch** (`launched` in the flight word, crate::status) the link never rejoins, hunts or dials: the
+//! glider leaves range, and a session still up runs on until it drops by itself. The radio is never switched off (a
+//! Wi-Fi stop and start through the C6 is an unproven path that can park the link until a reboot). An operator hold
+//! clears `launched`, so a held bench board keeps its normal reconnects. Plan B keyed its hunting pause on the
+//! airborne stage instead (drivers/wifi.py).
 //!
 //! The networks are the board config's (`wifi.networks`, board_config::wifi), tried round-robin with each one's
 //! own retry clock; a password comes from the `creds` store, else the config's fallback. The hub is the config's
@@ -9,7 +16,7 @@
 //! still joins, for the file server).
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 use board_config::{Hub, Network, Wifi};
@@ -20,10 +27,15 @@ use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configura
 
 use crate::commands::Executor;
 use crate::config::Credentials;
+use crate::status::FLIGHT;
 use firmware::gcl::Origin;
 
-/// No line from the hub this long -> it is gone; drop and re-dial. The hub polls every ~2 s.
+/// No line from the hub this long -> it is gone; drop the session (and re-dial, unless launched). The hub polls every
+/// ~2 s.
 const SILENT: Duration = Duration::from_secs(60);
+/// How long a dial waits for the hub to accept. A host that never answers would otherwise hold the dial for over a
+/// minute (lwIP's 12 SYN retries), and the launch check with it.
+const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 /// The link's tick: how often it looks for a network whose retry clock has run out (plan B hunts at 1 s).
 const TICK: Duration = Duration::from_secs(1);
 /// How long a cancelled association settles before the next one starts (plan B `_DISCONNECT_SETTLE_MS`).
@@ -66,6 +78,7 @@ pub fn run(
     }
     let mut rotation = Rotation::new(wifi.networks.len());
     let mut parked = false;
+    let mut gave_up = false;
     loop {
         std::thread::sleep(TICK);
         // SAFETY: reads the flag hosted_no_reboot sets when it parks the failed C6 transport.
@@ -82,6 +95,9 @@ pub fn run(
                 parked = true;
             }
             continue;
+        }
+        if !reconnect_allowed(&mut gave_up) {
+            continue; // launched: no hunt, no join, no dial
         }
         // joined = associated AND holding an address (plan B's isconnected() follows the lease): an AP that
         // associates but never leases must not pin the board -- join() disconnects it and the rotation moves on
@@ -116,12 +132,46 @@ pub fn run(
             }
             Hub::Host(host) => host.clone(),
         };
+        if !reconnect_allowed(&mut gave_up) {
+            // the launch came while the join waited for its address (up to 15 s, never cancelled: plan B abandons
+            // that wait and clears the attempt, drivers/wifi.py connect): no dial
+            continue;
+        }
         log::info!("link :: {address} -> hub {host}:{}", wifi.hub_port);
-        match TcpStream::connect((host.as_str(), wifi.hub_port)).and_then(|stream| serve(stream, executor)) {
+        match dial(&host, wifi.hub_port).and_then(|stream| serve(stream, executor)) {
             Ok(()) => log::info!("link :: hub closed the link"),
             Err(error) => log::warn!("link :: {error}"),
         }
     }
+}
+
+/// Whether the link may rejoin, hunt or dial now, by a fresh snapshot of the flight word
+/// ([`sequencer::Flight::reconnect_allowed`]); the first refusal after a launch logs that the link gives up.
+///
+/// Args: `gave_up` the refusal is already logged: set by a refusal, cleared once reconnects are allowed again (a
+/// hold or `stage setting`), so the next launch logs again.
+///
+/// Returns: false from the stage machine's launch until a hold or a return to SETTING, true otherwise.
+fn reconnect_allowed(gave_up: &mut bool) -> bool {
+    let allowed = FLIGHT.load().reconnect_allowed();
+    if !allowed && !*gave_up {
+        log::info!("link :: launch detected -- no more joins or dials (a session still up runs until it drops)");
+    }
+    *gave_up = !allowed;
+    allowed
+}
+
+/// Dial the hub, bounded by [`DIAL_TIMEOUT`]. `cc_host` may be a name: lwIP resolves it to one address.
+///
+/// Args: `host` the hub's address or name; `port` its port.
+///
+/// Returns: the connected stream; the resolver's or the connect's error, a timeout included.
+fn dial(host: &str, port: u16) -> std::io::Result<TcpStream> {
+    let address = (host, port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("{host} resolves to no address")))?;
+    TcpStream::connect_timeout(&address, DIAL_TIMEOUT)
 }
 
 /// Which network to try next (plan B wifi._next_network): round-robin from the last one tried, over the networks
@@ -156,7 +206,7 @@ impl Rotation {
     }
 }
 
-/// Join one network: configure, start, associate, and wait for an address.
+/// Join one network: configure, start, associate (unless the launch landed meanwhile), and wait for an address.
 fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: &str) -> anyhow::Result<()> {
     let configuration = ClientConfiguration {
         ssid: network
@@ -187,7 +237,7 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: 
     if !wifi.is_started()? {
         wifi.start()?;
         // modem sleep (the C6's default) parks every incoming packet until the next DTIM beacon: ~150 ms per
-        // hub round trip instead of ~2 ms. The pad link wants the latter; in flight Wi-Fi is off anyway.
+        // hub round trip instead of ~2 ms. The pad link wants the latter.
         // SAFETY: a plain driver call on the started Wi-Fi.
         esp_idf_svc::sys::esp!(unsafe {
             esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE)
@@ -197,6 +247,11 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: 
         // the radio's cap in quarter-dBm (MicroPython's txpower): the operator's signal-level knob
         // SAFETY: a plain driver call on the started Wi-Fi.
         esp_idf_svc::sys::esp!(unsafe { esp_idf_svc::sys::esp_wifi_set_max_tx_power((dbm * 4.0) as i8) })?;
+    }
+    // run() checked the launch before the RPCs and the settle above: a launch that landed since gets no association
+    // (the disconnect above already cleared any attempt still pending)
+    if !FLIGHT.load().reconnect_allowed() {
+        anyhow::bail!("launched before the association");
     }
     // the C6 keeps the last network in its own NVS and may already be connecting to it; it then answers
     // ESP_ERR_WIFI_CONN, which here means "in progress", so wait for the address all the same
