@@ -115,6 +115,13 @@ enum Own {
         sectors: u32,
         samples: u32,
     },
+    /// The stage machine (M9): which source holds each slot, the sources past their class's slots, and the veto
+    /// episode edges it reported.
+    Sequencer {
+        sources: String,
+        ignored: Vec<String>,
+        veto_edges: u32,
+    },
     /// The separation switch: its debounced latch.
     Separation { separated: bool },
     /// The checkpoint: the crumb in NVS, this boot's gate, the NVS action owed, and its tallies (crate::warm).
@@ -185,7 +192,6 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 altitude_m: scalar("altitude"),
                 temperature_c: scalar("temperature"),
                 pressure_pa: scalar("pressure"),
-                // on its row, not yet the databoard's (M9 stage 6): null until then
                 elevation_m: scalar("elevation"),
                 change_m_s: scalar("change"),
                 torn,
@@ -201,6 +207,14 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 samples,
             }
         }
+        "sequencer" => match crate::control::sequencer_inspection() {
+            Some((sources, ignored, veto_edges)) => Own::Sequencer {
+                sources,
+                ignored,
+                veto_edges,
+            },
+            None => Own::None {},
+        },
         "separation" => Own::Separation {
             separated: crate::control::separated(),
         },

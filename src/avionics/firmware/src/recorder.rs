@@ -228,6 +228,10 @@ static RECORDING: OnceLock<Recording> = OnceLock::new();
 /// a recorder runs, whatever its config entry is called, and its probe lines start with it.
 pub const NAME: &str = "recorder";
 
+/// The device key `vetoes.csv` is registered under ([`device_stream`]): the stage machine's veto episodes, written by
+/// its entry beside `<name>.csv` (crates/controller `vetoes`).
+pub const VETOES: &str = "vetoes";
+
 /// The microSD card as the ring knows it at boot: mounted, and named by its FAT volume serial (spec "Bring-up", step
 /// 4: the saver hint is trusted only for the card it was saved to).
 #[derive(Clone, Copy, Debug)]
@@ -359,6 +363,15 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool)
         match registry.add(&stream.file, stream.fields, stream.decimate_us, stream.durable) {
             Ok(id) => devices.push((entry.name.to_string(), id)),
             Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", stream.file),
+        }
+        // the stage machine's entry also writes the veto episodes (M9), once whatever the entries
+        if let Some(vetoes) = controller::vetoes(&entry)
+            && !devices.iter().any(|(name, _)| name == VETOES)
+        {
+            match registry.add(&vetoes.file, vetoes.fields, vetoes.decimate_us, vetoes.durable) {
+                Ok(id) => devices.push((VETOES.to_string(), id)),
+                Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", vetoes.file),
+            }
         }
     }
     let buffers = Buffers {

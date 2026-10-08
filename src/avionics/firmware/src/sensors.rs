@@ -157,14 +157,9 @@ impl Run {
         let name = member.name;
         match &member.part {
             Part::Icp10111(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
-            Part::Bmp581(_) => {
-                let mut outputs = Barometer::new(name, topology, entry);
-                // its row carries the elevation, the databoard not yet: the fused single-source machine would read an
-                // ICP -> BMP581 handover's offset as a climb, until the multi-source machine reads each barometer
-                // against itself (M9 stage 6)
-                outputs.elevation = None;
-                Some(Run::Barometer(Box::new(outputs)))
-            }
+            // its elevation on the databoard too: the multi-source machine reads each barometer against itself, so an
+            // ICP -> BMP581 handover is never a climb (M9)
+            Part::Bmp581(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
             Part::Bmm350(_) => Some(Run::Magnetometer(Box::new(Magnetometer::new(name, topology, entry)))),
             Part::Bmi323(_) => Some(Run::Imu(Box::new(Inertial::new(
                 name,
