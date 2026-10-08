@@ -678,6 +678,16 @@ impl Restore {
     pub fn keeps_flight(&self) -> bool {
         matches!(self, Restore::Warm { .. })
     }
+
+    /// Whether this boot restarts the board for no control stall: a warm start after `reset`, this boot's reason, a
+    /// software one. Off the pad only the supervisor's stall restart resets the board in software (`reboot` runs only
+    /// in SETTING, and a failing Wi-Fi link parks rather than restarting), so such a boot is a stall restart's own warm
+    /// start, and a stall that comes back every boot must leave the board stalled rather than cycle it through warm
+    /// starts. A warm start after any other reset (a panic, a watchdog), and every boot that is not warm, restart for a
+    /// stall as usual.
+    pub fn stall_restart_suppressed(&self, reset: ResetReason) -> bool {
+        matches!(self, Restore::Warm { .. }) && reset == ResetReason::Software
+    }
 }
 
 /// Decide the boot from NVS (plan B `restore`, without its logging and GC handling): load the crumb, honour the

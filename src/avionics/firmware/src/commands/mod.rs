@@ -45,7 +45,10 @@ pub struct Context {
     pub board: Arc<Board>,
     /// The `cfg` settings store (board.config, launch.config).
     pub store: crate::config::Store,
-    /// The per-launch mission (src/glider mission.Mission), owned here until a supervisor thread takes it.
+    /// The shared `nvs` partition: the warm start's crumb, which `inspect` reads (crate::warm).
+    pub nvs: esp_idf_svc::nvs::EspDefaultNvsPartition,
+    /// The per-launch mission (src/glider mission.Mission), owned here: its zone and launch point are republished
+    /// for the checkpoint after every line (crate::warm::publish_mission).
     pub mission: Mission,
     /// The board config this boot runs, as the layout rewrote it, how it was chosen, and its validation errors (plan
     /// B config.load, then layout.resolve); frozen for the run.
@@ -326,8 +329,8 @@ impl Executor {
     }
 }
 
-/// The executor thread: one line at a time, forever. It records through its own recorder ring: the session.csv row
-/// of a clock set, and every command's log lines.
+/// The executor thread: one line at a time, forever, the mission republished for the checkpoint after each. It
+/// records through its own recorder ring: the session.csv row of a clock set, and every command's log lines.
 fn serve(requests: Receiver<Request>, mut context: Context) {
     let _attachment = crate::recorder::get().and_then(|recorder| {
         recorder
@@ -338,6 +341,8 @@ fn serve(requests: Receiver<Request>, mut context: Context) {
     for request in requests {
         ARRIVED.with(|arrived| arrived.set(Some(request.arrived)));
         let reply = handle(&request.line, &mut context, request.origin);
+        // whatever the line changed of the mission, before the checkpoint's next freeze can read it
+        crate::warm::publish_mission(&context.mission);
         let _ = request.reply.send(reply); // the caller may have gone (a dropped link); nothing to do
     }
 }

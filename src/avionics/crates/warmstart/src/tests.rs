@@ -551,6 +551,46 @@ fn only_a_warm_start_keeps_the_recorder_s_flight_flag() {
 }
 
 #[test]
+fn a_warm_start_after_a_software_reset_suppresses_the_stall_restart() {
+    let blob = glide().to_json();
+    let mut nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
+    let warm = restore(&mut nvs, true, true, ResetReason::Software, 1030, SENSORS);
+    assert!(warm.keeps_flight(), "a software reset in flight warm-starts");
+    assert!(warm.stall_restart_suppressed(ResetReason::Software));
+}
+
+#[test]
+fn every_other_boot_restarts_for_a_stall() {
+    let blob = glide().to_json();
+    // a warm start after any other reset: a panic warm boot after a stall restart lifts the suppression
+    let mut nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
+    let warm = restore(&mut nvs, true, true, ResetReason::Panic, 1030, SENSORS);
+    assert!(warm.keeps_flight());
+    let others = ResetReason::ALL
+        .into_iter()
+        .filter(|reset| *reset != ResetReason::Software);
+    for reset in others {
+        assert!(!warm.stall_restart_suppressed(reset), "{reset:?}");
+    }
+    // a software reset that boots cold, disabled or refused is no stall restart's warm start
+    let mut empty = Memory::default();
+    let cold = restore(&mut empty, true, true, ResetReason::Software, 1030, SENSORS);
+    assert_eq!(cold, Restore::Cold);
+    let mut toggled_off = Memory::holding(Some(3), Some(blob.as_bytes()));
+    let disabled = restore(&mut toggled_off, false, true, ResetReason::Software, 1030, SENSORS);
+    assert_eq!(disabled, Restore::Disabled);
+    let mut nested = Memory::holding(Some(3), Some(blob.as_bytes()));
+    let refused = restore(&mut nested, true, false, ResetReason::Software, 1030, SENSORS);
+    assert_eq!(refused, Restore::Refused(Reason::Nested));
+    for decision in [cold, disabled, refused] {
+        assert!(
+            !decision.stall_restart_suppressed(ResetReason::Software),
+            "{decision:?}"
+        );
+    }
+}
+
+#[test]
 fn restore_warm_starts_a_passed_gate_and_keeps_the_crumb() {
     let blob = glide().to_json();
     let mut nvs = Memory::holding(Some(3), Some(blob.as_bytes()));

@@ -50,6 +50,10 @@ pub enum Kind {
     Separation,
     /// The stage machine: its settings read from the entry, its steps on the control thread.
     Sequencer,
+    /// The checkpoint: its cadence read from the entry, its passes on the supervisor (crate::warm).
+    Checkpoint,
+    /// The watchdog: its settings read from the entry, the task watchdog and the stall check on the supervisor.
+    Watchdog,
     /// Run natively by the firmware, with nothing to set up: up.
     Native,
     /// A plan B implementation not ported yet: failed with [`NOT_PORTED_YET`].
@@ -64,7 +68,7 @@ pub enum Kind {
 const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "bluetooth"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 14] = [
+const NOT_PORTED: [&str; 12] = [
     "adxl375",
     "bno055",
     "bmp280",
@@ -75,8 +79,6 @@ const NOT_PORTED: [&str; 14] = [
     "field",
     "sg90",
     "mg90s",
-    "checkpoint",
-    "watchdog",
     "flight",
     "hitl",
 ];
@@ -92,6 +94,8 @@ pub fn classify(entry: &Entry) -> Kind {
         },
         "separation" => Kind::Separation,
         "sequencer" => Kind::Sequencer,
+        "checkpoint" => Kind::Checkpoint,
+        "watchdog" => Kind::Watchdog,
         implementation if NATIVE.contains(&implementation) => Kind::Native,
         implementation if NOT_PORTED.contains(&implementation) => Kind::NotPorted,
         _ => Kind::Unknown,

@@ -334,13 +334,15 @@ pub fn session_prefix(document: &Value, boot_id: Option<i32>) -> String {
 ///   `recorder.session` (only to log a label that was ignored) and the board id.
 /// * `boot_id` - this boot's NVS count; None when uncounted.
 /// * `session` - this boot's file prefix ([`session_prefix`]).
+/// * `flight` - whether the bring-up starts in flight: a crumb in BOOSTING..LANDING (crate::warm::peek), a reboot in
+///   flight. The warm start's restore lowers it again unless the boot is warm.
 ///
 /// The config id comes later, with [`start`]: the layout rewrites the config after this, and the id is the
 /// rewritten config's (plan B main.py:120-124).
 ///
 /// Errors: PSRAM would not hold a ring, the prefix is not a session label, the registry refused a
 /// stream, or the recorder opened before. The board runs on without recording then.
-pub fn open(document: &Value, boot_id: Option<i32>, session: &str) -> anyhow::Result<()> {
+pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool) -> anyhow::Result<()> {
     let session = Session::new(session).ok_or_else(|| anyhow::anyhow!("{session:?} is not a session label"))?;
     let mut registry = Registry::new();
     let health = registry
@@ -375,8 +377,6 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str) -> anyhow::Re
         board: board_config::board_id(document),
         firmware: board::FIRMWARE_VERSION.into(),
     };
-    // the crumb that would start the writer in flight comes with the warm start (M8): every boot starts on the pad
-    let flight = false;
     let recorder = Recorder::new(
         registry,
         identity,

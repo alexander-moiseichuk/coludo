@@ -15,6 +15,10 @@
 //!   already up, the sender excepted, and is written as an oops record (§4.8).
 //! - The stage machine (M7): the first enabled `sequencer` entry's settings, read by sequencer::Settings::from_config;
 //!   a key it refuses fails the entry, naming the key, so `arm` refuses. Its steps are the control thread's.
+//! - The checkpoint and the watchdog (M8): the first enabled `checkpoint` entry's cadence and the first enabled
+//!   `watchdog` entry's settings, read by board_config's views, which refuse a key plan B could not run with and so
+//!   fail the entry. Both run on the supervisor (crate::warm, crate::supervisor); a refused watchdog leaves the task
+//!   watchdog at IDF's warn-only default.
 //! - The topology: one Parameter per quantity with a provider that came up, its sources registered in setup order
 //!   (plan B's `provide` at the end of each successful setup), then frozen.
 
@@ -74,6 +78,23 @@ pub struct SequencerMember {
     pub name: &'static str,
     /// Its thresholds and step period, read from the entry.
     pub settings: sequencer::Settings,
+}
+
+/// The checkpoint once its entry came up: the supervisor runs it (crate::warm::Keeping).
+#[derive(Clone, Copy)]
+pub struct CheckpointMember {
+    /// The entry's name: its log lines' (its stream is checkpoint.csv whatever the name).
+    pub name: &'static str,
+    /// The airborne cadence in seconds (`checkpoint_s`, at least 1).
+    pub checkpoint_s: f32,
+}
+
+/// The watchdog once its entry came up: the supervisor runs it (crate::supervisor).
+pub struct WatchdogMember {
+    /// The entry's name: its log lines'.
+    pub name: &'static str,
+    /// The task watchdog's timeout, the stall check's period and the stall limit.
+    pub settings: board_config::Watchdog,
 }
 
 /// The LSM6DSO32's sampling period when its entry gives none, ms (plan B lsm6dso32.py:39 `period_ms` 10).
@@ -245,6 +266,18 @@ pub struct Devices {
     pub separation: Option<SeparationMember>,
     /// The stage machine, when its entry came up.
     pub sequencer: Option<SequencerMember>,
+    /// The checkpoint, when its entry came up.
+    pub checkpoint: Option<CheckpointMember>,
+    /// The watchdog, when its entry came up.
+    pub watchdog: Option<WatchdogMember>,
+}
+
+/// Crashes each entry of `table` named in `names` that came up, with `reason`: the thread that would run it did not
+/// start (the control thread, the supervisor), so nothing runs it this boot, verify lists it and `arm` refuses.
+pub fn crash<'name>(table: &Table, names: impl IntoIterator<Item = Option<&'name str>>, reason: &str) {
+    for entry in names.into_iter().flatten().filter_map(|name| table.find(name)) {
+        entry.crash(reason.to_string());
+    }
 }
 
 /// Brings every enabled entry of `document` (the post-layout config) up, in config order, on the ports main holds on
@@ -259,6 +292,10 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut spi = Vec::new();
     let mut separation = None;
     let mut sequencer = None;
+    let mut checkpoint = None;
+    let mut first_checkpoint = None;
+    let mut watchdog = None;
+    let mut first_watchdog = None;
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -299,6 +336,28 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::Spi => set_up_spi(document, entry, attempts, spi_bus.as_ref(), &mut spi, &mut delay),
             Kind::Separation => set_up_separation(document, entry, attempts, &mut separation),
             Kind::Sequencer => set_up_sequencer(entry, &mut sequencer),
+            Kind::Checkpoint => {
+                let (outcome, came_up) =
+                    set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
+                if let Some(checkpoint_s) = came_up {
+                    checkpoint = Some(CheckpointMember {
+                        name: entry.name,
+                        checkpoint_s,
+                    });
+                }
+                outcome
+            }
+            Kind::Watchdog => {
+                let (outcome, came_up) =
+                    set_up_supervised(entry, &mut first_watchdog, board_config::watchdog(document));
+                if let Some(settings) = came_up {
+                    watchdog = Some(WatchdogMember {
+                        name: entry.name,
+                        settings,
+                    });
+                }
+                outcome
+            }
         };
         outcomes.push((controller::candidate(document, entry), outcome));
     }
@@ -316,7 +375,62 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         spi_bus,
         separation,
         sequencer,
+        checkpoint,
+        watchdog,
     }
+}
+
+/// The bring-up of an entry the supervisor runs once a board (the checkpoint, the watchdog), in one attempt, since a
+/// config read again reads the same. `settings` are board_config's view of the first enabled entry of its
+/// implementation, the first one the bring-up meets, since both walk the directory in order: that entry comes up with
+/// them unless the view refused a key, which fails it naming the key, as plan B's arm refused a task whose setup or
+/// run loop failed on one. A later entry of the same implementation fails, since one runs (plan B would run both, over
+/// one crumb or one task watchdog).
+///
+/// Args:
+/// * `entry` - the entry.
+/// * `first` - the first entry of its implementation the bring-up met, None before it: this one, from here on.
+/// * `settings` - the view's reading: None only for a config with no enabled entry of the implementation, which this
+///   entry contradicts.
+///
+/// Returns: the entry's outcome, and its settings when it came up.
+fn set_up_supervised<T: Copy>(
+    entry: &Entry<'static>,
+    first: &mut Option<&'static str>,
+    settings: Option<Result<T, String>>,
+) -> (Result<(), String>, Option<T>) {
+    let earlier = *first;
+    first.get_or_insert(entry.name);
+    let mut came_up = None;
+    let outcome = controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| match (earlier, &settings) {
+            (Some(earlier), _) => Attempt::Raised {
+                error: format!(
+                    "one {} only: the first, '{earlier}', is the board's",
+                    entry.implementation
+                ),
+                diagnosis: None,
+            },
+            (None, Some(Ok(settings))) => {
+                came_up = Some(*settings);
+                Attempt::Up
+            }
+            (None, Some(Err(refused))) => Attempt::Raised {
+                error: refused.clone(),
+                diagnosis: None,
+            },
+            (None, None) => Attempt::Raised {
+                error: "the board config's view found no enabled entry".to_string(),
+                diagnosis: None,
+            },
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    );
+    (outcome, came_up)
 }
 
 /// The stage machine's bring-up (plan B tasks/sequencer.py `setup`): its settings read from the entry, in one attempt,

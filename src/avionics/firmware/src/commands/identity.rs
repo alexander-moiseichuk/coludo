@@ -3,6 +3,7 @@
 //! whoami / ping / health -- who the board is and how it is doing (src/glider cc_client `_register_identity`).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
 
 use cc_protocol::Message;
 use esp_idf_svc::sys;
@@ -178,6 +179,10 @@ fn degraded(context: &Context, flight: Flight) -> Vec<String> {
     }
     if mission.site == "fallback" {
         degraded.push("cc-less-fallback".into());
+    }
+    if crate::status::WARM_STARTED.load(Ordering::Relaxed) {
+        // a reset in flight resumed the stage the crumb saved (crate::warm)
+        degraded.push("WARM-STARTED (rebooted in flight)".into());
     }
     degraded
 }

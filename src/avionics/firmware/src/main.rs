@@ -2,12 +2,14 @@
 //!
 //! Avionics bring-up (doc/specs/avionics-port.md "Bring-up order"): start the clock, count the boot and load the
 //! board config, which name this boot's records; open the recorder before anything else logs, so every later line is
-//! kept; mount the card (one FAT volume, or two: the recordings and the videos); create the I2C ports and decide the
-//! layout by their scan, which rewrites the config and so names its id; start the ring tasks (the writer, the eraser,
-//! and the saver that copies the flash to the card); then the board, the devices in config order on the lent ports
-//! (each port then goes back to its owner with the parts that came up), the supervisor, the mission, the CC executor
-//! and the UART console, and finally join Wi-Fi through the C6 and serve the CC hub forever. A panic anywhere prints
-//! its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
+//! kept, in flight when NVS holds a crumb in BOOSTING..LANDING; mount the card (one FAT volume, or two: the recordings
+//! and the videos); create the I2C ports and decide the layout by their scan, which rewrites the config and so names
+//! its id; start the ring tasks (the writer, the eraser, and the saver that copies the flash to the card); then the
+//! board, the devices in config order on the lent ports, and the warm start's restore, which may commit a flight
+//! through the flight word's writer and rebase the barometers while main still holds both; then each port goes back to
+//! its owner with the parts that came up, and the control thread takes the writer; the supervisor (health and the
+//! checkpoint and the watchdog), the CC executor and the UART console, and finally join Wi-Fi through the C6 and serve
+//! the CC hub forever. A panic anywhere prints its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
 
 mod board;
 mod clock;
@@ -26,6 +28,7 @@ mod recorder;
 mod sensors;
 mod status;
 mod supervisor;
+mod warm;
 
 use std::sync::Arc;
 
@@ -51,8 +54,10 @@ fn main() -> anyhow::Result<()> {
     // the saved config's id: what `set-config board` answered for it. The boot runs under the post-layout one below
     let saved_config_id = board_config::config_id(&loaded.document);
     let session = recorder::session_prefix(&loaded.document, boot_id);
+    // a crumb in BOOSTING..LANDING: a reboot in flight, whose records go into flight blocks from the first one
+    let in_flight = warm::peek(&partition);
     // storage first: from here on every log line and row is kept, queued in PSRAM until the ring_writer runs
-    if let Err(error) = recorder::open(&loaded.document, boot_id, &session) {
+    if let Err(error) = recorder::open(&loaded.document, boot_id, &session, in_flight) {
         log::error!("Recorder :: not recording this boot: {error}");
     }
     log::info!("config :: {saved_config_id} {}", loaded.source);
@@ -181,7 +186,29 @@ fn main() -> anyhow::Result<()> {
         spi_bus,
         separation,
         sequencer,
+        checkpoint,
+        watchdog,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
+    // the warm start, while the parts and the flight word's one writer are still main's and nothing else runs: a reset
+    // in flight resumes the crumb's stage, its barometers rebased to the pad and the mission's launch point and zone
+    // restored (doc/specs/avionics-port.md "Bring-up order"; crate::warm)
+    let mut writer = status::FLIGHT
+        .writer()
+        .expect("main takes the flight word's writer, once");
+    let range = board_config::max_range_m(&loaded.document).unwrap_or(mission::DEFAULT_MAX_RANGE_M);
+    let mut mission = mission::Mission::load(store.launch().as_deref(), range);
+    let separated = separation.as_ref().is_some_and(|member| member.part.separated());
+    let seed = warm::restore(
+        &partition,
+        &loaded.document,
+        separated,
+        &mut mission,
+        &mut members,
+        &mut writer,
+        in_flight,
+    );
+    // the zone and the launch point the checkpoint freezes at BOOSTING entry; the executor republishes them from here
+    warm::publish_mission(&mission);
     for (parked, port) in lent {
         let id = port.id();
         let parts = std::mem::take(&mut members[usize::from(id)]);
@@ -189,13 +216,14 @@ fn main() -> anyhow::Result<()> {
             log::error!("i2c:{id} :: {error}");
         }
     }
+    // the checkpoint's pad latch stops at half the altitude launch's rise: a launch the accel trigger missed stays in
+    // SETTING through the altitude launch's dwell, and must not latch its pad up the climb
+    let pad_ceiling_m = sequencer.as_ref().map(|member| member.settings.launch_alt_m / 2.0);
     // the flight tick on core 1, which wakes the owners too (§4.2, §4.3), steps the stage machine and owns the flight
-    // word's one writer
-    let writer = status::FLIGHT
-        .writer()
-        .expect("main takes the flight word's writer, once");
+    // word's one writer from here
+    let schedule_hz = board_config::schedule_hz(&loaded.document);
     if let Err(error) = control::start(
-        board_config::schedule_hz(&loaded.document),
+        schedule_hz,
         spi_bus,
         spi,
         separation,
@@ -206,11 +234,21 @@ fn main() -> anyhow::Result<()> {
     ) {
         log::error!("control :: the control thread did not start: {error}");
     }
-    if let Err(error) = supervisor::start(board.clone()) {
-        log::error!("supervisor :: {error}");
+    // the checkpoint keeps no crumb without its NVS namespace: its entry is crashed then, so `arm` refuses. A warm
+    // start's identity seeds it, so the restored flight's crumbs carry the pad and the launch it launched with
+    let keeping = checkpoint.and_then(|member| {
+        warm::Keeping::open(member, &partition, topology, pad_ceiling_m, seed)
+            .inspect_err(|error| {
+                log::error!("{} :: {error}", member.name);
+                devices::crash(table, [Some(member.name)], error);
+            })
+            .ok()
+    });
+    // the stall limit is at least two control ticks
+    let tick_ms = 1000.0 / schedule_hz.max(1) as f32;
+    if let Err(error) = supervisor::start(board.clone(), table, keeping, watchdog, tick_ms) {
+        log::error!("supervisor :: did not start: {error}");
     }
-    let range = board_config::max_range_m(&loaded.document).unwrap_or(mission::DEFAULT_MAX_RANGE_M);
-    let mission = mission::Mission::load(store.launch().as_deref(), range);
     let wifi = board_config::wifi(&loaded.document);
     let credentials = config::Credentials::new(settings);
     // the Glider Command Language: each component registers its own commands as it activates, so `help` lists
@@ -241,6 +279,7 @@ fn main() -> anyhow::Result<()> {
     let executor = commands::Executor::start(commands::Context {
         board: board.clone(),
         store,
+        nvs: partition.clone(),
         mission,
         config: loaded,
         config_id,
@@ -298,23 +337,30 @@ fn log_card(card: recorder::Card, layout: firmware::sd::Layout) {
 }
 
 /// The kinds of a deliberate panic (`panic kind=... confirm`).
-const PANIC_KINDS: &[&str] = &["rust", "fault", "abort", "oops"];
+const PANIC_KINDS: &[&str] = &["rust", "fault", "abort", "oops", "twdt", "stall"];
 
 /// The system's own console command (the Glider Command Language): `panic kind=... confirm`, which proves a panic
-/// reboots the board (and warm-starts it, once that is ported) and lands in the panic log (crate::panics_logger).
+/// reboots the board, warm-starting a flight in the air (crate::warm), and lands in the panic log
+/// (crate::panics_logger); and that the supervisor's watchdog resets a board whose supervisor stops feeding the task
+/// watchdog (`twdt`) or whose control thread stalls (`stall`). Open in every stage, for the console alone: it is the
+/// one hands-free reset in GLIDING and at DONE (`reboot` runs only in SETTING), and never one the hub can send. `twdt`
+/// and `stall` are refused when nothing would reset the board: a stalled control thread could not even be disarmed.
 fn register_system_commands() {
     firmware::gcl::register(vec![firmware::gcl::Command {
         owner: "system",
         words: "panic",
         about: "panic on purpose and see it in `panic log`: rust (a Rust panic), fault (a store to address 0), abort \
-                (C's abort()) reboot the board; oops records a non-fatal panic and goes on",
-        gate: firmware::gcl::Gate::Setting,
-        reach: firmware::gcl::Reach::Everywhere,
+                (C's abort()) reboot the board; oops records a non-fatal panic and goes on; twdt stops the \
+                supervisor feeding the task watchdog, which panics the board wdt_timeout_ms later (refused unless the \
+                task watchdog is armed); stall stops the control thread, and the supervisor's stall check restarts \
+                the board (refused unless it controls a flight and the check would restart it)",
+        gate: firmware::gcl::Gate::Open,
+        reach: firmware::gcl::Reach::Console,
         parameters: &[firmware::gcl::Parameter {
             name: "kind",
             kind: firmware::gcl::Kind::Choice(PANIC_KINDS),
             default: Some("rust"),
-            about: "rust, fault, abort (each reboots) or oops (does not)",
+            about: "rust, fault, abort, twdt, stall (each resets) or oops (does not)",
         }],
         bare_words: &[firmware::gcl::CONFIRM],
         run: Box::new(|arguments| match arguments.text("kind") {
@@ -332,6 +378,17 @@ fn register_system_commands() {
                 );
                 cc_protocol::build("ok", &["panic", "oops"], &[])
             }
+            "twdt" => match supervisor::starve() {
+                Ok(()) => cc_protocol::build("ok", &["panic", "twdt"], &[]),
+                Err(refusal) => cc_protocol::build("err", &["refused", refusal], &[]),
+            },
+            "stall" => match supervisor::stall_refused() {
+                None => {
+                    control::stall();
+                    cc_protocol::build("ok", &["panic", "stall"], &[])
+                }
+                Some(refusal) => cc_protocol::build("err", &["refused", refusal], &[]),
+            },
             _ => panic!("deliberate panic from a console command"),
         }),
     }]);

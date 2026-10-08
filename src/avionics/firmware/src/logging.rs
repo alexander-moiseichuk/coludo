@@ -20,13 +20,17 @@
 //! write blocks once the UART's transmit buffer fills (115200 baud drains ~11 KB a second, and a CC reply can be
 //! kilobytes), and a blocked control tick ran 4.5 ms late (M6, measured). It goes into a bounded FreeRTOS queue with
 //! a non-blocking send instead, dropped and counted when the queue is full, and a printer thread on core 0 writes it
-//! out. Its recorder.log copy is unchanged: the thread's own ring, lock-free.
+//! out. Its recorder.log copy is unchanged: the thread's own ring, lock-free. The supervisor's lines take the same
+//! way ([`queue_this_task`]): it feeds the task watchdog, and a console write waits out a whole reply (IDF's UART
+//! VFS holds its write lock for a write's whole buffer, and a `tlm` drain can be hundreds of KB, tens of seconds at
+//! 115200 baud), so a line in place would let a healthy board's watchdog fire.
 //!
 //! A line logged to the [`CONSOLE_ONLY`] target reaches the console (and the panic capture) and never recorder.log.
 
 use core::fmt::Write;
 use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 use std::io::Write as _;
+use std::time::{Duration, Instant};
 
 use esp_idf_svc::log::{EspIdfLogFilter, EspIdfLogger};
 use esp_idf_svc::sys;
@@ -49,7 +53,7 @@ pub const CONSOLE_ONLY: &str = "console";
 /// boundary.
 const QUEUED_LINE_BYTES: usize = 200;
 
-/// How many flight-core lines wait for the printer at most (PSRAM: 6.4 KB); a full queue drops the line.
+/// How many queued lines wait for the printer at most (PSRAM: 6.4 KB); a full queue drops the line.
 const QUEUED_LINES: u32 = 32;
 
 /// The printer thread's stack (PSRAM: a slow core-0 thread that never calls esp_mmu_map/unmap).
@@ -59,10 +63,23 @@ const PRINTER_STACK: usize = 4 << 10;
 /// is only the boot, before any flight thread runs).
 static QUEUE: AtomicPtr<sys::QueueDefinition> = AtomicPtr::new(core::ptr::null_mut());
 
-/// Flight-core lines the full queue dropped (their recorder.log copies were kept).
+/// Queued lines the full queue dropped (their recorder.log copies were kept).
 static DROPPED: AtomicU32 = AtomicU32::new(0);
 
-/// Flight-core console lines dropped because the printer's queue was full.
+/// The one core-0 task whose lines go through the printer's queue as the flight core's do, null before
+/// [`queue_this_task`]: the supervisor.
+static QUEUED_TASK: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Lines handed to the printer's queue: counted before each send, and taken back when the queue refuses it.
+static SENT: AtomicU32 = AtomicU32::new(0);
+
+/// Lines the printer wrote out.
+static PRINTED: AtomicU32 = AtomicU32::new(0);
+
+/// How often [`wait_for_printer`] looks.
+const PRINTER_POLL: Duration = Duration::from_millis(2);
+
+/// Queued console lines (the flight core's and the supervisor's) dropped because the printer's queue was full.
 pub fn console_dropped() -> u32 {
     DROPPED.load(Ordering::Relaxed)
 }
@@ -73,6 +90,37 @@ fn current_core() -> usize {
     // SAFETY: reads the hart id CSR, nothing else.
     unsafe { core::arch::asm!("csrr {}, mhartid", out(reg) core) };
     core
+}
+
+/// From now on the calling task's lines reach the console through the printer's queue, never in place: the
+/// supervisor's, which feeds the task watchdog and so must never wait on the console.
+pub fn queue_this_task() {
+    // SAFETY: a plain read of this task's own handle; the supervisor never ends.
+    QUEUED_TASK.store(unsafe { sys::xTaskGetCurrentTaskHandle() }.cast(), Ordering::Relaxed);
+}
+
+/// Whether the calling task's console lines go through `queue` (null before the printer runs): the flight core's,
+/// and the [`queue_this_task`] task's.
+fn queued(queue: sys::QueueHandle_t) -> bool {
+    if queue.is_null() {
+        return false;
+    }
+    if current_core() == FLIGHT_CORE {
+        return true;
+    }
+    // SAFETY: a plain read of this task's own handle.
+    let task = unsafe { sys::xTaskGetCurrentTaskHandle() };
+    task.cast::<core::ffi::c_void>() == QUEUED_TASK.load(Ordering::Relaxed)
+}
+
+/// Waits until the printer wrote out every line queued before this call, for at most `limit`: a line logged right
+/// before a restart then reaches the console. At once without a printer.
+pub fn wait_for_printer(limit: Duration) {
+    let sent = SENT.load(Ordering::Acquire);
+    let started = Instant::now();
+    while (PRINTED.load(Ordering::Acquire).wrapping_sub(sent) as i32) < 0 && started.elapsed() < limit {
+        std::thread::sleep(PRINTER_POLL);
+    }
 }
 
 /// The mark a queued line cut short ends with.
@@ -94,13 +142,16 @@ fn enqueue(queue: sys::QueueHandle_t, line: &str) {
         taken += CUT.len();
     }
     item[..2].copy_from_slice(&(taken as u16).to_le_bytes());
+    // counted first: a wait for the printer that reads it then also waits for this line
+    SENT.fetch_add(1, Ordering::AcqRel);
     // SAFETY: a live queue of QUEUED_LINE_BYTES items; the item is copied in; 0 ticks: never waits.
     if unsafe { sys::xQueueGenericSend(queue, item.as_ptr().cast(), 0, 0) } != 1 {
+        SENT.fetch_sub(1, Ordering::AcqRel);
         DROPPED.fetch_add(1, Ordering::Relaxed);
     }
 }
 
-/// The printer thread (core 0, priority 3): each queued flight-core line to the console, forever.
+/// The printer thread (core 0, priority 3): each queued line to the console, forever.
 fn print(queue: usize) {
     let queue = queue as sys::QueueHandle_t;
     let mut item = [0u8; QUEUED_LINE_BYTES];
@@ -113,6 +164,7 @@ fn print(queue: usize) {
         let mut stdout = std::io::stdout().lock();
         let _ = stdout.write_all(&item[2..2 + length]);
         let _ = stdout.write_all(b"\n");
+        PRINTED.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -156,9 +208,9 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record) {
         let queue = QUEUE.load(Ordering::Acquire);
-        let queued = !queue.is_null() && current_core() == FLIGHT_CORE;
-        // the console filter locks a mutex and IDF's level table: on the flight core the global level decides,
-        // lock-free (the per-target exceptions are for core-0 targets)
+        let queued = queued(queue);
+        // the console filter locks a mutex and IDF's level table: for a queued line the global level decides,
+        // lock-free (the per-target exceptions are for other core-0 targets)
         let enabled = if queued {
             record.level() <= log::max_level()
         } else {
@@ -187,7 +239,7 @@ impl log::Log for Logger {
         let _ = write!(tail, "{level} ({timestamp}) {}: {text}", record.target());
         // SAFETY: the line's bytes, valid for the call; panic_capture copies them.
         unsafe { sys::panic_capture_log(tail.0.as_ptr().cast(), tail.0.len()) };
-        // the same shape is the console's: the printer writes it for the flight core
+        // the same shape is the console's: the printer writes it for a queued line
         if queued {
             enqueue(queue, &tail.0);
         }
@@ -257,9 +309,9 @@ unsafe extern "C" fn idf_line(text: *const core::ffi::c_char, length: usize) -> 
         Ok(line) => line,
         Err(error) => core::str::from_utf8(&line[..error.valid_up_to()]).unwrap_or_default(),
     };
-    // the flight core's console copy goes to the printer: the hook then prints nothing in place
+    // a queued task's console copy goes to the printer: the hook then prints nothing in place
     let queue = QUEUE.load(Ordering::Acquire);
-    let queued = !queue.is_null() && current_core() == FLIGHT_CORE;
+    let queued = queued(queue);
     if queued && !line.is_empty() {
         enqueue(queue, line);
     }

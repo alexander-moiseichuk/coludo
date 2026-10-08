@@ -5,7 +5,10 @@
 //! ring and the ring_saver) when it opened, and every device that came up (plan B registers each task as it comes
 //! up), whose snapshot is plan B's `Task.inspect` -- name, ok, healthy -- and, for the parts the port drives so far,
 //! their own keys read off the databoard (the IMU, the barometer, the separation switch), null once stale. The
-//! bluetooth stub (drivers::bluetooth) adds plan B's `radio`, which `update` changes, and `active`, always null.
+//! bluetooth stub (drivers::bluetooth) adds plan B's `radio`, which `update` changes, and `active`, always null. The
+//! checkpoint adds the crumb NVS holds now, this boot's gate, the NVS action it owes and its tallies (crate::warm);
+//! the watchdog its settings, whether the task watchdog is armed, whether the board controls a flight, the control
+//! tick's age, the longest gaps between feeds and between stall checks, and whether its restart is suppressed.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
@@ -79,6 +82,10 @@ enum Own {
     },
     /// The separation switch: its debounced latch.
     Separation { separated: bool },
+    /// The checkpoint: the crumb in NVS, this boot's gate, the NVS action owed, and its tallies (crate::warm).
+    Checkpoint(crate::warm::Inspection),
+    /// The watchdog: the task watchdog, the stall check and their margins (crate::supervisor).
+    Watchdog(crate::supervisor::Inspection),
     /// The bluetooth stub (plan B bluetooth.py:67-77): the radio state asked for, and the radio's own, always null:
     /// this firmware starts no BLE radio, plan B's answer on a board with none.
     Bluetooth { radio: Value, active: Option<bool> },
@@ -122,6 +129,8 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
         "separation" => Own::Separation {
             separated: crate::control::separated(),
         },
+        "checkpoint" => Own::Checkpoint(crate::warm::inspect(&context.nvs)),
+        "watchdog" => Own::Watchdog(crate::supervisor::inspect()),
         "bluetooth" => Own::Bluetooth {
             radio: with_bluetooth(context, name, |stub| stub.radio().clone()),
             active: None,

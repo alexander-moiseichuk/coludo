@@ -736,6 +736,7 @@ dependencies = [
  "sequencer",
  "serde",
  "serde_json",
+ "warmstart",
 ]
 
 [[package]]

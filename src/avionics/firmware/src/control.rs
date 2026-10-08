@@ -35,6 +35,10 @@
 //! machine) is crashed with "the control thread did not start": nothing reads or steps them this boot, so `arm`
 //! refuses.
 //!
+//! Each tick stores its heartbeat, the uptime in ms as a wrapping u32 (the P4 has no 64-bit atomics), which the
+//! supervisor's stall check reads (crate::supervisor): one Relaxed store, and one Relaxed load of the flag
+//! `panic kind=stall` sets, on which the thread stops for good, so the check is proved on the board.
+//!
 //! The flight word's one writer lives here (M7, crate::status): this thread commits every change of the stage, the
 //! hold, the arming and the launch, between two ticks' work, so no change races a detector. The separation's GLIDING
 //! commits through it, and so do the operator's requests: the executor posts each one to its request slot, which the
@@ -120,6 +124,18 @@ static WORK_MAX_US: AtomicU32 = AtomicU32::new(0);
 /// not start, nothing serves the request slot, and nothing commits to the flight word.
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// The heartbeat the supervisor's stall check reads (controller::Stall): the uptime in ms, as a wrapping u32, of the
+/// latest tick. One Relaxed store a tick.
+static LAST_TICK_MS: AtomicU32 = AtomicU32::new(0);
+
+/// Set (Release) once the first tick has stored [`LAST_TICK_MS`], never cleared: before it the heartbeat means
+/// nothing, and a thread that never ticked is a failed bring-up, not a stall.
+static TICKED: AtomicBool = AtomicBool::new(false);
+
+/// Set by `panic kind=stall`, never cleared: at its next tick the thread stops for good, and the supervisor's stall
+/// check restarts the board. One Relaxed load a tick.
+static STALL: AtomicBool = AtomicBool::new(false);
+
 /// The executor's request slot (§4.3, step 4): its `stage`, `arm` and `disarm` reach the flight word's writer
 /// through it.
 /// The executor's alone: another requesting thread gets a slot of its own.
@@ -188,7 +204,7 @@ const AXIAL: usize = 0;
 
 /// The device name the GNSS publishes `elevation` under (plan B tasks/sequencer.py `_GNSS_SOURCE`): the stage machine
 /// never starts a flight on it (sequencer::Source::Gnss).
-const GNSS_SOURCE: &str = "gnss";
+pub const GNSS_SOURCE: &str = "gnss";
 
 /// Why an entry this thread drives is crashed when the thread or its tick did not start (`verify`, `arm`).
 const NOT_STARTED: &str = "the control thread did not start";
@@ -816,19 +832,11 @@ pub fn start(
     // the default back for the threads spawned after this one
     let reset = ThreadSpawnConfiguration::default().set();
     if spawned.is_err() {
-        not_started(table, driven);
+        crate::devices::crash(table, driven, NOT_STARTED);
     }
     spawned?;
     reset?;
     Ok(())
-}
-
-/// Crashes each entry this thread drives (`driven`: the IMU, the separation switch, the stage machine) with
-/// [`NOT_STARTED`]: nothing reads or steps them this boot, so verify lists them and `arm` refuses.
-fn not_started(table: &Table, driven: [Option<&str>; 3]) {
-    for entry in driven.into_iter().flatten().filter_map(|name| table.find(name)) {
-        entry.crash(NOT_STARTED.to_string());
-    }
 }
 
 /// The control thread: the IMU, the separation switch, the stage machine, the timer, then the tick forever.
@@ -911,7 +919,7 @@ fn run(
             SWITCH.get().map(|(name, _)| *name),
             machine.as_ref().map(|machine| machine.name),
         ];
-        not_started(table, driven);
+        crate::devices::crash(table, driven, NOT_STARTED);
         return;
     }
     SCHEDULE_HZ.store(schedule_hz, Ordering::Relaxed);
@@ -930,12 +938,21 @@ fn run(
         if pending == 0 {
             continue;
         }
+        if STALL.load(Ordering::Relaxed) {
+            stop();
+        }
         if pending > 1 {
             OVERRUNS.fetch_add(pending - 1, Ordering::Relaxed);
         }
+        let first_tick = first_us.is_none();
         let first = *first_us.get_or_insert(now_us);
         ticks += i64::from(pending);
         TICKS.store(ticks as u32, Ordering::Relaxed);
+        // the heartbeat, then (once) the word that vouches for it: the supervisor loads them in the other order
+        LAST_TICK_MS.store((now_us / 1000) as u32, Ordering::Relaxed);
+        if first_tick {
+            TICKED.store(true, Ordering::Release);
+        }
         let late = (now_us - first - (ticks - 1) * period_us).clamp(0, i64::from(u32::MAX)) as u32;
         LATE_LAST_US.store(late, Ordering::Relaxed);
         LATE_MAX_US.fetch_max(late, Ordering::Relaxed);
@@ -962,6 +979,31 @@ fn run(
         WORK_LAST_US.store(work, Ordering::Relaxed);
         WORK_MAX_US.fetch_max(work, Ordering::Relaxed);
     }
+}
+
+/// Stops the control thread for good (`panic kind=stall`), holding nothing: no lock is taken on this path, and the
+/// flight word stays as last committed. The timer goes on waking the bus owners.
+fn stop() -> ! {
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+/// The uptime in ms, as a wrapping u32, of the latest tick ([`ticked`] says whether there was one).
+pub fn last_tick_ms() -> u32 {
+    LAST_TICK_MS.load(Ordering::Relaxed)
+}
+
+/// Whether a tick has stored the heartbeat this boot. Acquire: load it before [`last_tick_ms`], so a check that
+/// straddles the first tick never pairs `true` with the boot's 0 (controller::Stall).
+pub fn ticked() -> bool {
+    TICKED.load(Ordering::Acquire)
+}
+
+/// Stops the control thread at its next tick (`panic kind=stall`): the supervisor's stall check is what restarts the
+/// board. The caller checks first that it will (crate::supervisor::stall_refused).
+pub fn stall() {
+    STALL.store(true, Ordering::Relaxed);
 }
 
 /// Moves the recorder's flight flag as `commit` moves it (sequencer::Commit::flight_flag), at once: a commit whose

@@ -30,6 +30,7 @@ mission.workspace = true
 recorder.workspace = true
 recorder_wire.workspace = true
 sequencer.workspace = true
+warmstart.workspace = true
 esp-idf-svc = "0.53"
 anyhow = "1"
 log = "0.4"
