@@ -52,6 +52,9 @@ pub struct Member {
     pub axes: Axes,
     /// Its data-ready GPIO, when the config wires one (`int_pin`): the BMI323's INT1, counted as evidence (M9).
     pub interrupt: Option<u8>,
+    /// Its read period, ms (`period_ms`), when the config sets one: the SDP810's, the INA226's and the lasers' runs
+    /// take their driver's default otherwise (M10).
+    pub period_ms: Option<u32>,
 }
 
 /// The LSM6DSO32 on SPI2 once it came up: the control thread, SPI2's owner, takes it (crate::control).
@@ -789,6 +792,11 @@ fn set_up_i2c(
             // Part::build refused a malformed key, so the part up has a good one
             axes: sensors::imu_axes(entry).unwrap_or_default(),
             interrupt: board_config::pin(document, entry, "int_pin"),
+            period_ms: entry
+                .fields
+                .get("period_ms")
+                .and_then(Value::as_u64)
+                .map(|period| period.clamp(1, u64::from(u32::MAX)) as u32),
         });
     }
     outcome

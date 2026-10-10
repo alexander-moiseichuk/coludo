@@ -57,6 +57,17 @@ pub const BAROMETER_FIELDS: [&str; 5] = ["altitude", "temperature", "pressure", 
 /// operator calibrates it, then centred and normalised (crates/drivers `bmm350`).
 pub const MAGNETOMETER_FIELDS: [&str; 3] = ["mx", "my", "mz"];
 
+/// The SDP810 pitot's columns (plan B drivers/sdp810.py:164-166): the tared dynamic pressure in Pa x 100, the
+/// airspeed in cm/s and the temperature in degrees C x 100, all integers as plan B pushed them.
+pub const PITOT_FIELDS: [&str; 3] = ["dynamic_pressure", "airspeed_cms", "temperature"];
+
+/// The INA226's columns (plan B drivers/ina226.py:93-95): mV, mA, mW and the over-current ALERT trips since boot.
+pub const POWER_FIELDS: [&str; 4] = ["voltage_mv", "current_ma", "power_mw", "alerts"];
+
+/// The laser rangers' columns (plan B drivers/vl53l1x.py:150, vl53l4cx.py alike): the height above ground in m and
+/// the data-ready edges its read took.
+pub const LASER_FIELDS: [&str; 2] = ["agl", "irq_runs"];
+
 /// The separation switch's columns: plan B's event (`separated` or `nested`, and the port's `blip`) and the stage after
 /// it (drivers/separation.py:57), then the port's `moment`, the uptime (µs) of the first edge of the episode the event
 /// concludes (drivers::separation `Event::moment_us`: for a separation, the separation moment), and `duration`, the µs
@@ -128,6 +139,9 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
         "lsm6dso32" | "bmi323" => (named(), &IMU_FIELDS, false),
         "icp10111" | "bmp581" => (named(), &BAROMETER_FIELDS, false),
         "bmm350" => (named(), &MAGNETOMETER_FIELDS, false),
+        "sdp810" => (named(), &PITOT_FIELDS, false),
+        "ina226" => (named(), &POWER_FIELDS, false),
+        "vl53l1x" | "vl53l4cx" => (named(), &LASER_FIELDS, false),
         "attitude" => (attitude::STREAM.to_string(), &attitude::FIELDS, false),
         "separation" => (SEPARATION_FILE.to_string(), &SEPARATION_FIELDS, true),
         SEQUENCER => (named(), &SEQUENCER_FIELDS, true),
@@ -156,8 +170,8 @@ pub fn vetoes(entry: &Entry) -> Option<Stream> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, MAGNETOMETER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS,
-        Stream, VETOES_FIELDS, stream, vetoes,
+        BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, LASER_FIELDS, MAGNETOMETER_FIELDS, PITOT_FIELDS, POWER_FIELDS,
+        SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, VETOES_FIELDS, stream, vetoes,
     };
     use board_config::{directory, entries};
     use serde_json::{Value, json};
@@ -233,6 +247,10 @@ mod tests {
                 ("imu_bmi323", measured("imu_bmi323.csv", &IMU_FIELDS)),
                 ("mag_bmm350", measured("mag_bmm350.csv", &MAGNETOMETER_FIELDS)),
                 ("baro_bmp581", measured("baro_bmp581.csv", &BAROMETER_FIELDS)),
+                ("airspeed_sdp810", measured("airspeed_sdp810.csv", &PITOT_FIELDS)),
+                ("laser_agl", measured("laser_agl.csv", &LASER_FIELDS)),
+                ("laser_agl_l1x", measured("laser_agl_l1x.csv", &LASER_FIELDS)),
+                ("power_ina226", measured("power_ina226.csv", &POWER_FIELDS)),
                 ("separation", event("separation.csv", &SEPARATION_FIELDS)),
                 ("sequencer", event("sequencer.csv", &SEQUENCER_FIELDS)),
                 ("checkpoint", event("checkpoint.csv", &CHECKPOINT_FIELDS)),
@@ -462,10 +480,27 @@ mod tests {
     }
 
     #[test]
-    fn a_part_the_port_does_not_record_has_no_stream() {
-        for driver in [
-            "adxl375", "bno055", "bmp280", "sdp810", "vl53l4cx", "vl53l1x", "ina226", "atgm336h",
+    fn the_pitot_the_power_monitor_and_the_lasers_write_plan_b_s_columns_never_decimated() {
+        for (driver, fields) in [
+            ("sdp810", &PITOT_FIELDS[..]),
+            ("ina226", &POWER_FIELDS[..]),
+            ("vl53l1x", &LASER_FIELDS[..]),
+            ("vl53l4cx", &LASER_FIELDS[..]),
         ] {
+            let found = only(&sensor("part", driver, Some(json!(100)))).expect(driver);
+            assert_eq!(
+                (found.file.as_str(), found.fields, found.decimate_us, found.durable),
+                ("part.csv", fields, -1, false)
+            );
+        }
+        assert_eq!(PITOT_FIELDS.join(";"), "dynamic_pressure;airspeed_cms;temperature");
+        assert_eq!(POWER_FIELDS.join(";"), "voltage_mv;current_ma;power_mw;alerts");
+        assert_eq!(LASER_FIELDS.join(";"), "agl;irq_runs");
+    }
+
+    #[test]
+    fn a_part_the_port_does_not_record_has_no_stream() {
+        for driver in ["adxl375", "bno055", "bmp280", "atgm336h"] {
             assert_eq!(only(&sensor("part", driver, Some(json!(10)))), None, "{driver}");
         }
         assert_eq!(only(&json!({"sensors": [{"name": "no_implementation"}]})), None);

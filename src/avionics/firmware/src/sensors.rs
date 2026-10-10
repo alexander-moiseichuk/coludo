@@ -146,6 +146,12 @@ pub enum Run {
     Imu(Box<Inertial>),
     /// The magnetometer's channel and stream.
     Magnetometer(Box<Magnetometer>),
+    /// The pitot's channels and stream (M10).
+    Pitot(Box<Pitot>),
+    /// The power monitor's channels and stream (M10).
+    Power(Box<Power>),
+    /// A laser ranger's channel and stream (M10).
+    Ranger(Box<Ranger>),
 }
 
 impl Run {
@@ -163,6 +169,24 @@ impl Run {
             // ICP -> BMP581 handover is never a climb (M9)
             Part::Bmp581(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
             Part::Bmm350(_) => Some(Run::Magnetometer(Box::new(Magnetometer::new(name, topology, entry)))),
+            Part::Sdp810(_) => Some(Run::Pitot(Box::new(Pitot::new(
+                name,
+                member.period_ms.unwrap_or(drivers::sdp810::DEFAULT_PERIOD_MS),
+                topology,
+                entry,
+            )))),
+            Part::Ina226(_) => Some(Run::Power(Box::new(Power::new(
+                name,
+                member.period_ms.unwrap_or(drivers::ina226::DEFAULT_PERIOD_MS),
+                topology,
+                entry,
+            )))),
+            Part::Vl53(_) => Some(Run::Ranger(Box::new(Ranger::new(
+                name,
+                member.period_ms.unwrap_or(drivers::vl53l1x::DEFAULT_PERIOD_MS),
+                topology,
+                entry,
+            )))),
             Part::Bmi323(_) => Some(Run::Imu(Box::new(Inertial::new(
                 name,
                 member.axes,
@@ -174,7 +198,6 @@ impl Run {
                 log::info!("{name} :: no read loop on I2C (SPI only)");
                 None
             }
-            _ => None,
         }
     }
 }
@@ -700,6 +723,388 @@ impl Magnetometer {
     }
 }
 
+/// When a polled run is due: every period, on its own grid, a stalled run starting a new grid (a burst never
+/// follows a gap).
+#[derive(Clone, Copy)]
+struct Due {
+    /// The period, microseconds.
+    period_us: u64,
+    /// When the next read is due, microseconds.
+    next_us: u64,
+}
+
+impl Due {
+    /// Every `period_ms`, the first read at once.
+    fn every(period_ms: u32) -> Due {
+        Due {
+            period_us: u64::from(period_ms.max(1)) * 1000,
+            next_us: 0,
+        }
+    }
+
+    /// Whether a read is due at `now_us`; when it is, the next one is set a period on.
+    fn take(&mut self, now_us: u64) -> bool {
+        if now_us < self.next_us {
+            return false;
+        }
+        self.next_us = (self.next_us + self.period_us).max(now_us + self.period_us / 2);
+        true
+    }
+}
+
+/// A row pushed to a run's stream, the refusal logged once per run of refusals.
+fn record(name: &str, telemetry: &mut Option<Telemetry<'static>>, overflowing: &mut bool, now_us: u64, row: &[Cell]) {
+    let Some(telemetry) = telemetry else {
+        return;
+    };
+    match telemetry.push(now_us, row) {
+        Ok(()) => *overflowing = false,
+        Err(overflow) => {
+            if !*overflowing {
+                log::warn!("{name} :: telemetry {overflow}");
+                *overflowing = true;
+            }
+        }
+    }
+}
+
+/// The pitot's pending calibration in plan B's words (sdp810.calibration, its live reading left out: the text is a
+/// constant on the owner).
+const PITOT_INSTRUCTION: &str = "keep the pitot in STILL AIR -- do NOT blow into it, this captures the zero tare";
+
+/// The pitot's state for `inspect` (plan B sdp810.py inspect), published by its run: the temperature (C x 100), the
+/// scale, the zero offset (Pa x 100), whether a tare is in force, the air density (kg/m^3 x 10000).
+static PITOT_STATE: [AtomicI32; 5] = [const { AtomicI32::new(0) }; 5];
+/// Whether the pitot's state was published at least once (its run exists).
+static PITOT_KNOWN: AtomicBool = AtomicBool::new(false);
+/// A tare the owner captured that the executor has not persisted yet (Pa x 100), and whether one waits: the NVS write
+/// is the executor's ([`persist_pitot_tare`]), never the flight core's.
+static PITOT_TARE: AtomicI32 = AtomicI32::new(0);
+/// Whether [`PITOT_TARE`] waits to be persisted.
+static PITOT_TARE_PENDING: AtomicBool = AtomicBool::new(false);
+
+/// Publishes the pitot's state for `inspect`.
+fn note_pitot(pitot: &Sdp810) {
+    let state = [
+        (pitot.temperature() * 100.0).round() as i32,
+        i32::from(pitot.scale()),
+        pitot.zero_offset(),
+        i32::from(pitot.tared()),
+        (pitot.air_density() * 10_000.0).round() as i32,
+    ];
+    for (published, value) in PITOT_STATE.iter().zip(state) {
+        published.store(value, Ordering::Relaxed);
+    }
+    PITOT_KNOWN.store(true, Ordering::Relaxed);
+}
+
+/// A tare the owner captured, for the executor to persist.
+fn owe_pitot_tare(tare: i32) {
+    PITOT_TARE.store(tare, Ordering::Relaxed);
+    PITOT_TARE_PENDING.store(true, Ordering::Release);
+}
+
+/// Persists the pitot tare the owner captured, if one waits (plan B sdp810._persist_zero: NVS `sdp810_zero`, the
+/// Pa x 100 i32 shared with plan B), on the executor after the owner answered a `calibrate` or an `update`. None when
+/// nothing waited or it persisted, else why it did not (the tare stays in force either way).
+pub fn persist_pitot_tare(partition: &esp_idf_svc::nvs::EspDefaultNvsPartition) -> Option<String> {
+    use warmstart::Nvs;
+    if !PITOT_TARE_PENDING.swap(false, Ordering::Acquire) {
+        return None;
+    }
+    let tare = PITOT_TARE.load(Ordering::Relaxed);
+    let written = crate::warm::ColudoNvs::open(partition)
+        .map_err(|error| error.to_string())
+        .and_then(|mut nvs| {
+            nvs.set_i32(drivers::sdp810::NVS_ZERO_KEY, tare)
+                .and_then(|()| nvs.commit())
+                .map_err(|error| format!("NVS error {:#x}", error.0))
+        });
+    match written {
+        Ok(()) => {
+            log::info!("sdp810 :: tare {:.2} Pa persisted", tare as f32 / 100.0);
+            None
+        }
+        Err(why) => Some(format!("tared but not persisted: {why}")),
+    }
+}
+
+/// What `inspect` shows of the pitot beyond its channels: (temperature C, scale, zero offset Pa, tared, air density);
+/// None before its run published.
+pub fn pitot_inspection() -> Option<(f32, i32, f32, bool, f32)> {
+    PITOT_KNOWN.load(Ordering::Relaxed).then(|| {
+        let [temperature, scale, zero, tared, density] =
+            PITOT_STATE.each_ref().map(|value| value.load(Ordering::Relaxed));
+        (
+            temperature as f32 / 100.0,
+            scale,
+            zero as f32 / 100.0,
+            tared != 0,
+            density as f32 / 10_000.0,
+        )
+    })
+}
+
+/// The SDP810's outputs (M10, plan B sdp810.run): `dynamic_pressure` (Pa) and `airspeed` (m/s), read every
+/// `period_ms` (20: 50 Hz) from the part's continuous mode, a row of plan B's integers per read; a bus failure counts
+/// toward the driver's restart ladder, a CRC reject is only noted.
+pub struct Pitot {
+    /// The `dynamic_pressure` writer.
+    pressure: Option<Writer<'static, f32>>,
+    /// The `airspeed` writer.
+    airspeed: Option<Writer<'static, f32>>,
+    /// Its stream, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// Its table entry, whose `healthy` the run writes.
+    entry: Option<&'static DeviceEntry<'static>>,
+    /// When a read is due.
+    due: Due,
+    /// A read failed and none succeeded since: one log line per run.
+    failing: bool,
+    /// A row was refused and none written since: one log line per run.
+    overflowing: bool,
+}
+
+impl Pitot {
+    /// The outputs of source `name`, read every `period_ms`, writing the health of `entry`.
+    fn new(
+        name: &'static str,
+        period_ms: u32,
+        topology: &'static Topology,
+        entry: Option<&'static DeviceEntry<'static>>,
+    ) -> Pitot {
+        let writer = |quantity: &str| topology.scalar(quantity).and_then(|parameter| parameter.writer(name));
+        Pitot {
+            pressure: writer("dynamic_pressure"),
+            airspeed: writer("airspeed"),
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            entry,
+            due: Due::every(period_ms),
+            failing: false,
+            overflowing: false,
+        }
+    }
+
+    /// One owner wake: when due, a frame read and published, or the failure noted (and the restart's outcome).
+    fn tick(&mut self, name: &str, pitot: &mut Sdp810, port: &mut I2cPort, delay: &mut Delay, now_us: u64) {
+        if !self.due.take(now_us) {
+            return;
+        }
+        match pitot.read(port, delay) {
+            Ok(sample) => {
+                self.failing = false;
+                if let Some(entry) = self.entry {
+                    entry.set_healthy(true);
+                }
+                for (writer, value) in [
+                    (&mut self.pressure, sample.dynamic_pressure),
+                    (&mut self.airspeed, sample.airspeed),
+                ] {
+                    if let Some(writer) = writer {
+                        writer.push(value, now_us);
+                    }
+                }
+                note_pitot(pitot);
+                record(
+                    name,
+                    &mut self.telemetry,
+                    &mut self.overflowing,
+                    now_us,
+                    &sample.row.map(Cell::I32),
+                );
+            }
+            Err(failure) => {
+                if let Some(entry) = self.entry {
+                    entry.set_healthy(false);
+                }
+                if !self.failing {
+                    log::warn!("sdp810 :: read {}", failure.fault);
+                    self.failing = true;
+                }
+                match failure.restart {
+                    Some(Ok(())) => log::warn!(
+                        "sdp810 :: restarted continuous mode after {} failures",
+                        drivers::sdp810::RESTART_AFTER
+                    ),
+                    Some(Err(fault)) => log::warn!("sdp810 :: restart failed: {fault}"),
+                    None => {}
+                }
+            }
+        }
+    }
+}
+
+/// The INA226's latest reading for `inspect` (mV, mA, mW) and whether it has one.
+static POWER_STATE: [AtomicI32; 3] = [const { AtomicI32::new(0) }; 3];
+/// Whether [`POWER_STATE`] holds a reading.
+static POWER_KNOWN: AtomicBool = AtomicBool::new(false);
+
+/// What `inspect` shows of the power monitor (plan B ina226.py inspect): mV, mA, mW and the ALERT trips (0: the
+/// over-current ALERT is counted with the servos, M13); None before a reading.
+pub fn power_inspection() -> Option<([i32; 3], u32)> {
+    POWER_KNOWN
+        .load(Ordering::Relaxed)
+        .then(|| (POWER_STATE.each_ref().map(|value| value.load(Ordering::Relaxed)), 0))
+}
+
+/// The INA226's outputs (M10, plan B ina226.run): `voltage` (mV), `current` (mA) and `power` (mW), read every
+/// `period_ms` (100), a row of plan B's integers per read.
+pub struct Power {
+    /// The `voltage`, `current` and `power` writers.
+    writers: [Option<Writer<'static, f32>>; 3],
+    /// Its stream, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// Its table entry, whose `healthy` the run writes.
+    entry: Option<&'static DeviceEntry<'static>>,
+    /// When a read is due.
+    due: Due,
+    /// A read failed and none succeeded since: one log line per run.
+    failing: bool,
+    /// A row was refused and none written since: one log line per run.
+    overflowing: bool,
+}
+
+impl Power {
+    /// The outputs of source `name`, read every `period_ms`, writing the health of `entry`.
+    fn new(
+        name: &'static str,
+        period_ms: u32,
+        topology: &'static Topology,
+        entry: Option<&'static DeviceEntry<'static>>,
+    ) -> Power {
+        let writer = |quantity: &str| topology.scalar(quantity).and_then(|parameter| parameter.writer(name));
+        Power {
+            writers: [writer("voltage"), writer("current"), writer("power")],
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            entry,
+            due: Due::every(period_ms),
+            failing: false,
+            overflowing: false,
+        }
+    }
+
+    /// One owner wake: when due, a reading published, or the failure noted.
+    fn tick(&mut self, name: &str, monitor: &Ina226, port: &mut I2cPort, now_us: u64) {
+        if !self.due.take(now_us) {
+            return;
+        }
+        match monitor.read(port) {
+            Ok(reading) => {
+                self.failing = false;
+                if let Some(entry) = self.entry {
+                    entry.set_healthy(true);
+                }
+                let values = [reading.voltage_mv, reading.current_ma, reading.power_mw];
+                for (writer, value) in self.writers.iter_mut().zip(values) {
+                    if let Some(writer) = writer {
+                        writer.push(value as f32, now_us);
+                    }
+                }
+                for (published, value) in POWER_STATE.iter().zip(values) {
+                    published.store(value, Ordering::Relaxed);
+                }
+                POWER_KNOWN.store(true, Ordering::Relaxed);
+                let row = [
+                    Cell::I32(values[0]),
+                    Cell::I32(values[1]),
+                    Cell::I32(values[2]),
+                    Cell::I32(0),
+                ];
+                record(name, &mut self.telemetry, &mut self.overflowing, now_us, &row);
+            }
+            Err(fault) => {
+                if let Some(entry) = self.entry {
+                    entry.set_healthy(false);
+                }
+                if !self.failing {
+                    log::warn!("ina226 :: read {fault}");
+                    self.failing = true;
+                }
+            }
+        }
+    }
+}
+
+/// A laser ranger's outputs (M10, plan B vl53l1x.run): `agl` (m), polled every `period_ms` (50), published only for a
+/// waiting, valid range (the data-ready check plan B lacked; an invalid status is read, cleared, never published).
+pub struct Ranger {
+    /// The `agl` writer.
+    agl: Option<Writer<'static, f32>>,
+    /// Its stream, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// Its table entry, whose `healthy` the run writes.
+    entry: Option<&'static DeviceEntry<'static>>,
+    /// When a poll is due.
+    due: Due,
+    /// A read failed and none succeeded since: one log line per run.
+    failing: bool,
+    /// A row was refused and none written since: one log line per run.
+    overflowing: bool,
+}
+
+impl Ranger {
+    /// The outputs of source `name`, polled every `period_ms`, writing the health of `entry`.
+    fn new(
+        name: &'static str,
+        period_ms: u32,
+        topology: &'static Topology,
+        entry: Option<&'static DeviceEntry<'static>>,
+    ) -> Ranger {
+        Ranger {
+            agl: topology.scalar("agl").and_then(|parameter| parameter.writer(name)),
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            entry,
+            due: Due::every(period_ms),
+            failing: false,
+            overflowing: false,
+        }
+    }
+
+    /// One owner wake: when due, a range read and, when valid, published.
+    fn tick(&mut self, name: &str, ranger: &Vl53<Xshut>, port: &mut I2cPort, now_us: u64) {
+        if !self.due.take(now_us) {
+            return;
+        }
+        match ranger.range(port) {
+            Ok(ranging) => {
+                self.failing = false;
+                if let Some(entry) = self.entry {
+                    entry.set_healthy(true);
+                }
+                let Some(agl) = ranging.agl() else {
+                    return;
+                };
+                if let Some(writer) = &mut self.agl {
+                    writer.push(agl, now_us);
+                }
+                // irq_runs: the lasers are polled (no data-ready wire on v1.x), plan B's 0
+                record(
+                    name,
+                    &mut self.telemetry,
+                    &mut self.overflowing,
+                    now_us,
+                    &[Cell::F32(agl), Cell::I32(0)],
+                );
+            }
+            Err(fault) => {
+                if let Some(entry) = self.entry {
+                    entry.set_healthy(false);
+                }
+                if !self.failing {
+                    log::warn!("{name} :: read {fault}");
+                    self.failing = true;
+                }
+            }
+        }
+    }
+}
+
 /// What a part's `calibrate` answers on its owner.
 pub enum Calibrated {
     /// Plan B's answer: None success, else why.
@@ -719,6 +1124,33 @@ pub fn restore_calibrations(
     members: &mut [Vec<crate::devices::Member>; 2],
 ) {
     use warmstart::Nvs;
+    for member in members.iter_mut().flatten() {
+        let Part::Sdp810(pitot) = &mut member.part else {
+            continue;
+        };
+        // the tare in NVS wins over the config's zero_offset_pa (plan B sdp810.setup), so a reboot mid-glide keeps it
+        let stored = crate::warm::ColudoNvs::open(partition)
+            .map_err(|error| error.to_string())
+            .and_then(|mut nvs| {
+                nvs.get_i32(drivers::sdp810::NVS_ZERO_KEY)
+                    .map_err(|error| format!("NVS error {:#x}", error.0))
+            });
+        match stored {
+            Ok(zero) => {
+                pitot.restore_zero(zero);
+                log::info!(
+                    "{} :: zero restored from NVS: {:.2} Pa",
+                    member.name,
+                    zero as f32 / 100.0
+                );
+            }
+            Err(why) => log::info!(
+                "{} :: no saved tare ({why}): the config's zero until a calibrate",
+                member.name
+            ),
+        }
+        note_pitot(pitot);
+    }
     let magnetometers = members
         .iter_mut()
         .flatten()
@@ -971,7 +1403,14 @@ impl Part {
     /// One owner tick for the part named `name` (M6: the ICP-10111's two-phase measurement, plan B's run loop),
     /// publishing through `run`. Returns [`Event::Rearm`] when the part's recovery asks the owner to re-arm the port's
     /// other parts.
-    pub fn tick(&mut self, name: &str, run: &mut Run, port: &mut I2cPort, now_us: u64) -> Option<Event> {
+    pub fn tick(
+        &mut self,
+        name: &str,
+        run: &mut Run,
+        port: &mut I2cPort,
+        delay: &mut Delay,
+        now_us: u64,
+    ) -> Option<Event> {
         match (self, run) {
             (Part::Icp10111(barometer), Run::Barometer(outputs)) => match barometer.poll(port, now_us) {
                 Poll::Waiting | Poll::Issued | Poll::GeneralCall => None,
@@ -1029,6 +1468,18 @@ impl Part {
                 outputs.tick(name, magnetometer, port, now_us);
                 None
             }
+            (Part::Sdp810(pitot), Run::Pitot(outputs)) => {
+                outputs.tick(name, pitot, port, delay, now_us);
+                None
+            }
+            (Part::Ina226(monitor), Run::Power(outputs)) => {
+                outputs.tick(name, monitor, port, now_us);
+                None
+            }
+            (Part::Vl53(ranger), Run::Ranger(outputs)) => {
+                outputs.tick(name, ranger, port, now_us);
+                None
+            }
             _ => None,
         }
     }
@@ -1045,6 +1496,7 @@ impl Part {
     pub fn calibration(&self) -> &'static str {
         match self {
             Part::Icp10111(barometer) => barometer.instruction(),
+            Part::Sdp810(pitot) if !pitot.tared() => PITOT_INSTRUCTION,
             _ => "",
         }
     }
@@ -1071,6 +1523,15 @@ impl Part {
                     None
                 }
                 Err(fault) => Some(format!("ground zero: {fault}")),
+            },
+            Part::Sdp810(pitot) => match pitot.calibrate() {
+                Ok(tare) => {
+                    log::info!("{name} :: calibrated: zero_offset {:.2} Pa", tare as f32 / 100.0);
+                    note_pitot(pitot);
+                    owe_pitot_tare(tare);
+                    None
+                }
+                Err(why) => Some(why.to_string()),
             },
             Part::Bmm350(magnetometer) => match magnetometer.calibrate() {
                 Ok(calibration) => {
@@ -1118,7 +1579,8 @@ impl Part {
                         .altitude
                         .as_ref()
                         .and_then(|writer| writer.recent(window_us, now_us)),
-                    Some(Run::Imu(_) | Run::Magnetometer(_)) | None => None,
+                    Some(Run::Imu(_) | Run::Magnetometer(_) | Run::Pitot(_) | Run::Power(_) | Run::Ranger(_))
+                    | None => None,
                 };
                 barometer
                     .update(properties, fresh)
@@ -1136,8 +1598,27 @@ impl Part {
                     .update(properties, fresh)
                     .map_err(|refusal| refusal.to_string())
             }
+            Part::Sdp810(pitot) => {
+                let update = pitot.update(properties).map_err(|refusal| refusal.to_string())?;
+                note_pitot(pitot);
+                if let Some(tare) = update.persist {
+                    owe_pitot_tare(tare);
+                }
+                Ok(update.changed)
+            }
             _ => Ok(Vec::new()),
         }
+    }
+
+    /// The warm start's pitot tare (the crumb's, Pa): put in force without persisting (a flash write mid-air is not
+    /// wanted). Whether the part is a pitot that took it.
+    pub fn restore_pitot_zero(&mut self, pascal: f32) -> bool {
+        let Part::Sdp810(pitot) = self else {
+            return false;
+        };
+        pitot.set_zero_offset(pascal);
+        note_pitot(pitot);
+        true
     }
 
     /// Whether the part re-zeroes a barometer's ground, as [`rezeroes`] says of its implementation: its `update` and

@@ -274,7 +274,15 @@ fn apply(plan: &ApplyPlan, mission: &mut Mission, members: &mut [Vec<Member>; 2]
         }
     }
     if let Some(zero) = plan.pitot_zero_pa {
-        log::info!("warmstart :: pitot tare {zero} Pa not restored: no pitot runs yet");
+        let restored = members
+            .iter_mut()
+            .flatten()
+            .filter_map(|member| member.part.restore_pitot_zero(zero).then_some(member.name))
+            .next();
+        match restored {
+            Some(name) => log::info!("warmstart :: {name} tare restored: {zero} Pa"),
+            None => log::info!("warmstart :: pitot tare {zero} Pa not restored: no pitot came up"),
+        }
     }
     if let Some(airspeed) = plan.airspeed_ms {
         log::info!("warmstart :: airspeed {airspeed} m/s not seeded: no flight law runs yet");

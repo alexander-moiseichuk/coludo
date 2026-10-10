@@ -74,7 +74,7 @@ struct Health<'a> {
     layout: &'a str,
     /// The board's own GNSS fix, null until there is a fresh one (the GNSS driver lands with port plan M11).
     position: Option<[f64; 2]>,
-    /// The laser height above ground, null unless fresh (the laser lands with port plan M10).
+    /// The laser height above ground, null unless fresh (M10).
     agl: Option<f32>,
     clock: String,
     epoch: i64,
@@ -120,7 +120,12 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         stage: flight.stage.name(),
         layout: &context.layout,
         position: None,
-        agl: None,
+        // plan B cc_client: the laser's AGL when fresh (a stale range-limited value is no AGL)
+        agl: context.topology.scalar("agl").and_then(|agl| {
+            // SAFETY: a plain read of the monotonic timer.
+            agl.read(unsafe { sys::esp_timer_get_time() } as u64)
+                .map(|reading| reading.value)
+        }),
         clock: clock::text(),
         epoch: clock::epoch(),
         // decimal degrees on the wire: f64 at this JSON boundary only (f32 prints 25.514379 as 25.51438)

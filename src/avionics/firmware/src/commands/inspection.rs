@@ -109,6 +109,26 @@ enum Own {
         torn: u32,
         implausible: u32,
     },
+    /// The SDP810 (plan B sdp810.py inspect): its channels' latest, its temperature, scale, zero offset, whether a tare
+    /// is in force, and its q -> v air density.
+    Pitot {
+        dynamic_pressure_pa: Option<f32>,
+        airspeed_ms: Option<f32>,
+        temperature_c: Option<f32>,
+        scale: Option<i32>,
+        zero_offset_pa: Option<f32>,
+        tared: Option<bool>,
+        air_density: Option<f32>,
+    },
+    /// The INA226 (plan B ina226.py inspect): mV, mA, mW and the over-current ALERT trips.
+    Power {
+        voltage_mv: Option<i32>,
+        current_ma: Option<i32>,
+        power_mw: Option<i32>,
+        alerts: u32,
+    },
+    /// A laser ranger (plan B vl53l1x.py inspect): whether its data-ready line is wired, its channel's latest.
+    Ranger { interrupt: bool, agl_m: Option<f32> },
     /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
     /// octants its turn covered and the samples it has seen.
     Magnetometer {
@@ -206,6 +226,31 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 implausible,
             }
         }
+        "sdp810" => {
+            let state = crate::sensors::pitot_inspection();
+            Own::Pitot {
+                dynamic_pressure_pa: scalar("dynamic_pressure"),
+                airspeed_ms: scalar("airspeed"),
+                temperature_c: state.map(|state| state.0),
+                scale: state.map(|state| state.1),
+                zero_offset_pa: state.map(|state| state.2),
+                tared: state.map(|state| state.3),
+                air_density: state.map(|state| state.4),
+            }
+        }
+        "ina226" => {
+            let reading = crate::sensors::power_inspection();
+            Own::Power {
+                voltage_mv: reading.map(|(values, _)| values[0]),
+                current_ma: reading.map(|(values, _)| values[1]),
+                power_mw: reading.map(|(values, _)| values[2]),
+                alerts: reading.map_or(0, |(_, alerts)| alerts),
+            }
+        }
+        "vl53l1x" | "vl53l4cx" => Own::Ranger {
+            interrupt: false,
+            agl_m: scalar("agl"),
+        },
         "bmm350" => {
             let (calibrated, span, sectors, samples) = crate::sensors::magnetometer_inspection();
             Own::Magnetometer {
@@ -301,10 +346,17 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
         "controller" | "databoard" => Vec::new(), // nothing on them is writable
         device if is_bluetooth(context, device) => with_bluetooth(context, device, |stub| stub.update(properties)),
         // a device: the part on its owner (the barometer's ground and rezero); the others change nothing
-        device => crate::owner::update(device, &Value::Object(properties.clone()))
-            .map_err(|error| Fault::new(Code::Internal, error))?
-            .unwrap_or(Ok(Vec::new()))
-            .map_err(|refusal| Fault::new(Code::Refused, refusal))?,
+        device => {
+            let changed = crate::owner::update(device, &Value::Object(properties.clone()))
+                .map_err(|error| Fault::new(Code::Internal, error))?
+                .unwrap_or(Ok(Vec::new()))
+                .map_err(|refusal| Fault::new(Code::Refused, refusal))?;
+            // a tare the update captured (the pitot's `zero`) is persisted here, off the flight core
+            if let Some(why) = crate::sensors::persist_pitot_tare(&context.nvs) {
+                log::warn!("{device} :: {why}");
+            }
+            changed
+        }
     };
     super::ok_json(&json!({"changed": changed}))
 }

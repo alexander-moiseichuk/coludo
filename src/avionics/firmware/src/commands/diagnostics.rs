@@ -232,9 +232,13 @@ pub fn calibrate(message: &Message, context: &mut Context) -> Reply {
         nvs.set_blob(key, blob).map_err(nvs_error)?;
         nvs.commit().map_err(nvs_error)
     };
-    let result = crate::owner::calibrate(target, persist)
+    let mut result = crate::owner::calibrate(target, persist)
         .map_err(|error| Fault::new(Code::Internal, error))?
         .unwrap_or(None);
+    // a tare the owner captured (the pitot's) is persisted here, off the flight core
+    if let (None, Some(why)) = (&result, crate::sensors::persist_pitot_tare(&context.nvs)) {
+        result = Some(why);
+    }
     super::ok_json(&json!({ target.as_str(): result }))
 }
 

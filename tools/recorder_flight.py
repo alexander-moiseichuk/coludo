@@ -99,6 +99,7 @@ _FIELDS: dict = {
     'baro_bmp581': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
     'airspeed_sdp810': ('dynamic_pressure', 'airspeed_cms', 'temperature'),
     'laser_agl': ('agl', 'irq_runs'),
+    'laser_agl_l1x': ('agl', 'irq_runs'),  # the VL53L1X alternate of the same socket (the Rust port records both)
     'health': ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps', 'rescues', 'rescue_ms'),
     'gnss_gga': ('altitude_m', 'elevation_m', 'quality', 'satellites', 'hdop_cd'),
     'gnss_sky': ('in_view', 'used', 'mode', 'cn0_1', 'cn0_2', 'cn0_3', 'cn0_4', 'antenna'),

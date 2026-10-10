@@ -314,7 +314,7 @@ fn run(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, now_us: u6
             let Some(run) = member.run.as_mut() else {
                 continue;
             };
-            if let Some(Event::Rearm) = member.part.tick(member.name, run, port, now_us) {
+            if let Some(Event::Rearm) = member.part.tick(member.name, run, port, delay, now_us) {
                 let name = member.name;
                 let _ = port.take_general_call();
                 let rearmed = rearm(port, members, name, delay);
