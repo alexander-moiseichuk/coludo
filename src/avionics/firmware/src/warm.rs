@@ -22,8 +22,8 @@
 //! launch point from a GNSS fix (no GNSS runs yet, so the zone's centre stands in when the operator set none) and the
 //! pitot tare (no pitot runs yet).
 //!
-//! Not restored yet, each logged once at the restore when a crumb carries it: the pitot tare and the airspeed seed (no
-//! pitot or flight law runs yet), and the ground of a barometer other than the ICP-10111 (none other publishes an
+//! Not restored yet, each logged once at the restore when a crumb carries it: the airspeed seed (no flight law runs
+//! yet; M10 restores the pitot tare), and the ground of a barometer other than the ICP-10111 (none other publishes an
 //! elevation yet). A warm-started flight records no video (the camera starts only when armed in SETTING) and never
 //! rejoins the link (it is launched).
 //!
@@ -450,7 +450,9 @@ impl Keeping {
                 zone,
                 launch_point,
                 fresh_altitude_m: altitude_m,
-                pitot_zero_pa: None,
+                // the pad's calibration, frozen with the rest of the recovery identity (plan B warmstart.py:373-384):
+                // a pitot that runs gives its zero offset, 0.0 Pa a valid tare
+                pitot_zero_pa: crate::sensors::pitot_inspection().map(|(_, _, zero_pa, _, _)| zero_pa),
             }
         };
         let stamp_s = || clock::epoch() - warmstart::UNIX_SECONDS_AT_2000;
