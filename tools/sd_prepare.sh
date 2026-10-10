@@ -4,18 +4,19 @@
 # Prepare a microSD card for a Rust (src/avionics) board, the operator's pre-cook (doc/specs/avionics-port.md "SD and
 # flash file layout", Card preparation). DESTRUCTIVE: everything on the card is gone afterwards.
 #
-#   tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] [--partitions 1|2] <device>
+#   tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--partitions 1|2] <device>
 #
 # What it does, in this order:
 #   1. wipes the card's old signatures and discards the whole card (wipefs, blkdiscard), so its controller knows every
 #      block is free; a reader that cannot pass a discard on (many USB readers) only costs that knowledge, and the
 #      script says so and goes on;
-#   2. writes an MBR with TWO primary partitions, both type 0x0c (FAT32, LBA): partition 1, the recordings, from
-#      4 MiB (the card's usual allocation-unit alignment) for N GiB (--recordings-gib, default 4: ~26 KB/s of text is
-#      ~94 MB an hour); partition 2, the videos, from there up to PERCENT of the card, rounded down to 4 MiB (--use,
-#      25..50, default 50; the default 8 Mbit/s of video is 3.6 GB an hour). --partitions 1 writes ONE partition
-#      instead, the recordings and the videos together over the same area, for comparing the layouts on one card
-#      prepared the same way (the same discard, alignment and cluster size);
+#   2. writes an MBR with TWO primary partitions, both type 0x0c (FAT32, LBA), over PERCENT of the card (--use, 25..100,
+#      default 75), from 4 MiB (the card's usual allocation-unit alignment) and rounded down to 4 MiB, split in two
+#      halves (the operator, 2026-10-10): partition 1, the recordings, the first half; partition 2, the videos, the
+#      rest. The logs use half and the video half: measured -> reported writes every sample (about 50 KB/s of text at
+#      the M9 rates, ~180 MB an hour), the default 8 Mbit/s of video ~3.6 GB an hour. --partitions 1 writes ONE
+#      partition instead, the recordings and the videos together over the same area, for comparing the layouts on one
+#      card prepared the same way (the same discard, alignment and cluster size);
 #   3. formats each FAT32, written in place at the partition's offset in the device itself: partition 1 labelled
 #      METRICS (the only one with --partitions 1), partition 2 VIDEOS, each with a fresh random volume serial, 32 KiB
 #      clusters (fewer when a small partition needs them to stay FAT32);
@@ -41,8 +42,7 @@
 #     in a reader is; a USB, SATA or NVMe disk is not, a USB backup SSD included);
 #   * a card larger than 256 GiB (no card this board uses), or one that holds a mounted filesystem, active swap, or a
 #     mapper/RAID holder on it or on any of its partitions;
-#   * a card too small for the recordings partition and a videos partition of at least 512 MiB (FAT32's least here)
-#     at the share asked;
+#   * a card too small for two halves of at least 512 MiB each (FAT32's least here) at the share asked;
 #   * a confirmation that is not the card's size in MiB as the plan's `card:` line shows it: typing it back means
 #     reading the line that says which card it is (size, transport, model), where typing the device's name back
 #     would only repeat a wrong name;
@@ -55,14 +55,14 @@
 # to a sparse file of its size.
 #
 #   --dry-run            every check and the plan, then exit without writing or asking
-#   --use N              the share of the card to partition, both partitions together, 25..50 percent (default 50)
-#   --recordings-gib N   partition 1's size, the recordings, 1..256 GiB (default 4)
-# Both take plain decimal numbers: a leading zero is refused (the shell's arithmetic would read 010 as octal).
+#   --use N              the share of the card to partition, both partitions together, 25..100 percent (default 75)
+#   --partitions 1|2     two partitions, the recordings and the videos half each (default), or one over the same area
+# --use takes a plain decimal number: a leading zero is refused (the shell's arithmetic would read 010 as octal).
 #
 # Exit codes: 0 done (or a dry run), 1 refused or failed, 2 a usage error. Sourced rather than run (as the test does),
 # it only defines its functions.
 set -euo pipefail
-usage='usage: sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] [--partitions 1|2] <device>'
+usage='usage: sd_prepare.sh [--dry-run] [--use PERCENT] [--partitions 1|2] <device>'
 sector=512
 align=8192                  # 4 MiB in sectors: each partition's start and its end are multiples of it
 smallest=$((512 << 20))     # the smallest partition, bytes
@@ -192,7 +192,7 @@ judge() {
 }
 
 main() {
-    local dry_run=0 use=50 recordings_gib=4 recordings_given=0 partitions=2 device='' tool total end \
+    local dry_run=0 use=75 partitions=2 device='' tool total end \
         recordings_size videos_start videos_size recordings_cluster videos_cluster recordings_serial videos_serial \
         shown videos_shown mebibytes answer planned dump
     while [ $# -gt 0 ]; do
@@ -201,12 +201,6 @@ main() {
             --use)
                 [ $# -ge 2 ] || misuse '--use needs a value'
                 use=$2
-                shift 2
-                ;;
-            --recordings-gib)
-                [ $# -ge 2 ] || misuse '--recordings-gib needs a value'
-                recordings_gib=$2
-                recordings_given=1
                 shift 2
                 ;;
             --partitions)
@@ -226,20 +220,16 @@ main() {
     [ -n "$device" ] || misuse 'name the card: there is no default device'
     # decimal digits with no leading zero: [ -ge ] reads 010 as ten, but $(( )) reads it as octal eight (and 08 not
     # at all), so a leading zero would plan other sizes than the ones checked and shown
-    [[ $use =~ ^[1-9][0-9]*$ ]] && [ "$use" -ge 25 ] && [ "$use" -le 50 ] ||
-        misuse "--use takes 25..50 percent, not $use"
-    [[ $recordings_gib =~ ^[1-9][0-9]*$ ]] && [ "$recordings_gib" -ge 1 ] && [ "$recordings_gib" -le 256 ] ||
-        misuse "--recordings-gib takes 1..256 GiB, not $recordings_gib"
+    [[ $use =~ ^[1-9][0-9]*$ ]] && [ "$use" -ge 25 ] && [ "$use" -le 100 ] ||
+        misuse "--use takes 25..100 percent, not $use"
     [ "$partitions" = 1 ] || [ "$partitions" = 2 ] || misuse "--partitions takes 1 or 2, not $partitions"
-    [ "$partitions" = 2 ] || [ "$recordings_given" = 0 ] ||
-        misuse '--recordings-gib sizes the recordings partition of two: one partition holds everything'
     for tool in sfdisk mkfs.fat od; do
         command -v "$tool" >/dev/null || fail "$tool is not installed (util-linux, dosfstools, coreutils)"
     done
     judge "$device"
 
-    # the plan: the recordings from 4 MiB for the GiB asked, the videos from there up to the share asked, every end
-    # on the 4 MiB grid (a GiB is a multiple of it); with one partition, it alone from 4 MiB up to the share
+    # the plan: the share asked from 4 MiB, split in halves on the 4 MiB grid, the recordings first and the videos the
+    # rest (the operator: the logs half, the video half); with one partition, it alone from 4 MiB up to the share
     total=$((bytes / sector))
     end=$((total * use / 100 / align * align))
     if [ "$partitions" = 1 ]; then
@@ -251,12 +241,13 @@ main() {
         videos_start=$end
         videos_size=0
     else
-        recordings_size=$((recordings_gib << 30 >> 9))
+        recordings_size=$(((end > align ? end - align : 0) / 2 / align * align))
         videos_start=$((align + recordings_size))
-        videos_size=$((end - videos_start))
-        [ $((videos_size * sector)) -ge "$smallest" ] ||
-            fail "$device is too small: $use % of it leaves $((videos_size > 0 ? videos_size * sector >> 20 : 0))" \
-                "MiB for the videos past $recordings_gib GiB of recordings, FAT32 here needs $((smallest >> 20)) MiB"
+        videos_size=$((end > videos_start ? end - videos_start : 0))
+        [ $((recordings_size * sector)) -ge "$smallest" ] && [ $((videos_size * sector)) -ge "$smallest" ] ||
+            fail "$device is too small: $use % of it leaves $((recordings_size * sector >> 20)) MiB for the" \
+                "recordings and $((videos_size * sector >> 20)) MiB for the videos, FAT32 here needs" \
+                "$((smallest >> 20)) MiB each"
     fi
     recordings_cluster=$(clusters_for "$recordings_size")
     videos_cluster=$(clusters_for "$((videos_size > 0 ? videos_size : recordings_size))")

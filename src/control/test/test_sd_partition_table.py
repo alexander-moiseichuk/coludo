@@ -131,7 +131,7 @@ def test_a_prepared_card_has_two() -> None:
     one, or broken, as the board must.
     """
     path = _image('prepared.img', 4 << 30)
-    prepared = subprocess.run([PREPARE, '--recordings-gib', '1', path], input='4096\n', capture_output=True,
+    prepared = subprocess.run([PREPARE, path], input='4096\n', capture_output=True,
                               text=True, timeout=120, cwd=_SCRATCH.name)
     assert prepared.returncode == 0, (prepared.stdout, prepared.stderr)
     dump = subprocess.run(['sfdisk', '--json', path], capture_output=True, text=True, check=True)

@@ -3,9 +3,9 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Host (CPython) test for tools/sd_prepare.sh, the operator's microSD preparation for a Rust board
 (doc/specs/avionics-port.md "SD and flash file layout", Card preparation): discard the card, two primary FAT32
-partitions (METRICS, the recordings, from 4 MiB for --recordings-gib; VIDEOS, the videos, from there up to 25..50 % of
-the card), the rest untouched; or, with --partitions 1 (comparing the layouts), one METRICS partition over the same
-area with the same clusters.
+partitions over --use (25..100 %, default 75) of the card from 4 MiB, split in halves (METRICS, the recordings, the
+first; VIDEOS, the videos, the rest), the rest untouched; or, with --partitions 1 (comparing the layouts), one METRICS
+partition over the same area with the same clusters.
 
 The script destroys whatever it is pointed at, so this test points it ONLY at plain image files in its own temporary
 directory, sparse so that an 8 GiB "card" costs a few MB: no device node is ever named, and _run() refuses any path
@@ -22,8 +22,8 @@ past the partitions (SEEK_DATA), so the junk planted at the card's end was disca
 the spare area. The negatives: a dry run and a wrong or missing confirmation (the device's name included: the
 confirmation is the card's size in MiB) leave the image byte for byte as it was; so does another image put in the
 card's place while the confirmation waits, or the card's growing then; a missing device, a directory, a card too small
-for the recordings and 512 MiB of videos (an 8 GiB card at the defaults among them) and usage errors (a size with a
-leading zero among them, which the shell's arithmetic would read as octal) are refused before anything is written;
+for two halves of 512 MiB and usage errors (a share with a leading zero among them, which the shell's arithmetic would
+read as octal; the retired --recordings-gib) are refused before anything is written;
 and of the block devices, an eMMC or an unknown kind in an MMC slot, a disk that is not removable (a USB backup SSD),
 a partition, a disk over 256 GiB, a mounted partition and one held by a mapper are refused, while an SD card in a slot
 or a removable card in a reader is taken, its identity following the kernel's disk sequence number. Needs util-linux
@@ -137,8 +137,7 @@ def _boot_sector(path: str, start: int) -> bytes:
         return image.read(SECTOR)
 
 
-def _check_prepared(path: str, size: int, use: int, result: subprocess.CompletedProcess, recordings_gib: int,
-                    clusters_kib: tuple) -> None:
+def _check_prepared(path: str, size: int, use: int, result: subprocess.CompletedProcess, clusters_kib: tuple) -> None:
     """
     Check a prepared image: the table, both boot sectors, fsck.fat over each partition, and nothing past them.
 
@@ -147,13 +146,12 @@ def _check_prepared(path: str, size: int, use: int, result: subprocess.Completed
         size - its size, bytes.
         use - the share asked, percent.
         result - the script's run.
-        recordings_gib - partition 1's size asked, GiB.
         clusters_kib - the cluster sizes the two partitions' sizes call for, KiB: (recordings, videos).
     """
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
     assert os.path.getsize(path) == size, 'the card changed size'
     end = size // SECTOR * use // 100 // ALIGN * ALIGN
-    recordings = recordings_gib * GIB // SECTOR
+    recordings = (end - ALIGN) // 2 // ALIGN * ALIGN  # the first half, on the 4 MiB grid
     planned = ((ALIGN, recordings), (ALIGN + recordings, end - ALIGN - recordings))
     partitions = _partitions(path)
     table = [(partition['start'], partition['size'], partition['type']) for partition in partitions]
@@ -190,21 +188,21 @@ def _check_prepared(path: str, size: int, use: int, result: subprocess.Completed
         os.remove(partition)
 
 
-def test_prepares_half_a_card() -> None:
+def test_prepares_three_quarters_of_a_card() -> None:
     """
-    A 16 GiB card at the defaults: 4 GiB of recordings, the videos up to 8 GiB, 32 KiB clusters on both, everything
-    past 8 GiB untouched (and the junk gone).
+    A 16 GiB card at the defaults: 75 % in two halves -- 6140 MiB of recordings, 6144 MiB of videos -- 32 KiB clusters
+    on both, everything past 12 GiB untouched (and the junk gone).
     """
     path = _image('card16.img', 16 * GIB)
     result = _run(path, answer='16384')
-    _check_prepared(path, 16 * GIB, 50, result, 4, (32, 32))
+    _check_prepared(path, 16 * GIB, 75, result, (32, 32))
     assert 'card:      %s (a card image of %d bytes), 16384 MiB' % (path, 16 * GIB) in result.stdout, result.stdout
     assert 'EVERYTHING ON %s IS LOST.' % path in result.stdout, result.stdout
-    assert '1, the recordings: sectors 8192..8396799, 4096 MiB, label METRICS' in result.stdout, result.stdout
-    assert '2, the videos: sectors 8396800..16777215, 4092 MiB, label VIDEOS' in result.stdout, result.stdout
+    assert '1, the recordings: sectors 8192..12582911, 6140 MiB, label METRICS' in result.stdout, result.stdout
+    assert '2, the videos: sectors 12582912..25165823, 6144 MiB, label VIDEOS' in result.stdout, result.stdout
     # prepared again, it is a new card: other volume serials
     again = _run(path, answer='16384')
-    _check_prepared(path, 16 * GIB, 50, again, 4, (32, 32))
+    _check_prepared(path, 16 * GIB, 75, again, (32, 32))
     first, second = (re.search(r'volume serial (\S+) \(the board', run.stdout).group(1) for run in (result, again))
     assert first != second, 'two preparations gave one serial: the board would take the new card for the old one'
 
@@ -217,7 +215,7 @@ def test_prepares_one_partition_over_the_same_area() -> None:
     path = _image('card16one.img', 16 * GIB)
     result = _run('--partitions', '1', path, answer='16384')
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
-    end = 16 * GIB // SECTOR * 50 // 100 // ALIGN * ALIGN
+    end = 16 * GIB // SECTOR * 75 // 100 // ALIGN * ALIGN
     partitions = _partitions(path)
     assert [(partition['start'], partition['size'], partition['type']) for partition in partitions] == \
         [(ALIGN, end - ALIGN, 'c')], partitions
@@ -244,17 +242,16 @@ def test_prepares_one_partition_over_the_same_area() -> None:
     os.remove(partition)
     # the same card prepared with two again: the two-partition layout, as before
     again = _run(path, answer='16384')
-    _check_prepared(path, 16 * GIB, 50, again, 4, (32, 32))
+    _check_prepared(path, 16 * GIB, 75, again, (32, 32))
 
 
 def test_prepares_a_quarter_with_smaller_clusters() -> None:
     """
-    An 8 GiB card at 25 % with 1 GiB of recordings: both partitions about 1 GiB, too few 32 KiB clusters for FAT32,
-    so 8 KiB ones.
+    An 8 GiB card at 25 %: halves of about 1 GiB (1020 and 1024 MiB), too few 32 KiB clusters for FAT32, so 8 KiB ones.
     """
     path = _image('card8.img', 8 * GIB)
-    result = _run('--use', '25', '--recordings-gib', '1', path, answer='8192')
-    _check_prepared(path, 8 * GIB, 25, result, 1, (8, 8))
+    result = _run('--use', '25', path, answer='8192')
+    _check_prepared(path, 8 * GIB, 25, result, (8, 8))
     assert result.stdout.count('clusters of 8 KiB') == 2, result.stdout
 
 
@@ -278,38 +275,32 @@ def test_dry_run_and_refused_confirmations_write_nothing() -> None:
 def test_refusals() -> None:
     """Usage errors exit 2, refusals exit 1, and neither writes anything."""
     path = _image('refused.img', 16 * GIB)
-    small = _image('small.img', 6 * GIB)  # 25 % is 1536 MiB: 4 MiB, 1 GiB of recordings, 508 MiB of videos
-    eight = _image('eight.img', 8 * GIB)  # 50 % is 4 GiB: the default recordings leave no room for the videos
-    before = (_digest(path), _digest(small), _digest(eight))
+    small = _image('small.img', 4 * GIB)  # 25 % is 1024 MiB: 4 MiB, then halves of 508 and 512 MiB
+    tiny = _image('tiny.img', 1 * GIB)  # 75 % is 768 MiB: halves of 380 and 384 MiB
+    before = (_digest(path), _digest(small), _digest(tiny))
     directory = os.path.join(_SCRATCH.name, 'a-directory')
     os.mkdir(directory)
     cases = (
         ((), 2, 'name the card: there is no default device'),
-        (('--use', '24', path), 2, '--use takes 25..50 percent, not 24'),
-        (('--use', '51', path), 2, '--use takes 25..50 percent, not 51'),
-        (('--use', 'half', path), 2, '--use takes 25..50 percent, not half'),
+        (('--use', '24', path), 2, '--use takes 25..100 percent, not 24'),
+        (('--use', '101', path), 2, '--use takes 25..100 percent, not 101'),
+        (('--use', 'half', path), 2, '--use takes 25..100 percent, not half'),
         (('--use',), 2, '--use needs a value'),
-        (('--recordings-gib', '0', path), 2, '--recordings-gib takes 1..256 GiB, not 0'),
-        (('--recordings-gib', '257', path), 2, '--recordings-gib takes 1..256 GiB, not 257'),
-        (('--recordings-gib', 'four', path), 2, '--recordings-gib takes 1..256 GiB, not four'),
-        (('--recordings-gib',), 2, '--recordings-gib needs a value'),
-        # a leading zero: the shell's arithmetic reads it as octal (010 would plan 8 GiB, 08 would not parse)
-        (('--recordings-gib', '010', path), 2, '--recordings-gib takes 1..256 GiB, not 010'),
-        (('--recordings-gib', '08', path), 2, '--recordings-gib takes 1..256 GiB, not 08'),
-        (('--use', '040', path), 2, '--use takes 25..50 percent, not 040'),
+        # a leading zero: the shell's arithmetic reads it as octal (040 would plan 32 %, 08 would not parse)
+        (('--use', '040', path), 2, '--use takes 25..100 percent, not 040'),
+        (('--use', '08', path), 2, '--use takes 25..100 percent, not 08'),
+        # the halves are the operator's split now: the old fixed recordings size is no option
+        (('--recordings-gib', '4', path), 2, 'unknown option --recordings-gib'),
         (('--bogus', path), 2, 'unknown option --bogus'),
         (('--partitions', '3', path), 2, '--partitions takes 1 or 2, not 3'),
         (('--partitions', 'one', path), 2, '--partitions takes 1 or 2, not one'),
         (('--partitions',), 2, '--partitions needs a value'),
-        (('--partitions', '1', '--recordings-gib', '4', path), 2,
-         '--recordings-gib sizes the recordings partition of two'),
         ((path, small), 2, 'one device only'),
         ((os.path.join(_SCRATCH.name, 'no-such-card.img'),), 1, 'neither a block device nor a card image file'),
         ((directory,), 1, 'neither a block device nor a card image file'),
-        (('--use', '25', '--recordings-gib', '1', small), 1,
-         'is too small: 25 % of it leaves 508 MiB for the videos past 1 GiB of recordings'),
-        ((eight,), 1, 'is too small: 50 % of it leaves 0 MiB for the videos past 4 GiB of recordings'),
-        (('--recordings-gib', '12', path), 1, 'is too small: 50 % of it leaves 0 MiB for the videos past 12 GiB'),
+        (('--use', '25', small), 1,
+         'is too small: 25 % of it leaves 508 MiB for the recordings and 512 MiB for the videos'),
+        ((tiny,), 1, 'is too small: 75 % of it leaves 380 MiB for the recordings and 384 MiB for the videos'),
     )
     for arguments, code, reason in cases:
         # the answer that would confirm, should a refusal ever let the run reach the prompt
@@ -317,7 +308,7 @@ def test_refusals() -> None:
         result = _run(*arguments, answer=_mebibytes(target) if os.path.isfile(target) else None)
         assert result.returncode == code, (arguments, result.returncode, result.stdout, result.stderr)
         assert reason in result.stderr, (arguments, reason, result.stderr)
-    assert (_digest(path), _digest(small), _digest(eight)) == before, 'a refused run wrote to a card'
+    assert (_digest(path), _digest(small), _digest(tiny)) == before, 'a refused run wrote to a card'
     assert not os.path.exists(os.path.join(_SCRATCH.name, 'no-such-card.img')), 'a refused run made a file'
 
 
@@ -450,15 +441,15 @@ missing = [tool for tool in ('sfdisk', 'mkfs.fat', 'fsck.fat', 'dd') if shutil.w
 if missing:
     print('note: %s not installed, so sd_prepare.sh is not tested' % ', '.join(missing))
     sys.exit(0)
-test_prepares_half_a_card()
+test_prepares_three_quarters_of_a_card()
 test_prepares_one_partition_over_the_same_area()
 test_prepares_a_quarter_with_smaller_clusters()
 test_dry_run_and_refused_confirmations_write_nothing()
 test_refusals()
 test_a_card_swapped_while_the_confirmation_waits()
 test_devices_are_judged_by_the_kernel()
-print('ok: sd_prepare.sh -- on image files only: two FAT32 partitions, METRICS from 4 MiB for the GiB asked and '
-      'VIDEOS up to the share asked, or one METRICS over the same area (fsck clean, the serials printed are the ones '
+print('ok: sd_prepare.sh -- on image files only: two FAT32 partitions, METRICS and VIDEOS halving the share asked '
+      '(75 % by default), or one METRICS over the same area (fsck clean, the serials printed are the ones '
       'written, nothing past them); dry '
       'runs, wrong confirmations, a card swapped at the prompt, a card too small and bad input write nothing; block '
       'devices judged on stand-ins: eMMC, fixed disks, partitions, big, mounted and held devices refused')

@@ -266,19 +266,18 @@ so it must run on both.
   passwords, so it exists only in a temporary directory removed on every exit; `--dry-run` builds and verifies it
   and lists its keys, never the values. `CREDS_DIR` points it at another creds directory (the test's made-up
   ones). Exit 1 is a refusal or a failure (esptool's included), 2 a usage error.
-- **`tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--recordings-gib N] [--partitions 1|2] <device>`** prepares a
+- **`tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--partitions 1|2] <device>`** prepares a
   microSD card for a
   **Rust** board, **destroying everything on it**: a discard of the whole card, an MBR with TWO primary FAT32
-  partitions (type 0x0c, each with a fresh random volume serial) -- partition 1, label METRICS, the recordings, from
-  4 MiB for `--recordings-gib` (1..256, default 4), and partition 2, label VIDEOS, the videos, from there up to
-  `--use` 25..50 % of the card (default 50) -- and the rest left unpartitioned as spare area for the card's
-  controller. The firmware mounts partition 1 at `/sdcard` and partition 2 at `/sdcard/videos`, and never formats;
+  partitions (type 0x0c, each with a fresh random volume serial) over `--use` 25..100 % of the card (default 75)
+  from 4 MiB, split in halves -- partition 1, label METRICS, the recordings, and partition 2, label VIDEOS, the
+  videos (the operator, 2026-10-10: the logs half, the video half) -- and the rest left unpartitioned as spare area
+  for the card's controller. The firmware mounts partition 1 at `/sdcard` and partition 2 at `/sdcard/videos`, and never formats;
   a card with one FAT partition (an M4-era card) still runs, with `videos/` a plain directory on it. `--partitions 1`
   makes such a card on purpose (one METRICS volume over the same area, the same discard, alignment and clusters), to
   compare the layouts on cards prepared alike. On panda the card goes into its built-in reader (Realtek RTS522A,
-  `/dev/mmcblk0`); run it with sudo. A card with no
-  room for 512 MiB of videos past the recordings is refused (an 8 GB card needs `--recordings-gib 1`), as is a size
-  with a leading zero (bash arithmetic would read it as octal). Partition 1's serial, printed first, is how the
+  `/dev/mmcblk0`); run it with sudo. A card too small for two halves of 512 MiB at the share asked is refused, as is
+  a share with a leading zero (bash arithmetic would read it as octal). Partition 1's serial, printed first, is how the
   board names the card (`sd :: mounted card XXXX-XXXX`): the ring_saver resumes at its saved position only on the
   same card, so a card prepared again gets everything still in flash.
   There is no default device; it refuses a partition, a loop/dm/md device, a disk that is not removable, an MMC/SD

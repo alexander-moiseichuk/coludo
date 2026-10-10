@@ -92,7 +92,7 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `src/avionics/sitl/` | Host binary: `control` + `sequencer` behind a UDP `sim_link` endpoint. |
 | `src/control/contract/{cases,transports,normalize}.py`, `tools/cc_contract.py`, `src/control/test/test_contract.py` | The contract runner (`BOARD=fake|taster|<id>`). |
 | `tools/board_pull.sh`, `tools/ring_split.py` | Pull a session over HTTP; turn a ring image or a `/ring` capture into session directories (`ring_split.py` exists, `7aa92a7`, and is re-pointed at the binary blocks in M3). |
-| `tools/sd_prepare.sh` | The operator's card preparation: discard the card, two FAT32 partitions (the recordings, then the videos) on 25–50 % of it, the rest untouched (§3.10). |
+| `tools/sd_prepare.sh` | The operator's card preparation: discard the card, two FAT32 partitions (the recordings, then the videos, half each) on 25–100 % of it (default 75), the rest untouched (§3.10). |
 | `tools/hitl_host.py`, `doc/specs/sim-link.md` | HITL with the physics on the host (`sim_model.py` stays the one implementation). |
 | `tools/provision.sh` | Writes a board's `cfg` NVS partition (board config, launch config, Wi-Fi creds) over USB with esptool, after `flash.sh`, once the board's partition table proves the `cfg` row; the image lives only in a temporary directory and is never committed (§7, Q12). |
 
@@ -1923,11 +1923,11 @@ routing. 32 GB cards are the safe size. A 64 GB card can be one FAT32 volume (`m
 needed.
 
 **Card preparation** (the operator's option): `tools/sd_prepare.sh` discards the whole card. It then writes an MBR
-with two primary FAT32 partitions: partition 1, label `METRICS`, the recordings (`--recordings-gib`, default 4 GiB,
-since ~26 KB/s of text is ~94 MB an hour), and partition 2, label `VIDEOS`, the videos, from there up to the 25–50 %
-of the card in use (`--use`). Each gets a fresh volume serial. It leaves the rest untouched, as spare area for the
-card's controller. A card with no room for 512 MiB of videos past the recordings is refused (an 8 GB card at the
-defaults: `--recordings-gib 1` fits it). The firmware mounts both and never formats a card. A card M4's
+with two primary FAT32 partitions over the share of the card in use (`--use`, 25–100 %, default 75), split in halves
+(the operator, 2026-10-10): partition 1, label `METRICS`, the recordings, and partition 2, label `VIDEOS`, the
+videos. Measured -> reported (M9) writes about 50 KB/s of text, ~180 MB an hour, so the old fixed 4 GiB of
+recordings no longer fits the logs' share. Each gets a fresh volume serial. It leaves the rest untouched, as spare
+area for the card's controller. A card too small for two halves of 512 MiB at the share asked is refused. The firmware mounts both and never formats a card. A card M4's
 `sd_prepare.sh` wrote (one partition over the whole share) runs on the one-partition fallback; prepare it again,
 after its sessions are pulled, for the two-partition layout.
 
