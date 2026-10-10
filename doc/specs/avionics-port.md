@@ -1199,7 +1199,7 @@ board can no longer hang silently.
 **Operator gains.** Primary attitude with a backup IMU on every SEN0697 board, measured on the bench; the stage
 machine decides from every source; the video starts when the glider stands on the rod.
 
-### M10. Pitot, power monitor, laser (2 days)
+### M10. Pitot, power monitor, laser (2 days; DONE 2026-10-10 on TMS-7F and the taster)
 
 **Scope**
 - **SDP810:** stop before start, all 3 CRCs, scale latch, the NVS `sdp810_zero` i32 that wins over the config,
@@ -1215,7 +1215,39 @@ machine decides from every source; the video starts when the glider stands on th
 - On the taster: blow test on the pitot (P+ is the barb opposite the '1' mark). INA226 rail check during a
   single-fin probe. Laser on 7F.
 
-**Operator gains.** Airspeed and power in health and telemetry. The servo probe's closed-loop verdict works.
+**As built (2026-10-10, lean: the operator's budget):**
+- The SDP810 (every `period_ms`, 20: 50 Hz), the INA226 (100 ms) and the VL53L1X/L4CX (50 ms poll behind the
+  data-ready check) run on their bus owners: `dynamic_pressure`/`airspeed`, `voltage`/`current`/`power`, `agl` on the
+  databoard, a row of plan B's integers per read (PITOT_FIELDS, POWER_FIELDS, LASER_FIELDS; both laser entries
+  record), health per read; `inspect` with plan B's keys; `health.agl` the fresh laser AGL.
+- The pitot tare: `calibrate` and `update {"zero": true}` capture it on the owner, the executor persists the shared
+  NVS `sdp810_zero` (Pa x 100 i32); bring-up restores it over the config's zero; the crumb freezes it at BOOSTING
+  and a warm start puts it in force without persisting.
+- The laser lands the machine: it was already bound to the multi-source machine's landing slot (M9), and now
+  publishes.
+- **The pitot in the stage machine (the operator, 2026-10-10):** a secondary source of speed and pressure, never
+  the decider and never a veto alone -- its frontal airspeed is right only in straight flight under about 50 m/s, and
+  the past launches' data was not reliable beyond that. With today's two barometers a tie-breaking pitot changes no
+  decision, so the machine carries none yet; the rule applies where speed is fused (M13's airspeed estimator). If new
+  launches confirm clean pitot data, the pitot can become source #1 while no yaw is actively commanded.
+- Deferred: the INA226's over-current ALERT count (with the servos, M13; its column reads 0); per-barometer grounds
+  in the crumb (both rebase to plan B's one `pad_altitude`, so the BMP581 carries the inter-baro offset, 5.3 m on
+  TMS-7F, after a warm start); M10 contract cases.
+
+**Proof (2026-10-10, as measured on TMS-7F):**
+- 50.00 pitot, 10.00 INA226 and 10.11 laser rows/s (longest gaps 20, 109, 100 ms); the laser reads 0.03 m on the
+  bench; the INA226 187 mV on USB (no battery), the taster's 4827 mV.
+- The tare: `calibrate` -0.04 Pa, persisted, restored across a reboot (tared true); `air_density` 0 and text values
+  refused.
+- The operator's blow test: the P+ barb (opposite the "1" mark) up to +546.1 Pa -> 30.4 m/s, the SDP810's ceiling
+  (32767 counts at scale 60); the other barb down to -137.5 Pa with the airspeed 0.
+- The laser lands the machine: bench copy B (no IMU) launched on both barometers, then `landing;agl 2.7m` 0.5 s
+  after GLIDING with the barometers still 15 m up, `done;landing timeout 10 s`.
+- The warm start: the crumb carried `pitot_zero: -0.04`; a panic in flight came back `airspeed_sdp810 tare restored:
+  -0.04 Pa` beside both barometers' rebase.
+
+**Operator gains.** Airspeed, power and laser AGL in health and telemetry; the pitot tare survives a reboot and a
+warm start. The servo probe's closed-loop verdict waits for the servos (M13).
 
 ### M11. GNSS, gnss_calib, field (2 days)
 
