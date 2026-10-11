@@ -16,9 +16,13 @@
 //!   at close), so a power cut costs at most the last second.
 //! - Every 5 s one status line on the USB console: bytes and lines in, good and damaged, sessions, card errors.
 //! - A card that does not answer is no stop: the link is read and counted all the same (lines then go unfiled,
-//!   counted), and the mount is tried again every 10 s.
+//!   counted), and the mount is tried again every 10 s. The first try traces the card's init on the console, each SPI
+//!   command and the card's answer.
+//! - A mounted card is read back before anything is written: its name, size and SPI clock, the volume's free space
+//!   and the root's entries. A card that cannot be read is not written to (the mount counts as failed).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{CStr, CString};
 use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::time::{Duration, Instant};
@@ -35,6 +39,10 @@ use esp_idf_svc::hal::spi::{Dma, SpiDriver};
 use esp_idf_svc::hal::uart::{UartConfig, UartRxDriver};
 use esp_idf_svc::hal::units::Hertz;
 use esp_idf_svc::io::vfs::MountedFatfs;
+use esp_idf_svc::sys::{
+    esp, esp_log_level_set, esp_log_level_t, esp_log_level_t_ESP_LOG_DEBUG, esp_log_level_t_ESP_LOG_INFO,
+    esp_log_level_t_ESP_LOG_VERBOSE, esp_vfs_fat_info,
+};
 
 /// The card's mount point.
 const ROOT: &str = "/sd";
@@ -62,6 +70,19 @@ const MOUNT_EVERY: Duration = Duration::from_secs(10);
 
 /// The card's SPI pins: SCK, MOSI, MISO, CS (the SuperMini's right header).
 const CARD_PINS: [i32; 4] = [19, 20, 14, 18];
+
+/// The card-init log tags the first mount raises (ESP-IDF's names), so the console shows each SPI command and the
+/// card's answer: the commands with their responses, the host's set-up and clock, an R1 error, the failed step.
+const TRACE_TAGS: [(&CStr, esp_log_level_t); 5] = [
+    (c"sdmmc_cmd", esp_log_level_t_ESP_LOG_VERBOSE),
+    (c"sdspi_host", esp_log_level_t_ESP_LOG_DEBUG),
+    (c"sdspi_transaction", esp_log_level_t_ESP_LOG_DEBUG),
+    (c"sdmmc_init", esp_log_level_t_ESP_LOG_DEBUG),
+    (c"sdmmc_common", esp_log_level_t_ESP_LOG_DEBUG),
+];
+
+/// The root's entries the read-back lists by name.
+const LISTED: usize = 16;
 
 /// The routing of the session index's lines.
 const SESSION_INDEX: &[u8] = b"session.csv";
@@ -181,9 +202,9 @@ impl Filer {
     }
 }
 
-/// The card mounted at [`ROOT`]: the mount, kept alive (dropping it unmounts), or why it failed. Each try takes the
-/// SPI host and its pins afresh, so a failed one can be tried again.
-fn mount() -> anyhow::Result<Box<dyn std::any::Any>> {
+/// The card mounted at [`ROOT`] and read back: the mount, kept alive (dropping it unmounts), or why it failed. Each
+/// try takes the SPI host and its pins afresh, so a failed one can be tried again; `trace` logs the card's init.
+fn mount(trace: bool) -> anyhow::Result<Box<dyn std::any::Any>> {
     let [sck, mosi, miso, cs] = CARD_PINS;
     // SAFETY: SPI2 and these GPIOs are the card's alone; a failed try dropped what it had taken.
     let (spi2, sck, mosi, miso, cs) = unsafe {
@@ -203,7 +224,17 @@ fn mount() -> anyhow::Result<Box<dyn std::any::Any>> {
         &DriverConfig::default().dma(Dma::Auto(4096)),
     )
     .map_err(|error| anyhow::anyhow!("the SPI host: {error}"))?;
-    let host = SdSpiHostDriver::new(
+    let levels = |raised: bool| {
+        for (tag, level) in TRACE_TAGS {
+            // SAFETY: a static NUL-terminated tag; INFO is the console's default level (sdkconfig.defaults)
+            unsafe { esp_log_level_set(tag.as_ptr(), if raised { level } else { esp_log_level_t_ESP_LOG_INFO }) };
+        }
+    };
+    if trace {
+        log::info!("receiver :: tracing the card's init on SPI2");
+        levels(true);
+    }
+    let card = SdSpiHostDriver::new(
         spi,
         Some(cs),
         AnyIOPin::none(),
@@ -211,12 +242,67 @@ fn mount() -> anyhow::Result<Box<dyn std::any::Any>> {
         AnyIOPin::none(),
         None,
     )
-    .map_err(|error| anyhow::anyhow!("the SD host on SPI: {error}"))?;
-    let card = SdCardDriver::new_spi(host, &SdCardConfiguration::new())
-        .map_err(|error| anyhow::anyhow!("the card's init (no answer: wiring, power, pull-ups, a card?): {error}"))?;
+    .map_err(|error| anyhow::anyhow!("the SD host on SPI: {error}"))
+    .and_then(|host| {
+        SdCardDriver::new_spi(host, &SdCardConfiguration::new())
+            .map_err(|error| anyhow::anyhow!("the card's init (no answer: wiring, power, pull-ups, a card?): {error}"))
+    });
+    if trace {
+        levels(false);
+    }
+    let card = card?;
+    let info = card.card();
+    // SAFETY: an SD card's init decodes its CID into `cid` (the union's other side is an MMC's raw CID)
+    let name = unsafe { info.__bindgen_anon_1.cid.name };
+    let name: String = name
+        .iter()
+        .take_while(|&&byte| byte != 0)
+        .map(|&byte| char::from(byte))
+        .collect();
+    let bytes = info.csd.capacity as u64 * info.csd.sector_size as u64;
+    log::info!(
+        "card :: {name}, {:.1} GiB ({} sectors of {} B), SPI at {} kHz, OCR {:#010x}",
+        bytes as f64 / f64::from(1u32 << 30),
+        info.csd.capacity,
+        info.csd.sector_size,
+        info.real_freq_khz,
+        info.ocr
+    );
     let fatfs = Fatfs::new_sdcard(0, card).map_err(|error| anyhow::anyhow!("FAT on the card: {error}"))?;
     let mounted = MountedFatfs::mount(fatfs, ROOT, 8).map_err(|error| anyhow::anyhow!("the mount: {error}"))?;
+    read_back().map_err(|error| anyhow::anyhow!("reading the card back: {error}"))?;
     Ok(Box::new(mounted))
+}
+
+/// The mounted card read back before any write: the volume's size and free space, and the root's entries.
+fn read_back() -> anyhow::Result<()> {
+    let (mut total, mut free) = (0u64, 0u64);
+    let root = CString::new(ROOT)?;
+    // SAFETY: a NUL-terminated mount point and two u64s to fill
+    esp!(unsafe { esp_vfs_fat_info(root.as_ptr(), &mut total, &mut free) })?;
+    let mut listed = Vec::new();
+    let mut count = 0usize;
+    for entry in std::fs::read_dir(ROOT)? {
+        let entry = entry?;
+        count += 1;
+        if listed.len() < LISTED {
+            let metadata = entry.metadata()?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            listed.push(if metadata.is_dir() {
+                format!("{name}/")
+            } else {
+                format!("{name} ({} B)", metadata.len())
+            });
+        }
+    }
+    log::info!(
+        "card :: read back: {} of {} MiB free; the root's {count} entries: {}{}",
+        free >> 20,
+        total >> 20,
+        listed.join(", "),
+        if count > listed.len() { ", ..." } else { "" }
+    );
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -227,8 +313,9 @@ fn main() -> anyhow::Result<()> {
     let mut card = None;
     let mut mounted_at: Option<Instant> = None;
     let try_mount = |card: &mut Option<Box<dyn std::any::Any>>, mounted_at: &mut Option<Instant>| {
+        let first = mounted_at.is_none();
         *mounted_at = Some(Instant::now());
-        match mount() {
+        match mount(first) {
             Ok(mount) => {
                 log::info!("receiver :: card mounted at {ROOT}");
                 *card = Some(mount);
