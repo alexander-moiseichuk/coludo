@@ -18,9 +18,9 @@
 //! `checkpoint_s` aloft). The crumb is saved only while the board flies (armed and launched), cleared on any edge out
 //! of that, and a refused NVS write is retried every poll until it lands. The recovery identity it freezes at
 //! BOOSTING entry comes from the mission, which the executor owns: it republishes the zone and the launch point after
-//! every line it runs ([`publish_mission`]), and the supervisor reads them only at the freeze. Not frozen yet: a
-//! launch point from a GNSS fix (no GNSS runs yet, so the zone's centre stands in when the operator set none) and the
-//! pitot tare (no pitot runs yet).
+//! every line it runs ([`publish_mission`]), and the supervisor reads them only at the freeze. A mission with a zone
+//! and no launch point yet (none set by the operator, none pinned at arm) takes the live GNSS fix there, as plan B's
+//! freeze_launch at BOOSTING entry did; the zone's centre stands in when there is none.
 //!
 //! Not restored yet, each logged once at the restore when a crumb carries it: the airspeed seed (no flight law runs
 //! yet; M10 restores the pitot tare), and the ground of a barometer other than the ICP-10111 (none other publishes an
@@ -323,8 +323,8 @@ fn gate() -> String {
 /// the executor and the supervisor lock it, never the flight core.
 static MISSION: Mutex<(Option<[Position; 2]>, Option<Position>)> = Mutex::new((None, None));
 
-/// Publishes `mission`'s zone and launch point for the checkpoint's freeze: the operator's point, None without one
-/// (a GNSS fix does not stand in yet: no GNSS runs).
+/// Publishes `mission`'s zone and launch point for the checkpoint's freeze: the operator's point or the one `arm`
+/// pinned, None without one (the freeze then takes the live fix).
 pub fn publish_mission(mission: &Mission) {
     let zone = mission.zone.map(|zone| [zone.top_left, zone.bottom_right]);
     *MISSION.lock().unwrap_or_else(PoisonError::into_inner) = (zone, mission.launch_point(None));
@@ -367,6 +367,8 @@ pub struct Keeping {
     altitude: Option<&'static Parameter<f32>>,
     /// The `elevation` quantity: the pad latch's ceiling is read against it.
     elevation: Option<&'static Parameter<f32>>,
+    /// The quantities, for the live GNSS fix the freeze pins when no launch point is set.
+    topology: &'static Topology,
     /// checkpoint.csv, with a recorder.
     telemetry: Option<Telemetry<'static>>,
     /// An NVS refusal was logged and no action has committed since: one line per run of refusals.
@@ -400,6 +402,7 @@ impl Keeping {
             nvs,
             altitude: topology.scalar("altitude"),
             elevation: topology.scalar("elevation"),
+            topology,
             telemetry: crate::recorder::get()
                 .zip(crate::recorder::device_stream(member.name))
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
@@ -444,8 +447,17 @@ impl Keeping {
             airspeed_ms: None,
             ticks_ms: now_us / 1000,
         };
+        let topology = self.topology;
         let freeze = || {
-            let (zone, launch_point) = *MISSION.lock().unwrap_or_else(PoisonError::into_inner);
+            let (zone, set) = *MISSION.lock().unwrap_or_else(PoisonError::into_inner);
+            // plan B warmstart.py:359: a fix that arrived after the arm pins here, the last ground moment; the
+            // operator's point and the arm's win, and a mission with no zone freezes none
+            let launch_point = set.or_else(|| {
+                let fix = crate::gnss::position(topology).filter(|_| zone.is_some())?;
+                let [latitude, longitude] = fix.degrees();
+                log::info!("mission :: launch point frozen ({latitude:.5}, {longitude:.5})");
+                Some(fix)
+            });
             Freeze {
                 zone,
                 launch_point,

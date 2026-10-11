@@ -35,8 +35,7 @@
 //!  * Nothing is memoized. Plan B caches the zone geometry by identity for its hot path; here it is a little
 //!    integer and f32 work, done when asked.
 //!
-//! Not yet ported from plan B's Mission: `freeze_launch` (the arm freeze of the launch point, M7), and
-//! `select_site` and `fallback_zone` (CC-less field operation, M11). A milestone that needs one ports it here
+//! Not yet ported from plan B's Mission: `select_site` and `fallback_zone` (CC-less field operation, M11). A milestone that needs one ports it here
 //! first, as M13 did `zone_aspect` and `endgame_heading` for the guidance law.
 
 use control::guidance::Heading;
@@ -292,6 +291,22 @@ impl Mission {
     /// Whether the operator set the launch position (both coordinates): the dashboard's 'launchpad_set'.
     pub fn position_set(&self) -> bool {
         self.latitude_e7.is_some() && self.longitude_e7.is_some()
+    }
+
+    /// Pins the live GNSS `fix` as the launch point (mission.py `freeze_launch`), at arm and again at BOOSTING
+    /// entry, the last moments the board is known to be on the pad: mid-flight the fix can drop, and the launch point
+    /// must not drop with it. An operator-set position always wins, and with no fix nothing changes. In memory only,
+    /// as plan B's: the pinned point is the operator's from here, so a later freeze keeps it.
+    ///
+    /// Returns the point pinned, None when nothing changed.
+    pub fn freeze_launch(&mut self, fix: Option<Position>) -> Option<Position> {
+        if self.position_set() {
+            return None; // the operator's, never overwritten
+        }
+        let fix = fix?;
+        self.latitude_e7 = Some(fix.latitude_e7);
+        self.longitude_e7 = Some(fix.longitude_e7);
+        Some(fix)
     }
 
     /// The launch origin (mission.py `launch_point`): the operator-set position when both coordinates are set,

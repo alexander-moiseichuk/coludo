@@ -60,7 +60,8 @@ fn applied(request: Request) -> Result<Flight, Fault> {
 }
 
 /// `arm`: enable actuation only when nothing is wrong (plan B cc_client.py:547-576); replies {armed}, the arming the
-/// control thread committed, and logs `controller :: armed`.
+/// control thread committed, pins the live GNSS fix as the launch point when the operator set none, and logs
+/// `controller :: armed`.
 ///
 /// Refused, `err unsafe` with every problem as {name: why}: each device that is not up (an entry the firmware cannot
 /// run yet included, plan B's rule), the stage problem (off the ground, or held), and in SETTING each failing probe of
@@ -90,6 +91,12 @@ pub fn arm(_message: &Message, context: &mut Context) -> Reply {
     }
     let answer = crate::control::request(Request::Arm).map_err(|unanswered| Fault::new(Code::Internal, unanswered))?;
     let flight = answer.map_err(|problem| refusal(&BTreeMap::from([("stage", problem.to_string())])))?;
+    // the last moment the board is known to be on the pad: the live fix becomes the launch point, unless the operator
+    // set one (plan B Controller.arm -> mission.freeze_launch)
+    if let Some(point) = context.mission.freeze_launch(crate::gnss::position(context.topology)) {
+        let [latitude, longitude] = point.degrees();
+        log::info!("mission :: launch point frozen ({latitude:.5}, {longitude:.5})");
+    }
     log::info!("controller :: armed");
     super::ok_json(&json!({"armed": flight.armed}))
 }

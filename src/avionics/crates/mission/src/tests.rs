@@ -535,3 +535,26 @@ fn clock_text_is_utc_civil_time() {
     assert_eq!(clock_text(1_781_000_000), "2026-06-09T10:13:20");
     assert_eq!(clock_text(-1), "1969-12-31T23:59:59");
 }
+
+#[test]
+fn the_freeze_pins_a_fix_but_never_the_operators_point() {
+    let fix = Some(at(49.0, 12.0));
+    let mut mission = loaded("{}");
+    assert_eq!(mission.freeze_launch(None), None, "no fix: nothing to pin");
+    assert!(!mission.position_set());
+    assert_eq!(mission.freeze_launch(fix), fix);
+    assert!(mission.position_set());
+    assert_eq!(mission.launch_point(None), fix, "the pinned point outlives the fix");
+    let later = Some(at(49.5, 12.5));
+    assert_eq!(mission.freeze_launch(later), None, "the pinned point is kept");
+    assert_eq!(mission.launch_point(later), fix);
+    // the operator's point wins; half of one is none, so a fix replaces both coordinates
+    let mut operator = loaded("{}");
+    operator.update(&properties(json!({"latitude": 48.0, "longitude": 11.0})));
+    assert_eq!(operator.freeze_launch(fix), None);
+    assert_eq!(operator.launch_point(fix), Some(at(48.0, 11.0)));
+    let mut half = loaded("{}");
+    half.update(&properties(json!({"latitude": 48.0})));
+    assert_eq!(half.freeze_launch(fix), fix);
+    assert_eq!(half.launch_point(None), fix);
+}
