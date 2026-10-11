@@ -1247,6 +1247,13 @@ fn register_commands(recorder: &'static Recorder) {
     ]);
 }
 
+/// The flash->SD backlog for the recovery beacon's page (crate::beacon): the ring's unsaved blocks and how many
+/// seconds of recording they hold; None before the bring-up scan has run.
+pub fn backlog() -> Option<(u32, Option<f32>)> {
+    let report = RingReport::new(ring()?, get()?);
+    Some((report.unsaved, report.unsaved_s))
+}
+
 /// The `ring` command's answer: `ok ring name=value ...`, or `err ring <why>` before the bring-up scan has run.
 ///
 /// The block figures are walked from the table now, against the saver's published position (with no saver, every

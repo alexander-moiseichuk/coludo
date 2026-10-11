@@ -67,6 +67,9 @@ static TASKS: [AtomicPtr<core::ffi::c_void>; 2] = [
 /// 1000): before the control tick runs, and should a notify be lost.
 const IDLE_WAIT_MS: u32 = 20;
 
+/// At DONE the beacon's sources run this often, µs (M11b): the barometers, the laser and the INA226.
+const DONE_PERIOD_US: u64 = 1_000_000;
+
 /// How many requests an owner serves on one wake: the rest wait for the next, so a burst never delays a tick's work.
 const REQUESTS_PER_WAKE: usize = 2;
 
@@ -277,6 +280,7 @@ fn own(
     let ring = [crate::recorder::Producer::I2c0, crate::recorder::Producer::I2c1][usize::from(id)];
     let _attachment = crate::recorder::get().and_then(|recorder| recorder.attach(ring as usize).ok());
     let mut delay = Delay::new_default();
+    let mut next_done_us = 0;
     loop {
         // a control tick (crate::control) or a request ([`ask`]) wakes the owner; the work is due by time, so a
         // request's wake costs only the check
@@ -296,14 +300,22 @@ fn own(
         }
         // SAFETY: a plain read of the monotonic timer.
         let now_us = unsafe { sys::esp_timer_get_time() } as u64;
-        run(&mut port, &mut members, &mut delay, now_us);
+        // DONE (M11b): the IMU, the magnetometer and the pitot stop, the beacon's sources run once a second
+        let done = crate::status::FLIGHT.load().stage == sequencer::Stage::Done;
+        if done {
+            if now_us < next_done_us {
+                continue;
+            }
+            next_done_us = now_us + DONE_PERIOD_US;
+        }
+        run(&mut port, &mut members, &mut delay, now_us, done);
     }
 }
 
 /// The parts' run loops on one wake (§4.3): each part with a run, due by time, the IMU first (D13 of the M9 plan:
 /// the backup IMU's reads at the lowest latency); a part's recovery re-arms the port's other parts, logged as plan B's
-/// icp10111 logs it and recorded once.
-fn run(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, now_us: u64) {
+/// icp10111 logs it and recorded once. `done` (DONE, M11b) skips the IMU, the magnetometer and the pitot.
+fn run(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, now_us: u64, done: bool) {
     // two passes, the IMU's then the rest: no allocation on the wake
     for imu in [true, false] {
         for index in 0..members.len() {
@@ -314,6 +326,9 @@ fn run(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, now_us: u6
             let Some(run) = member.run.as_mut() else {
                 continue;
             };
+            if done && matches!(run, Run::Imu(_) | Run::Magnetometer(_) | Run::Pitot(_)) {
+                continue;
+            }
             if let Some(Event::Rearm) = member.part.tick(member.name, run, port, delay, now_us) {
                 let name = member.name;
                 let _ = port.take_general_call();

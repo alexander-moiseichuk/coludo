@@ -21,6 +21,8 @@
 //!   ring_saver would file (doc/specs/avionics-port.md "CC tees and the HTTP exits"). `boot=N` keeps only that
 //!   boot's blocks.
 //! * `GET /ring/image` streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
+//! * `GET /beacon` is the recovery beacon's page as the access point serves it at DONE (crate::beacon): the bench sees
+//!   it before then.
 //!
 //! tools/ring_split.py turns either into session directories: the recovery path when the card failed in flight. The
 //! ring keeps changing while it streams (the writer appends, the eraser erases), so either is a snapshot taken over
@@ -54,7 +56,7 @@ const CHUNK: usize = 32 << 10;
 const READ_ATTEMPTS: u32 = 3;
 
 /// Start the server; it serves for as long as the returned handle lives.
-pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
+pub fn serve(beacon: crate::beacon::Beacon) -> anyhow::Result<EspHttpServer<'static>> {
     let mut server = EspHttpServer::new(&Configuration {
         http_port: PORT,
         uri_match_wildcard: true,
@@ -67,6 +69,14 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
         // runs elsewhere); its Rust allocations go to PSRAM too (crate::allocator)
         task_caps: esp_idf_svc::sys::MALLOC_CAP_SPIRAM | esp_idf_svc::sys::MALLOC_CAP_8BIT,
         ..Default::default()
+    })?;
+    // the recovery beacon's page as the AP will serve it at DONE (crate::beacon), for the bench before then
+    server.fn_handler::<anyhow::Error, _>("/beacon", Method::Get, move |request| {
+        let page = beacon.page();
+        request
+            .into_response(200, None, &[("Content-Type", "text/html; charset=utf-8")])?
+            .write_all(page.as_bytes())?;
+        Ok(())
     })?;
     server.fn_handler::<anyhow::Error, _>("/sd/*", Method::Get, |request| {
         let relative = request

@@ -26,6 +26,8 @@ use crate::fins::Fins;
 
 /// The flight.csv sample period, µs (plan B `telemetry_ms` 100: the control state SAMPLED, not traced).
 const SAMPLE_US: u64 = 100_000;
+/// At DONE, µs (M11b).
+const DONE_SAMPLE_US: u64 = 1_000_000;
 
 /// The mission view's sequence: odd while the executor writes it.
 static MISSION_SEQUENCE: AtomicU32 = AtomicU32::new(0);
@@ -244,7 +246,13 @@ impl FlightLoop {
             }
         }
         if now_us >= self.next_sample_us {
-            self.next_sample_us = now_us + SAMPLE_US;
+            // DONE (M11b): the recording a trickle, a row a second
+            self.next_sample_us = now_us
+                + if flight.stage == Stage::Done {
+                    DONE_SAMPLE_US
+                } else {
+                    SAMPLE_US
+                };
             self.sample(now_us, flight.stage);
         }
     }

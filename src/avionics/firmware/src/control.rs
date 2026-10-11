@@ -1339,6 +1339,9 @@ fn run(
     let mut ticks: i64 = 0;
     // the fins' probe sweep under way, and the INA226's power it samples
     let mut sweeping: Sweeping = None;
+    // DONE's fin rest (M11b): when DONE began, and whether the fins rest
+    let mut done_since_us: Option<u64> = None;
+    let mut rested = false;
     // a cold boot's fin centring, stepped below: it never holds this thread's start (crate::fins)
     if let (Some(fins), Some(concurrency)) = (fins.as_mut(), centre) {
         fins.centre(concurrency);
@@ -1378,9 +1381,23 @@ fn run(
         if late > LATENESS_BUDGET_US {
             LATE_OVER_BUDGET.fetch_add(1, Ordering::Relaxed);
         }
-        if let Some(imu) = &mut imu {
+        // DONE (M11b): the IMU and the attitude filter stop, the fins rest a second in (after the law centred them)
+        let done = writer.flight().stage == Stage::Done;
+        if let Some(imu) = &mut imu
+            && !done
+        {
             imu.tick(now_us as u64, period_us as u64 / 2);
         }
+        if !done {
+            done_since_us = None;
+        } else if let Some(fins) = fins.as_mut() {
+            let since = *done_since_us.get_or_insert(now_us as u64);
+            if !rested && now_us as u64 >= since + REST_AFTER_US {
+                fins.rest();
+                rested = true;
+            }
+        }
+        rested &= done;
         if let Some(switch) = &mut switch {
             // the switch reads its own clock after the level: the IMU's SPI work runs between the wake and here
             switch.tick(&mut writer);
@@ -1423,7 +1440,9 @@ fn run(
             watch.look(read_us);
         }
         // the attitude after the requests and before the stage machine (D11 of the M9 plan)
-        if let Some(filter) = &mut filter {
+        if let Some(filter) = &mut filter
+            && !done
+        {
             filter.tick(now_us as u64);
         }
         if let Some(machine) = &mut machine {
@@ -1481,6 +1500,9 @@ fn set_flight(flight: bool) {
         recorder.set_flight(flight);
     }
 }
+
+/// How long into DONE the fins keep their pulse, µs: the law's leaving-control centring travels first (M11b).
+const REST_AFTER_US: u64 = 1_000_000;
 
 /// The refusal of a fin request during the boot centring.
 const CENTRING: &str = "the fins are still centring after the boot";

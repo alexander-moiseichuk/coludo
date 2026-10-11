@@ -11,6 +11,7 @@
 //! checkpoint and the watchdog), the CC executor and the UART console, and finally join Wi-Fi through the C6 and serve
 //! the CC hub forever. A panic anywhere prints its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
 
+mod beacon;
 mod board;
 mod clock;
 mod commands;
@@ -364,7 +365,23 @@ fn main() -> anyhow::Result<()> {
         console.serve(executor.clone())?;
     }
     log::info!("{}", board.banner());
-    link::run(peripherals.modem, event_loop, partition, wifi, credentials, &executor)
+    // the recovery beacon at DONE (M11b): the battery's capacity from the INA226 entry, when the config gives one
+    let battery_mah = board_config::directory(&loaded.document)
+        .iter()
+        .find(|entry| entry.implementation == "ina226")
+        .and_then(|entry| entry.fields.get("battery_mah"))
+        .and_then(serde_json::Value::as_f64)
+        .map(|capacity| capacity as f32);
+    let beacon = beacon::Beacon::new(&board.id, topology, battery_mah);
+    link::run(
+        peripherals.modem,
+        event_loop,
+        partition,
+        wifi,
+        credentials,
+        &executor,
+        beacon,
+    )
 }
 
 /// Port 0 when the config defines no i2c:0: the WaveShare board's own wiring (the camera's SCCB and the codec are on

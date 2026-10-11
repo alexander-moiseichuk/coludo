@@ -32,6 +32,7 @@ use esp_idf_svc::hal::units::Hertz;
 use esp_idf_svc::sys;
 use gnss::{Antenna, Gnss, SkySwitch, Update};
 use recorder::{Cell, Telemetry};
+use sequencer::Stage;
 
 use crate::devices::{GnssCalibMember, GnssMember, Topology};
 use crate::status::FLIGHT;
@@ -59,6 +60,9 @@ const LINE_BYTES: usize = 128;
 
 /// The engine's tick period.
 const TICK: Duration = Duration::from_millis(1000);
+
+/// The module's fix rate at DONE (M11b): the beacon shows one fix, and a slow module draws less.
+const DONE_HZ: i32 = 1;
 
 /// NMEA lines read since boot (plan B's `_lines`: the probe's liveness counter).
 static LINES: AtomicU32 = AtomicU32::new(0);
@@ -154,7 +158,9 @@ fn run(member: GnssMember, driver: UartDriver<'static>, topology: &'static Topol
         sky: stream(format!("{name}_sky")),
         events: stream(format!("{name}_events")),
     };
-    let switch = configure(&driver, member.module, member.hz);
+    let mut switch = configure(&driver, member.module, member.hz);
+    // DONE (M11b): the module at 1 Hz, the beacon's cadence, until a reset
+    let mut slowed = false;
     log::info!(
         "{name} :: {:?} configured at {} Hz on uart:{} ({} baud)",
         member.module,
@@ -185,7 +191,13 @@ fn run(member: GnssMember, driver: UartDriver<'static>, topology: &'static Topol
         let now = Instant::now();
         if now >= next_tick {
             next_tick = now + TICK;
-            let tick = engine.tick(uptime_us(), FLIGHT.load().stage);
+            let stage = FLIGHT.load().stage;
+            if !slowed && stage == Stage::Done && member.hz > DONE_HZ {
+                switch = configure(&driver, member.module, DONE_HZ);
+                slowed = true;
+                log::info!("{name} :: DONE: the module at {DONE_HZ} Hz");
+            }
+            let tick = engine.tick(uptime_us(), stage);
             if let Some(frame) = tick.write {
                 let _ = driver.write(switch.frame(frame));
             }

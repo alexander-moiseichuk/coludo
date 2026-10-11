@@ -67,6 +67,7 @@ pub fn run(
     wifi: Wifi,
     credentials: Credentials,
     executor: &Executor,
+    beacon: crate::beacon::Beacon,
 ) -> ! {
     let events = event_loop.clone();
     let mut driver = BlockingWifi::wrap(
@@ -96,7 +97,7 @@ pub fn run(
         .ok();
     STACK_UP.store(true, Ordering::Release);
     // the microSD over HTTP (recordings, logs) -- only now: the Wi-Fi driver brought up the TCP/IP stack it needs
-    let _files = crate::files::serve()
+    let _files = crate::files::serve(beacon.clone())
         .inspect_err(|error| log::warn!("files :: {error}"))
         .ok();
     if !wifi.policy_enabled || wifi.networks.is_empty() {
@@ -107,6 +108,9 @@ pub fn run(
     }
     let mut rotation = Rotation::new(wifi.networks.len());
     let mut parked = false;
+    // the recovery beacon once DONE (M11b): the access point and its page server, kept until power-off or a reset
+    let mut beaconing = None;
+    let mut beacon_failed = false;
     let mut gave_up = false;
     let mut first = true;
     loop {
@@ -126,6 +130,20 @@ pub fn run(
                      the transport instead. Wi-Fi is off until the next boot; the flight goes on.",
                 );
                 parked = true;
+            }
+            continue;
+        }
+        if beaconing.is_some() {
+            continue; // the beacon holds the radio until power-off or a reset
+        }
+        if beacon_due() {
+            match beacon.start(&mut driver) {
+                Ok(server) => beaconing = Some(server),
+                Err(error) if !beacon_failed => {
+                    log::error!("beacon :: did not start, tried again each second: {error}");
+                    beacon_failed = true;
+                }
+                Err(_) => {}
             }
             continue;
         }
@@ -332,7 +350,16 @@ fn serve(stream: TcpStream, executor: &Executor) -> std::io::Result<()> {
             reply.push('\n'); // one write per line: two would wait out the hub's delayed ACK (~150 ms)
             writer.write_all(reply.as_bytes())?;
         }
+        if beacon_due() {
+            return Ok(()); // DONE: the radio turns into the beacon (the hub polls every ~2 s, so it ends that soon)
+        }
     }
+}
+
+/// Whether the recovery beacon is due: DONE, and no HITL flight, whose frames ride this Wi-Fi and whose host restores
+/// the board after DONE over the hub (crate::beacon).
+fn beacon_due() -> bool {
+    FLIGHT.load().stage == sequencer::Stage::Done && !crate::sim_link::running()
 }
 
 /// The P4 pin that drives the C6's EN (the Function-EV pinout; esp_hosted's slave reset).

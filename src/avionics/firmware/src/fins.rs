@@ -64,6 +64,8 @@ struct Fin {
     telemetry: Option<Telemetry<'static>>,
     /// A refused row was logged since the last accepted one.
     overflowing: bool,
+    /// Its pulse is off (DONE, [`Fins::rest`]): the next command drives it again even when unchanged.
+    resting: bool,
 }
 
 /// The fins, owned by one thread: bring-up's main, then the control thread.
@@ -196,6 +198,7 @@ pub fn open(members: Vec<ServoMember>, probe_limit: Option<i32>) -> anyhow::Resu
                 .zip(crate::recorder::device_stream(member.name))
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
             overflowing: false,
+            resting: false,
         });
     }
     let _ = NAMES.set(fins.iter().map(|fin| fin.name).collect());
@@ -269,6 +272,8 @@ impl Fins {
 
     /// Drives `command`'s pulse on fin `index`'s channel and records it (`done` false: issued).
     fn write(&mut self, index: usize, command: Command, done: bool) {
+        let fin = &mut self.fins[index];
+        fin.resting = false;
         let fin = &self.fins[index];
         let duty = (i64::from(command.pulse_us) << RESOLUTION_BITS) / i64::from(PERIOD_US);
         // SAFETY: plain LEDC driver calls on this fin's configured channel.
@@ -296,9 +301,32 @@ impl Fins {
     /// The flight loop's command for fin `index` (plan B `set_angle`): compare-and-set, nothing written when the
     /// clamped angle is the one already commanded.
     pub fn set_angle(&mut self, index: usize, degrees: f64) {
-        if let Some(command) = self.fins.get_mut(index).and_then(|fin| fin.servo.set_angle(degrees)) {
-            self.write(index, command, false);
+        let Some(fin) = self.fins.get_mut(index) else {
+            return;
+        };
+        match fin.servo.set_angle(degrees) {
+            Some(command) => self.write(index, command, false),
+            // the angle held, but its pulse was cut (DONE): drive it again
+            None if fin.resting => {
+                let command = fin.servo.command();
+                self.write(index, command, false);
+            }
+            None => {}
         }
+    }
+
+    /// At DONE (M11b): every fin's pulse off, so the servos draw no holding current while the beacon runs on the
+    /// battery; the next command drives a fin again.
+    pub fn rest(&mut self) {
+        for fin in &mut self.fins {
+            // SAFETY: plain LEDC driver calls on this fin's configured channel.
+            unsafe {
+                let _ = sys::ledc_set_duty(MODE, fin.channel, 0);
+                let _ = sys::ledc_update_duty(MODE, fin.channel);
+            }
+            fin.resting = true;
+        }
+        log::info!("fins :: at rest, no pulse (DONE)");
     }
 
     /// The operator's `update <servo> {trim|angle}` (plan B `update`): immediate and ungated; a new trim alone
