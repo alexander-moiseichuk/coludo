@@ -459,6 +459,12 @@ pub fn count(only: Option<&str>) -> Option<usize> {
     (count > 0).then_some(count)
 }
 
+/// Fin `name`'s commanded angle, whole degrees, once a pulse was driven: None before its first write (a warm start
+/// skips the centring, so a fin waits for the restored law) and for a name that is no fin.
+pub fn commanded(name: &str) -> Option<i32> {
+    inspection(name).and_then(|[angle, pulse_us, _]| (pulse_us != 0).then_some(angle))
+}
+
 /// Fin `name`'s state for `inspect` (plan B sg90 inspect): the commanded angle, the pulse driven (us), the trim; None
 /// for a name that is no fin.
 pub fn inspection(name: &str) -> Option<[i32; 3]> {

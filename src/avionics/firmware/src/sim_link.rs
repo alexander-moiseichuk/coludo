@@ -358,7 +358,8 @@ fn record(name: &str, sensors: &Sensors, change: Option<f32>, now_us: u64, strea
 /// The fins the board commands, as FINS carries them (left elevon, right elevon, yaw, plan B's surface names), None
 /// unless all three are servos that came up: the host then flies them neutral.
 fn fin_angles() -> Option<[i16; 3]> {
-    let angle = |name: &str| crate::fins::inspection(name).map(|[angle, _, _]| angle as i16);
+    // none until every fin was driven: a fin with no pulse yet is no angle (the host then flies them neutral)
+    let angle = |name: &str| crate::fins::commanded(name).map(|angle| angle as i16);
     Some([
         angle("servo_eleron_left")?,
         angle("servo_eleron_right")?,
