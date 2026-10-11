@@ -66,7 +66,7 @@ place whatever the flags, so a frame is one fixed size.
 
 The units are the Rust databoard's, which differ from plan B's channels: the attitude and the rates are float
 degrees where plan B pushed centidegree fixnums, and the dynamic pressure is float Pa where plan B pushed Pa x 100.
-The board derives `change` from `elevation` (crates/control `change`, as a barometer does); the separation switch is
+The board derives `change` from the altitude (crates/control `change`, as a barometer does); the separation switch is
 not simulated (M12).
 
 ### FINS (board -> host), 32 bytes
@@ -102,3 +102,15 @@ then flies the fins at neutral, as plan B's HITL read a missing servo task.
 The board's `hitl` entry masks every sensor whose config name is in `config_hitl._SIM_SENSORS` (`enabled = False`,
 as plan B's `config_hitl.mask`, again after the layout), then refuses to start the sim-link if one of them is still
 enabled: a real part left publishing beside the sim becomes a silent second source.
+
+## A reboot in a HITL flight
+
+The board really reboots (`tools/hitl_host.py --reboot`: a console panic mid-glide) while the host flies on. Two
+rules hold only while a board runs the sim-link, so the warm-started flight goes on:
+
+- It joins the Wi-Fi again after the launch: the simulated sensors ride it. A flying board never rejoins (M7).
+- Its glide counts as separated for the warm gate: no separation switch is simulated, as plan B's harness passed
+  `separated=True` by construction.
+
+The outage (the boot, then the join: ~26 s on the taster) is frames the board never sees; the host's physics
+does not wait for it.

@@ -1349,7 +1349,7 @@ warm start. The servo probe's closed-loop verdict waits for the servos (M13).
 electronics E16/F15, no active fins): stages, data, video, warm start, pull, and a beacon that leads to the
 airframe after landing (even without a fix, the phone's signal strength helps).
 
-### M12. HITL over a UDP sim-link, realtime and passive (2 days)
+### M12. HITL over a UDP sim-link, realtime and passive (2 days; DONE 2026-10-11 on the taster)
 
 **Scope**
 - `doc/specs/sim-link.md`, `crates/sim_link`, `firmware/sim_link.rs`. It runs only with an enabled `hitl`
@@ -1370,6 +1370,38 @@ airframe after landing (even without a fix, the phone's signal strength helps).
 **Proof**
 - A passive scenario flies to DONE with the warm gate passing.
 - Artefact counts are checked: streams pulled = streams expected, no empty stream, BUILD stamp present.
+
+**As built (2026-10-11):**
+- `doc/specs/sim-link.md` and `crates/sim_link`: UDP beside CC, the board on `sim_port` 1236; a 104-byte SENSORS
+  frame per physics publish (12 quantities in the Rust databoard's units, presence flags for faults and the laser's
+  range), a 32-byte FINS answer to each applied frame (stage, armed, launched, the fins or none); CSL1, version 1,
+  CRC-32 trailer; frames refused for their length, magic, version, kind, CRC or a non-finite value, and ordered by a
+  wrapping sequence. The host codec is pinned to the crate's bytes (test_tools).
+- The board: `board_config::mask_simulated` after the layout (`_SIM_SENSORS`, by name), the `hitl` entry refusing to
+  come up while one still runs; its 13 quantities at p0 / 1 s (the stage machine binds it unchanged); `sim_link.rs`
+  (core 0, priority 12) binds once the TCP/IP stack is up (`link::stack_up`: a socket before it asserts in lwIP),
+  stamps on arrival, derives `change`, records the simulated sensors' own streams, answers each frame;
+  `inspect hitl`.
+- `tools/hitl_host.py`: the board's own saved config made HITL over CC (not-ported entries removed, separation,
+  watchdog, bluetooth, field off), the mission seeded, the sim-link gate (a frame answered before flying), plan B's
+  realtime accumulator on the host clock, the board's stage choosing boost or glide; restored after. CC goes through
+  the hub: the console splits long replies with log lines. `tools/hitl_collect_host.sh` pulls each session with
+  `board_pull.sh` (every file against the board's listing, no empty stream), checks the BUILD stamp, cuts and plots.
+  `tools/hitl_overlay.py` draws a Rust flight over a plan B capture, aligned on BOOSTING.
+- **The real reboot (`--reboot`):** the console panics the board 1-6 s into the glide. Two HITL-only rules make it
+  fly on: a board running the sim-link joins the Wi-Fi again after the launch (it carries the simulated sensors; a
+  flying board never does), and its glide counts as separated for the warm gate (no separation is simulated; plan B's
+  harness passed `separated=True` by construction).
+
+**Proof (2026-10-11, the taster, F15 clean, 285 g; doc/sims/TMS-7-rust_hitl_m12):**
+- Passive to DONE, twice (sessions 000547, 000554): BOOSTING at 3.0 g, apogee 273 m, LANDING on the barometric
+  4.2 m, DONE stationary; the runs agree to 0.2 s; 5755 of 5755 frames answered on the second.
+- Against plan B's control stack on the same physics (`virtual_flight`, equal mass): the same 3.0 g, the same
+  273.3 m apogee, GLIDING 10.1 s vs 10.0 s after BOOSTING; the landing differs only by the passive glide.
+- The warm gate: `WARM GATE: True recover gliding, 3s after checkpoint (reset_cause panic)`, the restored board
+  rejoined and landed on time (sessions 000556 + 000557); the outage cost ~26 s of frames (boot + join).
+- Artefacts counted by the collector: every session file against the board's own listing, no empty stream, the
+  firmware stamp in recorder.log.
 
 **Operator gains.** Bench flights of the Rust board without hardware motion, with the same harness output as
 before.
