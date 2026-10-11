@@ -1,4 +1,4 @@
-# The receiver (ESP32-C6 SuperMini): the console on its native USB, the card on SPI with long file names.
+# The flight recorder (ESP32-C6 SuperMini): the console on its native USB, the card on SPI with long file names.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 # the SuperMini's 4 MB flash (partitions.csv's factory slot ends past 2 MB; flash.sh writes the table)
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

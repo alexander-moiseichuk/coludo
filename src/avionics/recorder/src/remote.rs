@@ -3,9 +3,9 @@
 //! The remote beacon (M20, doc/specs/avionics-port.md M19/M20; crates/beacon): the glider writes a report to
 //! beacon.csv every few seconds, an ordinary stream this recorder files, and the beacon replays its last row. The row
 //! sets the radio (the access point's name, empty for off; its password, empty for an open one; its channel, its TX
-//! cap, its on/off cycle) and the page's figures, the same page the glider serves at DONE. Every report also goes to the
-//! card's root beacon.csv, and after a restart its last row is read back ([`last_report`]), so a recorder that loses
-//! power and comes back beacons again.
+//! cap, its on/off cycle) and the page's figures, the same page the glider serves at DONE. Every report also goes to
+//! the card's root beacon.csv, and after a restart its last row is read back ([`last_report`]), so a recorder that
+//! loses power and comes back beacons again.
 //!
 //! The access point is a captive portal at 192.168.4.1 (crates/beacon `esp`); the page notes how old the glider's
 //! report is (the figures' ages grow with it), or that it came back from the card with its age unknown.

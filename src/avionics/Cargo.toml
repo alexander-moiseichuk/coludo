@@ -7,7 +7,7 @@
 #    so build it from there: `cd firmware && cargo build --release` (`cargo run --release` flashes).
 [workspace]
 resolver = "3"
-members = ["crates/*", "firmware", "receiver", "sitl"]
+members = ["crates/*", "firmware", "recorder", "sitl"]
 default-members = ["crates/*", "sitl"]
 
 [workspace.package]

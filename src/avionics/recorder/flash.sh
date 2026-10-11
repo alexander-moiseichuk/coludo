@@ -1,7 +1,7 @@
 #!/bin/bash
 # Coludo project, copyright under MIT license, Alexander Moiseichuk
 #
-# Flash the receiver onto the ESP32-C6 SuperMini: the bootloader esp-idf-sys built for THIS sdkconfig (4 MB flash),
+# Flash the flight recorder onto the ESP32-C6 SuperMini: the bootloader esp-idf-sys built for THIS sdkconfig (4 MB flash),
 # partitions.csv's table, and the app in the factory slot. esptool, not espflash: espflash's transfers failed on this
 # board. The board must sit on a direct USB port of the host (through a hub every long transfer corrupts).
 # PORT names the serial port: find the C6 by its USB serial in /sys/class/tty/ttyACM*/device/../serial, never by

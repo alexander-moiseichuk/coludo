@@ -1,8 +1,8 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The beacon's access point on ESP-IDF (the `esp` feature), for both ends: the glider at DONE (firmware/src/beacon.rs)
-//! and the remote recorder (receiver/). Each passes its own thread and server settings: the glider's stacks go to
-//! PSRAM on core 0, the C6 has neither PSRAM nor a second core.
+//! and the remote recorder (src/avionics/recorder). Each passes its own thread and server settings: the glider's
+//! stacks go to PSRAM on core 0, the C6 has neither PSRAM nor a second core.
 //!
 //! The page opens by itself (a captive portal, operator 2026-10-11): the AP's address is [`ADDRESS`], its DHCP server
 //! offers the beacon as the DNS server, a DNS responder answers every name with the beacon, and every other path

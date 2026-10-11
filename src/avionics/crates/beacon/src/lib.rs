@@ -4,10 +4,10 @@
 //!
 //! - the glider at DONE (firmware/src/beacon.rs): its own access point `<BOARD>_glider` on channel 3, its page read
 //!   from its databoard at each request;
-//! - the remote recorder (receiver/, an ESP32-C6 on the glider's recorder UART): `<BOARD>_beacon` on a channel three
-//!   up, its page from the glider's last [`Report`]. The glider writes the report as an ordinary recorder stream
-//!   (`beacon.csv`, [`FIELDS`]) every few seconds; the recorder files it as any stream and replays its last row, after
-//!   a restart from its card. The report sets that radio too ([`Radio`]): an empty name keeps it off.
+//! - the remote recorder (src/avionics/recorder, an ESP32-C6 on the glider's recorder UART): `<BOARD>_beacon` on a
+//!   channel three up, its page from the glider's last [`Report`]. The glider writes the report as an ordinary
+//!   recorder stream (`beacon.csv`, [`FIELDS`]) every few seconds; the recorder files it as any stream and replays its
+//!   last row, after a restart from its card. The report sets that radio too ([`Radio`]): an empty name keeps it off.
 //!
 //! One page for both ([`page`]), so a searcher's phone shows the same window whichever beacon it joined; the report's
 //! row ([`Report::cells`], [`Report::parse`]); the captive portal's DNS answer ([`dns_answer`]); and, with the `esp`

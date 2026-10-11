@@ -1,6 +1,6 @@
 # Coludo project, copyright under MIT license, Alexander Moiseichuk
 #
-# The SuperMini's 4 MB flash: the receiver's image with Wi-Fi and the beacon's page server is ~1.5 MB, past IDF's
+# The SuperMini's 4 MB flash: the flight recorder's image with Wi-Fi and the beacon's page server is ~1.5 MB, past IDF's
 # default 1 MB factory slot (the C6 then found no bootable app).
 #
 # Name,   Type, SubType, Offset,   Size

@@ -1,4 +1,4 @@
-# The receiver target (riscv32imac-esp-espidf) is Tier 3: nightly + rust-src for -Zbuild-std.
+# The flight recorder target (riscv32imac-esp-espidf) is Tier 3: nightly + rust-src for -Zbuild-std.
 # Only here: the crates/ build on stable.
 [toolchain]
 channel = "nightly"

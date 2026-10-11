@@ -128,7 +128,7 @@ const GLOBAL_INDEX: &str = "sessions.csv";
 /// How much of a file's end a first look reads: more than any header or session.csv line.
 const TAIL_BYTES: usize = 1024;
 
-/// What the receiver counted.
+/// What the recorder counted.
 #[derive(Default)]
 struct Counts {
     /// Bytes read from the link.
@@ -160,7 +160,7 @@ struct Known {
     last_session: Option<String>,
 }
 
-/// The lines gathered since the last flush, by file, and what the receiver counted.
+/// The lines gathered since the last flush, by file, and what the recorder counted.
 struct Filer {
     /// The bytes to append, by path.
     pending: BTreeMap<String, Vec<u8>>,
@@ -434,7 +434,7 @@ fn mount(trace: bool) -> anyhow::Result<Box<dyn std::any::Any>> {
         }
     };
     if trace {
-        log::info!("receiver :: tracing the card's init on SPI2");
+        log::info!("recorder :: tracing the card's init on SPI2");
         levels(true);
     }
     let card = SdSpiHostDriver::new(
@@ -646,11 +646,11 @@ fn main() -> anyhow::Result<()> {
         *mounted_at = Some(Instant::now());
         match mount(first) {
             Ok(mount) => {
-                log::info!("receiver :: card mounted at {ROOT}");
+                log::info!("recorder :: card mounted at {ROOT}");
                 *card = Some(mount);
             }
             Err(error) => log::warn!(
-                "receiver :: no card: {error}; trying again in {} s",
+                "recorder :: no card: {error}; trying again in {} s",
                 MOUNT_EVERY.as_secs()
             ),
         }
@@ -675,7 +675,7 @@ fn main() -> anyhow::Result<()> {
         Option::<AnyIOPin>::None,
         &UartConfig::default().baudrate(Hertz(BAUD)).rx_fifo_size(RX_BYTES),
     )?;
-    log::info!("receiver :: the P4's lines on GPIO17 at {BAUD} baud");
+    log::info!("recorder :: the P4's lines on GPIO17 at {BAUD} baud");
     spawn_console()?;
     let mut filer = Filer::new();
     filer.mounted = card.is_some();
@@ -720,7 +720,7 @@ fn main() -> anyhow::Result<()> {
             reported = Instant::now();
             let counts = &filer.counts;
             log::info!(
-                "receiver :: {} bytes, {} lines good, {} damaged, {} overlong, {} repeated, card {} (errors {}, unfiled {}), \
+                "recorder :: {} bytes, {} lines good, {} damaged, {} overlong, {} repeated, card {} (errors {}, unfiled {}), \
                  session {} ({} seen), beacon {}",
                 counts.bytes,
                 counts.good,

@@ -1,5 +1,5 @@
 [package]
-name = "receiver"
+name = "flight_recorder"
 description = "The remote flight recorder on an ESP32-C6: the P4's wire lines from its UART onto its own SD card (M20)"
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "receiver"
+name = "flight_recorder"
 path = "src/main.rs"
 harness = false
 

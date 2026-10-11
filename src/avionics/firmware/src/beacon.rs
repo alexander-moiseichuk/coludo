@@ -9,7 +9,7 @@
 //!   (the GNSS, each barometer, the laser: how high the glider hangs, should it land in a tree), the battery where an
 //!   INA226 is fitted, and the flash->SD copy still to go. Power-off or a reset ends it; any power-up after DONE is a
 //!   new session in SETTING.
-//! - The remote recorder's (receiver/, an ESP32-C6 on the recorder's UART, M20): every [`REPORT_EVERY`] the
+//! - The remote recorder's (src/avionics/recorder, an ESP32-C6 on the recorder's UART, M20): every [`REPORT_EVERY`] the
 //!   beacon_feed thread writes the same page's figures and that beacon's radio to beacon.csv, an ordinary recorder
 //!   stream ([`spawn_feed`]). The recorder replays the last row: `<BOARD>_beacon` three channels above this board's own
 //!   (operator 2026-10-11), a minute on and a minute silent. It comes on BEFORE launch, with the camera: armed in
