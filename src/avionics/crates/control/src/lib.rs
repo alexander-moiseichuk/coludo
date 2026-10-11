@@ -13,6 +13,7 @@
 //!  * [`navigation`] -- the landing-zone geometry the Mission resolves its target and gates with;
 //!  * [`wind`] -- the wind triangle from the GNSS ground velocity, the heading and the airspeed;
 //!  * [`drift`] -- the GNSS pad drift (tasks/gnss_calib.py), frozen at launch to de-bias the wind;
+//!  * [`flight`] -- the flight law (tasks/flight.py): governor, stage gate, guidance, PIDs, mixer, wind feed;
 //!  * [`guidance`] -- the stage-dependent guidance law: the attitude setpoints and the heading error;
 //!  * [`attitude`] -- the primary attitude: the complementary filter (gyro, gravity, track, magnetometer), its
 //!    blind window and the handover to a source above or below it.
@@ -25,6 +26,7 @@ pub mod attitude;
 pub mod change;
 pub mod commons;
 pub mod drift;
+pub mod flight;
 pub mod governor;
 pub mod guidance;
 pub mod mixer;
