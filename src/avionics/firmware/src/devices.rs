@@ -147,6 +147,38 @@ pub struct FieldMember {
     pub settings: mission::field::Settings,
 }
 
+/// The HITL sim-link once its entry came up: its thread binds the port (crate::sim_link, M12).
+pub struct HitlMember {
+    /// The entry's name: the source of every simulated quantity.
+    pub name: &'static str,
+    /// The UDP port the host sends to (`sim_port`).
+    pub port: u16,
+}
+
+/// The sim-link's UDP port when the entry names none (doc/specs/sim-link.md).
+const SIM_PORT: u16 = 1236;
+
+/// The quantities the `hitl` entry provides (plan B hitl.py's `Databoard.provide` at setup, its entry has no
+/// `provides`), each at priority 0 with plan B's 1 s timeout; `change` the port's own, as every barometer's.
+const HITL_QUANTITIES: [&str; 13] = [
+    "accel",
+    "rate",
+    "attitude",
+    "mag",
+    "agl",
+    "altitude",
+    "elevation",
+    "change",
+    "position",
+    "speed",
+    "course",
+    "airspeed",
+    "dynamic_pressure",
+];
+
+/// The `hitl` source's timeout, ms (plan B hitl.py `provided`).
+const HITL_TIMEOUT_MS: u32 = 1000;
+
 /// The UART the GNSS runs on: the one the firmware hands its thread (plan B's default `id`).
 const GNSS_UART: u8 = 2;
 
@@ -294,6 +326,17 @@ impl Topology {
             .filter(|(_, device)| device.active());
         for (entry, _) in up {
             let mut provides = board_config::provides(entry);
+            if entry.implementation == "hitl" {
+                provides = HITL_QUANTITIES
+                    .iter()
+                    .map(|quantity| board_config::Provide {
+                        quantity,
+                        priority: 0,
+                        timeout_ms: HITL_TIMEOUT_MS,
+                        reconcile: false,
+                    })
+                    .collect();
+            }
             if BAROMETERS.contains(&entry.implementation) {
                 let change = provides
                     .iter()
@@ -426,6 +469,8 @@ pub struct Devices {
     pub gnss_calib: Option<GnssCalibMember>,
     /// The CC-less field agent, when its entry came up.
     pub field: Option<FieldMember>,
+    /// The HITL sim-link, when its entry came up.
+    pub hitl: Option<HitlMember>,
 }
 
 /// Crashes each entry of `table` named in `names` that came up, with `reason`: the thread that would run it did not
@@ -456,6 +501,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut gnss = None;
     let mut gnss_calib = None;
     let mut field = None;
+    let mut hitl = None;
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -500,6 +546,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::Gnss => set_up_gnss(document, entry, &mut gnss),
             Kind::GnssCalib => set_up_gnss_calib(entry, &mut gnss_calib),
             Kind::Field => set_up_field(entry, &mut field),
+            Kind::Hitl => set_up_hitl(document, entry, &mut hitl),
             Kind::Checkpoint => {
                 let (outcome, came_up) =
                     set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
@@ -545,6 +592,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         gnss,
         gnss_calib,
         field,
+        hitl,
     }
 }
 
@@ -882,6 +930,59 @@ fn set_up_field(entry: &Entry<'static>, field: &mut Option<FieldMember>) -> Resu
     );
     if came_up.is_some() {
         *field = came_up;
+    }
+    outcome
+}
+
+/// The sim-link's bring-up (doc/specs/sim-link.md): `sim_port` (1236) read from the entry, in one attempt; the
+/// physics keys are the host's and ignored here. It fails when a simulated sensor still runs (avionics-port.md R10:
+/// main masked them, and one left enabled would be a silent second source), and for a second entry.
+fn set_up_hitl(document: &Value, entry: &Entry<'static>, hitl: &mut Option<HitlMember>) -> Result<(), String> {
+    let port = match entry.fields.get("sim_port") {
+        None => Ok(SIM_PORT),
+        Some(value) => value
+            .as_u64()
+            .and_then(|port| u16::try_from(port).ok())
+            .filter(|port| *port > 0)
+            .ok_or_else(|| format!("sim_port: {value} is not a UDP port")),
+    };
+    let live: Vec<&str> = board_config::directory(document)
+        .iter()
+        .map(|sensor| sensor.name)
+        .filter(|name| board_config::SIM_SENSORS.contains(name))
+        .collect();
+    let running = hitl.as_ref().map(|member: &HitlMember| member.name);
+    let mut came_up = None;
+    let outcome = controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| match (&port, running) {
+            (_, Some(running)) => Attempt::Raised {
+                error: format!("one hitl only: '{running}' runs the sim-link"),
+                diagnosis: None,
+            },
+            _ if !live.is_empty() => Attempt::Raised {
+                error: format!("simulated sensors still enabled: {}", live.join(", ")),
+                diagnosis: None,
+            },
+            (Err(refused), None) => Attempt::Raised {
+                error: refused.clone(),
+                diagnosis: None,
+            },
+            (Ok(port), None) => {
+                came_up = Some(HitlMember {
+                    name: entry.name,
+                    port: *port,
+                });
+                Attempt::Up
+            }
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    );
+    if came_up.is_some() {
+        *hitl = came_up;
     }
     outcome
 }

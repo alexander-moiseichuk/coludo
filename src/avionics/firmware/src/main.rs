@@ -27,6 +27,7 @@ mod owner;
 mod panics_logger;
 mod recorder;
 mod sensors;
+mod sim_link;
 mod status;
 mod supervisor;
 mod warm;
@@ -139,6 +140,12 @@ fn main() -> anyhow::Result<()> {
             log::info!("{line}");
         }
     }
+    // HITL: the sensors the simulator replaces, off again after the layout re-enabled what the revision fits (plan B
+    // tools/hitl_run.py:47); before the config id, so the id is the config flown
+    let masked = board_config::mask_simulated(&mut loaded.document);
+    if !masked.is_empty() {
+        log::info!("hitl :: simulated, so masked: {}", masked.join(", "));
+    }
     // the ports at the rewritten config's clocks
     for (_, port) in &mut lent {
         let id = port.id();
@@ -193,6 +200,7 @@ fn main() -> anyhow::Result<()> {
         gnss,
         gnss_calib,
         field,
+        hitl,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     // the warm start, while the parts and the flight word's one writer are still main's and nothing else runs: a reset
     // in flight resumes the crumb's stage, its barometers rebased to the pad and the mission's launch point and zone
@@ -257,6 +265,14 @@ fn main() -> anyhow::Result<()> {
     let calibration = gnss_calib.map(|member| gnss::Calibration::new(member, topology));
     if let Err(error) = supervisor::start(board.clone(), table, keeping, watchdog, calibration, tick_ms) {
         log::error!("supervisor :: did not start: {error}");
+    }
+    // the HITL sim-link on its own core-0 thread (M12): a thread that will not spawn crashes its entry, so `arm` refuses
+    if let Some(member) = hitl {
+        let name = member.name;
+        if let Err(error) = sim_link::start(member, topology) {
+            log::error!("{name} :: did not start: {error}");
+            devices::crash(table, [Some(name)], &error.to_string());
+        }
     }
     // the GNSS on UART2, on its own core-0 thread (M11): a UART that would not open crashes its entry, so `arm` refuses
     if let Some(member) = gnss {

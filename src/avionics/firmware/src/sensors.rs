@@ -66,6 +66,8 @@ pub enum Kind {
     GnssCalib,
     /// The CC-less field agent: its settings read from the entry, its passes on the executor (M11).
     Field,
+    /// The HITL sim-link: its port read from the entry, its frames on its own thread (M12).
+    Hitl,
     /// Run natively by the firmware, with nothing to set up: up.
     Native,
     /// A plan B implementation not ported yet: failed with [`NOT_PORTED_YET`].
@@ -80,7 +82,7 @@ pub enum Kind {
 const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "bluetooth"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 7] = ["adxl375", "bno055", "bmp280", "sg90", "mg90s", "flight", "hitl"];
+const NOT_PORTED: [&str; 6] = ["adxl375", "bno055", "bmp280", "sg90", "mg90s", "flight"];
 
 /// What runs `entry`. The LSM6DSO32 is an SPI part unless its entry binds it to I2C (plan B's lsm6dso32.py:144: the
 /// `bus` defaults to 'spi').
@@ -99,6 +101,7 @@ pub fn classify(entry: &Entry) -> Kind {
         "neo6mv2" | "atgm336h" => Kind::Gnss,
         "gnss_calib" => Kind::GnssCalib,
         "field" => Kind::Field,
+        "hitl" => Kind::Hitl,
         implementation if NATIVE.contains(&implementation) => Kind::Native,
         implementation if NOT_PORTED.contains(&implementation) => Kind::NotPorted,
         _ => Kind::Unknown,
@@ -750,7 +753,13 @@ impl Due {
 }
 
 /// A row pushed to a run's stream, the refusal logged once per run of refusals.
-fn record(name: &str, telemetry: &mut Option<Telemetry<'static>>, overflowing: &mut bool, now_us: u64, row: &[Cell]) {
+pub(crate) fn record(
+    name: &str,
+    telemetry: &mut Option<Telemetry<'static>>,
+    overflowing: &mut bool,
+    now_us: u64,
+    row: &[Cell],
+) {
     let Some(telemetry) = telemetry else {
         return;
     };

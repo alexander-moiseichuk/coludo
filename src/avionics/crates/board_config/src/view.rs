@@ -442,6 +442,52 @@ pub fn spi_bus(document: &Value, id: u8) -> Option<SpiSpecification> {
     })
 }
 
+/// The sensors a HITL run's simulator publishes over, by config NAME (plan B `config_hitl._SIM_SENSORS`; they are
+/// entry names, not drivers): a real part left beside the simulator would be a silent second source (avionics-port.md
+/// R10).
+pub const SIM_SENSORS: [&str; 12] = [
+    "accel_adxl375",
+    "imu_lsm6dso32",
+    "imu_bno055",
+    "baro_icp10111",
+    "baro_bmp280",
+    "laser_agl",
+    "laser_agl_l1x",
+    "gnss",
+    "airspeed_sdp810",
+    "imu_bmi323",
+    "mag_bmm350",
+    "baro_bmp581",
+];
+
+/// Whether `document` runs HITL: an enabled component whose implementation is `hitl` (doc/specs/sim-link.md).
+pub fn hitl_enabled(document: &Value) -> bool {
+    directory(document).iter().any(|entry| entry.implementation == "hitl")
+}
+
+/// Plan B's `config_hitl.mask`: with HITL enabled, every [`SIM_SENSORS`] sensor that is enabled is disabled (`enabled`
+/// false), by its name; nothing changes without HITL. Run after the layout, which re-enables the parts a revision
+/// fits (plan B's tools/hitl_run.py:47).
+///
+/// Returns the names it disabled, in the config's order.
+pub fn mask_simulated(document: &mut Value) -> Vec<String> {
+    if !hitl_enabled(document) {
+        return Vec::new();
+    }
+    let Some(sensors) = document.get_mut("sensors").and_then(Value::as_array_mut) else {
+        return Vec::new();
+    };
+    let mut masked = Vec::new();
+    for sensor in sensors.iter_mut().filter_map(Value::as_object_mut) {
+        let name = sensor.get("name").and_then(Value::as_str).unwrap_or_default();
+        if SIM_SENSORS.contains(&name) && enabled(sensor) {
+            masked.push(name.to_string());
+            sensor.insert("enabled".to_string(), Value::Bool(false));
+        }
+    }
+    masked
+}
+
 /// A UART bus as the GNSS opens it (M11).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UartSpecification {
@@ -901,7 +947,8 @@ fn implementation(device: &Map<String, Value>) -> &str {
 mod tests {
     use super::{
         Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, DEFAULT_SCHEDULE_HZ, Hub, Network, UartSpecification,
-        Watchdog, board_id, camera, checkpoint, max_range_m, mcu, schedule_hz, uart_bus, warm_start, watchdog, wifi,
+        Watchdog, board_id, camera, checkpoint, directory, hitl_enabled, mask_simulated, max_range_m, mcu, schedule_hz,
+        uart_bus, warm_start, watchdog, wifi,
     };
     use serde_json::{Value, json};
 
@@ -912,6 +959,38 @@ mod tests {
             retry_ms,
             password: password.to_string(),
             tx_power_dbm: None,
+        }
+    }
+
+    #[test]
+    fn hitl_masks_the_simulated_sensors_by_name_and_nothing_else() {
+        let board = |hitl: Value| {
+            json!({"sensors": [
+                {"name": "imu_lsm6dso32", "driver": "lsm6dso32"},
+                {"name": "baro_icp10111", "driver": "icp10111", "enabled": true},
+                {"name": "power_ina226", "driver": "ina226"},
+                {"name": "gnss", "driver": "neo6mv2", "enabled": false},
+                {"name": "my_baro", "driver": "icp10111"}],
+                "components": [hitl]})
+        };
+        let mut flying = board(json!({"name": "hitl", "activity": "hitl", "sim_port": 1236}));
+        assert!(hitl_enabled(&flying));
+        assert_eq!(mask_simulated(&mut flying), ["imu_lsm6dso32", "baro_icp10111"]);
+        let enabled_now = |document: &Value| -> Vec<String> {
+            directory(document).iter().map(|entry| entry.name.to_string()).collect()
+        };
+        // by name: a renamed barometer is no simulated sensor, and the power rail stays real
+        assert_eq!(enabled_now(&flying), ["power_ina226", "my_baro", "hitl"]);
+        assert!(mask_simulated(&mut flying).is_empty(), "idempotent");
+        for off in [
+            json!({"name": "hitl", "activity": "hitl", "enabled": false}),
+            json!({"name": "camera", "driver": "ov5647"}),
+        ] {
+            let mut document = board(off);
+            let before = document.clone();
+            assert!(!hitl_enabled(&document));
+            assert!(mask_simulated(&mut document).is_empty());
+            assert_eq!(document, before, "no HITL, no mask");
         }
     }
 

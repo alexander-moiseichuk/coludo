@@ -155,6 +155,19 @@ enum Own {
         samples: u32,
         frozen: bool,
     },
+    /// The HITL sim-link (the port's own): its UDP port and socket, the frames applied, refused by reason and stale,
+    /// the last frame's seq, sim time and age, and its sender.
+    Hitl {
+        port: u16,
+        bound: bool,
+        frames: u32,
+        refused: serde_json::Map<String, Value>,
+        stale: u32,
+        last_seq: Option<u32>,
+        sim_time_ms: Option<u32>,
+        age_ms: Option<u64>,
+        sender: Option<String>,
+    },
     /// A laser ranger (plan B vl53l1x.py inspect): whether its data-ready line is wired, its channel's latest.
     Ranger { interrupt: bool, agl_m: Option<f32> },
     /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
@@ -304,6 +317,24 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 drift_n: (north * 1000.0).round() / 1000.0,
                 samples,
                 frozen,
+            },
+            None => Own::None {},
+        },
+        "hitl" => match crate::sim_link::inspection() {
+            Some(state) => Own::Hitl {
+                port: state.port,
+                bound: state.bound,
+                frames: state.applied,
+                refused: state
+                    .refused
+                    .iter()
+                    .map(|(reason, count)| (reason.to_string(), Value::from(*count)))
+                    .collect(),
+                stale: state.stale,
+                last_seq: state.last.map(|(seq, _)| seq),
+                sim_time_ms: state.last.map(|(_, sim_time_ms)| sim_time_ms),
+                age_ms: state.age_ms,
+                sender: state.sender,
             },
             None => Own::None {},
         },

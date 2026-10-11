@@ -17,6 +17,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use board_config::{Hub, Network, Wifi};
@@ -42,6 +43,15 @@ const TICK: Duration = Duration::from_secs(1);
 const DISCONNECT_SETTLE: Duration = Duration::from_millis(300);
 
 /// Join, dial, serve -- forever.
+/// Whether the TCP/IP stack is up: the Wi-Fi driver brings it up in [`run`], and a socket opened before it asserts in
+/// lwIP (the sim-link's UDP socket waits for it, crate::sim_link).
+static STACK_UP: AtomicBool = AtomicBool::new(false);
+
+/// Whether the TCP/IP stack is up, so a socket can be opened (it may not hold an address yet).
+pub fn stack_up() -> bool {
+    STACK_UP.load(Ordering::Acquire)
+}
+
 pub fn run(
     modem: Modem<'static>,
     event_loop: EspSystemEventLoop,
@@ -66,6 +76,7 @@ pub fn run(
         ))
         .inspect_err(|error| log::warn!("link :: wifi storage: {error}"));
     }
+    STACK_UP.store(true, Ordering::Release);
     // the microSD over HTTP (recordings, logs) -- only now: the Wi-Fi driver brought up the TCP/IP stack it needs
     let _files = crate::files::serve()
         .inspect_err(|error| log::warn!("files :: {error}"))
