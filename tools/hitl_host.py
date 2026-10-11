@@ -8,15 +8,16 @@ src/glider/sim_model.py, the one physics implementation, over the UDP sim-link.
 The run, one scenario:
   1. CC (through the hub with --hub, else the USB console): the board's saved config and mission are kept; a HITL
      copy is installed -- the board's own config, the entries it cannot run yet removed (verify's "not ported
-     yet"), separation, watchdog, bluetooth and field off, and an enabled `hitl` entry carrying the scenario (the
-     board masks the simulated sensors itself, after its layout); the mission gets the scenario's pad and zone
-     (plan B hitl.py did the same at setup); reboot.
+     yet"), separation, watchdog, bluetooth and field off, its flight loop on with plan B's HITL test gains
+     (config_hitl, M13: the glide is flown), and an enabled `hitl` entry carrying the scenario (the board masks the
+     simulated sensors itself, after its layout); the mission gets the scenario's pad and zone (plan B hitl.py did
+     the same at setup); reboot.
   2. The sim-link gate: frames until the board answers one (it answers only once its Wi-Fi joined and its socket
      is bound; frames before that are lost).
   3. The pad: the body held at rest, published at inject_hz, while CC arms the board; then the pad dwell.
   4. The flight: plan B hitl.py's realtime accumulator (fixed physics sub-steps covering the measured wall time, a
      stall's catch-up capped at 0.5 s), boost while the board's stage is SETTING or BOOSTING, the glide from
-     GLIDING, the body stopped at DONE; the fins the board sends (neutral while it sends none: M12 is passive).
+     GLIDING, the body stopped at DONE; the fins the board sends (neutral while it sends none).
   5. The board's saved config and mission restored, and a reboot (unless --keep-config).
 
 It prints the lines tools/hitl_collect.sh parses from plan B's hitl_run: `SESSION <session> <motor> noise <n> wind
@@ -130,6 +131,11 @@ def decode_fins(frame: bytes) -> dict | None:
             'launched': bool(frame[18]), 'fins': list(struct.unpack_from('<3h', frame, 20)) if flags & 1 else None}
 
 
+def _plan_b_gains() -> dict:
+    """The test gains plan B's HITL flew (config_hitl.default's flight entry), the one source of them."""
+    return next(entry for entry in config_hitl.default()['components'] if entry['name'] == 'flight')['gains']
+
+
 def hitl_config(saved: dict, not_ported: set, args: argparse.Namespace) -> dict:
     """
     The board's HITL copy of its own saved config.
@@ -142,8 +148,16 @@ def hitl_config(saved: dict, not_ported: set, args: argparse.Namespace) -> dict:
 
     Returns:
         The config to install: plan B config_hitl.default's changes over the board's own config.
+
+    Raises:
+        ValueError - the config has no flight entry, or more than one: HITL flies exactly one loop.
     """
     hitl = copy.deepcopy(saved)
+    flights = [entry for entry in hitl.get('components', []) if entry.get('activity') == 'flight']
+    if len(flights) != 1:
+        raise ValueError('%d flight entries in the config: HITL flies exactly one' % len(flights))
+    flights[0]['enabled'] = True
+    flights[0]['gains'] = _plan_b_gains()
     for key in ('sensors', 'components'):
         kept = []
         for entry in hitl.get(key, []):

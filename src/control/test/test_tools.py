@@ -14,6 +14,7 @@ bug, because it corrupts the answer rather than announcing itself. The §26 scan
 tools; every one of them is pinned below so it cannot come back. Run by `make test` / `make check`.
 """
 
+import argparse
 import json
 import os
 import re
@@ -1828,6 +1829,35 @@ def test_hitl_host_frames_are_the_boards_bytes():
         assert hitl_host.decode_fins(broken) is None, broken.hex()
 
 
+def test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains():
+    """
+    hitl_config installs the board's own config with its flight loop on and plan B's HITL test gains (config_hitl), so
+    the Rust glide is flown as plan B's was; the rest of the board's flight entry (its stages, its limits) stays its
+    own. NEGATIVE: a config with no flight entry, or two, is refused -- HITL flies exactly one loop.
+    """
+    args = argparse.Namespace(motor='F15', glider_g=285, sim_hz=50, noise=0.0, spike=False, wind=0.0,
+                              wind_dir=0.0, boost_axis='z', gnss_drift=0.0, gnss_drift_dir=0.0, pad_dwell_s=0.0,
+                              inject_hz=0)
+    saved = {'components': [{'name': 'flight', 'activity': 'flight', 'enabled': False, 'bank_limit': 33,
+                             'gains': {'roll': {}, 'pitch': {}, 'yaw': {}}},
+                            {'name': 'watchdog', 'activity': 'watchdog', 'enabled': True}],
+             'sensors': [{'name': 'baro_bmp280', 'driver': 'bmp280'}]}
+    hitl = hitl_host.hitl_config(saved, {'baro_bmp280'}, args)
+    flight = hitl['components'][0]
+    assert flight['enabled'] and flight['bank_limit'] == 33, flight
+    assert flight['gains'] == {'roll': {'kp': 2.0, 'kd': 0.2}, 'pitch': {'kp': 1.5}, 'yaw': {'kp': 1.5, 'kd': 0.1}}
+    assert saved['components'][0]['enabled'] is False, 'the saved config itself is untouched'
+    assert hitl['components'][1]['enabled'] is False and hitl['sensors'] == []
+    assert hitl['components'][-1]['activity'] == 'hitl' and hitl['components'][-1]['liftoff_g'] > 285
+    for components in ([], [saved['components'][0], dict(saved['components'][0], name='flight_2')]):
+        try:
+            hitl_host.hitl_config({'components': components}, set(), args)
+        except ValueError as error:
+            assert 'flight entries' in str(error), error
+        else:
+            raise AssertionError('accepted %d flight entries' % len(components))
+
+
 def test_flight_pull_takes_a_session_not_a_junk_name():
     """
     flight_pull.sh with no session pulls the newest one: the session whose second-newest file is the newest.
@@ -1925,6 +1955,7 @@ test_recorder_flight_files_a_log_line_found_in_a_stream()
 test_recorder_flight_never_times_by_a_wrap_its_file_missed()
 test_every_reader_takes_a_damaged_byte()
 test_hitl_host_frames_are_the_boards_bytes()
+test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
       'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '
       'airspeed calibration fit, parser edge cases, session-tag eras (boot id included), '
