@@ -261,13 +261,16 @@ def main() -> int:
     """Build the overlay; 0 on success."""
     parser = argparse.ArgumentParser(description='Overlay a Rust HITL flight on a plan B flight')
     parser.add_argument('rust', help="the Rust flight's launch folder (recorder_flight.py -o)")
-    parser.add_argument('planb', help='a plan B capture (virtual_flight.py -o, or a board HITL capture)')
+    parser.add_argument('planb', help='a plan B capture (virtual_flight.py -o, a board HITL capture), or a cut folder '
+                        '(a SITL --record: tools/planb_sitl.py)')
     parser.add_argument('-o', '--out', required=True, help='output prefix: <out>.html and <out>.svg')
     parser.add_argument('--label-rust', default='Rust board HITL')
     parser.add_argument('--label-planb', default='plan B')
     parser.add_argument('--title', default='Rust HITL vs plan B')
     args = parser.parse_args()
-    flights = [rust_flight(args.rust, args.label_rust), planb_flight(args.planb, args.label_planb)]
+    # a folder is a cut (a Rust run, or a SITL's --record: tools/planb_sitl.py), a file a plan B capture
+    second = rust_flight if os.path.isdir(args.planb) else planb_flight
+    flights = [rust_flight(args.rust, args.label_rust), second(args.planb, args.label_planb)]
     table = _table(flights)
     print(table)
     panels = figure(flights, args.title)

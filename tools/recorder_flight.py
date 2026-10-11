@@ -729,6 +729,19 @@ def ignition(rows: list, fields: tuple) -> int:
     raise ValueError('no boost: |a| never held %.1f g for %.1f s' % (_BOOST_G, _BOOST_HOLD_S))
 
 
+def staged(rows: list, fields: tuple) -> int:
+    """
+    Uptime (us) of the stage machine's first BOOSTING row: the flight's anchor when no IMU boost holds _BOOST_G --
+    a HITL boost of ~3 g under its noise (the sim's, where a real motor pulls ~15 g). ValueError if there is none.
+    """
+    column = fields.index('stage')
+    for uptime, line in rows:
+        parts = _payload(line).split(';')[1:]
+        if len(parts) > column and parts[column] == 'boosting':
+            return uptime
+    raise ValueError('no boosting row')
+
+
 def board_log(lines: list, session: str) -> list:
     """
     The session's lines of recorder.log, verbatim.
@@ -946,6 +959,17 @@ def main() -> None:
             break
         except ValueError:
             continue
+    if boot is None and args.boot is None and 'sequencer' in found:
+        stage_header, stage_boots, _ = found['sequencer']
+        for index, rows in enumerate(stage_boots):
+            try:
+                boot, zero = index, staged(rows, stage_header or _FIELDS['sequencer'])
+                print('session %s: no |a| held %.1f g on %s -- ignition from the stage machine\'s BOOSTING row'
+                      % (args.session, _BOOST_G, args.accel))
+                break
+            except ValueError:
+                boot = None
+                continue
     if boot is None:
         sys.exit('no boost in %s boot(s) of session %s' % (len(boots), args.session))
     print('session %s: %d boot(s) on %s (%s); the flight is boot %d' % (

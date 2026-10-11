@@ -38,15 +38,15 @@ gate>` (the collectors fail a reboot scenario on `WARM GATE: False`) and `REBOOT
 goes through the console (`panic` is a console command), the rest through --hub when given.
 """
 import argparse
-import binascii
 import copy
 import json
 import math
 import os
 import random
 import socket
-import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -57,14 +57,9 @@ import cc_protocol as cc  # noqa: E402
 import config_hitl  # noqa: E402
 import sim_model  # noqa: E402
 from contract import transports  # noqa: E402
+from sim_link_codec import decode_fins, decode_sensors, encode_fins, encode_sensors  # noqa: E402,F401
 
 SIM_PORT: int = 1236  # the board's sim-link port (the hitl entry's sim_port default)
-_MAGIC: bytes = b'CSL1'
-_VERSION: int = 1
-_SENSORS: int = 1
-_FINS: int = 2
-_SENSORS_BYTES: int = 104
-_FINS_BYTES: int = 32
 _STAGES: dict = {1: 'setting', 2: 'boosting', 3: 'gliding', 4: 'landing', 5: 'done'}
 _SETTING, _BOOSTING, _GLIDING, _DONE = 1, 2, 3, 5
 
@@ -76,59 +71,11 @@ _MAG_DECLINATION_DEG: float = 17.0  # declination + mounting as one constant, th
 _SERVO_NEUTRAL_DEG: float = 90.0
 _MAX_CATCHUP_S: float = 0.5  # a scheduling stall's catch-up cap (plan B hitl.py)
 _TIMEOUT_S: float = 150.0  # from ignition, plan B hitl_run's cap
+_SITL_PAD_S: float = 2.0  # the SITL's pad before ignition, physics seconds: the stage machine's windows fill
+_LOCKSTEP_WAIT_S: float = 2.0  # how long a lockstep frame waits for its answer before the run stalls
 _GATE_S: float = 120.0  # how long the board gets to join Wi-Fi and answer a frame
 _QUIET_S: float = 3.0  # after an answer that is no reply: the board finishes a long one (get-config, ~0.8 s)
 _OFF: tuple = ('separation', 'watchdog', 'bluetooth', 'field')  # plan B's _OFF less the radios the link rides
-
-
-def encode_sensors(seq: int, sim_time_ms: int, fields: dict) -> bytes:
-    """
-    One SENSORS frame (doc/specs/sim-link.md): little-endian, presence flags, CRC-32 trailer.
-
-    Args:
-        seq - the frame's sequence number (wraps at 2^32).
-        sim_time_ms - the physics clock in ms (wraps at 2^32).
-        fields - accel, rate, attitude, mag (3 floats), altitude, elevation, agl, airspeed, dynamic_pressure,
-            speed, course (a float), position ([lat, lon] in 1e-7 degree ints); a missing or None field is absent.
-
-    Returns:
-        The 104-byte frame.
-    """
-    layout = (('accel', 0, '<3f', 16), ('rate', 1, '<3f', 28), ('attitude', 2, '<3f', 40), ('mag', 3, '<3f', 52),
-              ('altitude', 4, '<f', 64), ('elevation', 5, '<f', 68), ('agl', 6, '<f', 72), ('airspeed', 7, '<f', 76),
-              ('dynamic_pressure', 8, '<f', 80), ('position', 9, '<2i', 84), ('speed', 10, '<f', 92),
-              ('course', 11, '<f', 96))
-    frame = bytearray(_SENSORS_BYTES)
-    flags = 0
-    for name, bit, shape, offset in layout:
-        value = fields.get(name)
-        if value is None:
-            continue
-        flags |= 1 << bit
-        struct.pack_into(shape, frame, offset, *(value if isinstance(value, (list, tuple)) else (value,)))
-    struct.pack_into('<4sBBHII', frame, 0, _MAGIC, _VERSION, _SENSORS, flags, seq & 0xFFFFFFFF,
-                     sim_time_ms & 0xFFFFFFFF)
-    struct.pack_into('<I', frame, 100, binascii.crc32(bytes(frame[:100])))
-    return bytes(frame)
-
-
-def decode_fins(frame: bytes) -> dict | None:
-    """
-    One FINS frame, or None for anything that is not one (length, magic, version, kind, CRC).
-
-    Args:
-        frame - the datagram.
-
-    Returns:
-        {seq, uptime_ms, stage, armed, launched, fins: [left, right, yaw] whole degrees or None}.
-    """
-    if len(frame) != _FINS_BYTES or frame[:4] != _MAGIC or frame[4] != _VERSION or frame[5] != _FINS:
-        return None
-    if struct.unpack_from('<I', frame, 28)[0] != binascii.crc32(frame[:28]):
-        return None
-    flags, seq, uptime_ms = struct.unpack_from('<HII', frame, 6)
-    return {'seq': seq, 'uptime_ms': uptime_ms, 'stage': frame[16], 'armed': bool(frame[17]),
-            'launched': bool(frame[18]), 'fins': list(struct.unpack_from('<3h', frame, 20)) if flags & 1 else None}
 
 
 def _plan_b_gains() -> dict:
@@ -259,6 +206,8 @@ class _Sim:
         self.fin_range: list = []  # [low, high] per fin over those answers
         self.ignited = False  # set by the main thread once armed and the pad dwell is over
         self.sim_time = 0.0
+        self.clock: float | None = None  # lockstep: the frames' clock (pad included), else the physics time
+        self.rows: dict = {}  # lockstep --record: stream -> [(t_s, cells...)]
         self.wall_start: float | None = None
         self.drop_attitude = False
         self.drop_gnss = False
@@ -282,15 +231,20 @@ class _Sim:
                 frame, _ = self.socket.recvfrom(64)
             except (BlockingIOError, InterruptedError):
                 return
-            fins = decode_fins(frame)
-            if fins is not None:
-                self.answers += 1
-                if fins['fins'] is not None:
-                    self.with_fins += 1
-                    self.fin_range = [[min(low, angle), max(high, angle)] for (low, high), angle in
-                                      zip(self.fin_range or [[angle, angle] for angle in fins['fins']], fins['fins'])]
-                if self.answer is None or (fins['seq'] - self.answer['seq']) & 0xFFFFFFFF < 1 << 31:
-                    self.answer = fins
+            self.take(frame)
+
+    def take(self, frame: bytes) -> dict | None:
+        """One FINS datagram counted and kept when newest; the answer, or None when it is no FINS frame."""
+        fins = decode_fins(frame)
+        if fins is not None:
+            self.answers += 1
+            if fins['fins'] is not None:
+                self.with_fins += 1
+                self.fin_range = [[min(low, angle), max(high, angle)] for (low, high), angle in
+                                  zip(self.fin_range or [[angle, angle] for angle in fins['fins']], fins['fins'])]
+            if self.answer is None or (fins['seq'] - self.answer['seq']) & 0xFFFFFFFF < 1 << 31:
+                self.answer = fins
+        return fins
 
     def stage(self) -> int:
         """The board's stage by its latest answer; SETTING before any."""
@@ -382,10 +336,101 @@ class _Sim:
             fields['airspeed'] = pitot
             fields['dynamic_pressure'] = 0.5 * sim_model.RHO * pitot * pitot
         self.seq += 1
+        clock = self.clock if self.clock is not None else t
         try:
-            self.socket.sendto(encode_sensors(self.seq, int(t * 1000), fields), self.address)
+            self.socket.sendto(encode_sensors(self.seq, int(clock * 1000), fields), self.address)
         except OSError:
             pass  # a refused send (no route yet) is a lost frame, as the link allows
+        return fields
+
+    def lockstep(self, pad_s: float) -> int:
+        """
+        The flight frame by frame (M14): each fixed physics step is one frame, and the next waits for its answer, so
+        the run is the same every time and as fast as the flight code answers. The pad holds `pad_s`, then the boost
+        or the glide follows the answered stage as the realtime loop's does. Prints the realtime run's lines.
+
+        Returns:
+            0 on DONE, 1 on a timeout or a stalled answer.
+        """
+        fixed = 1.0 / self.args.sim_hz
+        self.socket.setblocking(True)
+        self.socket.settimeout(_LOCKSTEP_WAIT_S)
+        self.clock = 0.0
+        pad_steps, steps, last_stage = round(pad_s / fixed), 0, None
+        while True:
+            stage = self.stage()
+            if stage != last_stage:
+                print('STAGE', stage, _STAGES.get(stage))
+                self.row('sequencer', _STAGES.get(stage, str(stage)))
+                last_stage = stage
+            if stage >= _DONE:
+                print('DONE')
+                return 0
+            if self.sim_time > _TIMEOUT_S:
+                print('TIMEOUT', stage)
+                return 1
+            if not self.ignited and steps >= pad_steps:
+                self.ignited = True
+            if not self.ignited:
+                self.body.accel_g = 1.0
+            else:
+                boosting = stage < _GLIDING
+                roll, pitch, yaw = self.fins()
+                if not boosting and not self.body.gliding:
+                    self.body.begin_glide()
+                if boosting:
+                    thrust = self.thrust if self.sim_time < self.burn_s else 0.0
+                    self.body.boost_step(fixed, thrust, pitch, roll)
+                else:
+                    spiked = roll * 2.0 if (self.args.spike and random.random() < fixed / 3.0) else roll
+                    self.body.glide_step(fixed, spiked, pitch, yaw)
+                self.sim_time += fixed
+            self.clock += fixed
+            fields = self.publish()
+            if not self.await_answer(self.seq):
+                print('LOCKSTEP STALL: no answer to frame %d in %.0f s' % (self.seq, _LOCKSTEP_WAIT_S))
+                return 1
+            self.record(fields)
+            steps += 1
+
+    def await_answer(self, seq: int) -> bool:
+        """Waits for the answer to frame `seq`; whether it came."""
+        while True:
+            try:
+                frame, _ = self.socket.recvfrom(64)
+            except (socket.timeout, OSError):
+                return False
+            answer = self.take(frame)
+            if answer is not None and answer['seq'] == seq:
+                return True
+
+    def row(self, stream: str, *cells: object) -> None:
+        """One `--record` row of `stream` at the frames' clock."""
+        self.rows.setdefault(stream, []).append((self.clock or 0.0, *cells))
+
+    def record(self, fields: dict) -> None:
+        """The `--record` rows of one answered frame: what it carried, and the left fin the answer commanded."""
+        if 'elevation' in fields and fields['elevation'] is not None:
+            self.row('baro_icp10111', fields['elevation'])
+        if fields.get('accel') is not None:
+            self.row('imu_lsm6dso32', *fields['accel'])
+        if fields.get('airspeed') is not None:
+            self.row('airspeed_sdp810', fields['airspeed'] * 100.0)
+        if fields.get('position') is not None:
+            self.row('gnss', fields['position'][0] * 1e-7, fields['position'][1] * 1e-7)
+        if self.answer is not None and self.answer['fins'] is not None:
+            self.row('servo_eleron_left', self.answer['fins'][0])
+
+    def write_record(self, folder: str) -> None:
+        """The `--record` rows as a Rust cut's streams (`<folder>/flight/<stream>.csv`, t_s first, ';')."""
+        columns = {'sequencer': ('stage',), 'baro_icp10111': ('elevation',), 'imu_lsm6dso32': ('ax', 'ay', 'az'),
+                   'airspeed_sdp810': ('airspeed_cms',), 'gnss': ('lat', 'lon'), 'servo_eleron_left': ('angle',)}
+        os.makedirs(os.path.join(folder, 'flight'), exist_ok=True)
+        for stream, header in columns.items():
+            with open(os.path.join(folder, 'flight', stream + '.csv'), 'w') as handle:
+                handle.write(';'.join(('t_s',) + header) + '\n')
+                for t, *cells in self.rows.get(stream, []):
+                    handle.write(';'.join(['%.3f' % t] + [str(cell) for cell in cells]) + '\n')
 
 
 def _panic(port: str) -> None:
@@ -402,7 +447,7 @@ def _panic(port: str) -> None:
 def _arguments() -> argparse.Namespace:
     """The command line."""
     parser = argparse.ArgumentParser(description='HITL with the physics on the host (doc/specs/sim-link.md)')
-    parser.add_argument('--ip', required=True, help="the board's address on the panda net")
+    parser.add_argument('--ip', help="the board's address on the panda net (not with --sitl)")
     parser.add_argument('--serial', default='/dev/ttyACM0', help='the board console (default /dev/ttyACM0): CC '
                         'without --hub, and the panic of --reboot')
     parser.add_argument('--hub', help="drive CC through the hub by this board id (preferred: see the notes)")
@@ -425,12 +470,62 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--faults', default='', help="sim_model.Faults: 'gnss@30,pitot@45'")
     parser.add_argument('--reboot', action='store_true', help='a real panic 1-6 s into the glide (the console)')
     parser.add_argument('--keep-config', action='store_true', help='leave the HITL config installed')
+    parser.add_argument('--sitl', help='fly the SITL binary at this path instead of a board: lockstep, no CC')
+    parser.add_argument('--config', help='--sitl: the board config JSON it runs (a board\'s saved config)')
+    parser.add_argument('--sitl-port', type=int, default=SIM_PORT + 10, help='--sitl: its UDP port on localhost')
+    parser.add_argument('--seed', type=int, help='seed the noise and the spikes (a lockstep run then repeats)')
+    parser.add_argument('--record', help='--sitl: write the flown streams here as a Rust cut (<dir>/flight/)')
     return parser.parse_args()
+
+
+def _sitl(args: argparse.Namespace) -> int:
+    """
+    One scenario against the SITL (M14): the board config made HITL as a board's is, the mission the host seeds a
+    board with, the binary started on localhost, flown lockstep; 0 on DONE, 1 otherwise.
+    """
+    if args.reboot or args.attitude_drop_s or args.gnss_drop_s:
+        raise SystemExit('--sitl flies neither a reboot nor a timed drop: they are realtime events')
+    with open(args.config) as handle:
+        saved = json.load(handle)
+    scenario = sim_model.HPRC
+    folder = tempfile.mkdtemp(prefix='sitl_')
+    config, mission = os.path.join(folder, 'board.json'), os.path.join(folder, 'launch.json')
+    with open(config, 'w') as handle:
+        json.dump(hitl_config(saved, set(), args), handle)
+    with open(mission, 'w') as handle:
+        json.dump({'latitude': scenario['launch'][0], 'longitude': scenario['launch'][1],
+                   'altitude': scenario['elevation_m'], 'zone': scenario['zone']}, handle)
+    with open(os.path.join(folder, 'sitl.log'), 'w') as log:
+        process = subprocess.Popen([args.sitl, '--config', config, '--mission', mission,
+                                    '--port', str(args.sitl_port)], stdout=log, stderr=log)
+    try:
+        args.ip = '127.0.0.1'
+        sim = _Sim(args)
+        sim.address = (args.ip, args.sitl_port)
+        time.sleep(0.5)  # the binary binds its socket
+        print('SESSION sitl', args.motor, 'noise', args.noise, 'wind', args.wind)
+        outcome = sim.lockstep(_SITL_PAD_S)
+        print('CLOCK sim=%.2f frames=%d answers=%d' % (sim.sim_time, sim.seq, sim.answers))
+        print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
+            '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
+        if args.record:
+            sim.write_record(args.record)
+        print('RUN_END')
+        return outcome
+    finally:
+        process.terminate()
+        process.wait()
 
 
 def main() -> int:
     """One scenario; 0 on DONE, 1 otherwise."""
     args = _arguments()
+    if args.seed is not None:
+        random.seed(args.seed)
+    if args.sitl:
+        return _sitl(args)
+    if not args.ip:
+        raise SystemExit('--ip names the board (or fly the SITL with --sitl)')
     transport = transports.Hub(args.hub) if args.hub else transports.Serial(args.serial)
     board = _Board(transport)
     saved = board.ask('get-config saved')[1]

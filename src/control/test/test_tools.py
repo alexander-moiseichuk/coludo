@@ -37,6 +37,7 @@ import gen_schema  # noqa: E402
 import glide_polar  # noqa: E402
 import hitl_compare  # noqa: E402
 import hitl_host  # noqa: E402
+import hitl_matrix_compare  # noqa: E402
 import recorder_flight  # noqa: E402
 import recorder_wire  # noqa: E402
 
@@ -1807,6 +1808,58 @@ _FAKE_ADB = '\n'.join([
     ''])
 
 
+def test_the_matrix_scenarios_agree_across_the_three_tools():
+    """
+    hitl_matrix.sh (plan B on the board), hitl_matrix_host.sh (the Rust board) and hitl_matrix_compare.py (plan B's
+    reference, the families) each carry the 12-scenario table: a scenario that drifted in one would compare two
+    different flights under one name. Every scenario sits in exactly one family. NEGATIVE: a doctored table is caught.
+    """
+    def table(text: str) -> list:
+        block = text.split("<<'SCN'\n", 1)[1].split('\nSCN', 1)[0]
+        return [tuple(line.split()) for line in block.splitlines() if line.strip()]
+
+    expected = [(name, '%.2f' % noise, '%.1f' % wind, '%.1f' % bearing, str(spike))
+                for name, noise, wind, bearing, spike in hitl_matrix_compare.SCENARIOS]
+    tables = {}
+    for script in ('hitl_matrix.sh', 'hitl_matrix_host.sh'):
+        with open(os.path.join(_ROOT, 'tools', script)) as handle:
+            tables[script] = table(handle.read())
+        assert tables[script] == expected, (script, tables[script])
+    members = [name for names, _ in hitl_matrix_compare.FAMILIES.values() for name in names]
+    assert sorted(members) == sorted(name for name, *_ in expected), members
+    doctored = tables['hitl_matrix.sh'][:]
+    doctored[7] = ('wind06', '0.10', '6.0', '30.0', 'False')
+    assert doctored != expected
+
+
+def test_the_matrix_gates_judge_the_stage_machine_everywhere_and_the_miss_by_family():
+    """
+    hitl_matrix_compare.judge: the apogee (3 % of plan B's seed range) and GLIDING (0.5 s) gate every scenario, the
+    miss only the wind (7.7 m) and the low-noise (11.9 m) families, and a Rust flight must reach DONE. Inside passes;
+    NEGATIVE: each gate failed alone, and a high-noise miss far outside plan B's range still passes (not gated).
+    """
+    planb = [{'apogee_m': 270.0, 'gliding_s': 9.0, 'miss_m': 50.0},
+             {'apogee_m': 274.0, 'gliding_s': 9.4, 'miss_m': 60.0}]
+    rust = {'done': True, 'apogee_m': 272.0, 'gliding_s': 9.2, 'miss_m': 55.0}
+    assert hitl_matrix_compare.judge('wind06', rust, planb) == []
+    assert hitl_matrix_compare.judge('wind06', dict(rust, miss_m=67.6), planb) == [], 'inside 60 + 7.7'
+    assert hitl_matrix_compare.judge('wind06', dict(rust, miss_m=67.8), planb)[0].startswith('miss_m 67.8')
+    assert hitl_matrix_compare.judge('noise10', dict(rust, miss_m=71.8), planb) == [], 'inside 60 + 11.9'
+    assert hitl_matrix_compare.judge('noise10', dict(rust, miss_m=72.0), planb)[0].startswith('miss_m')
+    assert hitl_matrix_compare.judge('noise100', dict(rust, miss_m=400.0), planb) == [], 'high noise: not gated'
+    assert hitl_matrix_compare.judge('corner_stress', dict(rust, miss_m=0.0), planb) == []
+    assert hitl_matrix_compare.judge('noise100', dict(rust, apogee_m=250.0), planb)[0].startswith('apogee_m')
+    assert hitl_matrix_compare.judge('noise100', dict(rust, gliding_s=10.0), planb)[0].startswith('gliding_s')
+    assert hitl_matrix_compare.judge('noise100', dict(rust, done=False), planb) == ['no DONE']
+    assert hitl_matrix_compare.judge('wind06', dict(rust, miss_m=None), planb) == ['miss_m missing']
+    try:
+        hitl_matrix_compare.family('noise07')
+    except KeyError:
+        pass
+    else:
+        raise AssertionError('an unknown scenario has a family')
+
+
 def test_hitl_host_frames_are_the_boards_bytes():
     """
     The host's sim-link codec against the bytes crates/sim_link pins (src/avionics/crates/sim_link/src/tests.rs):
@@ -1827,6 +1880,52 @@ def test_hitl_host_frames_are_the_boards_bytes():
     assert hitl_host.decode_fins(bytes(passive))['fins'] is None
     for broken in (answer[:31], b'X' + answer[1:], answer[:5] + b'\x01' + answer[6:], answer[:-1] + b'\x00'):
         assert hitl_host.decode_fins(broken) is None, broken.hex()
+
+
+def test_recorder_flight_anchors_a_weak_boost_on_the_stage_machine():
+    """
+    A HITL boost is the sim's ~3 g: under noise no 0.3 s of |a| holds recorder_flight's 3.0 g, so the cut found no
+    flight in sessions that flew to DONE. staged() gives the stage machine's first BOOSTING row as the anchor instead.
+    NEGATIVE: a session whose stage machine never boosted has none (ValueError), and ignition() still refuses the weak
+    boost itself (the IMU rule is unchanged for real flights).
+    """
+    rows = [(1_000_000, '1000000;setting;boot'), (2_500_000, '2500000;boosting;launch |a|=3.0g dwell=100ms'),
+            (12_000_000, '12000000;gliding;apogee 273m')]
+    assert recorder_flight.staged(rows, ('stage', 'reason')) == 2_500_000
+    try:
+        recorder_flight.staged(rows[:1], ('stage', 'reason'))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a session with no BOOSTING row was anchored')
+    weak = [(t, '%d;0.0;0.0;%.2f;0;0;0;1' % (t, 3.0 + (0.1 if t % 20_000 else -0.1)))
+            for t in range(2_500_000, 3_200_000, 10_000)]
+    try:
+        recorder_flight.ignition(weak, recorder_flight._FIELDS['imu_lsm6dso32'])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a 3 g boost dipping under 3.0 g passed the IMU rule')
+
+
+def test_the_sim_link_codec_round_trips_both_ways():
+    """
+    hitl_host's two halves of each frame agree: a SENSORS frame encode_sensors writes, decode_sensors reads back field
+    for field (a float32 within its rounding, the position exact, an absent field absent), and a FINS answer
+    encode_fins writes, decode_fins reads back. NEGATIVE: a flipped byte fails the CRC, a FINS frame is no SENSORS one.
+    """
+    fields = {'accel': [0.0, 0.5, 1.25], 'elevation': 123.5, 'position': [255143790, -803917950], 'course': 210.0}
+    decoded = hitl_host.decode_sensors(hitl_host.encode_sensors(9, 4321, fields))
+    assert decoded['seq'] == 9 and decoded['sim_time_ms'] == 4321, decoded
+    assert decoded['fields'] == fields, decoded['fields']
+    answer = hitl_host.encode_fins(9, 777, 3, True, True, [80, 100, 95])
+    assert hitl_host.decode_fins(answer) == {'seq': 9, 'uptime_ms': 777, 'stage': 3, 'armed': True, 'launched': True,
+                                             'fins': [80, 100, 95]}
+    assert hitl_host.decode_fins(hitl_host.encode_fins(1, 0, 1, False, False, None))['fins'] is None
+    broken = bytearray(hitl_host.encode_sensors(9, 4321, fields))
+    broken[30] ^= 0x10
+    assert hitl_host.decode_sensors(bytes(broken)) is None
+    assert hitl_host.decode_sensors(answer) is None
 
 
 def test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains():
@@ -1954,7 +2053,11 @@ test_recorder_flight_times_the_log_from_this_boot_only()
 test_recorder_flight_files_a_log_line_found_in_a_stream()
 test_recorder_flight_never_times_by_a_wrap_its_file_missed()
 test_every_reader_takes_a_damaged_byte()
+test_the_matrix_scenarios_agree_across_the_three_tools()
+test_the_matrix_gates_judge_the_stage_machine_everywhere_and_the_miss_by_family()
 test_hitl_host_frames_are_the_boards_bytes()
+test_recorder_flight_anchors_a_weak_boost_on_the_stage_machine()
+test_the_sim_link_codec_round_trips_both_ways()
 test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
       'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '

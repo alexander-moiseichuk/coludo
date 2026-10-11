@@ -112,5 +112,30 @@ rules hold only while a board runs the sim-link, so the warm-started flight goes
 - Its glide counts as separated for the warm gate: no separation switch is simulated, as plan B's harness passed
   `separated=True` by construction.
 
-The outage (the boot, then the join: ~26 s on the taster) is frames the board never sees; the host's physics
-does not wait for it.
+The outage (the boot, then the join: ~26 s on the taster before the fast warm boot, ~13 s after it) is frames the
+board never sees; the host's physics does not wait for it.
+
+## Lockstep and the SITLs (M14)
+
+The same link serves two host-side flight stacks, flown lockstep: `tools/hitl_host.py --sitl <stack> --config <board
+config JSON>` starts the stack on localhost with the board's HITL config (`hitl_config`, as a board gets it) and the
+mission payload a board is seeded with, needs no CC, and flies frame by frame: each fixed physics step is one SENSORS
+frame, and the next waits for its FINS answer. A frame then carries the host's lockstep clock (the pad included) as
+`sim_time_ms`, and the stack's clock is that time after a 10 s boot (the golden shims'), never the wall's. Per frame
+the stack first runs the control ticks due before the frame on what the earlier frames left, then applies the frame,
+then runs the tick due at its own time, then answers: what a realtime board sees. `--seed` seeds the noise and the
+spikes, so a lockstep run repeats exactly. `--record <dir>` writes the flown streams as a Rust cut
+(`<dir>/flight/<stream>.csv`: the stages, the baro height, |a|, the pitot, the fix, the left fin).
+
+- **`src/avionics/sitl`, the Rust SITL:** the board's own crates and the firmware's own plumbing (crates/controller:
+  the topology from the masked config, `HitlWriters`, `StageSources`, `FlightQuantities`) around the stage machine
+  and the flight law. Not on the host: the servos (the answer carries the law's angles), the attitude filter (the
+  simulated attitude outranks it in HITL), the separation switch, the checkpoint and warm start, the GNSS drift
+  calibration. On the taster's scenarios it lands within 2 m of the board's own HITL flights.
+- **`tools/planb_sitl.py`, plan B's SITL:** plan B's own Controller, `tasks/sequencer.py` and `tasks/flight.py`
+  under the golden shims, fed what a board's databoard hands them. With the same frames the two stacks fly the same
+  flight; it is M14's plan B reference (tools/hitl_matrix_compare.py).
+
+The board itself stays realtime: its control thread runs on its gptimer, so a lockstep board would test another
+timing than the one it flies with.
+
