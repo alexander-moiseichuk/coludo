@@ -11,11 +11,12 @@
 //! (a fix lost in the trees is still the best guess), with that age shown.
 //!
 //! The page opens by itself (a captive portal, operator 2026-10-11): the AP's address is 192.168.4.1, its DHCP server
-//! offers the portal's URI (option 114, RFC 8910) and the board as the DNS server, a DNS responder answers every name
-//! with the board, and every other path redirects to the page, so a phone's connectivity check (Android's
-//! /generate_204, iOS's /hotspot-detect.html, Windows' /connecttest.txt) lands on it and the phone offers to open it.
+//! offers the board as the DNS server, a DNS responder answers every name with the board, and every other path
+//! redirects to the page, so a phone's connectivity check (Android's /generate_204, iOS's /hotspot-detect.html,
+//! Windows' /connecttest.txt) finds a portal and the phone opens it. No DHCP option 114 (RFC 8910): phones take it
+//! only as an HTTPS captive-portal API (RFC 8908), which a beacon cannot serve. The first build left the server's
+//! wildcard matching off, so the probes got 404 (no portal, only "no internet") and the page stayed shut.
 
-use std::ffi::CStr;
 use std::fmt::Write as _;
 use std::net::UdpSocket;
 
@@ -45,9 +46,6 @@ const MAXIMUM_CONNECTIONS: u16 = 4;
 
 /// The access point's address, the one the ESP-IDF examples and most beacons use.
 const ADDRESS: [u8; 4] = [192, 168, 4, 1];
-
-/// The captive portal's URI, as DHCP option 114 carries it (IDF keeps the pointer: a static).
-const PORTAL: &CStr = c"http://192.168.4.1/";
 
 /// The DNS responder's stack (PSRAM: a slow core-0 thread that never calls esp_mmu_map/unmap).
 const DNS_STACK: usize = 4 << 10;
@@ -122,6 +120,8 @@ impl Beacon {
             http_port: PORT,
             // the file server's control port is the default one: this one takes the next
             ctrl_port: 32769,
+            // `/*` below must match every path: without it the connectivity probes got 404, and no portal opened
+            uri_match_wildcard: true,
             stack_size: 8192,
             core: Some(Core::Core0),
             // a PSRAM stack, as the file server's (crate::files): it never calls esp_mmu_map/unmap
@@ -254,8 +254,8 @@ impl Beacon {
     }
 }
 
-/// The AP `netif` re-addressed to [`ADDRESS`], its DHCP server offering the board as the DNS server and [`PORTAL`] as
-/// the captive portal (the server stopped for the change, then started again).
+/// The AP `netif` re-addressed to [`ADDRESS`], its DHCP server offering the board as the DNS server (the server
+/// stopped for the change, then started again).
 fn portal(netif: *mut sys::esp_netif_t) -> anyhow::Result<()> {
     let address = sys::esp_ip4_addr {
         addr: u32::from_le_bytes(ADDRESS),
@@ -271,8 +271,7 @@ fn portal(netif: *mut sys::esp_netif_t) -> anyhow::Result<()> {
     dns.ip.u_addr.ip4 = address;
     dns.ip.type_ = 0; // IPADDR_TYPE_V4
     let mut offer_dns: u8 = 1;
-    // SAFETY: plain esp_netif calls on the AP's live netif; the option values outlive the calls, the portal's URI is
-    // a static, as IDF keeps its pointer.
+    // SAFETY: plain esp_netif calls on the AP's live netif; the option value outlives the call.
     unsafe {
         let _ = sys::esp_netif_dhcps_stop(netif);
         sys::esp!(sys::esp_netif_set_ip_info(netif, &information))?;
@@ -287,13 +286,6 @@ fn portal(netif: *mut sys::esp_netif_t) -> anyhow::Result<()> {
             sys::esp_netif_dhcp_option_id_t_ESP_NETIF_DOMAIN_NAME_SERVER,
             (&mut offer_dns as *mut u8).cast(),
             1
-        ))?;
-        sys::esp!(sys::esp_netif_dhcps_option(
-            netif,
-            sys::esp_netif_dhcp_option_mode_t_ESP_NETIF_OP_SET,
-            sys::esp_netif_dhcp_option_id_t_ESP_NETIF_CAPTIVEPORTAL_URI,
-            PORTAL.as_ptr().cast_mut().cast(),
-            PORTAL.to_bytes().len() as u32
         ))?;
         sys::esp!(sys::esp_netif_dhcps_start(netif))?;
     }
