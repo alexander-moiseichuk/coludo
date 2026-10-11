@@ -9,10 +9,19 @@
 //!
 //! The figures are read from the databoard's channels at each request, every source's latest value whatever its age
 //! (a fix lost in the trees is still the best guess), with that age shown.
+//!
+//! The page opens by itself (a captive portal, operator 2026-10-11): the AP's address is 192.168.4.1, its DHCP server
+//! offers the portal's URI (option 114, RFC 8910) and the board as the DNS server, a DNS responder answers every name
+//! with the board, and every other path redirects to the page, so a phone's connectivity check (Android's
+//! /generate_204, iOS's /hotspot-detect.html, Windows' /connecttest.txt) lands on it and the phone offers to open it.
 
+use std::ffi::CStr;
 use std::fmt::Write as _;
+use std::net::UdpSocket;
 
 use esp_idf_svc::hal::cpu::Core;
+use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::http::Method;
 use esp_idf_svc::http::server::{Configuration as HttpConfiguration, EspHttpServer};
 use esp_idf_svc::io::Write as _;
@@ -33,6 +42,18 @@ const PORT: u16 = 80;
 
 /// Phones at once.
 const MAXIMUM_CONNECTIONS: u16 = 4;
+
+/// The access point's address, the one the ESP-IDF examples and most beacons use.
+const ADDRESS: [u8; 4] = [192, 168, 4, 1];
+
+/// The captive portal's URI, as DHCP option 114 carries it (IDF keeps the pointer: a static).
+const PORTAL: &CStr = c"http://192.168.4.1/";
+
+/// The DNS responder's stack (PSRAM: a slow core-0 thread that never calls esp_mmu_map/unmap).
+const DNS_STACK: usize = 4 << 10;
+
+/// A DNS answer's lifetime, seconds: short, the board is the only name server while it lasts.
+const DNS_TTL_S: u32 = 60;
 
 /// A 1S LiPo's open-circuit voltage (mV) against its charge (%), for the page's charge estimate: the usual table,
 /// coarse, under load it reads low.
@@ -94,6 +115,8 @@ impl Beacon {
         }
         // SAFETY: a plain driver call on the started Wi-Fi.
         sys::esp!(unsafe { sys::esp_wifi_set_max_tx_power(MAXIMUM_TX_POWER) })?;
+        portal(wifi.wifi().ap_netif().handle())?;
+        spawn_dns()?;
         let address = wifi.wifi().ap_netif().get_ip_info().map(|info| info.ip.to_string());
         let mut server = EspHttpServer::new(&HttpConfiguration {
             http_port: PORT,
@@ -111,6 +134,13 @@ impl Beacon {
             request
                 .into_response(200, None, &[("Content-Type", "text/html; charset=utf-8")])?
                 .write_all(page.as_bytes())?;
+            Ok(())
+        })?;
+        // every other path to the page: the phones' connectivity checks find a portal and offer to open it
+        server.fn_handler::<anyhow::Error, _>("/*", Method::Get, |request| {
+            request
+                .into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?
+                .write_all(b"the beacon's page: http://192.168.4.1/\n")?;
             Ok(())
         })?;
         log::info!(
@@ -222,6 +252,115 @@ impl Beacon {
         page.push_str("</body></html>");
         page
     }
+}
+
+/// The AP `netif` re-addressed to [`ADDRESS`], its DHCP server offering the board as the DNS server and [`PORTAL`] as
+/// the captive portal (the server stopped for the change, then started again).
+fn portal(netif: *mut sys::esp_netif_t) -> anyhow::Result<()> {
+    let address = sys::esp_ip4_addr {
+        addr: u32::from_le_bytes(ADDRESS),
+    };
+    let information = sys::esp_netif_ip_info_t {
+        ip: address,
+        netmask: sys::esp_ip4_addr {
+            addr: u32::from_le_bytes([255, 255, 255, 0]),
+        },
+        gw: address,
+    };
+    let mut dns = sys::esp_netif_dns_info_t::default();
+    dns.ip.u_addr.ip4 = address;
+    dns.ip.type_ = 0; // IPADDR_TYPE_V4
+    let mut offer_dns: u8 = 1;
+    // SAFETY: plain esp_netif calls on the AP's live netif; the option values outlive the calls, the portal's URI is
+    // a static, as IDF keeps its pointer.
+    unsafe {
+        let _ = sys::esp_netif_dhcps_stop(netif);
+        sys::esp!(sys::esp_netif_set_ip_info(netif, &information))?;
+        sys::esp!(sys::esp_netif_set_dns_info(
+            netif,
+            sys::esp_netif_dns_type_t_ESP_NETIF_DNS_MAIN,
+            &mut dns
+        ))?;
+        sys::esp!(sys::esp_netif_dhcps_option(
+            netif,
+            sys::esp_netif_dhcp_option_mode_t_ESP_NETIF_OP_SET,
+            sys::esp_netif_dhcp_option_id_t_ESP_NETIF_DOMAIN_NAME_SERVER,
+            (&mut offer_dns as *mut u8).cast(),
+            1
+        ))?;
+        sys::esp!(sys::esp_netif_dhcps_option(
+            netif,
+            sys::esp_netif_dhcp_option_mode_t_ESP_NETIF_OP_SET,
+            sys::esp_netif_dhcp_option_id_t_ESP_NETIF_CAPTIVEPORTAL_URI,
+            PORTAL.as_ptr().cast_mut().cast(),
+            PORTAL.to_bytes().len() as u32
+        ))?;
+        sys::esp!(sys::esp_netif_dhcps_start(netif))?;
+    }
+    Ok(())
+}
+
+/// The DNS responder (core 0, priority 2): every A query answered with [`ADDRESS`], every other one with no answer,
+/// forever.
+fn spawn_dns() -> anyhow::Result<()> {
+    let socket = UdpSocket::bind(("0.0.0.0", 53))?;
+    ThreadSpawnConfiguration {
+        name: Some(c"beacon_dns"),
+        stack_size: DNS_STACK,
+        priority: 2,
+        pin_to_core: Some(Core::Core0),
+        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
+        ..Default::default()
+    }
+    .set()?;
+    let spawned = std::thread::Builder::new().stack_size(DNS_STACK).spawn(move || {
+        let mut query = [0u8; 512];
+        loop {
+            let Ok((length, sender)) = socket.recv_from(&mut query) else {
+                continue;
+            };
+            if let Some(answer) = answer(&query[..length]) {
+                let _ = socket.send_to(&answer, sender);
+            }
+        }
+    });
+    ThreadSpawnConfiguration::default().set()?;
+    spawned?;
+    Ok(())
+}
+
+/// The answer to one DNS `query` (RFC 1035): its id and question echoed, an A record of [`ADDRESS`] for an A query,
+/// no record for any other type; None for a datagram that is no single-question query.
+fn answer(query: &[u8]) -> Option<Vec<u8>> {
+    if query.len() < 12 || query[2] & 0x80 != 0 || u16::from_be_bytes([query[4], query[5]]) != 1 {
+        return None;
+    }
+    // the question's name: labels up to the zero length
+    let mut end = 12;
+    loop {
+        let label = usize::from(*query.get(end)?);
+        end += 1 + label;
+        if label == 0 {
+            break;
+        }
+        if label & 0xc0 != 0 {
+            return None; // a pointer has no place in a question
+        }
+    }
+    let question = query.get(12..end + 4)?;
+    let address_query = u16::from_be_bytes([question[question.len() - 4], question[question.len() - 3]]) == 1;
+    let mut answer = Vec::with_capacity(12 + question.len() + 16);
+    answer.extend_from_slice(&query[..2]); // the id
+    answer.extend_from_slice(&[0x81, 0x80]); // a response, recursion desired and available, no error
+    answer.extend_from_slice(&[0, 1, 0, u8::from(address_query), 0, 0, 0, 0]);
+    answer.extend_from_slice(question);
+    if address_query {
+        answer.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1]); // the question's name, type A, class IN
+        answer.extend_from_slice(&DNS_TTL_S.to_be_bytes());
+        answer.extend_from_slice(&[0, 4]);
+        answer.extend_from_slice(&ADDRESS);
+    }
+    Some(answer)
 }
 
 /// A 1S LiPo's charge (%) at `millivolts`, interpolated in [`LIPO_CHARGE`]; None above [`LIPO_CEILING_MV`].
