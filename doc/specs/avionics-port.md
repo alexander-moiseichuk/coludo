@@ -1249,7 +1249,7 @@ machine decides from every source; the video starts when the glider stands on th
 **Operator gains.** Airspeed, power and laser AGL in health and telemetry; the pitot tare survives a reboot and a
 warm start. The servo probe's closed-loop verdict waits for the servos (M13).
 
-### M11. GNSS, gnss_calib, field (2 days)
+### M11. GNSS, gnss_calib, field (2 days; DONE 2026-10-11 on the taster, the outdoor-fix proofs open)
 
 **Scope**
 - **`crates/gnss` on uart:2** (TX22/RX23):
@@ -1272,6 +1272,46 @@ warm start. The servo probe's closed-loop verdict waits for the servos (M13).
   UBX command bytes must match EXACTLY.
 - Golden `gnss_calib.json` and `field.json`.
 - On the taster: `gps taster` on the hub console. A NEO-6M fix with an active antenna.
+
+**As built (2026-10-10/11, lean: the operator's budget):**
+- **The GNSS thread** (`firmware/src/gnss.rs`, core 0, PSRAM stack) owns UART2: the driver's commands with plan B's
+  gaps, then the NMEA lines into crates/gnss. It publishes `position`/`altitude`/`elevation`/`speed`/`course` and
+  writes `<name>.csv`, `_gga`, `_sky` and the durable `_events` (registered through `controller::companions`). The
+  engine's 1 s tick runs the outage sweep, the sky window by stage and the sky row. One GNSS, on uart:2 (`buses.uart.<id>`
+  through `board_config::uart_bus`); a UART that will not open crashes the entry. `inspect gnss` has plan B's keys
+  plus `lines`; `probe gnss` passes when the lines advance in 1.5 s; `health.position` is the live fix, which also
+  stands behind `health.launchpad` and the mission probe.
+- **A refused configuration is an event (the port's own):** a u-blox answers a sentence it does not take with
+  `$GPTXT,01,01,01,<family> inv format`; plan B parsed that text and dropped it. The engine raises one event per
+  family (PCAS, PMTK, PUBX) a session. Its first catch: the taster's GNSS is a NEO-6M that ran under an `atgm336h`
+  config (switched to `neo6mv2` at 5 Hz, 2026-10-10).
+- **freeze_launch:** `arm` pins the live fix as the launch point once the control thread applied the arm, unless
+  the operator set one; the checkpoint's BOOSTING freeze takes the live fix when a zone is set and no point was
+  pinned. In memory only, as plan B's: the pinned point counts as set from then on.
+- **gnss_calib** (`control::drift`): a supervisor duty every `period_ms`, the fresh fused speed and course averaged
+  east/north in SETTING, restarted at the first armed pass, frozen off the pad (at least `min_samples`, else zero).
+  `gnss::drift()` hands it to M13's wind de-bias through atomics. `min_samples` 0 with no sample freezes zero, where
+  plan B divided by zero.
+- **field** (`mission::field`, `Mission::select_site`, `Mission::fallback_zone`): the executor ticks it between lines,
+  since it owns the mission. It waits with `recv_timeout` only while a field entry runs. **The auto-arm keeps the
+  CC `arm`'s passive gates (the operator, 2026-10-11):** the devices, the stage, the mission probe and the recorder's
+  ring gate, never the probe sweep (it moves the fins with nobody there). A refusal logs every problem and restarts
+  the dwell, so the agent asks again after another whole one. A knob plan B could not fly with fails the entry,
+  naming the key.
+- **health.flight:** the fused attitude (whole degrees, half to even) and airspeed (0.1 m/s, the pitot until M13's
+  estimator), absent without either provider.
+
+**Proof (2026-10-10/11, indoors: no fix):**
+- Golden `gnss_calib.json` (25 cases) and `field.json` (31 cases), built by running plan B's own `run()`/`_tick()`;
+  the still band's exact edges are left out (f32 and f64 round 1.3 g to opposite sides of it).
+- The taster: ~6 NMEA lines/s, the sky rows every ~10.2 s once configured, no refusal events, `probe gnss` passing;
+  an operator hold into GLIDING froze gnss_calib with plan B's `drift 0.000, 0.000 m/s (0 samples)`; `field`
+  enabled for the check came up and the executor answered as before; contract core + inspect pass, 0 violations.
+- TMS-7F: the NEO-6M streams NMEA but never takes its configuration. A UART1 receiver attached to GPIO22 heard no
+  byte while UART2 transmitted (on the taster it read every command back exactly), and the module never answered
+  `$PUBX,00`: the GPIO22 -> NEO RX line, a hardware check (the operator).
+- **Open, outdoors:** a real fix through the launch-point freeze, gnss_calib's samples, the field's site pick and
+  auto-arm, and `gps taster` on the hub console.
 
 **Operator gains.** Position in health and telemetry, the pad drift calibration, and CC-less field arming.
 
