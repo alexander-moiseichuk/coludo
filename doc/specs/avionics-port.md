@@ -1406,7 +1406,7 @@ airframe after landing (even without a fix, the phone's signal strength helps).
 **Operator gains.** Bench flights of the Rust board without hardware motion, with the same harness output as
 before.
 
-### M13. Active control (2 days, possibly split: crate one day, integration one day)
+### M13. Active control (2 days, possibly split: crate one day, integration one day; DONE 2026-10-11 on the taster)
 
 **Scope**
 - `crates/control`: pid, mixer, governor, airspeed, wind, guidance, and the rest of navigation (its subset
@@ -1428,6 +1428,46 @@ before.
 - Golden `control_trace_<scenario>.json`: virtual_flight (`VF_SEED`) per-tick inputs replayed open-loop. Stage
   transitions EXACT, fins within 1 deg.
 - On the taster: the dashboard fin-zero card (reads `props.trim`, nudges, saves).
+
+**As built (2026-10-11):**
+- `crates/control::flight::FlightLaw`: plan B `tasks/flight.py`'s `_tick` in its order (the airspeed estimator and
+  the governor's fin cap, guidance with the wind fed per GNSS course stamp, the PIDs with the gyro D term, the mixer);
+  `step` takes one tick's fresh inputs and says whether it actuated: a law that never engaged writes no fin on the
+  pad, so an operator's fin command stands; leaving control centres once.
+- `firmware/fins.rs`: LEDC 50 Hz, 14-bit duty; the pins LOW from config load; boot centring staggered by
+  `fins.concurrency`; the control thread owns the fins (`update <servo> {trim|angle}`, the probe sweep and the law
+  reach them there). The probe sweep is bounded by `fins.mixer.limit_deg` (neutral ± limit inside the servo's range,
+  operator 2026-10-11: plan B's 0..180 needed the wings open), judged by the INA226's power rise.
+- `firmware/flight.rs`: the flight loop ticks after the stage machine on the control thread, reading the databoard
+  (attitude, rate, accel, GNSS speed/course/fix, the pitot, AGL, elevation) and the mission's zone and launch point
+  through a sequence-locked view (no mutex on the flight core); every 100 ms plan B's `flight.csv` row and the
+  vitals `health.flight` shows (plan B's keys: airspeed, fin_cap, active, reach, r_min_m, attitude, fins = the
+  mixer's commanded angles, heading_error, wind). A mixer surface with no servo is logged at boot and `verify`'s
+  readiness says `fins: no driver for X -- reduced control authority`. The FINS answer carries the real fin angles.
+- The warm start seeds the law's airspeed from the crumb, and the crumb keeps the law's estimate.
+- The control thread's stack is 8 KB (was 6): with the loop's state in its frame, an IMU probe's float formatting
+  overflowed 6 KB; the loop is boxed and its `new`/`tick` never inlined. Floats are not formatted on that thread.
+- `tools/hitl_host.py` flies the board's loop with `config_hitl`'s test gains; `tools/hitl_overlay.py` draws the
+  law's roll setpoint and command, a fin, the zone and the touchdown miss.
+
+**Proof (2026-10-11, the taster; doc/sims/TMS-7-rust_hitl_m13):**
+- Every golden above, and `control_trace.json`: 16175 ticks of two closed-loop virtual flights replayed through
+  `FlightLaw`, the fins and the cap within 1 deg on every tick.
+- Active HITL, F15, 285 g, against `virtual_flight` at equal mass: the setpoints, commands, fin angles and the
+  figure-8 loiter overlay plan B's; clean 39.5 m and 41.5 m from the zone centre (plan B 49.2 m), wind 6 m/s 37.3 m
+  (plan B 55.8 m), all in the zone; the wind estimated 6.11 m/s from 30 deg (plan B 6.00, true 6 from 30).
+- A real mid-glide reboot: the warm gate restored GLIDING, the law's first row read the seeded 1400 cm/s, DONE.
+- The fin-zero card's own requests: `inspect` gives a numeric `props.trim`; `update servo_yaw {trim}` moves the fin
+  live (1511 -> 1522 us) and a word is refused (`trim must be a number`); the save (`get-config saved`, the trims
+  patched, `set-config board`) survives a reboot.
+- Negative: `servo_yaw` disabled -> the boot warning and the readiness `fins` problem.
+
+**Settled from earlier milestones:** the airspeed seed (M8), the servo probe's closed-loop verdict (M10), `fins` in
+the readiness gate (M7), the complete `health.flight` (M11), the D term reading `rate` (carried from M6).
+**Still deferred:** the INA226's over-current ALERT count; a per-fin probe verdict on an INA3221 (one channel per
+servo; ordered); a cap on warm cycles and a BOOSTING crumb that already reads separated (M14); the fast warm boot
+(next: flight sensors and the control thread first, the camera and the Wi-Fi after them without blocking, operator
+2026-10-11).
 
 **Operator gains.** Active control in HITL. The fin-zero calibration UI works unchanged.
 
