@@ -34,8 +34,8 @@ use flash_ring::header::Session;
 use flash_ring::{BLOCK_BYTES, BlockTable, Flash, Geometry, Hints, MemoryError, MemoryFlash, Position, scan};
 use recorder::layout::GLOBAL_INDEX;
 use recorder::{
-    BATCH_BLOCKS, BATCH_FILES, BATCH_MS, Cell, Decoder, Recorder, Registry, SaveError, Saver, TICK_US, Telemetry,
-    Writer,
+    BATCH_BLOCKS, BATCH_FILES, BATCH_MS, Cell, Decoder, LineRing, Recorder, Registry, SaveError, Saver, TICK_US,
+    Telemetry, Writer,
 };
 
 /// A flight that boosts 3 s in, lands at 6 s and is done at 7 s, with the IMU at 100 Hz throughout.
@@ -1002,4 +1002,59 @@ fn the_backlog_counts_against_the_saver_and_the_write_rate_makes_it_ring_unsaved
         "the saver's position, once it runs: {}",
         String::from_utf8_lossy(status.last().unwrap())
     );
+}
+
+#[test]
+fn the_uart_queue_gets_every_line_the_saver_stages_with_its_routing_once_and_in_order() {
+    // M19: the saver hands each line it stages to the uart_saver's queue, as `GET /ring` streams it
+    let run = |capacity: usize| {
+        let geometry = Geometry::new(128).unwrap();
+        let flash = MemoryFlash::new(geometry.bytes());
+        let scanned = bring_up(&flash, geometry);
+        let (parts, streams) = flight_recorder(BOOT_ID);
+        let queue: &'static LineRing = Box::leak(Box::new(LineRing::new(capacity)));
+        let mut board = Board::new(&flash, &scanned, &parts, BOOT_ID, None, None);
+        board.erasing = false;
+        board.mount_with_uart(Card::new(), None, queue);
+        let mut flight = Flight::new(parts.recorder, streams, PLAN);
+        for tick in 0..900 {
+            flight.fly(&mut board, tick);
+        }
+        quiet(parts.recorder);
+        board.settle(300);
+        // the decoder's own wire lines of the whole ring, in order
+        let image = flash.image();
+        let all = blocks(&image, geometry);
+        let mut decoder = Decoder::new();
+        let mut expected: Vec<Vec<u8>> = Vec::new();
+        for (index, block) in all.iter().enumerate() {
+            let boot_goes_on = all[index + 1..]
+                .iter()
+                .any(|later| later.header.boot_id == block.header.boot_id);
+            decoder
+                .block(slot_bytes(&image, block.slot), boot_goes_on, |line| {
+                    expected.push(line.wire.to_vec())
+                })
+                .unwrap();
+        }
+        let mut got = Vec::new();
+        let mut line = Vec::new();
+        while queue.pop(&mut line) {
+            got.push(line.clone());
+        }
+        (expected, got, queue.dropped())
+    };
+    let (expected, got, dropped) = run(4 << 20);
+    assert_eq!(dropped, 0);
+    assert_eq!(got.len(), expected.len(), "every line once");
+    assert!(got == expected, "in the ring's order, byte for byte");
+    assert!(
+        got.iter().any(|line| line.starts_with(b"@000123_imu_lsm6dso32.csv@")),
+        "a stream line keeps its routing for the receiver"
+    );
+    // NEGATIVE: a queue nobody drains keeps the newest lines only, each dropped one counted
+    let (expected, got, dropped) = run(4096);
+    assert!(dropped > 0 && !got.is_empty());
+    assert_eq!(got.len() + dropped as usize, expected.len());
+    assert!(expected.ends_with(&got), "the newest, in order");
 }

@@ -9,7 +9,9 @@
 
 use flash_ring::header::Session;
 use flash_ring::{BlockTable, Eraser, Erasure, Loss, MemoryFlash, Position, Ring, Scan};
-use recorder::{BATCH_BLOCKS, Cell, Recorder, Registry, SaveError, Saved, Saver, StreamId, TICK_US, Telemetry, Writer};
+use recorder::{
+    BATCH_BLOCKS, Cell, LineRing, Recorder, Registry, SaveError, Saved, Saver, StreamId, TICK_US, Telemetry, Writer,
+};
 
 use super::card::Card;
 use super::{EPOCH, Parts, TestClock};
@@ -106,6 +108,13 @@ impl<'a> Board<'a> {
     pub fn mount(&mut self, card: Card, hint: Option<Position>) {
         let start = self.table().saver_start(hint);
         self.saver = Some(Saver::new(self.recorder, self.flash, self.table(), card, start));
+    }
+
+    /// Mounts `card` as [`Board::mount`] does, the saver handing every line it stages to `queue` too (M19).
+    #[allow(dead_code, reason = "the saver test's alone among the binaries sharing this module")]
+    pub fn mount_with_uart(&mut self, card: Card, hint: Option<Position>, queue: &'static LineRing) {
+        let start = self.table().saver_start(hint);
+        self.saver = Some(Saver::new(self.recorder, self.flash, self.table(), card, start).with_uart(queue));
     }
 
     /// One 10 ms tick: the writer's step, the eraser's, and every [`SAVER_EVERY`] ticks the saver's.

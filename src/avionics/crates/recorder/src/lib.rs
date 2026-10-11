@@ -41,6 +41,7 @@ mod byte_ring;
 mod decoder;
 mod fs;
 pub mod layout;
+mod line_ring;
 mod published;
 mod record;
 mod recorder;
@@ -52,6 +53,7 @@ mod writer;
 
 pub use decoder::{BlockError, BlockSummary, DecodedLine, Decoder};
 pub use fs::{Fs, StdFs};
+pub use line_ring::LineRing;
 pub use published::Stats;
 pub use recorder::{AttachError, Attachment, Buffers, Clock, Identity, Inspection, Overflow, Recorder, Settings, Wake};
 pub use recorder_wire::Cell;

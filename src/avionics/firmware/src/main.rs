@@ -168,6 +168,22 @@ fn main() -> anyhow::Result<()> {
     panics_logger::name_config(&config_id);
     // the ring_writer scans the `log` partition in its own thread, then starts the ring_eraser and, with a card, the
     // ring_saver: all three after the encoder's reservation. Boot goes on, and the producers queue meanwhile
+    // the uart_saver (M19): the recorder's wire lines to a receiver on its UART, before the saver that feeds it starts
+    let recorder_uart = board_config::directory(&loaded.document)
+        .iter()
+        .find(|entry| entry.implementation == "recorder")
+        .filter(|entry| entry.bus == Some("uart"))
+        .and_then(|entry| entry.bus_id.as_deref()?.parse::<u8>().ok())
+        .and_then(|id| board_config::uart_transmitter(&loaded.document, id).map(|link| (id, link)));
+    match recorder_uart {
+        Some((1, (tx, baud))) => {
+            if let Err(error) = recorder::start_uart(peripherals.uart1, tx, baud) {
+                log::error!("ring :: the uart_saver did not start, no line leaves on its UART: {error}");
+            }
+        }
+        Some((id, _)) => log::warn!("ring :: the recorder's uart:{id} is not UART1, the one free: no uart_saver"),
+        None => {}
+    }
     if let Err(error) = recorder::start(settings.clone(), card, &config_id) {
         log::error!("Recorder :: the ring_writer did not start: {error}");
     }

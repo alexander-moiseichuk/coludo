@@ -87,6 +87,7 @@ use recorder_wire::{SESSION_INDEX, is_label};
 use crate::decoder::{BlockSummary, DecodedLine, Decoder};
 use crate::fs::Fs;
 use crate::layout;
+use crate::line_ring::LineRing;
 use crate::record::LOG_FILE;
 use crate::recorder::Recorder;
 
@@ -510,6 +511,8 @@ pub struct Saver<'r, 't, F: Flash, S: Fs> {
     path: String,
     /// A file's end as it is looked at, [`TAIL_BYTES`].
     tail: Vec<u8>,
+    /// The uart_saver's queue (M19): every staged line's wire bytes, routing included, before any goes to the card.
+    uart: Option<&'r LineRing>,
 }
 
 impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
@@ -544,7 +547,15 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
             files: BTreeMap::new(),
             path: String::new(),
             tail: vec![0; TAIL_BYTES],
+            uart: None,
         }
+    }
+
+    /// The saver handing every line it stages to `queue` too (M19's uart_saver): each line once, as `GET /ring`
+    /// streams it, before any of it goes to the card, so an SD stall never holds the UART back.
+    pub fn with_uart(mut self, queue: &'r LineRing) -> Saver<'r, 't, F, S> {
+        self.uart = Some(queue);
+        self
     }
 
     /// One step: collects what the walk reads into the batch, and puts the batch on the card once it is due (see
@@ -593,8 +604,19 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
         if self.boot.replace(boot) != Some(boot) {
             self.files.retain(|path, _| path == layout::GLOBAL_INDEX);
         }
-        let Saver { walk, staged, path, .. } = self;
-        walk.decode(|line| stage_line(staged, path, line));
+        let Saver {
+            walk,
+            staged,
+            path,
+            uart,
+            ..
+        } = self;
+        walk.decode(|line| {
+            if let Some(queue) = uart {
+                queue.push(line.wire);
+            }
+            stage_line(staged, path, line)
+        });
         staged.boot = Some(boot);
         staged.last_block = Some(header.block_sequence);
         staged.end = walk.cursor();

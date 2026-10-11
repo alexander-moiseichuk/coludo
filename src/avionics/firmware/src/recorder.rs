@@ -79,8 +79,8 @@ use flash_ring::{
     BLOCK_BYTES, BacklogTrend, BlockTable, Eraser, Erasure, Figures, Flash, Geometry, Hints, Position, Ring,
 };
 use recorder::{
-    BATCH_BLOCKS, Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, SaveError, Saved, Saver, Settings, StdFs,
-    StreamId, TICK_US, Writer, layout,
+    BATCH_BLOCKS, Buffers, Identity, LineRing, MERGE_HORIZON_US, Recorder, Registry, SaveError, Saved, Saver, Settings,
+    StdFs, StreamId, TICK_US, Writer, layout,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -793,11 +793,102 @@ fn start_saver(
         // the saver's buffers are allocated here, on its own thread, after the encoder's reservation (start)
         // the card's root: the saver files each session where crates/recorder's layout says, under <session>/recordings
         let saver = Saver::new(recorder, partition, table, StdFs::new(sd::MOUNT), start);
+        // every line it stages to the uart_saver too (M19), when the recorder's link to its receiver runs
+        let saver = match UART_QUEUE.get() {
+            Some(queue) => saver.with_uart(queue),
+            None => saver,
+        };
         save(saver, store)
     };
     if let Err(error) = spawn(c"ring_saver", SAVER_STACK, SAVER_PRIORITY, body) {
         log::error!("ring :: the saver would not start, nothing reaches the card: {error}");
     }
+}
+
+/// The uart_saver's queue (M19): the ring_saver pushes each line it stages, the uart_saver sends them; recency first
+/// (crates/recorder LineRing). Set before the recorder starts, when the config gives the recorder its UART.
+static UART_QUEUE: OnceLock<LineRing> = OnceLock::new();
+
+/// The uart_saver's queue, bytes (PSRAM): ~10 s of the flight's ~26 KB/s of text, so a receiver that stalls a few
+/// seconds loses nothing.
+const UART_QUEUE_BYTES: usize = 256 << 10;
+
+/// The most the uart_saver hands the driver at once, bytes.
+const UART_BATCH_BYTES: usize = 4096;
+
+/// The receive buffer IDF installs for the transmit-only UART, bytes: more than its 128-byte FIFO, else refused.
+const UART_RX_BYTES: usize = 256;
+
+/// The uart_saver's rest while its queue is empty.
+const UART_IDLE: Duration = Duration::from_millis(20);
+
+/// The uart_saver's priority: below the ring_saver's, which feeds it (§4.2).
+const UART_PRIORITY: u8 = 2;
+
+/// The uart_saver's stack: a batch's copy and the driver's write.
+const UART_STACK: usize = 4 << 10;
+
+/// The uart_saver (M19, doc/specs/avionics-port.md M19): the recorder's wire lines out of `uart`'s TX on GPIO `tx` at
+/// `baud`, to a receiver that keeps them when the board and its card are lost (a Luckfox's recorderd, the C6 box of
+/// M20): the bytes plan B sent. Its thread (core 0, below the ring_saver) takes what the saver queued, in order, and
+/// never holds the saver: a stalled link costs the oldest lines, counted. Lines reach it from the saver, so a board
+/// with no card sends none yet (the no-card walk is M19's next step).
+///
+/// Errors: the driver would not install, or the thread would not spawn.
+pub fn start_uart<U: esp_idf_svc::hal::uart::Uart + 'static>(_uart: U, tx: u8, baud: u32) -> anyhow::Result<()> {
+    let queue = UART_QUEUE.get_or_init(|| LineRing::new(UART_QUEUE_BYTES));
+    // IDF's own driver, installed here: esp-idf-hal's transmit-only driver installs no receive buffer, which IDF
+    // refuses ("uart rx buffer length error"), so it never starts. The peripheral is taken, so nothing else drives it.
+    let port = U::port();
+    let config = sys::uart_config_t {
+        baud_rate: baud as i32,
+        data_bits: sys::uart_word_length_t_UART_DATA_8_BITS,
+        parity: sys::uart_parity_t_UART_PARITY_DISABLE,
+        stop_bits: sys::uart_stop_bits_t_UART_STOP_BITS_1,
+        flow_ctrl: sys::uart_hw_flowcontrol_t_UART_HW_FLOWCTRL_DISABLE,
+        __bindgen_anon_1: sys::uart_config_t__bindgen_ty_1 {
+            source_clk: sys::soc_periph_uart_clk_src_legacy_t_UART_SCLK_DEFAULT,
+        },
+        ..Default::default()
+    };
+    // SAFETY: plain driver calls on the UART the board config gives the recorder alone; the driver lives for good.
+    unsafe {
+        sys::esp!(sys::uart_param_config(port, &config))?;
+        sys::esp!(sys::uart_set_pin(port, i32::from(tx), -1, -1, -1))?;
+        sys::esp!(sys::uart_driver_install(
+            port,
+            UART_RX_BYTES as i32,
+            (UART_BATCH_BYTES * 2) as i32,
+            0,
+            ptr::null_mut(),
+            0
+        ))?;
+    }
+    spawn(c"uart_saver", UART_STACK, UART_PRIORITY, move || {
+        let mut line = Vec::new();
+        let mut batch = Vec::with_capacity(UART_BATCH_BYTES + 1024);
+        loop {
+            batch.clear();
+            while batch.len() < UART_BATCH_BYTES && queue.pop(&mut line) {
+                batch.extend_from_slice(&line);
+            }
+            if batch.is_empty() {
+                std::thread::sleep(UART_IDLE);
+                continue;
+            }
+            let mut sent = 0;
+            while sent < batch.len() {
+                // SAFETY: the installed driver's write: it copies the bytes into its transmit buffer, waiting for room
+                let count = unsafe { sys::uart_write_bytes(port, batch[sent..].as_ptr().cast(), batch.len() - sent) };
+                if count <= 0 {
+                    break; // a refused write loses this batch; the next goes on
+                }
+                sent += count as usize;
+            }
+        }
+    })?;
+    log::info!("ring :: uart_saver on GPIO{tx} at {baud} baud");
+    Ok(())
 }
 
 /// The ring_saver thread: [`Saver::step`] again and again, forever (spec "The ring_saver"). The saver collects what
@@ -1300,6 +1391,24 @@ fn ring_report(recorder: &'static Recorder) -> String {
         ("unsaved_s", seconds(report.unsaved_s)),
         ("chunks", report.chunks.to_string()),
         ("flash_errors", report.flash_errors.to_string()),
+        (
+            "uart_pushed",
+            UART_QUEUE
+                .get()
+                .map_or_else(|| "None".to_string(), |queue| queue.pushed().to_string()),
+        ),
+        (
+            "uart_dropped",
+            UART_QUEUE
+                .get()
+                .map_or_else(|| "None".to_string(), |queue| queue.dropped().to_string()),
+        ),
+        (
+            "uart_queued",
+            UART_QUEUE
+                .get()
+                .map_or_else(|| "None".to_string(), |queue| queue.queued().to_string()),
+        ),
         ("tlm_count", stats.telemetry.count.to_string()),
         ("tlm_max", stats.telemetry.max.to_string()),
         ("tlm_dropped", stats.telemetry.dropped.to_string()),

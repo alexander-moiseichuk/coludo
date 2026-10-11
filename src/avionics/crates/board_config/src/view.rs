@@ -514,6 +514,16 @@ pub fn uart_bus(document: &Value, id: u8) -> Option<UartSpecification> {
     })
 }
 
+/// A transmit-only UART `buses.uart.<id>` (the recorder's link to its receiver, M19: plan B's UART1, `tx` 20 at
+/// 921600 baud): its TX GPIO and baud rate, an `rx` ignored. None when the bus, its `tx` or a whole `baud` is missing.
+pub fn uart_transmitter(document: &Value, id: u8) -> Option<(u8, u32)> {
+    let specification = bus(document, "uart", id)?;
+    Some((
+        gpio(specification.get("tx")?)?,
+        Some(clock_hz(specification.get("baud"), 0)).filter(|&baud| baud > 0)?,
+    ))
+}
+
 /// Plan B's `config.bus` (config.py:681-696): the spec under `buses.<kind>.<id>`, looked up by the id's text
 /// (`str(ident)`), since the keys of a JSON object are text. None when a level is missing, or is not an object
 /// (plan B raises on a level that is present but no dict; validate() refuses one).
@@ -948,7 +958,7 @@ mod tests {
     use super::{
         Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, DEFAULT_SCHEDULE_HZ, Hub, Network, UartSpecification,
         Watchdog, board_id, camera, checkpoint, directory, hitl_enabled, mask_simulated, max_range_m, mcu, schedule_hz,
-        uart_bus, warm_start, watchdog, wifi,
+        uart_bus, uart_transmitter, warm_start, watchdog, wifi,
     };
     use serde_json::{Value, json};
 
@@ -1021,6 +1031,29 @@ mod tests {
             assert_eq!(at(refused.clone()), None, "{refused}");
         }
         assert_eq!(uart_bus(&json!({"buses": {"uart": {}}}), 2), None);
+    }
+
+    #[test]
+    fn a_transmit_only_uart_needs_its_tx_and_a_whole_baud_never_an_rx() {
+        let at = |spec: Value| uart_transmitter(&json!({"buses": {"uart": {"1": spec}}}), 1);
+        assert_eq!(
+            at(json!({"tx": 20, "baud": 921600})),
+            Some((20, 921600)),
+            "plan B's recorder link"
+        );
+        assert_eq!(at(json!({"tx": 20, "rx": 21, "baud": 9600})), Some((20, 9600)));
+        // NEGATIVE: no tx, no baud, a fractional baud, another id
+        for refused in [
+            json!({"baud": 921600}),
+            json!({"tx": 20}),
+            json!({"tx": 20, "baud": 9600.5}),
+        ] {
+            assert_eq!(at(refused.clone()), None, "{refused}");
+        }
+        assert_eq!(
+            uart_transmitter(&json!({"buses": {"uart": {"1": {"tx": 20, "baud": 9600}}}}), 2),
+            None
+        );
     }
 
     #[test]
