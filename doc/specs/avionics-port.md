@@ -1315,7 +1315,7 @@ warm start. The servo probe's closed-loop verdict waits for the servos (M13).
 
 **Operator gains.** Position in health and telemetry, the pad drift calibration, and CC-less field arming.
 
-### M11b. DONE and the recovery beacon (1-2 days; before the first passive flight)
+### M11b. DONE and the recovery beacon (1-2 days; before the first passive flight; DONE 2026-10-11 on the taster, the battery time open)
 
 **Scope**
 - **At DONE:**
@@ -1344,6 +1344,34 @@ warm start. The servo probe's closed-loop verdict waits for the servos (M13).
   GNSS rows come at 1 Hz.
 - A power cycle after DONE comes back in SETTING as a new session, with the copy resumed.
 - The battery time at DONE is measured on the INA226 (about 1.5-2 h expected on 800 mAh).
+
+**As built (2026-10-11, firmware/src/beacon.rs):**
+- At DONE the link thread ends any hub session (within the hub's ~2 s poll) and turns the C6 into an open AP
+  `<BOARD>_glider`, channel 3, 21 dBm, up to 4 phones; the page on port 80 at 192.168.4.1 refreshes every 5 s, and
+  opens by itself (a captive portal, operator 2026-10-11): the DHCP server offers the board as the DNS server, a DNS
+  responder answers every name with the board, and every other path redirects to the page, so a phone's connectivity
+  check finds a portal. No DHCP option 114: phones take it only as an HTTPS captive-portal API (RFC 8908). The fix shown is the newest any source pushed, whatever its age (a fix lost in the trees
+  is still the best guess); the heights are each source's latest with its age; the battery is the INA226's voltage and
+  current with a 1S LiPo charge estimate, and the hours left when the INA226 entry gives `battery_mah` (none above
+  4.35 V: USB). Under the fix, a map link to the launch pad (the mission's launch point), there even before a fix.
+  The file server serves the same page as `/beacon`, so the bench sees it before DONE.
+- A HITL board never beacons: its frames ride the Wi-Fi, and the host restores it after DONE. A bench `stage done`
+  beacons as a flight does; the AP and the GNSS's 1 Hz hold until power-off or a reset.
+- DONE quiets the board: the IMUs (control's and the owner's), the magnetometer, the pitot and the attitude filter
+  stop; the barometers, the laser and the INA226 run once a second; flight.csv takes a row a second; the GNSS module
+  is reconfigured to 1 Hz; the fins lose their pulse a second in, after the law's centring (no holding current).
+
+**Proof so far (2026-10-11, the taster, `stage done` on the console):**
+- The fins rest at +1.0 s, the GNSS at 1 Hz at +1.2 s, the beacon open at +2.0 s
+  (`beacon :: taster_glider open on channel 3, the page on http://192.168.4.1/`); the page renders every section.
+- The recording at DONE, over 272 s: the IMUs (99/s each), the pitot and the attitude (50/s), the magnetometer (12/s)
+  to 0; the BMP581 50/s to 1/s, the ICP-10111 to 0.5/s (its two-phase read), the laser, the INA226 and flight.csv to
+  1/s: ~460 rows/s to ~6.
+- A reset after DONE comes back in SETTING as a new session (000660 -> 000661) with the flash->SD copy running.
+- The operator's phone joined `taster_glider` and read the page at 192.168.4.1 (the first build's portal answered
+  the phones' probes with 404, so it had to be opened by hand; fixed). The page carries a map link to the launch pad
+  always, and to the last fix once one came.
+- Still owed: the battery time on a LiPo (an airframe, not the USB taster).
 
 **Operator gains.** **Passive-flight ready.** This covers the flight-test ladder's second rung (passive
 electronics E16/F15, no active fins): stages, data, video, warm start, pull, and a beacon that leads to the
