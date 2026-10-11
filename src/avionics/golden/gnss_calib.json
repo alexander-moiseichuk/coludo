@@ -1,0 +1,5723 @@
+{
+ "cases": [
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       10.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       10.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "the_arm_restarts_the_mean_and_boosting_freezes_it",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.21213203435596426,
+      0.21213203435596426
+     ],
+     "frozen": true,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.21213203435596426,
+      0.21213203435596426
+     ],
+     "frozen": true,
+     "samples": 6
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       10.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "too_few_samples_freeze_zero",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": true,
+      "course": [
+       300.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       300.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       300.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       null,
+       900
+      ],
+      "speed": [
+       0.4,
+       null,
+       900
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       5.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       10.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       300.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       300.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       10.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "stale_readings_are_never_sampled",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      -0.17320508075688773,
+      0.10000000000000005
+     ],
+     "frozen": true,
+     "samples": 5
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       200.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       10.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "never_armed_samples_the_whole_pad",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      -0.1827023856508359,
+      -0.6608403676190279
+     ],
+     "frozen": true,
+     "samples": 7
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       25.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       25.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       25.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     }
+    ]
+   },
+   "name": "a_warm_start_into_gliding_freezes_zero",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 0
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 0
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 0
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": true,
+      "course": [
+       180.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       180.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       180.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       180.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       180.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       2.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       2.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       2.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "frozen_stays_frozen_back_in_setting",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      6.123233995736766e-17,
+      -0.5
+     ],
+     "frozen": true,
+     "samples": 5
+    },
+    {
+     "drift": [
+      6.123233995736766e-17,
+      -0.5
+     ],
+     "frozen": true,
+     "samples": 5
+    },
+    {
+     "drift": [
+      6.123233995736766e-17,
+      -0.5
+     ],
+     "frozen": true,
+     "samples": 5
+    },
+    {
+     "drift": [
+      6.123233995736766e-17,
+      -0.5
+     ],
+     "frozen": true,
+     "samples": 5
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 3,
+    "steps": [
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       270.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.6,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       270.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.6,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       270.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.6,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "a_disarm_and_rearm_never_restarts_twice",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 8
+    },
+    {
+     "drift": [
+      -0.03749999999999999,
+      -2.985076572921673e-17
+     ],
+     "frozen": true,
+     "samples": 8
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 1,
+    "steps": [
+     {
+      "armed": true,
+      "course": [
+       359.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.25,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "landing"
+     }
+    ]
+   },
+   "name": "min_samples_one",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      -0.00436310160932089,
+      0.24996192378909782
+     ],
+     "frozen": true,
+     "samples": 1
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": true,
+      "course": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       180.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       270.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       45.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "done"
+     }
+    ]
+   },
+   "name": "the_compass_points",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.14142135623730953,
+      0.14142135623730948
+     ],
+     "frozen": true,
+     "samples": 5
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       288.41601502288046,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.8497369624163081,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       358.306215201041,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.6010652612697902,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       124.80219210646335,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.22068699332056568,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       108.35728985405419,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2110094234797134,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       114.71999325109873,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.17347135901737443,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       130.5484387369617,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.17209968318386237,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       30.649498521270893,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     }
+    ]
+   },
+   "name": "seeded_00",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 8,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       106.42973365159516,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.8248603611490668,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       139.20554048508862,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5868102362869438,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       142.1099823860098,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.7656533502556186,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       14.079434250099268,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.3154210781290767,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       297.95766664121305,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.1282434595362711,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       24.674691626986856,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.8199393651181117,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       271.910578998541,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.38981807287183334,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       290.14376340867574,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.35262542445900374,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       281.23429269860117,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.34333485515715506,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       274.08933746584205,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3316197235565573,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       259.7155188821755,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       29.422321234751983,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       54.92094339016159,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_01",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 8,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       204.21657157085582,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.5960631723447087,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       212.17562159232102,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.3254094036108452,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       107.81715634995317,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.1153992263050503,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       295.28328874751566,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.15733122704451968,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       310.93089659614867,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.16092851588475704,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       294.68718856816065,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.1735134752127912,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       289.81611360403724,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.08274467363908823,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       240.58303310072222,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     }
+    ]
+   },
+   "name": "seeded_02",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 8,
+    "steps": [
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       null,
+       900
+      ],
+      "speed": [
+       0.4,
+       null,
+       900
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       52.7735880619199,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.38042265709180684,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       67.117847603251,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.33906803823422144,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       56.762306652296914,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_03",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 0
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 0
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 0
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 0
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 2
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       248.50618759189942,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.8164595296933235,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       223.22479079574128,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.119346243477446,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       206.28126723088624,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.8614351444247466,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       211.8046346436787,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.2164573310555544,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       161.39723227736133,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.181162138038414,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       346.8231084039398,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.0161873710781695,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       202.08472750401506,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.006357902033331295,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       198.29967817845085,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.16770655274323082,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       199.81117803665035,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.10094469928574581,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       206.03420520064643,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.041927037032489206,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       212.22838176515697,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.09639108098596016,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       190.6787246658768,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.08229451836104386,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       209.5987255493358,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       0.08655697934726345,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       null,
+       900
+      ],
+      "speed": [
+       0.4,
+       null,
+       900
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       187.91401853052795,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.06226129122298987,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       null,
+       900
+      ],
+      "speed": [
+       0.4,
+       null,
+       900
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       121.34227823522,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     }
+    ]
+   },
+   "name": "seeded_04",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 8
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 8
+    },
+    {
+     "drift": [
+      -0.02286116828937048,
+      -0.06522965857786678
+     ],
+     "frozen": true,
+     "samples": 8
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       129.98927212616806,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5735375878895345,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       220.31271665949816,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.6304669386238484,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       184.93484152324115,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.1155005622280871,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       110.25152182564963,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.6204918230036276,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       0.06284818806251202,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       91.31779505006494,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_05",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 8,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       261.37277955614553,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.4811032089529852,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       224.4356254586758,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.5042017306309348,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       261.5918781714787,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.6043413774230117,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       290.2997000959594,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.8141523463861373,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       346.5628506162846,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.12814919617653137,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       328.9823445437087,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.017211079504494978,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       353.116092589832,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.13644213363627716,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       341.4756025483696,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.1396172197678384,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       348.8249305848639,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.06436542508291844,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       343.05187921687093,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.07309568534599727,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       340.45801437936797,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.0,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       276.45553812162916,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     }
+    ]
+   },
+   "name": "seeded_06",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 7
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       261.87417678276404,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.5763766500395793,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       53.85561940506196,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.06814358494269517,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       76.89418515495659,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.14035293484327135,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       75.72905173248293,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.18373923569822947,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       51.14550958797616,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.15745566170151698,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       61.902516850852244,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.10806177018969657,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       58.98335973755543,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.07241308993482912,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       81.33463696193051,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.14182672956620243,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       63.34144117565578,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.15149466646857632,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       72.06103845368962,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.12508349236938748,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       61.28355162748334,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.17153519894166658,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       68.95372355388761,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.1951369800645722,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       224.53483103158706,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       234.57427876585814,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       143.14491641321922,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_07",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 8
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 9
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 10
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 11
+    },
+    {
+     "drift": [
+      0.12517776985173967,
+      0.05315087271260068
+     ],
+     "frozen": true,
+     "samples": 11
+    },
+    {
+     "drift": [
+      0.12517776985173967,
+      0.05315087271260068
+     ],
+     "frozen": true,
+     "samples": 11
+    },
+    {
+     "drift": [
+      0.12517776985173967,
+      0.05315087271260068
+     ],
+     "frozen": true,
+     "samples": 11
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 3,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       64.82982959214914,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.575137624227529,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       85.27703725903832,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.9738070307938106,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       226.148609873858,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.2389514079062975,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       125.12881153611654,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.7253257485545868,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       258.17318229699686,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.20469551550212423,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       259.1485255446672,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3242692978834415,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       265.53027830919365,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.247744504324907,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       273.4884560085292,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.29138183759119013,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       269.13805002055676,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.24573939073810747,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       266.4426620795918,
+       "gnss",
+       0
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       248.5128670670843,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.35003734706614087,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       253.58680147347016,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.33232908456852783,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       272.3401896862534,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3145306752129087,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       269.47071960701334,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.3528449371733925,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       273.1201386932259,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2225255979182414,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       320.6598852895045,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     },
+     {
+      "armed": true,
+      "course": [
+       307.3800235185646,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     },
+     {
+      "armed": true,
+      "course": [
+       82.10783630760929,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     }
+    ]
+   },
+   "name": "seeded_08",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 8
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 9
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 10
+    },
+    {
+     "drift": [
+      -0.2836155547960031,
+      -0.03086995033074131
+     ],
+     "frozen": true,
+     "samples": 10
+    },
+    {
+     "drift": [
+      -0.2836155547960031,
+      -0.03086995033074131
+     ],
+     "frozen": true,
+     "samples": 10
+    },
+    {
+     "drift": [
+      -0.2836155547960031,
+      -0.03086995033074131
+     ],
+     "frozen": true,
+     "samples": 10
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": true,
+      "course": [
+       237.06164874683853,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.06692639287970505,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       null,
+       900
+      ],
+      "speed": [
+       0.4,
+       null,
+       900
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       248.57221075302394,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.24940855050382021,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       244.67602923122502,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2331215545883728,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       252.86434120345376,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.15619036432302708,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       232.6315411318323,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.23460837937731316,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       167.00647847997274,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "gliding"
+     }
+    ]
+   },
+   "name": "seeded_09",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      -0.16695374386470613,
+      -0.08312656415380551
+     ],
+     "frozen": true,
+     "samples": 5
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       255.28872721310512,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.112319386564557,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       49.510471546877916,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.8195681702715674,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       122.83310801687647,
+       "gnss",
+       0
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       123.52282742386879,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.10602660479300655,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       134.86635081110074,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.16255006137014538,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       120.43694107433069,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.1286207137383767,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       127.91939445546602,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.03456796993206349,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       90.0,
+       null,
+       900
+      ],
+      "speed": [
+       0.4,
+       null,
+       900
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       97.69812197271284,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_10",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 0
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 4
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 1,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       260.03375116865584,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.523434336963042,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       41.660374563442964,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.411513431768027,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       322.1719780703392,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5281468718439549,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       336.7559505739024,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5798707610937213,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       327.34815311699725,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5652747542943737,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       316.5881722099135,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5152247841603009,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       325.857109081671,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.381719499848214,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       323.92374563736547,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.6152693839805295,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       230.41155154493205,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       250.94422672002221,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_11",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      -0.2980620025513258,
+      0.4355648433083145
+     ],
+     "frozen": true,
+     "samples": 6
+    },
+    {
+     "drift": [
+      -0.2980620025513258,
+      0.4355648433083145
+     ],
+     "frozen": true,
+     "samples": 6
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 1,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       337.54379052004117,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.6393335041063783,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       232.68185312369582,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.9509437816703876,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       203.2867241671906,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5288532576220224,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       125.94340960252907,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.1148425489188547,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       275.5097803135893,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.6141870367515724,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       316.018850967339,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5121596162831553,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       305.4315811193695,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5701021688663291,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       313.7090592795224,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.504364658989398,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       310.34964842177055,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.484985684891588,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       294.59714727540086,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.49430235375574433,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       247.20639348088926,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       136.05873295352433,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_12",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      -0.40076435843281955,
+      0.313460815432824
+     ],
+     "frozen": true,
+     "samples": 5
+    },
+    {
+     "drift": [
+      -0.40076435843281955,
+      0.313460815432824
+     ],
+     "frozen": true,
+     "samples": 5
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 3,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       268.5650435397403,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.073068492148861,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       123.17609239034672,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.9483715486865587,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       186.7004953205256,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_13",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 2
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 8,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       63.52748861723822,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.6100806132637113,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       240.2180059854419,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.19112873275502384,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       217.01736700078717,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2434343270772512,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       221.16967464483758,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.14981765896402982,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       238.2553773837496,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.17542767284018804,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       null,
+       null,
+       null
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       228.88232314598145,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.2405222221985879,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       218.1646934324943,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.17545274314962667,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       98.01358593004706,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       245.3533606456818,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_14",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": true,
+     "samples": 6
+    }
+   ]
+  },
+  {
+   "input": {
+    "min_samples": 5,
+    "steps": [
+     {
+      "armed": false,
+      "course": [
+       227.4636400799362,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.0778687505350841,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       153.35126709678224,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.1988725652854078,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       50.309123810570725,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.5367177809590087,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": false,
+      "course": [
+       39.63792990294636,
+       "gnss",
+       0
+      ],
+      "speed": [
+       1.747422027072147,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       286.56726209692596,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.45939891911486447,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       278.66794197750676,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.44146518487301006,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       301.85462870065646,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5487873888697298,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       298.73196085459347,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.504781651874724,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       278.5458269236377,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5237865438263086,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       310.5309771925802,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.4887682915040597,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       290.90846619063643,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.45927595659579273,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       305.325145241669,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.6033563345366333,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       300.3084010742451,
+       "gnss",
+       0
+      ],
+      "speed": [
+       null,
+       null,
+       null
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       289.97833169461785,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.4956263164323171,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       300.9230313150139,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.4267352372365036,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       311.4056558902425,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.4283262906086185,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       306.0122767458386,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.4857766511198165,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       299.7277230465685,
+       "gnss",
+       0
+      ],
+      "speed": [
+       0.5105509402444214,
+       "gnss",
+       0
+      ],
+      "stage": "setting"
+     },
+     {
+      "armed": true,
+      "course": [
+       337.23947910803975,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       183.35870650234048,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     },
+     {
+      "armed": true,
+      "course": [
+       242.35897370322667,
+       "gnss",
+       0
+      ],
+      "speed": [
+       30.0,
+       "gnss",
+       0
+      ],
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_15",
+   "output": [
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 1
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 2
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 3
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 4
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 5
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 6
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 7
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 8
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 8
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 9
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 10
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 11
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 12
+    },
+    {
+     "drift": [
+      0.0,
+      0.0
+     ],
+     "frozen": false,
+     "samples": 13
+    },
+    {
+     "drift": [
+      -0.4296709505938277,
+      0.2191354019116078
+     ],
+     "frozen": true,
+     "samples": 13
+    },
+    {
+     "drift": [
+      -0.4296709505938277,
+      0.2191354019116078
+     ],
+     "frozen": true,
+     "samples": 13
+    },
+    {
+     "drift": [
+      -0.4296709505938277,
+      0.2191354019116078
+     ],
+     "frozen": true,
+     "samples": 13
+    }
+   ]
+  }
+ ],
+ "compare": {
+  "kind": "abs",
+  "tol": 0.0001
+ },
+ "meta": {
+  "commit": "61f9234df807dd50fc63cde30eb9f7c51de6f23a",
+  "generator": "gnss_calib",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "python": "3.12",
+  "source": "src/glider/tasks/gnss_calib.py",
+  "tag": "micropython_plan_B_2"
+ },
+ "note": "per case: input {min_samples, steps}, a step per pass of plan B's run(): {stage, armed, speed and course as read() answers them: [value, source or null when stale, age]}; output the state after each pass: {drift: [east, north] m/s, samples since the restart, frozen}"
+}

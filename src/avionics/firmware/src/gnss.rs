@@ -11,13 +11,18 @@
 //!
 //! The executor sees it through atomics (`inspect`, `probe`, `health`), so the thread holds no lock and makes its
 //! text only for its own event rows and log lines. The UBX NAV-PVT path (the NEO-M8N) comes with M16.
+//!
+//! The pad drift calibration (plan B tasks/gnss_calib.py, [`Calibration`]) is the supervisor's duty: it reads the
+//! fused speed and course, whoever provides them, and publishes the frozen drift through atomics for `inspect` and
+//! the flight loop (M13).
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use control::drift::DriftCalibrator;
 use control::navigation::Position;
-use databoard::Writer;
+use databoard::{Parameter, Writer};
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::delay::TickType;
 use esp_idf_svc::hal::gpio::AnyIOPin;
@@ -28,7 +33,7 @@ use esp_idf_svc::sys;
 use gnss::{Antenna, Gnss, SkySwitch, Update};
 use recorder::{Cell, Telemetry};
 
-use crate::devices::{GnssMember, Topology};
+use crate::devices::{GnssCalibMember, GnssMember, Topology};
 use crate::status::FLIGHT;
 
 /// The module on the UART, as the entry's driver names it.
@@ -371,4 +376,93 @@ pub fn probe(only: Option<&str>) -> Option<(&'static str, Option<String>)> {
         None
     };
     Some((name, verdict))
+}
+
+/// The pad drift calibration once its entry came up: the supervisor passes it every `period_ms`.
+pub struct Calibration {
+    /// The entry's name: its log line's.
+    name: &'static str,
+    /// Its pass period, ms (`period_ms`).
+    period_ms: u32,
+    /// The averaging and the freeze (crates/control drift).
+    calibrator: DriftCalibrator,
+    /// The fused ground speed, m/s.
+    speed: Option<&'static Parameter<f32>>,
+    /// The fused ground course, degrees.
+    course: Option<&'static Parameter<f32>>,
+}
+
+/// The frozen drift, east and north (f32 bits, m/s): zero until the freeze.
+static DRIFT: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+/// The calibration's samples since its restart.
+static DRIFT_SAMPLES: AtomicU32 = AtomicU32::new(0);
+/// Whether the drift froze.
+static DRIFT_FROZEN: AtomicBool = AtomicBool::new(false);
+/// Whether a calibration runs.
+static CALIBRATING: AtomicBool = AtomicBool::new(false);
+
+impl Calibration {
+    /// The calibration of `member`, its quantities found in `topology`.
+    pub fn new(member: GnssCalibMember, topology: &'static Topology) -> Calibration {
+        CALIBRATING.store(true, Ordering::Relaxed);
+        Calibration {
+            name: member.name,
+            period_ms: member.period_ms,
+            calibrator: DriftCalibrator::new(member.min_samples),
+            speed: topology.scalar("speed"),
+            course: topology.scalar("course"),
+        }
+    }
+
+    /// The entry's name.
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// Its pass period, ms.
+    pub fn period_ms(&self) -> u32 {
+        self.period_ms
+    }
+
+    /// One pass at `now_us` (plan B's run loop body): the flight word's stage and arming, the fused speed and course
+    /// when both are fresh (read, never extrapolated: a stale fix must not enter the mean), and the freeze's log line.
+    pub fn pass(&mut self, now_us: u64) {
+        let flight = FLIGHT.load();
+        let fresh = |parameter: Option<&'static Parameter<f32>>| {
+            parameter
+                .and_then(|parameter| parameter.read(now_us))
+                .map(|reading| reading.value)
+        };
+        let ground = fresh(self.speed)
+            .zip(fresh(self.course))
+            .map(|(speed, course)| [speed, course]);
+        if let Some(([east, north], count)) = self.calibrator.pass(flight.stage, flight.armed, ground) {
+            log::info!("{} :: drift {east:.3}, {north:.3} m/s ({count} samples)", self.name);
+        }
+        for (published, value) in DRIFT.iter().zip(self.calibrator.drift()) {
+            published.store(value.to_bits(), Ordering::Relaxed);
+        }
+        DRIFT_SAMPLES.store(self.calibrator.samples(), Ordering::Relaxed);
+        DRIFT_FROZEN.store(self.calibrator.frozen(), Ordering::Relaxed);
+    }
+}
+
+/// The frozen pad drift, east and north, m/s: zero until the freeze, and without a calibration (plan B
+/// `GnssCalib.drift()`, the flight loop's wind de-bias, M13).
+pub fn drift() -> [f32; 2] {
+    DRIFT
+        .each_ref()
+        .map(|value| f32::from_bits(value.load(Ordering::Relaxed)))
+}
+
+/// The calibration's state for `inspect` (plan B gnss_calib.py inspect): the drift, its samples, whether it froze.
+/// None without a calibration.
+pub fn calibration_inspection() -> Option<([f32; 2], u32, bool)> {
+    CALIBRATING.load(Ordering::Relaxed).then(|| {
+        (
+            drift(),
+            DRIFT_SAMPLES.load(Ordering::Relaxed),
+            DRIFT_FROZEN.load(Ordering::Relaxed),
+        )
+    })
 }

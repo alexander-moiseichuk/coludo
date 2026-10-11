@@ -147,6 +147,14 @@ enum Own {
         antenna: &'static str,
         lines: u32,
     },
+    /// The pad drift calibration (plan B gnss_calib.py inspect): the drift east and north (m/s, to 3 decimals), the
+    /// samples since its restart, whether it froze.
+    GnssCalib {
+        drift_e: f32,
+        drift_n: f32,
+        samples: u32,
+        frozen: bool,
+    },
     /// A laser ranger (plan B vl53l1x.py inspect): whether its data-ready line is wired, its channel's latest.
     Ranger { interrupt: bool, agl_m: Option<f32> },
     /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
@@ -287,6 +295,15 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 cn0_mean: state.sky[3..7].iter().sum::<i32>() as f32 / 4.0,
                 antenna: state.antenna,
                 lines: state.lines,
+            },
+            None => Own::None {},
+        },
+        "gnss_calib" => match crate::gnss::calibration_inspection() {
+            Some(([east, north], samples, frozen)) => Own::GnssCalib {
+                drift_e: (east * 1000.0).round() / 1000.0,
+                drift_n: (north * 1000.0).round() / 1000.0,
+                samples,
+                frozen,
             },
             None => Own::None {},
         },

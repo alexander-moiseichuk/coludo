@@ -128,6 +128,17 @@ pub struct GnssMember {
     pub uart: board_config::UartSpecification,
 }
 
+/// The pad drift calibration once its entry came up: the supervisor passes it (crate::gnss::Calibration, M11).
+#[derive(Clone, Copy)]
+pub struct GnssCalibMember {
+    /// The entry's name: its log lines'.
+    pub name: &'static str,
+    /// Fewer samples freeze a zero drift (`min_samples`, plan B's 5).
+    pub min_samples: u32,
+    /// The pass period, ms (`period_ms`, plan B's 1000; at least 1).
+    pub period_ms: u32,
+}
+
 /// The UART the GNSS runs on: the one the firmware hands its thread (plan B's default `id`).
 const GNSS_UART: u8 = 2;
 
@@ -403,6 +414,8 @@ pub struct Devices {
     pub watchdog: Option<WatchdogMember>,
     /// The GNSS, when its entry came up.
     pub gnss: Option<GnssMember>,
+    /// The pad drift calibration, when its entry came up.
+    pub gnss_calib: Option<GnssCalibMember>,
 }
 
 /// Crashes each entry of `table` named in `names` that came up, with `reason`: the thread that would run it did not
@@ -431,6 +444,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut watchdog = None;
     let mut first_watchdog = None;
     let mut gnss = None;
+    let mut gnss_calib = None;
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -473,6 +487,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::Sequencer => set_up_sequencer(entry, &mut sequencer),
             Kind::Attitude => set_up_attitude(entry, &mut attitude),
             Kind::Gnss => set_up_gnss(document, entry, &mut gnss),
+            Kind::GnssCalib => set_up_gnss_calib(entry, &mut gnss_calib),
             Kind::Checkpoint => {
                 let (outcome, came_up) =
                     set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
@@ -516,6 +531,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         checkpoint,
         watchdog,
         gnss,
+        gnss_calib,
     }
 }
 
@@ -767,6 +783,55 @@ fn set_up_gnss(document: &Value, entry: &Entry<'static>, gnss: &mut Option<GnssM
     );
     if came_up.is_some() {
         *gnss = came_up;
+    }
+    outcome
+}
+
+/// The pad drift calibration's bring-up (plan B tasks/gnss_calib.py setup): `min_samples` (5) and `period_ms` (1000)
+/// read from the entry, in one attempt. A value that is no whole number in range fails the entry naming the key (plan
+/// B would run with it: a negative `min_samples` divides by zero at a sample-less launch, a non-positive `period_ms`
+/// spins its loop); a second calibration fails too, since one drift feeds the wind.
+fn set_up_gnss_calib(entry: &Entry<'static>, gnss_calib: &mut Option<GnssCalibMember>) -> Result<(), String> {
+    let count = |key: &str, default: u32, least: u32| match entry.fields.get(key) {
+        None => Ok(default),
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value >= least)
+            .ok_or_else(|| format!("{key}: {value} is not a whole number from {least}")),
+    };
+    let settings = count("min_samples", 5, 0).and_then(|min_samples| {
+        count("period_ms", 1000, 1).map(|period_ms| GnssCalibMember {
+            name: entry.name,
+            min_samples,
+            period_ms,
+        })
+    });
+    let running = gnss_calib.map(|member: GnssCalibMember| member.name);
+    let mut came_up = None;
+    let outcome = controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| match (&settings, running) {
+            (_, Some(running)) => Attempt::Raised {
+                error: format!("one gnss_calib only: '{running}' runs it"),
+                diagnosis: None,
+            },
+            (Err(refused), None) => Attempt::Raised {
+                error: refused.clone(),
+                diagnosis: None,
+            },
+            (Ok(member), None) => {
+                came_up = Some(*member);
+                Attempt::Up
+            }
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    );
+    if came_up.is_some() {
+        *gnss_calib = came_up;
     }
     outcome
 }

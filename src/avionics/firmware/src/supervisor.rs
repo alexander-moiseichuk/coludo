@@ -16,10 +16,11 @@
 //!  * health.csv at 1 Hz, plan B's board_health columns unchanged (spec "Row, log and index text"), so
 //!    recorder_flight, flight_report and flight_video read the Rust board's vitals as they read plan B's;
 //!  * the checkpoint (crate::warm::Keeping) every `poll_ms`, when the board config enables one: the crumb a reset in
-//!    flight warm-starts from, and checkpoint.csv.
+//!    flight warm-starts from, and checkpoint.csv;
+//!  * the GNSS pad drift calibration (crate::gnss::Calibration) every `period_ms`, when the board config enables one.
 //!
 //! It runs with or without a recorder: without one, its rows go nowhere and the rest goes on; and once subscribed to
-//! the task watchdog it never leaves its loop. gnss_calib and the field logic join it as they are ported (M11). The
+//! the task watchdog it never leaves its loop. The field logic joins it as it is ported (M11). The
 //! NVS and flash locks its checkpoint takes are core 0's: the flight tick never waits on them. Its console lines go
 //! through the logger's printer, as the flight core's do (crate::logging): a console reply holds the UART for
 //! seconds, and a line printed in place would wait that out with the task watchdog unfed.
@@ -49,6 +50,7 @@ use serde::Serialize;
 
 use crate::board::{self, Board};
 use crate::devices::WatchdogMember;
+use crate::gnss::Calibration;
 use crate::recorder::Producer;
 use crate::status::FLIGHT;
 use crate::warm::Keeping;
@@ -121,19 +123,23 @@ static CHECK_MAX_MS: AtomicU32 = AtomicU32::new(0);
 ///   supervised entry when the thread does not start.
 /// * `keeping` - the checkpoint, when its entry came up and its NVS opened.
 /// * `watchdog` - the watchdog, when its entry came up.
+/// * `calibration` - the GNSS pad drift calibration, when its entry came up.
 /// * `tick_ms` - the control tick's period, ms: the stall limit is at least two of them.
 ///
-/// Errors: the thread would not spawn; the checkpoint's and the watchdog's entries are crashed then.
+/// Errors: the thread would not spawn; the checkpoint's, the watchdog's and the calibration's entries are crashed
+/// then.
 pub fn start(
     board: Arc<Board>,
     table: &'static Table<'static>,
     keeping: Option<Keeping>,
     watchdog: Option<WatchdogMember>,
+    calibration: Option<Calibration>,
     tick_ms: f32,
 ) -> anyhow::Result<()> {
     let supervised = [
         keeping.as_ref().map(Keeping::name),
         watchdog.as_ref().map(|member| member.name),
+        calibration.as_ref().map(Calibration::name),
     ];
     if let Some(member) = &watchdog {
         let _ = SETTINGS.set(member.settings);
@@ -154,7 +160,7 @@ pub fn start(
     .and_then(|()| {
         std::thread::Builder::new()
             .stack_size(STACK_SIZE)
-            .spawn(move || run(board, table, keeping, watchdog, tick_ms))
+            .spawn(move || run(board, table, keeping, watchdog, calibration, tick_ms))
             .map_err(anyhow::Error::from)
     });
     // the default back for the threads spawned after this one
@@ -173,6 +179,7 @@ fn run(
     table: &'static Table<'static>,
     mut keeping: Option<Keeping>,
     watchdog: Option<WatchdogMember>,
+    mut calibration: Option<Calibration>,
     tick_ms: f32,
 ) {
     // a line printed in place would wait out any console reply, the task watchdog unfed meanwhile
@@ -186,6 +193,9 @@ fn run(
     let mut watch = watchdog.map(|member| Watch::new(&member, table, tick_ms));
     let mut health = Health::new(board);
     let keeping_ticks = keeping.as_ref().map_or(1, |keeping| ticks(keeping.poll_ms()));
+    let calibration_ticks = calibration
+        .as_ref()
+        .map_or(1, |calibration| ticks(u64::from(calibration.period_ms())));
     // the grid, uptime µs: a base tick falls due one step after the last
     let mut due_us = uptime_us();
     // base ticks since the start: 100 ms each, so the u64 never wraps
@@ -212,6 +222,11 @@ fn run(
             // B's sleeps between polls are never less: measured at each wake, two polls come a few µs short of 1 s
             // about half the time, and those checkpoints slip to the third poll
             keeping.pass(due_us);
+        }
+        if let Some(calibration) = &mut calibration
+            && base_tick.is_multiple_of(calibration_ticks)
+        {
+            calibration.pass(uptime_us());
         }
         base_tick += 1;
     }

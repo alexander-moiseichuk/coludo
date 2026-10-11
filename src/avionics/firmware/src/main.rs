@@ -191,6 +191,7 @@ fn main() -> anyhow::Result<()> {
         checkpoint,
         watchdog,
         gnss,
+        gnss_calib,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     // the warm start, while the parts and the flight word's one writer are still main's and nothing else runs: a reset
     // in flight resumes the crumb's stage, its barometers rebased to the pad and the mission's launch point and zone
@@ -252,7 +253,8 @@ fn main() -> anyhow::Result<()> {
     });
     // the stall limit is at least two control ticks
     let tick_ms = 1000.0 / schedule_hz.max(1) as f32;
-    if let Err(error) = supervisor::start(board.clone(), table, keeping, watchdog, tick_ms) {
+    let calibration = gnss_calib.map(|member| gnss::Calibration::new(member, topology));
+    if let Err(error) = supervisor::start(board.clone(), table, keeping, watchdog, calibration, tick_ms) {
         log::error!("supervisor :: did not start: {error}");
     }
     // the GNSS on UART2, on its own core-0 thread (M11): a UART that would not open crashes its entry, so `arm` refuses

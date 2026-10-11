@@ -62,6 +62,8 @@ pub enum Kind {
     Watchdog,
     /// The GNSS on its UART: its own thread reads it (crate::gnss, M11).
     Gnss,
+    /// The pad drift calibration: its settings read from the entry, its passes on the supervisor (M11).
+    GnssCalib,
     /// Run natively by the firmware, with nothing to set up: up.
     Native,
     /// A plan B implementation not ported yet: failed with [`NOT_PORTED_YET`].
@@ -76,16 +78,8 @@ pub enum Kind {
 const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "bluetooth"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 9] = [
-    "adxl375",
-    "bno055",
-    "bmp280",
-    "gnss_calib",
-    "field",
-    "sg90",
-    "mg90s",
-    "flight",
-    "hitl",
+const NOT_PORTED: [&str; 8] = [
+    "adxl375", "bno055", "bmp280", "field", "sg90", "mg90s", "flight", "hitl",
 ];
 
 /// What runs `entry`. The LSM6DSO32 is an SPI part unless its entry binds it to I2C (plan B's lsm6dso32.py:144: the
@@ -103,6 +97,7 @@ pub fn classify(entry: &Entry) -> Kind {
         "checkpoint" => Kind::Checkpoint,
         "watchdog" => Kind::Watchdog,
         "neo6mv2" | "atgm336h" => Kind::Gnss,
+        "gnss_calib" => Kind::GnssCalib,
         implementation if NATIVE.contains(&implementation) => Kind::Native,
         implementation if NOT_PORTED.contains(&implementation) => Kind::NotPorted,
         _ => Kind::Unknown,
