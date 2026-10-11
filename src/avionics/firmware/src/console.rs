@@ -7,6 +7,11 @@
 //! its password must never cross the network).
 //!
 //! tools/avionics_console.py is the operator's end of it: history, completion from `help`, readable replies.
+//!
+//! The UART driver goes in first thing in main ([`install`]), the reader only once the executor runs
+//! ([`Console::serve`]): without the driver IDF's console write polls the transmit FIFO, so the log printer
+//! (crate::logging) spun on core 0 above main's priority and held the bring-up for every line it printed, ~8 ms
+//! each at 115200 baud (the fast warm boot, operator 2026-10-11). With it a write waits on the transmit interrupt.
 
 use std::io::{BufRead, Write};
 
@@ -22,14 +27,17 @@ use crate::commands::Executor;
 /// The console thread's stack: it reads a line and prints a reply, nothing deeper.
 const STACK_SIZE: usize = 8192;
 
-/// Take over UART0 for blocking line reads and serve the console on its own thread (core 0, priority 5, beside the CC
-/// executor it feeds), forever.
-pub fn start(
+/// UART0 with its driver in place, stdin and stdout through it, until [`Console::serve`] reads it.
+pub struct Console(BlockingStdIo<'static, UartDriver<'static>>);
+
+/// Take over UART0: its driver in place and the console's stdio through it, interrupt-driven from here.
+///
+/// Errors: the driver would not install (the console then stays IDF's polling one, and has no reader).
+pub fn install(
     uart: impl Uart + 'static,
     transmit: impl OutputPin + 'static,
     receive: impl InputPin + 'static,
-    executor: Executor,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Console> {
     // drain what the boot already printed: installing the driver mid-line cuts the line off
     // SAFETY: a polling wait on the console UART's transmit FIFO.
     unsafe { esp_idf_svc::sys::uart_wait_tx_idle_polling(0) };
@@ -41,35 +49,42 @@ pub fn start(
         Option::<AnyIOPin>::None,
         &Default::default(),
     )?;
-    let standard_io = BlockingStdIo::uart(driver)?;
-    ThreadSpawnConfiguration {
-        name: Some(c"console"),
-        stack_size: STACK_SIZE,
-        priority: 5,
-        // core 0 with the rest of the link: pthread's default leaves it unpinned, free to run on core 1, the flight
-        // core
-        pin_to_core: Some(Core::Core0),
-        // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
-        // esp_mmu_map/unmap, the one runtime path that turns the cache off
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new().stack_size(STACK_SIZE).spawn(move || {
-        let _standard_io = standard_io; // stdin blocks only while this lives
-        let mut line = String::new();
-        loop {
-            line.clear();
-            if std::io::stdin().lock().read_line(&mut line).is_err() {
-                continue;
-            }
-            if let Some(reply) = executor.ask(line.trim(), Origin::Console) {
-                println!("{reply}");
-                let _ = std::io::stdout().flush();
-            }
+    Ok(Console(BlockingStdIo::uart(driver)?))
+}
+
+impl Console {
+    /// Serve the console on its own thread (core 0, priority 5, beside the CC executor it feeds), forever.
+    pub fn serve(self, executor: Executor) -> anyhow::Result<()> {
+        let standard_io = self.0;
+        ThreadSpawnConfiguration {
+            name: Some(c"console"),
+            stack_size: STACK_SIZE,
+            priority: 5,
+            // core 0 with the rest of the link: pthread's default leaves it unpinned, free to run on core 1, the flight
+            // core
+            pin_to_core: Some(Core::Core0),
+            // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
+            // esp_mmu_map/unmap, the one runtime path that turns the cache off
+            stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
+            ..Default::default()
         }
-    });
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
-    Ok(())
+        .set()?;
+        let spawned = std::thread::Builder::new().stack_size(STACK_SIZE).spawn(move || {
+            let _standard_io = standard_io; // stdin blocks only while this lives
+            let mut line = String::new();
+            loop {
+                line.clear();
+                if std::io::stdin().lock().read_line(&mut line).is_err() {
+                    continue;
+                }
+                if let Some(reply) = executor.ask(line.trim(), Origin::Console) {
+                    println!("{reply}");
+                    let _ = std::io::stdout().flush();
+                }
+            }
+        });
+        ThreadSpawnConfiguration::default().set()?;
+        spawned?;
+        Ok(())
+    }
 }

@@ -1314,9 +1314,11 @@ impl Part {
 
     /// Plan B's setup (its bus half): the part from its power-on state to producing data.
     ///
-    /// Errors: the fault the setup ended in, as one line.
-    pub fn setup(&mut self, port: &mut I2cPort, delay: &mut Delay) -> Result<(), String> {
-        each!(self, driver => Device::<I2cPort>::setup(driver, port, delay).map_err(|fault| fault.to_string()))
+    /// Errors: the fault the setup ended in, as one line, and whether another part answered at the address (an
+    /// identity of another silicon: retrying cannot help).
+    pub fn setup(&mut self, port: &mut I2cPort, delay: &mut Delay) -> Result<(), (String, bool)> {
+        each!(self, driver => Device::<I2cPort>::setup(driver, port, delay)
+            .map_err(|fault| (fault.to_string(), matches!(fault, drivers::device::Fault::Identity { .. }))))
     }
 
     /// What a general call took from the part, restored (never its setup: that would re-zero a barometer's ground

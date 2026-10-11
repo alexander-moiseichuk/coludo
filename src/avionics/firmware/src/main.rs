@@ -47,6 +47,10 @@ fn main() -> anyhow::Result<()> {
     clock::start();
 
     let peripherals = Peripherals::take()?;
+    // the console's UART driver first: without it every console write polls the FIFO (crate::console)
+    let console = console::install(peripherals.uart0, peripherals.pins.gpio37, peripherals.pins.gpio38)
+        .inspect_err(|error| log::warn!("console :: no UART driver, the console polls and reads nothing: {error}"))
+        .ok();
     let event_loop = EspSystemEventLoop::take()?;
     let partition = EspDefaultNvsPartition::take()?;
     // the boot count and the board config first: they name this boot's records (plan B main: the boot id before
@@ -246,17 +250,20 @@ fn main() -> anyhow::Result<()> {
     // the flight tick on core 1, which wakes the owners too (§4.2, §4.3), steps the stage machine and owns the flight
     // word's one writer from here
     let schedule_hz = board_config::schedule_hz(&loaded.document);
-    // the fins: each on its LEDC channel, centred `fins.concurrency` at a time (plan B's 3 when unset), then the
-    // control thread's; a timer or channel that will not configure crashes every fin, so `arm` refuses
+    // the fins: each on its LEDC channel, the control thread's; a timer or channel that will not configure crashes
+    // every fin, so `arm` refuses. A cold boot centres them `fins.concurrency` at a time (plan B's 3 when unset) on
+    // the control thread, never holding its start; a warm start does not, the restored law taking them at once
+    let centre = seed
+        .is_none()
+        .then(|| loaded.document["fins"]["concurrency"].as_u64().unwrap_or(3) as usize);
     let fins = (!servos.is_empty())
         .then(|| {
             let names: Vec<&'static str> = servos.iter().map(|member| member.name).collect();
-            let concurrency = loaded.document["fins"]["concurrency"].as_u64().unwrap_or(3) as usize;
             // the probe sweeps the flown deflection range, not the servos' own (the operator, 2026-10-11)
             let probe_limit = loaded.document["fins"]["mixer"]["limit_deg"]
                 .as_i64()
                 .and_then(|limit| i32::try_from(limit).ok());
-            fins::open(servos, concurrency, probe_limit)
+            fins::open(servos, probe_limit)
                 .inspect_err(|error| {
                     log::error!("fins :: the PWM did not start: {error}");
                     devices::crash(table, names.iter().map(|name| Some(*name)), &error.to_string());
@@ -272,6 +279,7 @@ fn main() -> anyhow::Result<()> {
         sequencer,
         attitude,
         fins,
+        centre,
         flight,
         topology,
         table,
@@ -352,12 +360,9 @@ fn main() -> anyhow::Result<()> {
         field: field.map(commands::FieldAgent::new),
     })?;
     // the console drains the UART before taking it over, so the lines above survive
-    console::start(
-        peripherals.uart0,
-        peripherals.pins.gpio37,
-        peripherals.pins.gpio38,
-        executor.clone(),
-    )?;
+    if let Some(console) = console {
+        console.serve(executor.clone())?;
+    }
     log::info!("{}", board.banner());
     link::run(peripherals.modem, event_loop, partition, wifi, credentials, &executor)
 }

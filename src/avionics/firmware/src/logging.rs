@@ -16,14 +16,17 @@
 //! logged before the recorder opens reach the console only; main opens it right after the board config, so that is
 //! the boot count and the config load.
 //!
-//! A line logged on the flight core (core 1: the control thread, the bus owners) never prints in place: a console
-//! write blocks once the UART's transmit buffer fills (115200 baud drains ~11 KB a second, and a CC reply can be
-//! kilobytes), and a blocked control tick ran 4.5 ms late (M6, measured). It goes into a bounded FreeRTOS queue with
-//! a non-blocking send instead, dropped and counted when the queue is full, and a printer thread on core 0 writes it
-//! out. Its recorder.log copy is unchanged: the thread's own ring, lock-free. The supervisor's lines take the same
-//! way ([`queue_this_task`]): it feeds the task watchdog, and a console write waits out a whole reply (IDF's UART
-//! VFS holds its write lock for a write's whole buffer, and a `tlm` drain can be hundreds of KB, tens of seconds at
-//! 115200 baud), so a line in place would let a healthy board's watchdog fire.
+//! No line prints in place once the printer runs (first thing in main): a console write blocks once the UART's
+//! transmit buffer fills (115200 baud drains ~11 KB a second, and a CC reply can be kilobytes). A blocked control
+//! tick ran 4.5 ms late (M6, measured); the supervisor feeds the task watchdog, and a console write waits out a whole
+//! reply (IDF's UART VFS holds its write lock for a write's whole buffer, and a `tlm` drain can be hundreds of KB,
+//! tens of seconds at 115200 baud); and the boot's own lines held the bring-up, ~8 ms each (the fast warm boot,
+//! operator 2026-10-11: logging never delays anything). A line goes into a bounded FreeRTOS queue with a non-blocking
+//! send instead, dropped and counted when the queue is full, and a printer thread on core 0 writes it out. Its
+//! recorder.log copy is unchanged: the thread's own ring, lock-free.
+//!
+//! IDF's own startup lines are at WARN (sdkconfig.defaults: each was a blocking write before main); [`install`]
+//! raises the level to INFO, so every line after it prints as before.
 //!
 //! A line logged to the [`CONSOLE_ONLY`] target reaches the console (and the panic capture) and never recorder.log.
 
@@ -39,9 +42,6 @@ use esp_idf_svc::sys;
 /// limit (1 KiB). The console prints the whole line regardless.
 const LINE_BYTES: usize = 1024;
 
-/// The core the flight threads run on: their lines go through the printer's queue, never straight to the console.
-const FLIGHT_CORE: usize = 1;
-
 /// The log target whose lines reach the console only: never recorder.log, so neither the recording nor the CC `log`
 /// tee, which reads recorder.log. Plan B printed its Controller's lines to the console only (main.py:75, 101), and
 /// the tools find the stage events in a recording by the text `stage ->` (tools/flight_kpi.py, flight_report.py,
@@ -53,22 +53,22 @@ pub const CONSOLE_ONLY: &str = "console";
 /// boundary.
 const QUEUED_LINE_BYTES: usize = 200;
 
-/// How many queued lines wait for the printer at most (PSRAM: 6.4 KB); a full queue drops the line.
-const QUEUED_LINES: u32 = 32;
+/// How many queued lines wait for the printer at most (PSRAM: 100 KB): the boot logs ~150 lines in its first second
+/// and the console drains ~120 a second, so the boot fits whole; a full queue drops the line.
+const QUEUED_LINES: u32 = 512;
 
 /// The printer thread's stack (PSRAM: a slow core-0 thread that never calls esp_mmu_map/unmap).
 const PRINTER_STACK: usize = 4 << 10;
 
-/// The printer's queue, once [`install`] made it (null before: the flight core's lines print in place then, which
-/// is only the boot, before any flight thread runs).
+/// The core the flight threads run on: their lines skip the console filter's mutex (the global level decides).
+const FLIGHT_CORE: usize = 1;
+
+/// The printer's queue, once [`install`] made it (null before: lines print in place then, which is only main's first
+/// lines, before any other thread runs).
 static QUEUE: AtomicPtr<sys::QueueDefinition> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Queued lines the full queue dropped (their recorder.log copies were kept).
 static DROPPED: AtomicU32 = AtomicU32::new(0);
-
-/// The one core-0 task whose lines go through the printer's queue as the flight core's do, null before
-/// [`queue_this_task`]: the supervisor.
-static QUEUED_TASK: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Lines handed to the printer's queue: counted before each send, and taken back when the queue refuses it.
 static SENT: AtomicU32 = AtomicU32::new(0);
@@ -79,7 +79,7 @@ static PRINTED: AtomicU32 = AtomicU32::new(0);
 /// How often [`wait_for_printer`] looks.
 const PRINTER_POLL: Duration = Duration::from_millis(2);
 
-/// Queued console lines (the flight core's and the supervisor's) dropped because the printer's queue was full.
+/// Console lines dropped because the printer's queue was full.
 pub fn console_dropped() -> u32 {
     DROPPED.load(Ordering::Relaxed)
 }
@@ -92,25 +92,9 @@ fn current_core() -> usize {
     core
 }
 
-/// From now on the calling task's lines reach the console through the printer's queue, never in place: the
-/// supervisor's, which feeds the task watchdog and so must never wait on the console.
-pub fn queue_this_task() {
-    // SAFETY: a plain read of this task's own handle; the supervisor never ends.
-    QUEUED_TASK.store(unsafe { sys::xTaskGetCurrentTaskHandle() }.cast(), Ordering::Relaxed);
-}
-
-/// Whether the calling task's console lines go through `queue` (null before the printer runs): the flight core's,
-/// and the [`queue_this_task`] task's.
+/// Whether a console line goes through `queue`: always, once the printer runs (`queue` not null).
 fn queued(queue: sys::QueueHandle_t) -> bool {
-    if queue.is_null() {
-        return false;
-    }
-    if current_core() == FLIGHT_CORE {
-        return true;
-    }
-    // SAFETY: a plain read of this task's own handle.
-    let task = unsafe { sys::xTaskGetCurrentTaskHandle() };
-    task.cast::<core::ffi::c_void>() == QUEUED_TASK.load(Ordering::Relaxed)
+    !queue.is_null()
 }
 
 /// Waits until the printer wrote out every line queued before this call, for at most `limit`: a line logged right
@@ -209,9 +193,9 @@ impl log::Log for Logger {
     fn log(&self, record: &log::Record) {
         let queue = QUEUE.load(Ordering::Acquire);
         let queued = queued(queue);
-        // the console filter locks a mutex and IDF's level table: for a queued line the global level decides,
-        // lock-free (the per-target exceptions are for other core-0 targets)
-        let enabled = if queued {
+        // the console filter locks a mutex and IDF's level table: on the flight core the global level decides,
+        // lock-free (the per-target exceptions are for core-0 targets)
+        let enabled = if current_core() == FLIGHT_CORE {
             record.level() <= log::max_level()
         } else {
             log::Log::enabled(&CONSOLE, record.metadata())
@@ -264,6 +248,8 @@ static LOGGER: Logger = Logger;
 /// Route the `log` crate through the console and recorder.log, and IDF's C log lines into recorder.log too (instead
 /// of `EspLogger::initialize_default`). Call first thing in main: lines before the recorder opens reach the console.
 pub fn install() {
+    // SAFETY: a static NUL-terminated tag; IDF copies nothing, it sets the default level.
+    unsafe { sys::esp_log_level_set(c"*".as_ptr(), sys::esp_log_level_t_ESP_LOG_INFO) };
     if log::set_logger(&LOGGER).is_ok() {
         CONSOLE.filter().initialize();
         // esp-idf-svc logs every NVS handle it drops at INFO; the credential store opens one per join attempt

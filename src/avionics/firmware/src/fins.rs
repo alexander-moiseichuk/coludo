@@ -3,9 +3,12 @@
 //! The fin servos (M13; plan B drivers/sg90.py, mg90s.py, the logic in crates/drivers sg90): one LEDC channel per
 //! servo on one 50 Hz timer at 14-bit duty (1.22 us a step). Every servo pin of the config is driven LOW from the
 //! first moment of the boot ([`hold_low`]): a floating fin pin picks up the others' pulses and every servo twitches
-//! (the bench gotcha). At bring-up's end [`open`] gives each pin its channel with no pulse, then centres the fins a
-//! group at a time, `fins.concurrency` per group, each group given its travel time before the next: three servos
-//! starting together draw their peaks together, which a 1 A bench supply does not carry.
+//! (the bench gotcha). At bring-up's end [`open`] gives each pin its channel with no pulse. On a cold boot the control
+//! thread then centres the fins ([`Fins::centre`], stepped each tick), a group at a time, `fins.concurrency` per
+//! group, each group given its travel time before the next: three servos starting together draw their peaks
+//! together, which a 1 A bench supply does not carry. The centring never holds the control thread's start (it took
+//! ~0.9 s at concurrency 1: the fast warm boot, operator 2026-10-11); a warm start skips it, the restored law taking
+//! the fins from its first tick, and a launch during it hands the fins to the law.
 //!
 //! From there the control thread owns the fins: the flight loop's compare-and-set [`Fins::set_angle`] (M13 stage 4)
 //! and the operator's `update <servo> {trim|angle}` through its mailbox ([`Fins::update`]). A write is two LEDC
@@ -14,7 +17,6 @@
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::time::Duration;
 
 use drivers::sg90::{Command, PERIOD_US, PROBE_SAMPLE_MS, PROBE_SAMPLES, PROBE_SETTLE_MS, ProbeVerdict, Servo};
 use esp_idf_svc::sys;
@@ -71,6 +73,18 @@ pub struct Fins {
     /// The probe sweep's half-range, whole degrees: the board config's `fins.mixer.limit_deg` (None sweeps the
     /// servos' own ranges, plan B's).
     probe_limit: Option<i32>,
+    /// The boot centring under way, None once done (or never begun: a warm start).
+    centring: Option<Centring>,
+}
+
+/// The boot centring's progress (crate::fins module notes).
+struct Centring {
+    /// Fins per group, at least 1.
+    concurrency: usize,
+    /// The group issued last, its moves recorded done once it settled.
+    group: core::ops::Range<usize>,
+    /// When that group's travel ends, µs on the monotonic timer.
+    settled_us: u64,
 }
 
 /// One fin's probe sweep, for the probe's lines (crate::commands, plan B sg90.probe) and its verdict.
@@ -142,11 +156,11 @@ pub fn hold_low(document: &Value) {
     }
 }
 
-/// Gives each servo its LEDC channel (no pulse yet), then centres the fins `concurrency` at a time, each group
-/// given its travel time; the fins, for the control thread. `probe_limit` bounds the probe sweep ([`Sweep`]).
+/// Gives each servo its LEDC channel (no pulse yet); the fins, for the control thread, which centres them on a cold
+/// boot ([`Fins::centre`]). `probe_limit` bounds the probe sweep ([`Sweep`]).
 ///
 /// Errors: the LEDC timer or a channel would not configure (the fins are then crashed by the caller).
-pub fn open(members: Vec<ServoMember>, concurrency: usize, probe_limit: Option<i32>) -> anyhow::Result<Fins> {
+pub fn open(members: Vec<ServoMember>, probe_limit: Option<i32>) -> anyhow::Result<Fins> {
     let timer = sys::ledc_timer_config_t {
         speed_mode: MODE,
         duty_resolution: RESOLUTION_BITS,
@@ -185,37 +199,72 @@ pub fn open(members: Vec<ServoMember>, concurrency: usize, probe_limit: Option<i
         });
     }
     let _ = NAMES.set(fins.iter().map(|fin| fin.name).collect());
-    let mut owned = Fins { fins, probe_limit };
-    owned.centre(concurrency.max(1));
-    Ok(owned)
+    Ok(Fins {
+        fins,
+        probe_limit,
+        centring: None,
+    })
 }
 
 impl Fins {
-    /// The boot centring: each fin to its configured angle (`angle`, else the range's neutral), trim included, a group
-    /// of `concurrency` at a time. The horn's start is unknown, so each group waits a half-range travel with the
-    /// settle margin before the next starts; each move is recorded issued, then completed.
-    fn centre(&mut self, concurrency: usize) {
-        for first in (0..self.fins.len()).step_by(concurrency) {
-            let group = first..(first + concurrency).min(self.fins.len());
-            let mut longest_ms = 0;
-            for index in group.clone() {
-                let fin = &mut self.fins[index];
-                let command = fin.servo.apply(fin.start_degrees);
-                longest_ms = longest_ms.max(fin.servo.travel_ms(fin.half_range.max(1), true));
-                self.write(index, command, false);
-                log::info!(
-                    "{} :: centred at {} deg ({} us)",
-                    self.fins[index].name,
-                    command.angle,
-                    command.pulse_us
-                );
-            }
-            std::thread::sleep(Duration::from_millis(u64::try_from(longest_ms).unwrap_or(0)));
-            for index in group {
-                let command = self.fins[index].servo.command();
-                self.record(index, command, true);
-            }
+    /// Begins the boot centring, `concurrency` fins a group (at least 1), stepped by [`Fins::step_centring`].
+    pub fn centre(&mut self, concurrency: usize) {
+        self.centring = Some(Centring {
+            concurrency: concurrency.max(1),
+            group: 0..0,
+            settled_us: 0,
+        });
+    }
+
+    /// Whether the boot centring is under way: the operator's fin requests wait for its end.
+    pub fn centring(&self) -> bool {
+        self.centring.is_some()
+    }
+
+    /// One control tick of the boot centring at `now_us`: each fin to its configured angle (`angle`, else the
+    /// range's neutral), trim included, a group at a time. The horn's start is unknown, so a group is given a
+    /// half-range travel with the settle margin before the next is issued; each move is recorded issued, then
+    /// completed. `may_move` false (the stage left SETTING: a launch) ends it where it is, the law's from then.
+    pub fn step_centring(&mut self, now_us: u64, may_move: bool) {
+        let Some(centring) = &self.centring else {
+            return;
+        };
+        if !may_move {
+            self.centring = None;
+            return;
         }
+        if now_us < centring.settled_us {
+            return;
+        }
+        let (settled, concurrency) = (centring.group.clone(), centring.concurrency);
+        for index in settled.clone() {
+            let command = self.fins[index].servo.command();
+            self.record(index, command, true);
+        }
+        let first = settled.end;
+        if first >= self.fins.len() {
+            self.centring = None;
+            return;
+        }
+        let group = first..(first + concurrency).min(self.fins.len());
+        let mut longest_ms = 0;
+        for index in group.clone() {
+            let fin = &mut self.fins[index];
+            let command = fin.servo.apply(fin.start_degrees);
+            longest_ms = longest_ms.max(fin.servo.travel_ms(fin.half_range.max(1), true));
+            self.write(index, command, false);
+            log::info!(
+                "{} :: centred at {} deg ({} us)",
+                self.fins[index].name,
+                command.angle,
+                command.pulse_us
+            );
+        }
+        self.centring = Some(Centring {
+            concurrency,
+            group,
+            settled_us: now_us + u64::try_from(longest_ms).unwrap_or(0) * 1000,
+        });
     }
 
     /// Drives `command`'s pulse on fin `index`'s channel and records it (`done` false: issued).

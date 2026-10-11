@@ -194,6 +194,14 @@ pub enum Attempt {
     },
     /// Nothing runs this entry's implementation (plan B's create() found no class): retrying cannot help.
     NoDriver,
+    /// Another part answered at the address (its identity read as another silicon's: the VL53L4CX and the VL53L1X
+    /// share 0x29): retrying cannot help, so the attempts end here and the diagnosis is taken whatever the attempt.
+    /// New (plan B retried it, ~0.2 s a gap, on every boot of a board that declares both lasers; the fast warm boot,
+    /// operator 2026-10-11).
+    Foreign {
+        /// As for [`Attempt::Failed`], but used: this attempt is the last.
+        diagnosis: Option<String>,
+    },
 }
 
 /// Bring one device up: plan B's `_bring_up` (controller.py:385-420) with its `_diagnose` (controller.py:422-445).
@@ -206,7 +214,8 @@ pub enum Attempt {
 ///  * `controller :: no driver/activity '<implementation>' for '<name>'` for [`Attempt::NoDriver`], which ends the
 ///    attempts (controller.py:283, 402);
 ///  * `controller :: task '<name>' setup raised: <error>` for [`Attempt::Raised`] (controller.py:409);
-///  * `controller :: task '<name>' setup attempt <n>/<attempts> failed, retrying` before each gap (controller.py:417).
+///  * `controller :: task '<name>' setup attempt <n>/<attempts> failed, retrying` before each gap (controller.py:417);
+///  * `controller :: task '<name>' setup found another part, not retried` for [`Attempt::Foreign`] (new).
 ///
 /// Returns the failure reason when no attempt brought the part up: [`SETUP_FAILED`], or a raised attempt's error,
 /// as the last attempt left it, with its diagnosis folded in ([`diagnosed`]); [`NO_DRIVER`] when the first attempt
@@ -241,6 +250,16 @@ pub fn set_up(
                 log(format!("controller :: task '{name}' setup raised: {error}"));
                 reason = error;
                 diagnosis
+            }
+            Attempt::Foreign { diagnosis } => {
+                log(format!(
+                    "controller :: task '{name}' setup found another part, not retried"
+                ));
+                reason = SETUP_FAILED.to_string();
+                if let Some(detail) = diagnosis {
+                    reason = diagnosed(&reason, &detail);
+                }
+                break;
             }
         };
         if last {
@@ -811,6 +830,24 @@ mod tests {
         assert_eq!(run.lasts, [false]);
         assert_eq!(run.sleeps, Vec::<u32>::new());
         assert_eq!(run.log, ["controller :: task 'part' up"]);
+    }
+
+    #[test]
+    fn another_part_at_the_address_ends_the_attempts_at_once_with_its_diagnosis() {
+        let run = trace(3, |_, _| Attempt::Foreign {
+            diagnosis: Some("model 0xeacc".to_string()),
+        });
+        assert_eq!(run.result, Err(format!("{SETUP_FAILED} -- model 0xeacc")));
+        assert_eq!(run.lasts, [false], "one attempt, not the configured three");
+        assert_eq!(run.sleeps, Vec::<u32>::new());
+        assert_eq!(
+            run.log,
+            ["controller :: task 'part' setup found another part, not retried"]
+        );
+        // NEGATIVE: a plain failure still retries to the last attempt
+        let run = trace(3, |_, _| failed("silent"));
+        assert_eq!(run.lasts, [false, false, true]);
+        assert_eq!(run.sleeps, [RETRY_GAP_MS, RETRY_GAP_MS]);
     }
 
     #[test]

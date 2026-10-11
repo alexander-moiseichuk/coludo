@@ -1211,6 +1211,7 @@ pub fn start(
     sequencer: Option<SequencerMember>,
     attitude: Option<AttitudeMember>,
     fins: Option<crate::fins::Fins>,
+    centre: Option<usize>,
     flight: Option<crate::devices::FlightMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
@@ -1243,6 +1244,7 @@ pub fn start(
                     sequencer,
                     attitude,
                     fins,
+                    centre,
                     flight,
                     topology,
                     table,
@@ -1271,6 +1273,7 @@ fn run(
     sequencer: Option<SequencerMember>,
     attitude: Option<AttitudeMember>,
     mut fins: Option<crate::fins::Fins>,
+    centre: Option<usize>,
     flight: Option<crate::devices::FlightMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
@@ -1364,6 +1367,10 @@ fn run(
     let mut ticks: i64 = 0;
     // the fins' probe sweep under way, and the INA226's power it samples
     let mut sweeping: Sweeping = None;
+    // a cold boot's fin centring, stepped below: it never holds this thread's start (crate::fins)
+    if let (Some(fins), Some(concurrency)) = (fins.as_mut(), centre) {
+        fins.centre(concurrency);
+    }
     let power = topology.scalar("power");
     // the flight loop (M13): its law steps every tick after the stage machine, its fins through their owner here; on
     // the heap, as this stack has no room for the law's state beside a probe's float formatting
@@ -1409,6 +1416,11 @@ fn run(
         // the operator's request first: lock-free, and its answer is the executor's to log
         if let Some(Ok(commit)) = EXECUTOR_SLOT.serve(&mut writer) {
             follow_flight(&commit);
+        }
+        if let Some(fins) = fins.as_mut().filter(|fins| fins.centring()) {
+            // SAFETY: a plain read of the monotonic timer.
+            let centring_us = unsafe { sys::esp_timer_get_time() } as u64;
+            fins.step_centring(centring_us, writer.flight().stage == Stage::Setting);
         }
         serve(
             &requests,
@@ -1498,6 +1510,9 @@ fn set_flight(flight: bool) {
     }
 }
 
+/// The refusal of a fin request during the boot centring.
+const CENTRING: &str = "the fins are still centring after the boot";
+
 /// Serves at most [`REQUESTS_PER_TICK`] requests waiting in the mailbox, each refused unless `stage` is SETTING: the
 /// executor checked its gate once, and a probe sweep then takes seconds, during which a launch may be detected. A
 /// refusal is the stage as a value, so off the pad this thread makes no text (§3.1: text only off the flight path).
@@ -1550,6 +1565,9 @@ fn serve(
             } => {
                 let answer = match refusal {
                     Some(refusal) => Err(refusal),
+                    None if fins.as_deref().is_some_and(crate::fins::Fins::centring) => {
+                        Ok(Some(Err(CENTRING.to_string())))
+                    }
                     None => Ok(fins.as_deref_mut().and_then(|fins| fins.update(&name, &properties))),
                 };
                 let _ = reply.send(answer);
@@ -1557,6 +1575,8 @@ fn serve(
             Request::ProbeFins { only, reply } => {
                 if let Some(refusal) = refusal {
                     let _ = reply.send(Err(refusal.to_string()));
+                } else if fins.as_deref().is_some_and(crate::fins::Fins::centring) {
+                    let _ = reply.send(Err(CENTRING.to_string()));
                 } else if sweeping.is_some() {
                     let _ = reply.send(Err("a fin probe sweep is under way".to_string()));
                 } else {

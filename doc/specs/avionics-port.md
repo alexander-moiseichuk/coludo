@@ -2335,6 +2335,20 @@ Bus owners run their tables on the same notify:
    reconfigures the TWDT to panic at `wdt_timeout_ms` and subscribes to it (M8).
 10. Console, link and httpd (as today).
 
+**The fast warm boot (operator, 2026-10-11: a reset resumes control in about a second; flight buses and sensors
+first, the camera and the Wi-Fi after them, nothing blocking).** Measured on the taster, reset to the first control
+tick: 3.6 s before, **1.0 s** after (power-on reset; the Wi-Fi joins later on its own, `link::run`).
+- The bootloader never re-hashes the app (`BOOTLOADER_SKIP_VALIDATE_ALWAYS`, ~0.28 s: with no rollback and ota_1
+  invalidated there is no other image to fall back to; flash.sh and the OTA verify on write) and logs at WARN.
+- IDF's startup lines at WARN, raised to INFO first thing in main; the console's UART driver installed right after
+  (without it a console write polls the FIFO), and every log line through the printer's queue (crate::logging): no
+  line waits on the 115200-baud console (~8 ms each, ~150 lines a boot).
+- Step 6's I2C parts come up one thread per lent port, in config order on each bus (the buses are independent);
+  a part whose identity reads as another silicon (the shared laser socket) is not retried (`Attempt::Foreign`, a
+  divergence: plan B retried it, ~0.45 s a boot on a board declaring both lasers).
+- The fins' boot centring is the control thread's, stepped each tick after it starts (~0.9 s at
+  `fins.concurrency` 1 had held its start); a warm start skips it, the restored law taking the fins at once.
+
 ### 4.6 Warm-start, boot rules and reset classes
 
 - **Boot rules** (the operator's, 2026-10-06): plan B's warm start as closely as possible, as a simple state

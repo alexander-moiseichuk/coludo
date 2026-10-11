@@ -7,7 +7,9 @@
 //! (crate::sensors), keeps the parts that came up for their bus owners, and builds the databoard topology from them.
 //!
 //! - An I2C part runs on the port its entry binds, lent to main by its owner (crate::owner); the parts go back with
-//!   the port when the owner starts.
+//!   the port when the owner starts. The I2C parts come up first, one thread per lent port, each in config order on
+//!   its own bus: the buses are independent, so one bus's slow setups (a barometer's ground capture) never hold the
+//!   other's (the fast warm boot, operator 2026-10-11).
 //! - SPI: the chip select of every part with no driver yet is held high before any SPI part is set up (a floating
 //!   select could fight MISO, plan B spibus.py:42); the LSM6DSO32 is set up on one handle reused across its attempts
 //!   (the first-use discard follows the peripheral, not the handle). Its owner is M6's control thread.
@@ -22,6 +24,7 @@
 //! - The topology: one Parameter per quantity with a provider that came up, its sources registered in setup order
 //!   (plan B's `provide` at the end of each successful setup), then frozen.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use board_config::Entry;
@@ -533,8 +536,9 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut servos = Vec::new();
     let mut flight = None;
     let spi_bus = open_spi(document, &entries);
+    let mut set_up = set_up_ports(document, &entries, attempts, ports, &mut members);
     let mut outcomes = Vec::with_capacity(entries.len());
-    for entry in &entries {
+    for (index, entry) in entries.iter().enumerate() {
         let log = |line: String| log::info!("{line}");
         let sleep = |ms: u32| std::thread::sleep(Duration::from_millis(u64::from(ms)));
         let outcome = match sensors::classify(entry) {
@@ -568,7 +572,10 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
                 sleep,
                 log,
             ),
-            Kind::I2c => set_up_i2c(document, entry, attempts, ports, &mut members, &mut delay),
+            // set up on its port's thread, or here when that thread did not run (or the entry is on no lent port)
+            Kind::I2c => set_up
+                .remove(&index)
+                .unwrap_or_else(|| set_up_i2c(document, entry, attempts, ports, &mut members, &mut delay)),
             Kind::Spi => set_up_spi(document, entry, attempts, spi_bus.as_ref(), &mut spi, &mut delay),
             Kind::Separation => set_up_separation(document, entry, attempts, &mut separation),
             Kind::Sequencer => set_up_sequencer(entry, &mut sequencer),
@@ -628,6 +635,71 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         servos,
         flight,
     }
+}
+
+/// A port's setup thread's stack (internal, freed with the thread at bring-up's end): main runs the same setups in
+/// under 5 KB.
+const PORT_SETUP_STACK: usize = 8 << 10;
+
+/// The I2C entries' setups, one scoped thread per lent port, each on its own port in config order (crate::devices
+/// module notes). Returns each set-up entry's outcome by its index in `entries`, its parts in `members`; an entry on
+/// no lent port, or on a port whose thread would not spawn, is not there, and the caller sets it up itself.
+fn set_up_ports(
+    document: &'static Value,
+    entries: &[Entry<'static>],
+    attempts: u32,
+    ports: &mut [(owner::Parked, I2cPort)],
+    members: &mut [Vec<Member>; 2],
+) -> BTreeMap<usize, Result<(), String>> {
+    let port_of =
+        |entry: &Entry| match controller::binding(entry, "i2c", sensors::default_address(entry.implementation)) {
+            Binding::I2c { id, .. } => id
+                .parse::<u8>()
+                .ok()
+                .filter(|id| board_config::i2c_bus(document, *id).is_some()),
+            Binding::Spi { .. } | Binding::Unbound => None,
+        };
+    std::thread::scope(|scope| {
+        let threads: Vec<_> = ports
+            .iter_mut()
+            .filter_map(|lent| {
+                let id = lent.1.id();
+                let mine: Vec<usize> = entries
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, entry)| matches!(sensors::classify(entry), Kind::I2c) && port_of(entry) == Some(id))
+                    .map(|(index, _)| index)
+                    .collect();
+                std::thread::Builder::new()
+                    .stack_size(PORT_SETUP_STACK)
+                    .spawn_scoped(scope, move || {
+                        let mut own: [Vec<Member>; 2] = [Vec::new(), Vec::new()];
+                        let mut delay = Delay::new_default();
+                        let outcomes: Vec<(usize, Result<(), String>)> = mine
+                            .into_iter()
+                            .map(|index| {
+                                let lent = core::slice::from_mut(&mut *lent);
+                                (
+                                    index,
+                                    set_up_i2c(document, &entries[index], attempts, lent, &mut own, &mut delay),
+                                )
+                            })
+                            .collect();
+                        (usize::from(id), own, outcomes)
+                    })
+                    .inspect_err(|error| log::warn!("i2c:{id} :: setup thread did not spawn ({error}): set up on main"))
+                    .ok()
+            })
+            .collect();
+        let mut outcomes = BTreeMap::new();
+        for thread in threads {
+            if let Ok((id, mut own, done)) = thread.join() {
+                members[id] = std::mem::take(&mut own[id]);
+                outcomes.extend(done);
+            }
+        }
+        outcomes
+    })
 }
 
 /// The bring-up of an entry the supervisor runs once a board (the checkpoint, the watchdog), in one attempt, since a
@@ -1190,7 +1262,14 @@ fn set_up_i2c(
                     came_up = Some(part);
                     Attempt::Up
                 }
-                Err(fault) => {
+                // another part answers at the address (the shared laser socket): the attempts end, diagnosed now
+                Err((fault, true)) => {
+                    log::debug!("{} :: setup: {fault}", entry.name);
+                    Attempt::Foreign {
+                        diagnosis: Some(part.diagnose(port)),
+                    }
+                }
+                Err((fault, false)) => {
                     log::debug!("{} :: setup: {fault}", entry.name);
                     Attempt::Failed {
                         diagnosis: last.then(|| part.diagnose(port)),

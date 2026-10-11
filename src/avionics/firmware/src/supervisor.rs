@@ -182,8 +182,6 @@ fn run(
     mut calibration: Option<Calibration>,
     tick_ms: f32,
 ) {
-    // a line printed in place would wait out any console reply, the task watchdog unfed meanwhile
-    crate::logging::queue_this_task();
     let _attachment = crate::recorder::get().and_then(|recorder| {
         recorder
             .attach(Producer::Supervisor as usize)

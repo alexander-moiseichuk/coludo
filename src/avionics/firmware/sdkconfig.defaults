@@ -97,7 +97,10 @@ CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
 
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
-CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+# Logs: the IDF startup's own lines at WARN (~35 INFO lines, each a blocking write at 115200 baud before main: ~0.3 s of
+# every reset); main raises the level to INFO first thing (logging::install), so every line after it prints as before
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
 
 # Wi-Fi through the ESP32-C6 over SDIO (esp_hosted + esp_wifi_remote), as MicroPython v1.29.0 configures it
 CONFIG_ESP_HOSTED_ENABLED=y
@@ -231,3 +234,10 @@ CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 # reboot in flight would come back on the OLD build. A reset always boots the slot otadata selects; the slot changes
 # only by an explicit OTA in SETTING (doc/specs/avionics-port.md M15), and flash.sh erases otadata + ota_1.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
+
+# The fast warm boot (operator 2026-10-11: a reset resumes control in about a second). The bootloader never re-hashes
+# the 2.2 MB app (~0.28 s of every reset): with no rollback and ota_1 invalidated there is no other image to fall
+# back to, so a validation failure would leave the board unbootable all the same; flash.sh and the OTA verify on
+# write. Its log at WARN: ~40 INFO lines at 115200 baud were ~0.2 s.
+CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
