@@ -9,7 +9,7 @@ encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
   GET  /             -> the one-page dashboard (static/index.html)
   GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
   GET  /api/absent   -> known-but-disconnected gliders from the roster, each with a reboot hint
-  POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
+  POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON {board, status, args, named}
   POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
   GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
 """
@@ -194,7 +194,9 @@ class Web:
         resp = await board.command(command, *params)
         if resp is None:
             return await _send_json(writer, 502, {'board': board.id, 'error': 'offline'})
-        return await _send_json(writer, 200, {'board': board.id, 'status': resp.command, 'args': resp.args})
+        # the named params too: the Rust board's figures (`control`, `heap`, `ring`, ...) are all named
+        return await _send_json(writer, 200, {'board': board.id, 'status': resp.command, 'args': resp.args,
+                                              'named': resp.named})
 
     async def _api_op(self, body: bytes, writer) -> None:
         """

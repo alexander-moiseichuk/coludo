@@ -133,6 +133,19 @@ class _Board:
     def __init__(self, transport: object) -> None:
         self._transport = transport
 
+    def raw(self, line: str) -> str:
+        """
+        Send `line` once and return its reply line as the board sent it, named params included (`ask` keeps only the
+        last argument, and a Rust board answers its figures as named params).
+
+        Raises:
+            transports.NoAnswer - no reply line came.
+        """
+        for text in self._transport.exchange(line):
+            if text.startswith(('ok', 'err')):
+                return text
+        raise transports.NoAnswer('no reply to %r' % line)
+
     def ask(self, line: str, attempts: int = 15) -> tuple:
         """
         Send `line`, retrying past a reboot's silence and the console's noise.
@@ -614,6 +627,12 @@ def main() -> int:
               % (sim.sim_time, wall, wall - sim.sim_time, sim.seq, sim.answers))
         print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
             '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
+        # the control tick's figures over the flight (its counters live until the restore's reboot below): rate,
+        # overruns, the largest lateness and work -- how fast the board reacts
+        try:
+            print('CONTROL %s' % board.raw('control'))
+        except (transports.NoAnswer, OSError) as error:
+            print('CONTROL none (%s)' % error)
         print('RUN_END')
     finally:
         if not args.keep_config:

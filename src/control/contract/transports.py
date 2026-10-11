@@ -240,15 +240,15 @@ def hub_request(line: str) -> tuple:
 
 def hub_reply(body: dict) -> str:
     """
-    The reply line the board sent, rebuilt from the hub's /api/cmd answer {board, status, args}.
+    The reply line the board sent, rebuilt from the hub's /api/cmd answer {board, status, args, named}.
 
     Args:
-        body - the decoded /api/cmd JSON (args already base64-decoded by the hub).
+        body - the decoded /api/cmd JSON (args already base64-decoded by the hub; named absent from an older hub).
 
     Returns:
-        The reply line, encoded as the board would send it.
+        The reply line, encoded as the board would send it, its named params included.
     """
-    return cc.build(body['status'], body.get('args', []))
+    return cc.build(body['status'], body.get('args', []), body.get('named') or None)
 
 
 class Hub:

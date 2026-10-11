@@ -40,6 +40,7 @@ import hitl_host  # noqa: E402
 import hitl_matrix_compare  # noqa: E402
 import recorder_flight  # noqa: E402
 import recorder_wire  # noqa: E402
+import stack_compare  # noqa: E402
 
 _ZONE = ((25.514944, -80.392972), (25.514583, -80.391111))  # the HPRC strip (TL, BR)
 _SCRATCH: tempfile.TemporaryDirectory = tempfile.TemporaryDirectory()  # every folder a test writes; gone at exit
@@ -2072,3 +2073,58 @@ print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, tou
       'collisions and junk tails, flight_pull session pick (byte-safe, never a label), every boot of the session '
       'index, the flight\'s UTC across a wrap, the log timeline of this boot only, a log line found in a stream, '
       'nothing timed by a wrap its file missed, a damaged byte through every reader (and the report, names too)')
+
+
+def test_stack_compare_reads_both_stacks_rows_and_their_cadence():
+    """
+    stack_compare reads a plan B capture (plain rows, the uptime wrapping at 2^30 us) and a Rust session (each row in
+    its integrity wrapper) alike: the flight window from BOOSTING to DONE, each stream's cadence, each health column's
+    spread. NEGATIVE: a damaged row (another width) is left out, a missing stream reads as none, a session without
+    BOOSTING is refused.
+    """
+    folder = _folder()
+    wrap = stack_compare.UPTIME_WRAP
+    start = wrap - 300_000  # plan B: the uptime wraps 0.3 s into the flight
+    planb = os.path.join(folder, 'planb')
+    with open(planb + '_sequencer.csv', 'w') as stream:
+        stream.write('uptime;stage;reason\n%d;setting;x\n%d;boosting;x\n%d;done;x\n'
+                     % (start - 1_000_000, start, (start + 2_000_000) % wrap))
+    with open(planb + '_flight.csv', 'w') as stream:
+        stream.write('uptime;stage\n' + ''.join('%d;2\n' % ((start + i * 100_000) % wrap) for i in range(21)))
+        stream.write('%d;2;damaged\n' % ((start + 50_000) % wrap))
+    with open(planb + '_health.csv', 'w') as stream:
+        stream.write('uptime;temp;mem_free;load\n%d;33;1000;10\n%d;35;3000;30\n' % (start, (start + 1_000_000) % wrap))
+    flight = stack_compare.summary(planb)
+    assert flight['stages'] == {'boosting': 0.0, 'done': 2.0}, flight['stages']
+    cadence = flight['streams']['flight']
+    assert cadence['median'] == 100.0 and cadence['max'] == 100.0 and abs(cadence['hz'] - 10.0) < 1e-9, cadence
+    assert flight['streams']['fins'] is None, 'no fins stream: none'
+    assert flight['health']['temp'] == (33.0, 34.0, 35.0) and flight['health']['load'] == (10.0, 20.0, 30.0)
+    # a Rust session: wrapped rows, no wrap
+    rust = os.path.join(folder, '000001')
+    def wrapped(line):
+        return '{%s};%s;<%s>\n' % ('0' * 8, line, 'f' * 8)
+    with open(rust + '_sequencer.csv', 'w') as stream:
+        stream.write(wrapped('uptime;stage;reason') + wrapped('1000000;boosting;x') + wrapped('3000000;done;x'))
+    with open(rust + '_flight.csv', 'w') as stream:
+        stream.write(wrapped('uptime;stage') + ''.join(wrapped('%d;2' % (1_000_000 + i * 110_000)) for i in range(10)))
+    with open(rust + '_health.csv', 'w') as stream:
+        stream.write(wrapped('uptime;temp;mem_free;load') + wrapped('2000000;35.3;23000000;37'))
+    flight = stack_compare.summary(rust)
+    assert flight['streams']['flight']['median'] == 110.0, flight['streams']['flight']
+    assert flight['health']['mem_free'] == (23e6, 23e6, 23e6)
+    text = stack_compare.table({'plan B': stack_compare.summary(planb), 'Rust': flight})
+    assert text.splitlines()[1] == '|---|---|---|', text.splitlines()[1]
+    # negative: no BOOSTING
+    lone = os.path.join(folder, 'lone')
+    with open(lone + '_sequencer.csv', 'w') as stream:
+        stream.write('uptime;stage;reason\n1;setting;x\n')
+    try:
+        stack_compare.summary(lone)
+    except ValueError as error:
+        assert 'BOOSTING' in str(error), error
+    else:
+        raise AssertionError('a session without BOOSTING was read')
+
+
+test_stack_compare_reads_both_stacks_rows_and_their_cadence()
