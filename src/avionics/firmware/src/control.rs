@@ -1776,7 +1776,8 @@ pub fn register_commands() {
             words: "control",
             about: "the control tick: its rate, ticks, overruns (ticks the thread missed), lateness (the latest, the \
                 largest, and how many ticks passed the 200 us budget) and work (the latest and the largest, from the \
-                wake to the end of the tick's work); whether the flight word holds the stage machine's launch; the \
+                wake to the end of the tick's work); the Rust allocations made on core 1 since boot (the flight core: \
+                they should stop at the bring-up's); whether the flight word holds the stage machine's launch; the \
                 IMU's reads, failures, reads with no new conversion, halves pushed raced and flagged over identical \
                 bytes (accel/rate), each watched channel's lapses (source.quantity:count), INT1 edges at the latest tick and whether INT1 is \
                 silent; the IMU's SPI clock; the separation latch, whether its pin is polled, the events it \
@@ -1802,6 +1803,10 @@ pub fn register_commands() {
                         ),
                         ("work_last_us", &WORK_LAST_US.load(Ordering::Relaxed).to_string()),
                         ("work_max_us", &WORK_MAX_US.load(Ordering::Relaxed).to_string()),
+                        (
+                            "flight_core_allocations",
+                            &firmware::allocator::flight_core_allocations().to_string(),
+                        ),
                         ("launched", &FLIGHT.load().launched.to_string()),
                         ("imu_reads", &IMU_READS.load(Ordering::Relaxed).to_string()),
                         ("imu_failures", &IMU_FAILURES.load(Ordering::Relaxed).to_string()),

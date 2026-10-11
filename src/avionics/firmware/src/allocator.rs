@@ -15,10 +15,15 @@
 //! C code (NVS, FatFs, esp_hosted) calls malloc itself and is untouched.
 //!
 //! What such a thread needs in internal RAM it asks for by name: [`InternalBuffer`] (a flash read's destination).
+//!
+//! It also counts the Rust allocations made on core 1, the flight core ([`flight_core_allocations`]): an allocation
+//! there takes the heap's lock, which core 0 shares, so a tick that allocates can wait on core 0's malloc. The
+//! control thread's `control` command reports the count, which should stop growing once the bring-up is over.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use esp_idf_svc::sys;
 
@@ -33,6 +38,25 @@ pub struct Allocator;
 
 #[global_allocator]
 static ALLOCATOR: Allocator = Allocator;
+
+/// The Rust allocations (and reallocations) made on core 1 since boot.
+static FLIGHT_CORE_ALLOCATIONS: AtomicU32 = AtomicU32::new(0);
+
+/// The Rust allocations made on core 1, the flight core, since boot (the control thread, the I2C owners).
+pub fn flight_core_allocations() -> u32 {
+    FLIGHT_CORE_ALLOCATIONS.load(Ordering::Relaxed)
+}
+
+/// Counts an allocation when the calling code runs on core 1: the hart id CSR, one instruction.
+#[inline(always)]
+fn count_flight_core() {
+    let hart: usize;
+    // SAFETY: reads the hart id CSR (ESP-IDF runs in machine mode); no memory is touched.
+    unsafe { core::arch::asm!("csrr {}, mhartid", out(reg) hart, options(nomem, nostack, preserves_flags)) };
+    if hart == 1 {
+        FLIGHT_CORE_ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 /// Whether the calling thread's stack is in PSRAM: the stack pointer against the external RAM range.
 #[inline(always)]
@@ -60,6 +84,7 @@ unsafe fn psram_alloc(layout: Layout) -> *mut u8 {
 
 unsafe impl GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        count_flight_core();
         if stack_in_psram() {
             // SAFETY: forwarded from the caller.
             let block = unsafe { psram_alloc(layout) };
@@ -72,6 +97,7 @@ unsafe impl GlobalAlloc for Allocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        count_flight_core();
         if stack_in_psram() {
             // SAFETY: forwarded from the caller; the block holds layout.size() bytes.
             let block = unsafe { psram_alloc(layout) };
@@ -91,6 +117,7 @@ unsafe impl GlobalAlloc for Allocator {
     }
 
     unsafe fn realloc(&self, block: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        count_flight_core();
         if stack_in_psram() {
             // SAFETY: forwarded from the caller. heap_caps_realloc moves the block into PSRAM when it is not there
             // (its contents kept); an over-aligned block is moved by hand, as std's own realloc does.
