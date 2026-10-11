@@ -139,6 +139,14 @@ pub struct GnssCalibMember {
     pub period_ms: u32,
 }
 
+/// The CC-less field agent once its entry came up: the executor ticks it (crate::commands field, M11).
+pub struct FieldMember {
+    /// The entry's name: its log lines'.
+    pub name: &'static str,
+    /// Its knobs, read from the entry.
+    pub settings: mission::field::Settings,
+}
+
 /// The UART the GNSS runs on: the one the firmware hands its thread (plan B's default `id`).
 const GNSS_UART: u8 = 2;
 
@@ -416,6 +424,8 @@ pub struct Devices {
     pub gnss: Option<GnssMember>,
     /// The pad drift calibration, when its entry came up.
     pub gnss_calib: Option<GnssCalibMember>,
+    /// The CC-less field agent, when its entry came up.
+    pub field: Option<FieldMember>,
 }
 
 /// Crashes each entry of `table` named in `names` that came up, with `reason`: the thread that would run it did not
@@ -445,6 +455,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut first_watchdog = None;
     let mut gnss = None;
     let mut gnss_calib = None;
+    let mut field = None;
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -488,6 +499,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::Attitude => set_up_attitude(entry, &mut attitude),
             Kind::Gnss => set_up_gnss(document, entry, &mut gnss),
             Kind::GnssCalib => set_up_gnss_calib(entry, &mut gnss_calib),
+            Kind::Field => set_up_field(entry, &mut field),
             Kind::Checkpoint => {
                 let (outcome, came_up) =
                     set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
@@ -532,6 +544,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         watchdog,
         gnss,
         gnss_calib,
+        field,
     }
 }
 
@@ -832,6 +845,43 @@ fn set_up_gnss_calib(entry: &Entry<'static>, gnss_calib: &mut Option<GnssCalibMe
     );
     if came_up.is_some() {
         *gnss_calib = came_up;
+    }
+    outcome
+}
+
+/// The field agent's bring-up (plan B tasks/field.py setup): its knobs read from the entry
+/// (mission::field::Settings::from_config), in one attempt. A knob plan B could not fly with fails the entry naming
+/// the key; a second agent fails too, since one decides the site and the arm.
+fn set_up_field(entry: &Entry<'static>, field: &mut Option<FieldMember>) -> Result<(), String> {
+    let settings = mission::field::Settings::from_config(entry.fields);
+    let running = field.as_ref().map(|member: &FieldMember| member.name);
+    let mut came_up = None;
+    let outcome = controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| match (&settings, running) {
+            (_, Some(running)) => Attempt::Raised {
+                error: format!("one field agent only: '{running}' runs it"),
+                diagnosis: None,
+            },
+            (Err(refused), None) => Attempt::Raised {
+                error: refused.clone(),
+                diagnosis: None,
+            },
+            (Ok(settings), None) => {
+                came_up = Some(FieldMember {
+                    name: entry.name,
+                    settings: *settings,
+                });
+                Attempt::Up
+            }
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    );
+    if came_up.is_some() {
+        *field = came_up;
     }
     outcome
 }

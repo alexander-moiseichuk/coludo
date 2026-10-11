@@ -20,6 +20,9 @@
 mod config;
 mod control;
 mod diagnostics;
+mod field;
+
+pub use field::Agent as FieldAgent;
 mod identity;
 mod inspection;
 mod streaming;
@@ -27,7 +30,7 @@ mod system;
 
 use std::cell::Cell;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
 use cc_protocol::Message;
@@ -63,6 +66,8 @@ pub struct Context {
     pub devices: &'static controller::Table<'static>,
     /// The databoard's quantities: what `inspect` reads a device's latest values from.
     pub topology: &'static crate::devices::Topology,
+    /// The CC-less field agent, when its entry came up: the executor ticks it between lines (commands::field).
+    pub field: Option<field::Agent>,
 }
 
 /// The error codes on the wire (cc-protocol.md "Errors"), as plan B answers them.
@@ -349,8 +354,9 @@ impl Executor {
     }
 }
 
-/// The executor thread: one line at a time, forever, the mission republished for the checkpoint after each. It
-/// records through its own recorder ring: the session.csv row of a clock set, and every command's log lines.
+/// The executor thread: one line at a time, forever, the mission republished for the checkpoint after each, and the
+/// field agent's pass between lines when it is due. It records through its own recorder ring: the session.csv row of
+/// a clock set, and every command's log lines.
 fn serve(requests: Receiver<Request>, mut context: Context) {
     let _attachment = crate::recorder::get().and_then(|recorder| {
         recorder
@@ -358,11 +364,24 @@ fn serve(requests: Receiver<Request>, mut context: Context) {
             .inspect_err(|error| log::warn!("cc :: the executor shares the misc ring: {error:?}"))
             .ok()
     });
-    for request in requests {
-        ARRIVED.with(|arrived| arrived.set(Some(request.arrived)));
-        let reply = handle(&request.line, &mut context, request.origin);
-        // whatever the line changed of the mission, before the checkpoint's next freeze can read it
+    loop {
+        // with a field agent, the wait for a line ends when its pass is due
+        let request = match context.field.as_ref().map(field::Agent::wait) {
+            None => requests.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            Some(wait) => requests.recv_timeout(wait),
+        };
+        match request {
+            Ok(request) => {
+                ARRIVED.with(|arrived| arrived.set(Some(request.arrived)));
+                let reply = handle(&request.line, &mut context, request.origin);
+                // whatever the line changed of the mission, before the checkpoint's next freeze can read it
+                crate::warm::publish_mission(&context.mission);
+                let _ = request.reply.send(reply); // the caller may have gone (a dropped link); nothing to do
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+        field::tick(&mut context);
         crate::warm::publish_mission(&context.mission);
-        let _ = request.reply.send(reply); // the caller may have gone (a dropped link); nothing to do
     }
 }

@@ -70,13 +70,8 @@ fn applied(request: Request) -> Result<Flight, Fault> {
 /// control thread checks the stage again when it applies the arm, since a launch may be detected during the sweep:
 /// refused then under `stage` alone.
 pub fn arm(_message: &Message, context: &mut Context) -> Reply {
-    // every device that is not up, as plan B's arm lists its controller's failures (cc_client.py:566)
-    let mut problems: BTreeMap<&str, String> = context.devices.failures().into_iter().collect();
-    let flight = FLIGHT.load();
-    if let Some(problem) = flight.stage_problem() {
-        problems.insert("stage", problem.to_string());
-    }
-    if flight.stage.change_refused(false).is_none() {
+    let mut problems = standing_problems(context);
+    if FLIGHT.load().stage.change_refused(false).is_none() {
         // the probes sweep the fins: only in SETTING
         if let Some(problem) = super::diagnostics::probe_mission(context) {
             problems.insert("mission", problem);
@@ -89,16 +84,51 @@ pub fn arm(_message: &Message, context: &mut Context) -> Reply {
     if !problems.is_empty() {
         return Err(refusal(&problems));
     }
+    let flight = commit_arm(context)?;
+    super::ok_json(&json!({"armed": flight.armed}))
+}
+
+/// The field agent's arm (commands::field): the CC `arm`'s passive gates -- every device that is not up, the stage
+/// problem, the mission's probe and the recorder's ring gate -- and never the probe sweep, which moves the fins (the
+/// operator, 2026-10-11); then the same commit as `arm`.
+///
+/// Errors: the problems as `{name: why}` JSON text, or the control thread's refusal.
+pub fn auto_arm(context: &mut Context) -> Result<(), String> {
+    let mut problems = standing_problems(context);
+    if let Some(problem) = super::diagnostics::probe_mission(context) {
+        problems.insert("mission", problem);
+    }
+    if let Some(Some(problem)) = crate::recorder::probe() {
+        problems.insert(crate::recorder::NAME, problem);
+    }
+    if !problems.is_empty() {
+        return Err(json!(problems).to_string());
+    }
+    commit_arm(context).map(|_| ()).map_err(|fault| fault.detail)
+}
+
+/// The problems every arm refuses on (plan B cc_client.py:566): each device that is not up, as plan B's arm lists
+/// its controller's failures, and the stage problem (off the ground, or held).
+fn standing_problems(context: &Context) -> BTreeMap<&'static str, String> {
+    let mut problems: BTreeMap<&'static str, String> = context.devices.failures().into_iter().collect();
+    if let Some(problem) = FLIGHT.load().stage_problem() {
+        problems.insert("stage", problem.to_string());
+    }
+    problems
+}
+
+/// The arm itself, once the gates passed: the control thread applies it (checking the stage again, since a launch
+/// may be detected meanwhile: refused then under `stage` alone), the live fix becomes the launch point unless the
+/// operator set one (plan B Controller.arm -> mission.freeze_launch), and `controller :: armed` is logged.
+fn commit_arm(context: &mut Context) -> Result<Flight, Fault> {
     let answer = crate::control::request(Request::Arm).map_err(|unanswered| Fault::new(Code::Internal, unanswered))?;
     let flight = answer.map_err(|problem| refusal(&BTreeMap::from([("stage", problem.to_string())])))?;
-    // the last moment the board is known to be on the pad: the live fix becomes the launch point, unless the operator
-    // set one (plan B Controller.arm -> mission.freeze_launch)
     if let Some(point) = context.mission.freeze_launch(crate::gnss::position(context.topology)) {
         let [latitude, longitude] = point.degrees();
         log::info!("mission :: launch point frozen ({latitude:.5}, {longitude:.5})");
     }
     log::info!("controller :: armed");
-    super::ok_json(&json!({"armed": flight.armed}))
+    Ok(flight)
 }
 
 /// `arm`'s refusal: `err unsafe {name: why}`.

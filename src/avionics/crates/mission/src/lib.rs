@@ -35,7 +35,8 @@
 //!  * Nothing is memoized. Plan B caches the zone geometry by identity for its hot path; here it is a little
 //!    integer and f32 work, done when asked.
 //!
-//! Not yet ported from plan B's Mission: `select_site` and `fallback_zone` (CC-less field operation, M11). A milestone that needs one ports it here
+//! The CC-less field agent (plan B tasks/field.py) is [`field`]: the site by GPS through [`Mission::select_site`] and
+//! [`Mission::fallback_zone`], and the auto-arm's stillness dwell. A milestone that needs one ports it here
 //! first, as M13 did `zone_aspect` and `endgame_heading` for the guidance law.
 
 use control::guidance::Heading;
@@ -309,6 +310,56 @@ impl Mission {
         Some(fix)
     }
 
+    /// The range limit in metres from the launch point to any zone point (the board config's `field.max_range_m`).
+    pub fn max_range_m(&self) -> f32 {
+        self.max_range_m
+    }
+
+    /// CC-less site selection (mission.py `select_site`): the nearest known site whose pad is within `max_range_m`
+    /// of the live `fix` becomes the mission's site and zone, a later site at an equal distance winning as plan B's
+    /// `<=` lets it. The launch point is left as it is: the live fix stands in for it until `arm` pins it.
+    ///
+    /// Returns the site's name; None when no site is in range (the field agent synthesizes the fallback zone).
+    pub fn select_site(&mut self, fix: Position) -> Option<String> {
+        let mut best: Option<&Site> = None;
+        let mut best_distance = self.max_range_m;
+        for site in &self.sites {
+            let span = navigation::distance(fix, site.pad);
+            if span <= best_distance {
+                best = Some(site);
+                best_distance = span;
+            }
+        }
+        let best = best?.clone();
+        self.site = best.name.clone();
+        self.zone = Some(best.zone);
+        Some(best.name)
+    }
+
+    /// The spiral-landing fallback (mission.py `fallback_zone`): a generous axis-aligned box the mission adopts as
+    /// its zone, site 'fallback'. Its wide side (`width_m`) faces the pad, its near edge `near_m` out from `fix`,
+    /// running `depth_m` away; its centre `near_m + depth_m / 2` from the fix at `bearing_deg` (the operator's clear
+    /// sector). Degrees in f64, as plan B's CPython reference computes them, then rounded to the position units.
+    ///
+    /// Returns the adopted zone.
+    pub fn fallback_zone(&mut self, fix: Position, bearing_deg: f32, near_m: f32, width_m: f32, depth_m: f32) -> Zone {
+        let metres_per_degree = f64::from(navigation::METRES_PER_DEGREE);
+        let [fix_latitude, fix_longitude] = fix.degrees();
+        let centre = f64::from(near_m) + f64::from(depth_m) / 2.0;
+        let bearing = f64::from(bearing_deg).to_radians();
+        let latitude = fix_latitude + centre * bearing.cos() / metres_per_degree;
+        let longitude = fix_longitude + centre * bearing.sin() / (metres_per_degree * fix_latitude.to_radians().cos());
+        let half_latitude = f64::from(depth_m) / 2.0 / metres_per_degree; // along the bearing
+        let half_longitude = f64::from(width_m) / 2.0 / (metres_per_degree * latitude.to_radians().cos()); // the wide side
+        let zone = Zone {
+            top_left: Position::from_degrees(latitude + half_latitude, longitude - half_longitude),
+            bottom_right: Position::from_degrees(latitude - half_latitude, longitude + half_longitude),
+        };
+        self.site = "fallback".to_string();
+        self.zone = Some(zone);
+        zone
+    }
+
     /// The launch origin (mission.py `launch_point`): the operator-set position when both coordinates are set,
     /// else the live GNSS `fix`, else None.
     pub fn launch_point(&self, fix: Option<Position>) -> Option<Position> {
@@ -569,6 +620,8 @@ fn json_metres(metres: f32) -> Value {
         .and_then(serde_json::Number::from_f64)
         .map_or(Value::Null, Value::Number)
 }
+
+pub mod field;
 
 #[cfg(test)]
 mod tests;

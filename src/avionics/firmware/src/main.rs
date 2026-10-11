@@ -192,6 +192,7 @@ fn main() -> anyhow::Result<()> {
         watchdog,
         gnss,
         gnss_calib,
+        field,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     // the warm start, while the parts and the flight word's one writer are still main's and nothing else runs: a reset
     // in flight resumes the crumb's stage, its barometers rebased to the pad and the mission's launch point and zone
@@ -303,6 +304,7 @@ fn main() -> anyhow::Result<()> {
         layout: resolved.label(),
         devices: table,
         topology,
+        field: field.map(commands::FieldAgent::new),
     })?;
     // the console drains the UART before taking it over, so the lines above survive
     console::start(
