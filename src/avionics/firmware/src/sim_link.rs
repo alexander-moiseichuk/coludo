@@ -78,10 +78,18 @@ static RUNNING: OnceLock<(&'static str, u16)> = OnceLock::new();
 /// The last frame's sender for inspect: its IPv4 address and its port (port 0: none yet, or not IPv4).
 static SENDER: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
 
+/// Whether the sim-link runs this boot: the link then joins again after the launch (crate::link), since the
+/// simulated sensors ride the Wi-Fi.
+pub fn running() -> bool {
+    RUNNING.get().is_some()
+}
+
 /// Starts the sim-link thread for `member`, its quantities found in `topology`.
 ///
 /// Errors: the thread would not spawn.
 pub fn start(member: HitlMember, topology: &'static Topology) -> anyhow::Result<()> {
+    // before the spawn: the link reads it from its first tick
+    let _ = RUNNING.set((member.name, member.port));
     ThreadSpawnConfiguration {
         name: Some(c"sim_link"),
         stack_size: STACK_SIZE,
@@ -150,7 +158,6 @@ struct Streams {
 /// The thread: bind, then frames forever.
 fn run(member: HitlMember, topology: &'static Topology) {
     let name = member.name;
-    let _ = RUNNING.set((name, member.port));
     let source = name;
     let scalar = |quantity: &str| topology.scalar(quantity).and_then(|parameter| parameter.writer(source));
     let vector = |quantity: &str| topology.vector(quantity).and_then(|parameter| parameter.writer(source));

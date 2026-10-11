@@ -164,7 +164,9 @@ pub fn run(
 ///
 /// Returns: false from the stage machine's launch until a hold or a return to SETTING, true otherwise.
 fn reconnect_allowed(gave_up: &mut bool) -> bool {
-    let allowed = FLIGHT.load().reconnect_allowed();
+    // HITL rides the Wi-Fi (doc/specs/sim-link.md): the simulated sensors arrive over it, so a board in a HITL
+    // flight joins again after a reboot in flight, or the warm-started flight would fly blind
+    let allowed = FLIGHT.load().reconnect_allowed() || crate::sim_link::running();
     if !allowed && !*gave_up {
         log::info!("link :: launch detected -- no more joins or dials (a session still up runs until it drops)");
     }
@@ -261,7 +263,7 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: 
     }
     // run() checked the launch before the RPCs and the settle above: a launch that landed since gets no association
     // (the disconnect above already cleared any attempt still pending)
-    if !FLIGHT.load().reconnect_allowed() {
+    if !FLIGHT.load().reconnect_allowed() && !crate::sim_link::running() {
         anyhow::bail!("launched before the association");
     }
     // the C6 keeps the last network in its own NVS and may already be connecting to it; it then answers

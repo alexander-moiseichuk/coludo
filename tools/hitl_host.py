@@ -6,11 +6,11 @@ HITL with the physics on the host (doc/specs/sim-link.md, M12): a Rust board fli
 src/glider/sim_model.py, the one physics implementation, over the UDP sim-link.
 
 The run, one scenario:
-  1. CC (the USB console, or the hub): the board's saved config and mission are kept; a HITL copy is installed --
-     the board's own config, the entries it cannot run yet removed (verify's "not ported yet"), separation,
-     watchdog, bluetooth and field off, and an enabled `hitl` entry carrying the scenario (the board masks the
-     simulated sensors itself, after its layout); the mission gets the scenario's pad and zone (plan B hitl.py did
-     the same at setup); reboot.
+  1. CC (through the hub with --hub, else the USB console): the board's saved config and mission are kept; a HITL
+     copy is installed -- the board's own config, the entries it cannot run yet removed (verify's "not ported
+     yet"), separation, watchdog, bluetooth and field off, and an enabled `hitl` entry carrying the scenario (the
+     board masks the simulated sensors itself, after its layout); the mission gets the scenario's pad and zone
+     (plan B hitl.py did the same at setup); reboot.
   2. The sim-link gate: frames until the board answers one (it answers only once its Wi-Fi joined and its socket
      is bound; frames before that are lost).
   3. The pad: the body held at rest, published at inject_hz, while CC arms the board; then the pad dwell.
@@ -22,11 +22,18 @@ The run, one scenario:
 It prints the lines tools/hitl_collect.sh parses from plan B's hitl_run: `SESSION <session> <motor> noise <n> wind
 <w>`, `STAGE <id> <name>` per change, a trace every 5 s of glide, `DONE` or `TIMEOUT <stage>`, `RUN_END`.
 
-  tools/hitl_host.py --ip 192.168.102.152                      # the taster on /dev/ttyACM0, F15, clean
-  tools/hitl_host.py --ip 192.168.102.162 --serial /dev/ttyACM1 --noise 0.05 --wind 6 --wind-dir 210
-  tools/hitl_host.py --ip 192.168.102.152 --hub taster --faults gnss@20
+  tools/hitl_host.py --ip 192.168.102.152 --hub taster                  # the taster, F15, clean
+  tools/hitl_host.py --ip 192.168.102.162 --hub TMS-7F --noise 0.05 --wind 6 --wind-dir 210
+  tools/hitl_host.py --ip 192.168.102.152 --hub taster --serial /dev/ttyACM0 --reboot
 
-The mid-glide reboot (plan B's reboot_s) is the board's real one and comes with M12's stage 4.
+Prefer --hub: the console interleaves the board's log lines with a long reply (get-config's 9.5 KB take ~0.8 s at
+115200 baud), so on a board that logs while it answers the reply arrives in pieces; the hub's link frames each reply.
+
+--reboot is plan B's mid-glide reboot made real: 1-6 s into the glide the console (--serial) panics the board
+(`panic kind=rust confirm`) while the sim flies on; the board warm-starts from its crumb, joins the Wi-Fi again (a
+HITL board may, the sim rides it) and flies on. It prints `REBOOT`, `WARM GATE: <restored> <the checkpoint's
+gate>` (the collectors fail a reboot scenario on `WARM GATE: False`) and `REBOOTED <session> boot <id>`. The panic
+goes through the console (`panic` is a console command), the rest through --hub when given.
 """
 import argparse
 import binascii
@@ -199,6 +206,7 @@ class _Board:
             time.sleep(_QUIET_S)
         raise SystemExit('no answer to %s' % line.split(' ', 1)[0])
 
+
     def reboot(self) -> dict:
         """Reboot and wait for the new boot's whoami; returns it."""
         self.ask('reboot')
@@ -359,12 +367,24 @@ class _Sim:
             pass  # a refused send (no route yet) is a lost frame, as the link allows
 
 
+def _panic(port: str) -> None:
+    """The console's `panic kind=rust confirm`: the board resets before it could reply, so no answer is awaited."""
+    console = transports.Serial(port)
+    try:
+        console.exchange('panic kind=rust confirm')
+    except (transports.NoAnswer, OSError):
+        pass
+    finally:
+        console.close()
+
+
 def _arguments() -> argparse.Namespace:
     """The command line."""
     parser = argparse.ArgumentParser(description='HITL with the physics on the host (doc/specs/sim-link.md)')
     parser.add_argument('--ip', required=True, help="the board's address on the panda net")
-    parser.add_argument('--serial', default='/dev/ttyACM0', help='the board console (default /dev/ttyACM0)')
-    parser.add_argument('--hub', help='drive the board through the hub by this id instead of the console')
+    parser.add_argument('--serial', default='/dev/ttyACM0', help='the board console (default /dev/ttyACM0): CC '
+                        'without --hub, and the panic of --reboot')
+    parser.add_argument('--hub', help="drive CC through the hub by this board id (preferred: see the notes)")
     parser.add_argument('--motor', default='F15', choices=sorted(sim_model.MOTORS))
     parser.add_argument('--noise', type=float, default=0.0)
     parser.add_argument('--wind', type=float, default=0.0)
@@ -382,6 +402,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--gnss-drop-s', type=float, default=0.0)
     parser.add_argument('--no-mag', action='store_true')
     parser.add_argument('--faults', default='', help="sim_model.Faults: 'gnss@30,pitot@45'")
+    parser.add_argument('--reboot', action='store_true', help='a real panic 1-6 s into the glide (the console)')
     parser.add_argument('--keep-config', action='store_true', help='leave the HITL config installed')
     return parser.parse_args()
 
@@ -422,7 +443,8 @@ def main() -> int:
         sim.ignited = True
         started = time.monotonic()
         last_stage, last_trace = None, started
-        drop_attitude_at = drop_gnss_at = recover_gnss_at = None
+        drop_attitude_at = drop_gnss_at = recover_gnss_at = reboot_at = None
+        rebooted = False
         while True:
             stage = sim.stage()
             now = time.monotonic()
@@ -432,6 +454,8 @@ def main() -> int:
                     drop_attitude_at = now + args.attitude_drop_s
                 if stage == _GLIDING and args.gnss_drop_s > 0:
                     drop_gnss_at = now + 2.0 + random.random() * 4.0
+                if stage == _GLIDING and args.reboot and reboot_at is None:
+                    reboot_at = now + 1.0 + random.random() * 5.0  # early-to-mid glide, as plan B's
                 last_stage = stage
             if drop_attitude_at is not None and now >= drop_attitude_at and not sim.drop_attitude:
                 sim.drop_attitude = True
@@ -443,6 +467,17 @@ def main() -> int:
             if recover_gnss_at is not None and sim.drop_gnss and now >= recover_gnss_at:
                 sim.drop_gnss = False
                 print('GNSS RECOVER: fix reacquired')
+            if reboot_at is not None and not rebooted and now >= reboot_at and stage == _GLIDING:
+                rebooted = True
+                print('REBOOT: a real panic mid-glide (the console); the sim flies on')
+                _panic(args.serial)
+                whoami = board.ask('whoami')[1]
+                gate = board.ask('inspect checkpoint')[1].get('gate')
+                health = board.ask('health')[1]
+                restored = health.get('stage') in ('gliding', 'landing') and bool(health.get('armed'))
+                print('WARM GATE:', restored, gate)
+                print('REBOOTED', whoami.get('session'), 'boot', whoami.get('boot_id'))
+                continue
             if stage >= _DONE:
                 print('DONE')
                 outcome = 0

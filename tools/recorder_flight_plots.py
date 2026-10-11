@@ -44,14 +44,15 @@ def _require_plotly():
 
 def load(folder: str, stream: str) -> list:
     """
-    The stream's rows as dicts of floats (None for an empty cell), or [] when it was not recorded. Rows
-    with an acceleration past the sensor's full scale are corrupted and dropped.
+    The stream's rows as dicts of floats (None for an empty cell, or for the text None a Rust board writes where
+    plan B pushed Python's None, e.g. a barometer's change before its first slope), or [] when it was not recorded.
+    Rows with an acceleration past the sensor's full scale are corrupted and dropped.
     """
     path = os.path.join(folder, stream + '.csv')
     if not os.path.exists(path):
         return []
     with open(path, newline='') as handle:
-        rows = [{key: (float(value) if value not in ('', None) else None) for key, value in row.items()}
+        rows = [{key: (float(value) if value not in ('', 'None', None) else None) for key, value in row.items()}
                 for row in csv.DictReader(handle, delimiter=';')]
     limit = _FULL_SCALE_G.get(stream)
     if limit is None:
@@ -60,8 +61,12 @@ def load(folder: str, stream: str) -> list:
 
 
 def _pad_mean(rows: list, field: str) -> float:
-    """The field's mean over the pad window."""
-    return statistics.mean(r[field] for r in rows if _PAD_S[0] <= r['t_s'] <= _PAD_S[1] and r[field] is not None)
+    """
+    The field's mean over the pad window; 0.0 (no offset) when the stream has no row there -- a HITL flight armed
+    seconds after its first sample (tools/hitl_host.py) has a pad shorter than the window.
+    """
+    pad = [r[field] for r in rows if _PAD_S[0] <= r['t_s'] <= _PAD_S[1] and r[field] is not None]
+    return statistics.mean(pad) if pad else 0.0
 
 
 def _figure(make_subplots, titles: list, title: str):

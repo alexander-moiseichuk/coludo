@@ -210,7 +210,10 @@ fn main() -> anyhow::Result<()> {
         .expect("main takes the flight word's writer, once");
     let range = board_config::max_range_m(&loaded.document).unwrap_or(mission::DEFAULT_MAX_RANGE_M);
     let mut mission = mission::Mission::load(store.launch().as_deref(), range);
-    let separated = separation.as_ref().is_some_and(|member| member.part.separated());
+    // HITL simulates no separation switch (doc/specs/sim-link.md): its glide counts as separated, as plan B's
+    // harness passed separated=True by construction (tools/hitl_run.py `_simulated_reboot`), or no warm start in a
+    // HITL glide could pass the gate
+    let separated = separation.as_ref().is_some_and(|member| member.part.separated()) || hitl.is_some();
     let seed = warm::restore(
         &partition,
         &loaded.document,
