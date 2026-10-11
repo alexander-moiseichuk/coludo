@@ -104,8 +104,14 @@ fn the_probe_sweeps_min_max_neutral() {
     let elevon = fin(json!({"min_deg": -30, "max_deg": 30}));
     assert_eq!(elevon.probe_targets(None), [("min", -30), ("max", 30), ("neutral", 0)]);
     // the board config's fin limit bounds the sweep, never past the servo's own range
-    assert_eq!(elevon.probe_targets(Some(20)), [("min", -20), ("max", 20), ("neutral", 0)]);
-    assert_eq!(elevon.probe_targets(Some(45)), [("min", -30), ("max", 30), ("neutral", 0)]);
+    assert_eq!(
+        elevon.probe_targets(Some(20)),
+        [("min", -20), ("max", 20), ("neutral", 0)]
+    );
+    assert_eq!(
+        elevon.probe_targets(Some(45)),
+        [("min", -30), ("max", 30), ("neutral", 0)]
+    );
     assert_eq!(elevon.probe_targets(Some(-5)), [("min", 0), ("max", 0), ("neutral", 0)]);
 }
 
