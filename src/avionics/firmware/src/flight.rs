@@ -155,6 +155,18 @@ fn mission_view() -> (Option<Landing>, Option<Position>) {
     }
 }
 
+/// The mission's launch point as the flight loop reads it (set by CC, or pinned at arm), degrees: the beacon's map
+/// link while no fix came this boot (crate::beacon).
+pub fn launch_degrees() -> Option<(f64, f64)> {
+    let (_, launch) = mission_view();
+    launch.map(|point| {
+        (
+            f64::from(point.latitude_e7) * 1e-7,
+            f64::from(point.longitude_e7) * 1e-7,
+        )
+    })
+}
+
 /// Keeps a warm start's airspeed for the law's seed (crate::warm, before the control thread starts), logged here: a
 /// float formatted on the control thread costs its stack.
 pub fn keep_warm_airspeed(airspeed: f32) {

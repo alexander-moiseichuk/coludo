@@ -188,6 +188,14 @@ impl Beacon {
             }
             None => page.push_str("<p>no GNSS fix this boot</p>"),
         }
+        // the launch pad, always: where the flight began, a map link even before any fix
+        if let Some((latitude, longitude)) = crate::flight::launch_degrees() {
+            let _ = write!(
+                page,
+                "<p>launch pad: {latitude:.6}, {longitude:.6}<br><a href=\"https://maps.google.com/?q={latitude:.6},\
+                 {longitude:.6}\">open the pad in Google Maps</a></p>"
+            );
+        }
         // every source's height: each barometer's and the GNSS's elevation above the pad, the laser's AGL
         page.push_str("<h2>How high</h2><table>");
         for (quantity, label) in [("elevation", "above the pad"), ("agl", "above the ground (laser)")] {
