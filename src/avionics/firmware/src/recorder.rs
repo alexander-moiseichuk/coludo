@@ -69,7 +69,7 @@ use std::time::{Duration, Instant};
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::delay::TickType;
 use esp_idf_svc::hal::task;
-use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
+use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::nvs::{EspCustomNvsPartition, EspNvs, NvsCustom};
 use esp_idf_svc::sys;
 use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
@@ -459,9 +459,13 @@ pub fn start(settings: EspCustomNvsPartition, card: Option<Card>, config_id: &st
         .ok_or_else(|| anyhow::anyhow!("the recorder did not open"))?;
     recording.recorder.bind_config_id(config_id);
     let config_id = config_id.to_string();
-    spawn(c"ring_writer", WRITER_STACK, BRING_UP_PRIORITY, move || {
-        write(recording, settings, card, &config_id)
-    })
+    spawn(
+        c"ring_writer",
+        WRITER_STACK,
+        Stack::Internal,
+        BRING_UP_PRIORITY,
+        move || write(recording, settings, card, &config_id),
+    )
 }
 
 /// The ring_writer thread: the bring-up routine, then [`Writer::step`] on every ~10 ms tick or durable record's
@@ -638,9 +642,13 @@ fn start_eraser(
             return;
         }
     };
-    if let Err(error) = spawn(c"ring_eraser", ERASER_STACK, ERASER_PRIORITY, move || {
-        erase(eraser, recorder, store)
-    }) {
+    if let Err(error) = spawn(
+        c"ring_eraser",
+        ERASER_STACK,
+        Stack::Internal,
+        ERASER_PRIORITY,
+        move || erase(eraser, recorder, store),
+    ) {
         log::error!("ring :: the eraser would not start: {error}");
     }
 }
@@ -800,7 +808,7 @@ fn start_saver(
         };
         save(saver, store)
     };
-    if let Err(error) = spawn(c"ring_saver", SAVER_STACK, SAVER_PRIORITY, body) {
+    if let Err(error) = spawn(c"ring_saver", SAVER_STACK, Stack::Internal, SAVER_PRIORITY, body) {
         log::error!("ring :: the saver would not start, nothing reaches the card: {error}");
     }
 }
@@ -825,7 +833,12 @@ const UART_IDLE: Duration = Duration::from_millis(20);
 /// The uart_saver's priority: below the ring_saver's, which feeds it (§4.2).
 const UART_PRIORITY: u8 = 2;
 
-/// The uart_saver's stack: a batch's copy and the driver's write.
+/// The uart_saver's stack (PSRAM, its batch with it): a batch's copy and the driver's write.
+///
+/// Its internal RAM cost the board its Wi-Fi: on internal RAM, with the driver's 8 KB transmit ring, the taster
+/// associated but its DHCP request never left (no lease from the uart_saver's first flash on, a lease at once without
+/// it; the DMA-capable low-water 17 -> 9 KB, 2026-10-11). Neither is in internal RAM now: the stack and the batch in
+/// PSRAM, and no transmit ring (the write fills the FIFO from this thread).
 const UART_STACK: usize = 4 << 10;
 
 /// The uart_saver (M19, doc/specs/avionics-port.md M19): the recorder's wire lines out of `uart`'s TX on GPIO `tx` at
@@ -855,16 +868,17 @@ pub fn start_uart<U: esp_idf_svc::hal::uart::Uart + 'static>(_uart: U, tx: u8, b
     unsafe {
         sys::esp!(sys::uart_param_config(port, &config))?;
         sys::esp!(sys::uart_set_pin(port, i32::from(tx), -1, -1, -1))?;
+        // no transmit ring (internal RAM): the uart_saver's write fills the FIFO itself, waiting on its interrupt
         sys::esp!(sys::uart_driver_install(
             port,
             UART_RX_BYTES as i32,
-            (UART_BATCH_BYTES * 2) as i32,
+            0,
             0,
             ptr::null_mut(),
             0
         ))?;
     }
-    spawn(c"uart_saver", UART_STACK, UART_PRIORITY, move || {
+    spawn(c"uart_saver", UART_STACK, Stack::Psram, UART_PRIORITY, move || {
         let mut line = Vec::new();
         let mut batch = Vec::with_capacity(UART_BATCH_BYTES + 1024);
         loop {
@@ -878,7 +892,7 @@ pub fn start_uart<U: esp_idf_svc::hal::uart::Uart + 'static>(_uart: U, tx: u8, b
             }
             let mut sent = 0;
             while sent < batch.len() {
-                // SAFETY: the installed driver's write: it copies the bytes into its transmit buffer, waiting for room
+                // SAFETY: the installed driver's write: with no transmit ring it fills the FIFO, waiting for room
                 let count = unsafe { sys::uart_write_bytes(port, batch[sent..].as_ptr().cast(), batch.len() - sent) };
                 if count <= 0 {
                     break; // a refused write loses this batch; the next goes on
@@ -1177,11 +1191,21 @@ fn wake() {
     }
 }
 
+/// Where a recorder thread's stack lives (spec §4.7, the internal RAM budget).
+#[derive(Clone, Copy)]
+enum Stack {
+    /// Internal RAM: a thread that calls the flash driver, which turns the cache (so PSRAM) off.
+    Internal,
+    /// PSRAM, and so its Rust allocations too (crate::allocator): a thread that never touches the flash.
+    Psram,
+}
+
 /// Spawns `body` as a thread on core 0 with this name, stack and priority: none of the ring's work runs on core 1,
 /// the flight core.
 fn spawn(
     name: &'static CStr,
     stack_size: usize,
+    stack: Stack,
     priority: u8,
     body: impl FnOnce() + Send + 'static,
 ) -> anyhow::Result<()> {
@@ -1190,6 +1214,10 @@ fn spawn(
         stack_size,
         priority,
         pin_to_core: Some(Core::Core0),
+        stack_alloc_caps: match stack {
+            Stack::Internal => ThreadSpawnConfiguration::default().stack_alloc_caps,
+            Stack::Psram => MallocCap::Spiram | MallocCap::Cap8bit,
+        },
         ..Default::default()
     }
     .set()?;
@@ -1268,7 +1296,7 @@ fn start_load(recorder: &'static Recorder, lines_per_s: u32, seconds: u32) -> St
         recorder.log("ring load", &summary);
         LOADING.store(false, Ordering::Release);
     };
-    match spawn(c"ring_load", 4096, 5, body) {
+    match spawn(c"ring_load", 4096, Stack::Internal, 5, body) {
         Ok(()) => cc_protocol::build(
             "ok",
             &["ring", "load"],
