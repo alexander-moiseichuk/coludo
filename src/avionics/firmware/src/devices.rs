@@ -179,6 +179,20 @@ const HITL_QUANTITIES: [&str; 13] = [
 /// The `hitl` source's timeout, ms (plan B hitl.py `provided`).
 const HITL_TIMEOUT_MS: u32 = 1000;
 
+/// A fin servo once its entry came up: its pin and logic, for crate::fins.
+pub struct ServoMember {
+    /// The entry's name: its stream's and its log lines'.
+    pub name: &'static str,
+    /// Its PWM GPIO (`pin`, a pins-map name).
+    pub gpio: u8,
+    /// The command logic (crates/drivers sg90, the type's own figures).
+    pub servo: drivers::sg90::Servo,
+    /// The angle commanded at boot, degrees: the entry's `angle`, else the range's neutral.
+    pub start_degrees: f64,
+    /// Half the command range, degrees: the boot centring's worst-case travel.
+    pub half_range: i32,
+}
+
 /// The UART the GNSS runs on: the one the firmware hands its thread (plan B's default `id`).
 const GNSS_UART: u8 = 2;
 
@@ -471,6 +485,8 @@ pub struct Devices {
     pub field: Option<FieldMember>,
     /// The HITL sim-link, when its entry came up.
     pub hitl: Option<HitlMember>,
+    /// The fin servos that came up, in config order.
+    pub servos: Vec<ServoMember>,
 }
 
 /// Crashes each entry of `table` named in `names` that came up, with `reason`: the thread that would run it did not
@@ -502,6 +518,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut gnss_calib = None;
     let mut field = None;
     let mut hitl = None;
+    let mut servos = Vec::new();
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -547,6 +564,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::GnssCalib => set_up_gnss_calib(entry, &mut gnss_calib),
             Kind::Field => set_up_field(entry, &mut field),
             Kind::Hitl => set_up_hitl(document, entry, &mut hitl),
+            Kind::Servo => set_up_servo(document, entry, &mut servos),
             Kind::Checkpoint => {
                 let (outcome, came_up) =
                     set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
@@ -593,6 +611,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         gnss_calib,
         field,
         hitl,
+        servos,
     }
 }
 
@@ -931,6 +950,46 @@ fn set_up_field(entry: &Entry<'static>, field: &mut Option<FieldMember>) -> Resu
     if came_up.is_some() {
         *field = came_up;
     }
+    outcome
+}
+
+/// A fin servo's bring-up (plan B drivers/sg90.py setup): its `pin` resolved through the pins map, its settings read
+/// for its type (SG90, MG90S), in one attempt. No pin fails it as plan B's setup returned False; the PWM itself
+/// comes up with every fin at the bring-up's end (crate::fins), the pin held LOW meanwhile.
+fn set_up_servo(document: &Value, entry: &Entry<'static>, servos: &mut Vec<ServoMember>) -> Result<(), String> {
+    let servo_type = if entry.implementation == "mg90s" {
+        drivers::mg90s::MG90S
+    } else {
+        drivers::sg90::SG90
+    };
+    let gpio = board_config::pin(document, entry, "pin");
+    let mut came_up = None;
+    let outcome = controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, last| {
+            let Some(gpio) = gpio else {
+                let name = entry.fields.get("pin").and_then(Value::as_str).unwrap_or("pin");
+                return Attempt::Failed {
+                    diagnosis: last.then(|| format!("no pin -- '{name}' not defined in config pins")),
+                };
+            };
+            let settings = drivers::sg90::Settings::from_config(&Value::Object(entry.fields.clone()), &servo_type);
+            let servo = drivers::sg90::Servo::new(&servo_type, &settings);
+            came_up = Some(ServoMember {
+                name: entry.name,
+                gpio,
+                start_degrees: settings.angle.unwrap_or(f64::from(servo.neutral())),
+                half_range: (settings.max_degrees - settings.min_degrees) / 2,
+                servo,
+            });
+            Attempt::Up
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    );
+    servos.extend(came_up);
     outcome
 }
 

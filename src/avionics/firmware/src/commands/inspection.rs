@@ -168,6 +168,14 @@ enum Own {
         age_ms: Option<u64>,
         sender: Option<String>,
     },
+    /// A fin servo (plan B sg90.py inspect): the COMMANDED angle and pulse -- an SG90 is open-loop, nothing is
+    /// measured -- the trim, and the feedback it has none of (null).
+    Servo {
+        angle: i32,
+        pulse_us: i32,
+        trim: i32,
+        feedback: Option<i32>,
+    },
     /// A laser ranger (plan B vl53l1x.py inspect): whether its data-ready line is wired, its channel's latest.
     Ranger { interrupt: bool, agl_m: Option<f32> },
     /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
@@ -338,6 +346,15 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
             },
             None => Own::None {},
         },
+        "sg90" | "mg90s" => match crate::fins::inspection(name) {
+            Some([angle, pulse_us, trim]) => Own::Servo {
+                angle,
+                pulse_us,
+                trim,
+                feedback: None,
+            },
+            None => Own::None {},
+        },
         "vl53l1x" | "vl53l4cx" => Own::Ranger {
             interrupt: false,
             agl_m: scalar("agl"),
@@ -436,6 +453,12 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
         RECORDER => apply_recorder(properties),
         "controller" | "databoard" => Vec::new(), // nothing on them is writable
         device if is_bluetooth(context, device) => with_bluetooth(context, device, |stub| stub.update(properties)),
+        // a fin servo: on the control thread, its owner (trim, angle)
+        device if crate::fins::inspection(device).is_some() => {
+            crate::control::update_fin(device, &Value::Object(properties.clone()))
+                .map_err(|error| Fault::new(Code::Internal, error))?
+                .map_err(|refusal| Fault::new(Code::Refused, refusal))?
+        }
         // a device: the part on its owner (the barometer's ground and rezero); the others change nothing
         device => {
             let changed = crate::owner::update(device, &Value::Object(properties.clone()))

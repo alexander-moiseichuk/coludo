@@ -20,6 +20,7 @@ mod control;
 mod devices;
 mod diagnostics;
 mod files;
+mod fins;
 mod gnss;
 mod link;
 mod logging;
@@ -53,6 +54,8 @@ fn main() -> anyhow::Result<()> {
     let settings = config::partition()?;
     let store = config::Store::open(settings.clone())?;
     let mut loaded = board_config::load(store.board().as_deref(), config::defaults());
+    // every fin pin LOW from here: a floating one picks up its neighbours' pulses and the servos twitch (crate::fins)
+    fins::hold_low(&loaded.document);
     // the saved config's id: what `set-config board` answered for it. The boot runs under the post-layout one below
     let saved_config_id = board_config::config_id(&loaded.document);
     let session = recorder::session_prefix(&loaded.document, boot_id);
@@ -201,6 +204,7 @@ fn main() -> anyhow::Result<()> {
         gnss_calib,
         field,
         hitl,
+        servos,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     // the warm start, while the parts and the flight word's one writer are still main's and nothing else runs: a reset
     // in flight resumes the crumb's stage, its barometers rebased to the pad and the mission's launch point and zone
@@ -240,6 +244,20 @@ fn main() -> anyhow::Result<()> {
     // the flight tick on core 1, which wakes the owners too (§4.2, §4.3), steps the stage machine and owns the flight
     // word's one writer from here
     let schedule_hz = board_config::schedule_hz(&loaded.document);
+    // the fins: each on its LEDC channel, centred `fins.concurrency` at a time (plan B's 3 when unset), then the
+    // control thread's; a timer or channel that will not configure crashes every fin, so `arm` refuses
+    let fins = (!servos.is_empty())
+        .then(|| {
+            let names: Vec<&'static str> = servos.iter().map(|member| member.name).collect();
+            let concurrency = loaded.document["fins"]["concurrency"].as_u64().unwrap_or(3) as usize;
+            fins::open(servos, concurrency)
+                .inspect_err(|error| {
+                    log::error!("fins :: the PWM did not start: {error}");
+                    devices::crash(table, names.iter().map(|name| Some(*name)), &error.to_string());
+                })
+                .ok()
+        })
+        .flatten();
     if let Err(error) = control::start(
         schedule_hz,
         spi_bus,
@@ -247,6 +265,7 @@ fn main() -> anyhow::Result<()> {
         separation,
         sequencer,
         attitude,
+        fins,
         topology,
         table,
         writer,

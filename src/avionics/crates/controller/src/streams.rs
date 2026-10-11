@@ -64,6 +64,10 @@ pub const PITOT_FIELDS: [&str; 3] = ["dynamic_pressure", "airspeed_cms", "temper
 /// The INA226's columns (plan B drivers/ina226.py:93-95): mV, mA, mW and the over-current ALERT trips since boot.
 pub const POWER_FIELDS: [&str; 4] = ["voltage_mv", "current_ma", "power_mw", "alerts"];
 
+/// The fin servos' columns (plan B drivers/sg90.py:187, the MG90S alike): the commanded angle in whole degrees, the
+/// pulse driven in us, and done (0 a command issued, 1 a move completed by its estimate).
+pub const SERVO_FIELDS: [&str; 3] = ["angle", "pulse_us", "done"];
+
 /// The laser rangers' columns (plan B drivers/vl53l1x.py:150, vl53l4cx.py alike): the height above ground in m and
 /// the data-ready edges its read took.
 pub const LASER_FIELDS: [&str; 2] = ["agl", "irq_runs"];
@@ -147,7 +151,7 @@ pub struct Stream {
 
 /// The stream `entry` writes, when its part is one the port records, every one never decimated: the IMUs (LSM6DSO32,
 /// BMI323), the barometers (ICP-10111, BMP581) and the BMM350 as `<name>.csv`, the attitude filter as the fixed
-/// `attitude.csv`; the separation switch as the fixed `separation.csv`, the stage machine as `<name>.csv` and the
+/// `attitude.csv`, the fin servos as `<name>.csv`; the separation switch as the fixed `separation.csv`, the stage machine as `<name>.csv` and the
 /// checkpoint as the fixed `checkpoint.csv`, the last three durable. None for any other part. The stage machine's
 /// second stream is [`vetoes`].
 pub fn stream(entry: &Entry) -> Option<Stream> {
@@ -159,6 +163,7 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
         "sdp810" => (named(), &PITOT_FIELDS, false),
         "ina226" => (named(), &POWER_FIELDS, false),
         "vl53l1x" | "vl53l4cx" => (named(), &LASER_FIELDS, false),
+        "sg90" | "mg90s" => (named(), &SERVO_FIELDS, false),
         driver if GNSS_DRIVERS.contains(&driver) => (named(), &GNSS_FIELDS, false),
         "attitude" => (attitude::STREAM.to_string(), &attitude::FIELDS, false),
         "separation" => (SEPARATION_FILE.to_string(), &SEPARATION_FIELDS, true),
@@ -215,7 +220,7 @@ mod tests {
         BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, LASER_FIELDS, MAGNETOMETER_FIELDS, PITOT_FIELDS, POWER_FIELDS,
         SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, VETOES_FIELDS, stream, vetoes,
     };
-    use super::{EVENT_FIELDS, GGA_FIELDS, GNSS_FIELDS, SKY_FIELDS, companions};
+    use super::{EVENT_FIELDS, GGA_FIELDS, GNSS_FIELDS, SERVO_FIELDS, SKY_FIELDS, companions};
     use board_config::{directory, entries};
     use serde_json::{Value, json};
 
@@ -296,6 +301,9 @@ mod tests {
                 ("power_ina226", measured("power_ina226.csv", &POWER_FIELDS)),
                 ("gnss", measured("gnss.csv", &GNSS_FIELDS)),
                 ("separation", event("separation.csv", &SEPARATION_FIELDS)),
+                ("servo_yaw", measured("servo_yaw.csv", &SERVO_FIELDS)),
+                ("servo_eleron_left", measured("servo_eleron_left.csv", &SERVO_FIELDS)),
+                ("servo_eleron_right", measured("servo_eleron_right.csv", &SERVO_FIELDS)),
                 ("sequencer", event("sequencer.csv", &SEQUENCER_FIELDS)),
                 ("checkpoint", event("checkpoint.csv", &CHECKPOINT_FIELDS)),
             ]
@@ -530,6 +538,8 @@ mod tests {
             ("ina226", &POWER_FIELDS[..]),
             ("vl53l1x", &LASER_FIELDS[..]),
             ("vl53l4cx", &LASER_FIELDS[..]),
+            ("sg90", &SERVO_FIELDS[..]),
+            ("mg90s", &SERVO_FIELDS[..]),
         ] {
             let found = only(&sensor("part", driver, Some(json!(100)))).expect(driver);
             assert_eq!(
@@ -540,6 +550,7 @@ mod tests {
         assert_eq!(PITOT_FIELDS.join(";"), "dynamic_pressure;airspeed_cms;temperature");
         assert_eq!(POWER_FIELDS.join(";"), "voltage_mv;current_ma;power_mw;alerts");
         assert_eq!(LASER_FIELDS.join(";"), "agl;irq_runs");
+        assert_eq!(SERVO_FIELDS.join(";"), "angle;pulse_us;done");
     }
 
     #[test]

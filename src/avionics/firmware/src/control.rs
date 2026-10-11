@@ -52,6 +52,8 @@
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, Ordering};
 use std::sync::OnceLock;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+
+use serde_json::Value;
 use std::time::Duration;
 
 use control::attitude::{Attitude, Pace, Quantities, assemble};
@@ -186,7 +188,17 @@ enum Request {
         duration_ms: u32,
         reply: SyncSender<Result<bool, ChangeRefused>>,
     },
+    /// The operator's `update <servo> {trim|angle}` on fin `name` (M13): the keys applied, the servo's refusal, or
+    /// None for a name that is no fin.
+    Fin {
+        name: String,
+        properties: Value,
+        reply: SyncSender<Result<FinAnswer, ChangeRefused>>,
+    },
 }
+
+/// A fin update's answer: None for a name that is no fin, else the keys applied or the servo's refusal.
+type FinAnswer = Option<Result<Vec<&'static str>, String>>;
 
 /// The control thread's mailbox, once it runs.
 static MAILBOX: OnceLock<SyncSender<Request>> = OnceLock::new();
@@ -1186,6 +1198,7 @@ pub fn start(
     separation: Option<SeparationMember>,
     sequencer: Option<SequencerMember>,
     attitude: Option<AttitudeMember>,
+    fins: Option<crate::fins::Fins>,
     topology: &'static Topology,
     table: &'static Table<'static>,
     writer: FlightWriter<'static>,
@@ -1216,6 +1229,7 @@ pub fn start(
                     separation,
                     sequencer,
                     attitude,
+                    fins,
                     topology,
                     table,
                     writer,
@@ -1242,6 +1256,7 @@ fn run(
     separation: Option<SeparationMember>,
     sequencer: Option<SequencerMember>,
     attitude: Option<AttitudeMember>,
+    mut fins: Option<crate::fins::Fins>,
     topology: &'static Topology,
     table: &'static Table<'static>,
     mut writer: FlightWriter<'static>,
@@ -1373,7 +1388,13 @@ fn run(
         if let Some(Ok(commit)) = EXECUTOR_SLOT.serve(&mut writer) {
             follow_flight(&commit);
         }
-        serve(&requests, imu.as_mut(), spi_bus.as_ref(), writer.flight().stage);
+        serve(
+            &requests,
+            imu.as_mut(),
+            spi_bus.as_ref(),
+            fins.as_mut(),
+            writer.flight().stage,
+        );
         // the consumers' view of the IMU channels, where the stage machine reads them
         // SAFETY: a plain read of the monotonic timer.
         let read_us = unsafe { sys::esp_timer_get_time() } as u64;
@@ -1438,7 +1459,13 @@ fn set_flight(flight: bool) {
 /// Serves at most [`REQUESTS_PER_TICK`] requests waiting in the mailbox, each refused unless `stage` is SETTING: the
 /// executor checked its gate once, and a probe sweep then takes seconds, during which a launch may be detected. A
 /// refusal is the stage as a value, so off the pad this thread makes no text (§3.1: text only off the flight path).
-fn serve(requests: &Receiver<Request>, mut imu: Option<&mut Imu>, bus: Option<&SpiBus>, stage: Stage) {
+fn serve(
+    requests: &Receiver<Request>,
+    mut imu: Option<&mut Imu>,
+    bus: Option<&SpiBus>,
+    mut fins: Option<&mut crate::fins::Fins>,
+    stage: Stage,
+) {
     for _ in 0..REQUESTS_PER_TICK {
         let request = match requests.try_recv() {
             Ok(request) => request,
@@ -1473,7 +1500,44 @@ fn serve(requests: &Receiver<Request>, mut imu: Option<&mut Imu>, bus: Option<&S
                 };
                 let _ = reply.send(answer);
             }
+            Request::Fin {
+                name,
+                properties,
+                reply,
+            } => {
+                let answer = match refusal {
+                    Some(refusal) => Err(refusal),
+                    None => Ok(fins.as_deref_mut().and_then(|fins| fins.update(&name, &properties))),
+                };
+                let _ = reply.send(answer);
+            }
         }
+    }
+}
+
+/// The operator's `update <servo> {trim|angle}` (M13): posted to the control thread, the fins' owner.
+///
+/// Returns: the keys applied, or the servo's refusal (a key that is not a number).
+///
+/// Errors: no fin by that name, the control thread is not running, is busy, refused outside SETTING, or did not
+/// answer in time.
+pub fn update_fin(name: &str, properties: &Value) -> Result<Result<Vec<&'static str>, String>, String> {
+    let mailbox = MAILBOX
+        .get()
+        .ok_or_else(|| "the control thread is not running".to_string())?;
+    let (reply, answer) = sync_channel(1);
+    mailbox
+        .try_send(Request::Fin {
+            name: name.to_string(),
+            properties: properties.clone(),
+            reply,
+        })
+        .map_err(|_| "the control thread is busy".to_string())?;
+    match answer.recv_timeout(PROBE_DEADLINE) {
+        Ok(Ok(Some(answer))) => Ok(answer),
+        Ok(Ok(None)) => Err(format!("{name} is no fin on the control thread")),
+        Ok(Err(refusal)) => Err(refusal.to_string()),
+        Err(_) => Err("the control thread did not answer".to_string()),
     }
 }
 

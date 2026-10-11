@@ -64,8 +64,8 @@ pub use readiness::readiness;
 pub use ring_gate::ring_gate;
 pub use stale_arm::stale_arm;
 pub use streams::{
-    BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, MAGNETOMETER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream,
-    VETOES_FIELDS, companions, stream, vetoes,
+    BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, MAGNETOMETER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS,
+    SERVO_FIELDS, Stream, VETOES_FIELDS, companions, stream, vetoes,
 };
 pub use watchdog::Stall;
 
