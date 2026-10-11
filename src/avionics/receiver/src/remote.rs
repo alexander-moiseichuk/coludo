@@ -67,8 +67,10 @@ impl RemoteBeacon {
         *self.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some((report, received));
     }
 
-    /// The access point as the last report's radio asks: off for an empty name; on, or silent, by its cycle; started
-    /// again when the radio changed. Called from the link's loop, often.
+    /// The access point as the last report's radio asks: off for an empty name; on, or silent, by its cycle, staying on
+    /// while a phone is connected (spec M20: a searcher who found it keeps it); started again only when what goes on
+    /// the air changed (name, password, channel, TX cap), never for the same one again: a new cycle applies as it is.
+    /// Called from the link's loop, often.
     pub fn step(&mut self) {
         let wanted = self
             .latest
@@ -83,16 +85,28 @@ impl RemoteBeacon {
             }
             return;
         };
-        let changed = self.radio.as_ref() != Some(&radio);
+        let changed = self.radio.as_ref().is_none_or(|running| !same_air(running, &radio));
         let cycle_over = |seconds: u32| seconds > 0 && self.since.elapsed().as_secs() >= u64::from(seconds);
         if self.on && changed {
-            self.stop("its radio changed");
+            self.stop("its name, password, channel or power changed");
             self.start(radio);
-        } else if self.on && radio.off_s > 0 && cycle_over(radio.on_s) {
+        } else if self.on && radio.off_s > 0 && cycle_over(radio.on_s) && !self.phone_connected() {
+            self.radio = Some(radio);
             self.stop("silent for its cycle");
         } else if !self.on && (changed || cycle_over(radio.off_s.max(RETRY_S))) {
             self.start(radio);
+        } else {
+            // the same air: a new cycle (on/off seconds) only, kept without a restart
+            self.radio = Some(radio);
         }
+    }
+
+    /// Whether a station is joined to the access point now (a phone on the page).
+    fn phone_connected(&self) -> bool {
+        let mut stations = esp_idf_svc::sys::wifi_sta_list_t::default();
+        // SAFETY: a plain driver query on the started access point, into a list it fills.
+        let listed = unsafe { esp_idf_svc::sys::esp_wifi_ap_get_sta_list(&mut stations) };
+        listed == esp_idf_svc::sys::ESP_OK && stations.num > 0
     }
 
     /// The access point up as `radio` says, the page served (the server and the DNS responder start once).
@@ -165,6 +179,13 @@ impl RemoteBeacon {
         }
         log::info!("beacon :: off the air: {why}");
     }
+}
+
+/// Whether `running` and `wanted` put the same access point on the air: name, password, channel and TX cap (the
+/// cycle is no part of it).
+fn same_air(running: &Radio, wanted: &Radio) -> bool {
+    (&running.ssid, &running.password, running.channel, running.power_dbm)
+        == (&wanted.ssid, &wanted.password, wanted.channel, wanted.power_dbm)
 }
 
 /// The page from the glider's `latest` report, its figures aged by the report's own age.
