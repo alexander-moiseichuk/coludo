@@ -1,0 +1,10 @@
+[package]
+name = "sim_link"
+description = "The HITL sim-link frames: SENSORS (host -> board) and FINS (board -> host), allocation-free, versioned, CRC-checked (doc/specs/sim-link.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+recorder_wire.workspace = true  # crc32: the IEEE CRC-32 zlib and Python's binascii compute

@@ -34,6 +34,7 @@ databoard = { path = "crates/databoard" }
 layout = { path = "crates/layout" }
 drivers = { path = "crates/drivers" }
 controller = { path = "crates/controller" }
+sim_link = { path = "crates/sim_link" }
 # the device traits the drivers are written over (I2c, SpiDevice, DelayNs); esp-idf-hal implements the same 1.0
 embedded-hal = "1"
 serde = { version = "1", features = ["derive"] }
