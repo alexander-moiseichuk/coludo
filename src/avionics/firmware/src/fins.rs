@@ -246,7 +246,6 @@ impl Fins {
 
     /// The flight loop's command for fin `index` (plan B `set_angle`): compare-and-set, nothing written when the
     /// clamped angle is the one already commanded.
-    #[expect(dead_code, reason = "the flight loop's, M13 stage 4")]
     pub fn set_angle(&mut self, index: usize, degrees: f64) {
         if let Some(command) = self.fins.get_mut(index).and_then(|fin| fin.servo.set_angle(degrees)) {
             self.write(index, command, false);
@@ -274,6 +273,11 @@ impl Fins {
 }
 
 impl Fins {
+    /// The index of the fin named `name`.
+    pub fn index(&self, name: &str) -> Option<usize> {
+        self.fins.iter().position(|fin| fin.name == name)
+    }
+
     /// A probe sweep of every fin, or of the one named `only`; None when `only` names no fin.
     pub fn sweep(&self, only: Option<&str>) -> Option<Sweep> {
         let order: Vec<usize> = (0..self.fins.len())

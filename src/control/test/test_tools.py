@@ -1132,6 +1132,7 @@ _RUST_STREAMS: dict = {
     'separation': ('controller/src/streams.rs', 'SEPARATION_FIELDS'),
     'sequencer': ('controller/src/streams.rs', 'SEQUENCER_FIELDS'),
     'checkpoint': ('controller/src/streams.rs', 'CHECKPOINT_FIELDS'),
+    'flight': ('controller/src/streams.rs', 'FLIGHT_FIELDS'),
     'vetoes': ('controller/src/streams.rs', 'VETOES_FIELDS'),
 }
 """
@@ -1148,6 +1149,7 @@ _PLAN_B_STREAMS: dict = {
     'separation': 'drivers/separation.py',
     'sequencer': 'tasks/sequencer.py',
     'checkpoint': 'warmstart.py',
+    'flight': 'tasks/flight.py',
 }
 
 

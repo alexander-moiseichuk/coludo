@@ -110,6 +110,8 @@ _FIELDS: dict = {
     'servo_eleron_right': ('angle', 'pulse_us', 'done'),
     'servo_yaw': ('angle', 'pulse_us', 'done'),
     'checkpoint': ('stage', 'altitude', 'speed', 'airspeed', 'ticks_ms'),
+    'flight': ('stage', 'active', 'airspeed_cms', 'fin_cap', 'roll_sp', 'pitch_sp', 'heading_err', 'roll_cmd',
+               'pitch_cmd', 'yaw_cmd', 'wind_cms', 'wind_from', 'reckoning'),
     'separation': ('event', 'stage', 'moment', 'duration'),
     'sequencer': ('stage', 'reason'),
     'sequencer_events': ('stage', 'reason'),

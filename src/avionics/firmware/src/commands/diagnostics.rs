@@ -223,11 +223,18 @@ pub fn verify(_message: &Message, context: &mut Context) -> Reply {
         }
     }
     let mission = &context.mission;
-    let readiness = controller::readiness(
+    let mut readiness = controller::readiness(
         &context.config.document,
         mission.zone.is_some(),
         !mission.sites.is_empty(),
     );
+    // plan B's `fins` check: a control surface with no servo holds its last angle while the others fly
+    if let Some(unbound) = crate::flight::unbound_surfaces().filter(|unbound| !unbound.is_empty()) {
+        readiness.insert(
+            "fins",
+            format!("no driver for {} -- reduced control authority", unbound.join(", ")),
+        );
+    }
     super::ok_json(&json!({
         "pass": problems.is_empty(),
         "devices": devices.devices().into_iter().collect::<BTreeMap<_, _>>(),

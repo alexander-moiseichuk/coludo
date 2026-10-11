@@ -70,6 +70,8 @@ pub enum Kind {
     Hitl,
     /// A fin servo (SG90, MG90S): its pin and settings read from the entry, its PWM on LEDC (M13).
     Servo,
+    /// The flight loop: its law read from the entry and the fins section, its steps on the control thread (M13).
+    Flight,
     /// Run natively by the firmware, with nothing to set up: up.
     Native,
     /// A plan B implementation not ported yet: failed with [`NOT_PORTED_YET`].
@@ -84,7 +86,7 @@ pub enum Kind {
 const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "bluetooth"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 4] = ["adxl375", "bno055", "bmp280", "flight"];
+const NOT_PORTED: [&str; 3] = ["adxl375", "bno055", "bmp280"];
 
 /// What runs `entry`. The LSM6DSO32 is an SPI part unless its entry binds it to I2C (plan B's lsm6dso32.py:144: the
 /// `bus` defaults to 'spi').
@@ -105,6 +107,7 @@ pub fn classify(entry: &Entry) -> Kind {
         "field" => Kind::Field,
         "hitl" => Kind::Hitl,
         "sg90" | "mg90s" => Kind::Servo,
+        "flight" => Kind::Flight,
         implementation if NATIVE.contains(&implementation) => Kind::Native,
         implementation if NOT_PORTED.contains(&implementation) => Kind::NotPorted,
         _ => Kind::Unknown,

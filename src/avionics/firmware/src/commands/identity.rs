@@ -9,6 +9,7 @@ use cc_protocol::Message;
 use esp_idf_svc::sys;
 use sequencer::Flight;
 use serde::Serialize;
+use serde_json::Value;
 
 use super::{Context, Reply};
 use crate::board;
@@ -87,10 +88,10 @@ struct Health<'a> {
     armed: bool,
     /// The device tasks that came up, false once a task's loop crashed (plan B's `{name, ok}`).
     tasks: Vec<Task<'a>>,
-    /// The live flight panel (plan B cc_client.py:510-512, flight.vitals): absent without an attitude or an
-    /// airspeed provider.
+    /// The live flight panel (plan B cc_client.py:510-512, flight.vitals): the flight loop's vitals while it runs
+    /// (M13), else the fused attitude and airspeed; absent without an attitude or an airspeed provider.
     #[serde(skip_serializing_if = "Option::is_none")]
-    flight: Option<FlightPanel>,
+    flight: Option<Value>,
     /// The calibrations the devices wait for, {name: instruction}; absent when none is pending (plan B
     /// cc_client.py:443-514).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,9 +99,9 @@ struct Health<'a> {
     degraded: Vec<String>,
 }
 
-/// `health.flight`, minimal until the flight loop is ported (M13 adds the fins, the fin cap, reach, the turn radius,
-/// the heading error and the wind): the fused attitude and airspeed, each null while no source is fresh. The airspeed
-/// is the fused `airspeed` (the pitot) where plan B showed its governor's estimate, which M13 ports.
+/// `health.flight` of a config without a flight loop: the fused attitude and airspeed, each null while no source is
+/// fresh. The airspeed is the fused `airspeed` (the pitot); with the loop it is the governor's estimate
+/// (crate::flight::vitals).
 #[derive(Serialize)]
 struct FlightPanel {
     /// m/s to 0.1.
@@ -117,22 +118,27 @@ struct AttitudePanel {
     pitch: i32,
 }
 
-/// The flight panel from `topology` at `now_us`; None without an attitude or an airspeed quantity.
-fn flight_panel(topology: &crate::devices::Topology, now_us: u64) -> Option<FlightPanel> {
-    let attitude = topology.vector("attitude");
+/// The flight panel from `topology` at `now_us`: the flight loop's vitals while it runs (crate::flight), else the
+/// minimal panel; None without an attitude or an airspeed quantity.
+fn flight_panel(topology: &crate::devices::Topology, now_us: u64) -> Option<Value> {
+    let attitude = topology
+        .vector("attitude")
+        .and_then(|parameter| parameter.read(now_us))
+        .map(|reading| reading.value.map(|degrees| degrees.round_ties_even() as i32));
+    if let Some(vitals) = crate::flight::vitals(attitude) {
+        return Some(vitals);
+    }
     let airspeed = topology.scalar("airspeed");
-    if attitude.is_none() && airspeed.is_none() {
+    if topology.vector("attitude").is_none() && airspeed.is_none() {
         return None;
     }
-    Some(FlightPanel {
+    serde_json::to_value(FlightPanel {
         airspeed: airspeed
             .and_then(|parameter| parameter.read(now_us))
             .map(|reading| (reading.value * 10.0).round_ties_even() / 10.0),
-        attitude: attitude.and_then(|parameter| parameter.read(now_us)).map(|reading| {
-            let [heading, roll, pitch] = reading.value.map(|degrees| degrees.round_ties_even() as i32);
-            AttitudePanel { heading, roll, pitch }
-        }),
+        attitude: attitude.map(|[heading, roll, pitch]| AttitudePanel { heading, roll, pitch }),
     })
+    .ok()
 }
 
 /// One `health.tasks` item.

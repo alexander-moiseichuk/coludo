@@ -83,8 +83,9 @@ use crate::status::FLIGHT;
 const PRIORITY: u8 = 20;
 
 /// The control thread's stack (internal: a flight thread); grown as the tick takes on the IMU, the attitude filter
-/// and the flight law, each step measured with `heap stacks`.
-const STACK_SIZE: usize = 6 << 10;
+/// and the flight law, each step measured with `heap stacks`. 6 KB kept 996 bytes never used with the flight loop on
+/// the pad, and an IMU probe's float formatting overflowed it (M13).
+const STACK_SIZE: usize = 8 << 10;
 
 /// The lateness budget a tick must keep, microseconds (the M6 proof: max <= 200 us under FHD@25 and bus load).
 pub const LATENESS_BUDGET_US: u32 = 200;
@@ -1210,6 +1211,7 @@ pub fn start(
     sequencer: Option<SequencerMember>,
     attitude: Option<AttitudeMember>,
     fins: Option<crate::fins::Fins>,
+    flight: Option<crate::devices::FlightMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
     writer: FlightWriter<'static>,
@@ -1241,6 +1243,7 @@ pub fn start(
                     sequencer,
                     attitude,
                     fins,
+                    flight,
                     topology,
                     table,
                     writer,
@@ -1268,6 +1271,7 @@ fn run(
     sequencer: Option<SequencerMember>,
     attitude: Option<AttitudeMember>,
     mut fins: Option<crate::fins::Fins>,
+    flight: Option<crate::devices::FlightMember>,
     topology: &'static Topology,
     table: &'static Table<'static>,
     mut writer: FlightWriter<'static>,
@@ -1361,6 +1365,10 @@ fn run(
     // the fins' probe sweep under way, and the INA226's power it samples
     let mut sweeping: Sweeping = None;
     let power = topology.scalar("power");
+    // the flight loop (M13): its law steps every tick after the stage machine, its fins through their owner here; on
+    // the heap, as this stack has no room for the law's state beside a probe's float formatting
+    let mut flight_loop =
+        flight.map(|member| Box::new(crate::flight::FlightLoop::new(&member, topology, fins.as_ref())));
     RUNNING.store(true, Ordering::Release);
     loop {
         // SAFETY: this task's own notification value, index 0, cleared on take.
@@ -1436,6 +1444,11 @@ fn run(
         }
         if let Some(machine) = &mut machine {
             machine.tick(now_us as u64, period_us as u64 / 2, &mut writer);
+        }
+        if let Some(flight_loop) = &mut flight_loop {
+            // SAFETY: a plain read of the monotonic timer.
+            let flight_us = unsafe { sys::esp_timer_get_time() } as u64;
+            flight_loop.tick(flight_us, writer.flight(), fins.as_mut());
         }
         // SAFETY: a plain read of the monotonic timer.
         let work = (unsafe { sys::esp_timer_get_time() } - now_us).clamp(0, i64::from(u32::MAX)) as u32;

@@ -20,7 +20,8 @@ The run, one scenario:
   5. The board's saved config and mission restored, and a reboot (unless --keep-config).
 
 It prints the lines tools/hitl_collect.sh parses from plan B's hitl_run: `SESSION <session> <motor> noise <n> wind
-<w>`, `STAGE <id> <name>` per change, a trace every 5 s of glide, `DONE` or `TIMEOUT <stage>`, `RUN_END`.
+<w>`, `STAGE <id> <name>` per change, a trace every 5 s of glide, `DONE` or `TIMEOUT <stage>`, `FINS <n> of <answers>
+...` (how many answers carried fins, and each fin's angle range), `RUN_END`.
 
   tools/hitl_host.py --ip 192.168.102.152 --hub taster                  # the taster, F15, clean
   tools/hitl_host.py --ip 192.168.102.162 --hub TMS-7F --noise 0.05 --wind 6 --wind-dir 210
@@ -240,6 +241,8 @@ class _Sim:
         self.seq = 0
         self.answer: dict | None = None  # the board's latest FINS
         self.answers = 0
+        self.with_fins = 0  # answers carrying fins
+        self.fin_range: list = []  # [low, high] per fin over those answers
         self.ignited = False  # set by the main thread once armed and the pad dwell is over
         self.sim_time = 0.0
         self.wall_start: float | None = None
@@ -268,6 +271,10 @@ class _Sim:
             fins = decode_fins(frame)
             if fins is not None:
                 self.answers += 1
+                if fins['fins'] is not None:
+                    self.with_fins += 1
+                    self.fin_range = [[min(low, angle), max(high, angle)] for (low, high), angle in
+                                      zip(self.fin_range or [[angle, angle] for angle in fins['fins']], fins['fins'])]
                 if self.answer is None or (fins['seq'] - self.answer['seq']) & 0xFFFFFFFF < 1 << 31:
                     self.answer = fins
 
@@ -496,6 +503,8 @@ def main() -> int:
         wall = time.monotonic() - (sim.wall_start or started)
         print('CLOCK sim=%.2f wall=%.2f lag=%.2f frames=%d answers=%d'
               % (sim.sim_time, wall, wall - sim.sim_time, sim.seq, sim.answers))
+        print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
+            '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
         print('RUN_END')
     finally:
         if not args.keep_config:

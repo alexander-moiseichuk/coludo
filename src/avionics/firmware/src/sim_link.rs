@@ -236,7 +236,7 @@ fn run(member: HitlMember, topology: &'static Topology) {
             stage: flight.stage as u8,
             armed: flight.armed,
             launched: flight.launched,
-            fins: None,
+            fins: fin_angles(),
         };
         let _ = socket.send_to(&answer.encode(), sender);
     }
@@ -353,6 +353,17 @@ fn record(name: &str, sensors: &Sensors, change: Option<f32>, now_us: u64, strea
         let row = mag.map(|counts| Cell::I32(counts.round() as i32));
         crate::sensors::record(name, magnetometer, overflowing, now_us, &row);
     }
+}
+
+/// The fins the board commands, as FINS carries them (left elevon, right elevon, yaw, plan B's surface names), None
+/// unless all three are servos that came up: the host then flies them neutral.
+fn fin_angles() -> Option<[i16; 3]> {
+    let angle = |name: &str| crate::fins::inspection(name).map(|[angle, _, _]| angle as i16);
+    Some([
+        angle("servo_eleron_left")?,
+        angle("servo_eleron_right")?,
+        angle("servo_yaw")?,
+    ])
 }
 
 /// The [`REFUSED`] slot of `refusal`.

@@ -179,6 +179,16 @@ const HITL_QUANTITIES: [&str; 13] = [
 /// The `hitl` source's timeout, ms (plan B hitl.py `provided`).
 const HITL_TIMEOUT_MS: u32 = 1000;
 
+/// The flight loop once its entry came up: the control thread runs it (crate::flight, M13).
+pub struct FlightMember {
+    /// The entry's name: its log lines'.
+    pub name: &'static str,
+    /// The entry: the gains, the schedule, the guidance and wind knobs.
+    pub entry: Value,
+    /// The config's `fins` section: the mixer, the limit multiplier.
+    pub fins: Value,
+}
+
 /// A fin servo once its entry came up: its pin and logic, for crate::fins.
 pub struct ServoMember {
     /// The entry's name: its stream's and its log lines'.
@@ -487,6 +497,8 @@ pub struct Devices {
     pub hitl: Option<HitlMember>,
     /// The fin servos that came up, in config order.
     pub servos: Vec<ServoMember>,
+    /// The flight loop, when its entry came up.
+    pub flight: Option<FlightMember>,
 }
 
 /// Crashes each entry of `table` named in `names` that came up, with `reason`: the thread that would run it did not
@@ -519,6 +531,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut field = None;
     let mut hitl = None;
     let mut servos = Vec::new();
+    let mut flight = None;
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -565,6 +578,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::Field => set_up_field(entry, &mut field),
             Kind::Hitl => set_up_hitl(document, entry, &mut hitl),
             Kind::Servo => set_up_servo(document, entry, &mut servos),
+            Kind::Flight => set_up_flight(document, entry, &mut flight),
             Kind::Checkpoint => {
                 let (outcome, came_up) =
                     set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
@@ -612,6 +626,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         field,
         hitl,
         servos,
+        flight,
     }
 }
 
@@ -990,6 +1005,38 @@ fn set_up_servo(document: &Value, entry: &Entry<'static>, servos: &mut Vec<Servo
         |line| log::info!("{line}"),
     );
     servos.extend(came_up);
+    outcome
+}
+
+/// The flight loop's bring-up (plan B tasks/flight.py setup): the entry and the config's `fins` section, in one
+/// attempt; a second flight loop fails, since one law drives the fins.
+fn set_up_flight(document: &Value, entry: &Entry<'static>, flight: &mut Option<FlightMember>) -> Result<(), String> {
+    let running = flight.as_ref().map(|member: &FlightMember| member.name);
+    let mut came_up = None;
+    let outcome = controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| match running {
+            Some(running) => Attempt::Raised {
+                error: format!("one flight loop only: '{running}' drives the fins"),
+                diagnosis: None,
+            },
+            None => {
+                came_up = Some(FlightMember {
+                    name: entry.name,
+                    entry: Value::Object(entry.fields.clone()),
+                    fins: document.get("fins").cloned().unwrap_or(Value::Null),
+                });
+                Attempt::Up
+            }
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    );
+    if came_up.is_some() {
+        *flight = came_up;
+    }
     outcome
 }
 

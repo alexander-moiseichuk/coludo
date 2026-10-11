@@ -86,6 +86,8 @@ pub struct FlightLaw {
     wind_min_speed: f32,
     /// The course stamp the wind was last fed at.
     wind_stamp: Option<u64>,
+    /// The last control step's guidance inputs, its airspeed and wind filled in: the reach estimate's.
+    inputs: Inputs,
     /// The nominal L/D for the reach estimate (`glide_ratio`).
     glide_ratio: f32,
 }
@@ -139,14 +141,16 @@ impl FlightLaw {
             steps: 0,
             wind_min_speed: flight["wind"]["min_speed"].as_f64().unwrap_or(3.0) as f32,
             wind_stamp: None,
+            inputs: Inputs::default(),
             glide_ratio: number("glide_ratio").unwrap_or(5.5),
         }
     }
 
-    /// One control step (plan B `_tick`); the fin angles to write, in the mixer's surface order. Out of a control
-    /// stage, disarmed, with no fresh attitude, or with the boost still on the rod, the fins go neutral (and stay
-    /// as they were while nothing ever engaged).
-    pub fn step(&mut self, input: &Step) -> &[i32] {
+    /// One control step (plan B `_tick`). Returns whether it actuated: then [`FlightLaw::angles`] are the fin angles
+    /// to write. Out of a control stage, disarmed, with no fresh attitude, or with the boost still on the rod, it
+    /// actuates neutral; out of a control stage while nothing engaged it does not actuate at all, so an operator's
+    /// fin command on the pad stands (plan B returns before `_actuate`).
+    pub fn step(&mut self, input: &Step) -> bool {
         let elapsed = self.slice(input.now_us);
         self.governor.step(
             &mut self.mixer,
@@ -160,12 +164,13 @@ impl FlightLaw {
                 self.neutral();
                 self.active = false;
                 self.stage = None;
+                return true;
             }
-            return &self.angles;
+            return false;
         }
         let Some([heading, roll, pitch]) = input.attitude else {
             self.neutral();
-            return &self.angles;
+            return true;
         };
         self.pitch = pitch;
         if !self.active {
@@ -177,15 +182,15 @@ impl FlightLaw {
         }
         self.stage = Some(input.stage);
         let (wind_east, wind_north) = self.wind.components();
-        let inputs = Inputs {
+        self.inputs = Inputs {
             airspeed: self.governor.airspeed(),
             wind_east,
             wind_north,
             ..input.guidance
         };
-        if !self.guidance.compute(input.stage, heading, input.now_us, &inputs) {
+        if !self.guidance.compute(input.stage, heading, input.now_us, &self.inputs) {
             self.neutral(); // the boost still on the rod: no q to bite
-            return &self.angles;
+            return true;
         }
         self.run_pids(roll, pitch, elapsed, input.rate);
         self.steps += 1;
@@ -195,7 +200,27 @@ impl FlightLaw {
                 self.feed_wind(course, speed, heading, input.drift);
             }
         }
+        true
+    }
+
+    /// The fin angles last actuated, in the mixer's surface order (neutral before any).
+    pub fn angles(&self) -> &[i32] {
         &self.angles
+    }
+
+    /// The zone's reach from the last control step's inputs (plan B flight.vitals `reach`), None without a zone.
+    pub fn reach(&self) -> Option<crate::guidance::Reach> {
+        self.guidance.reachability(self.glide_ratio, &self.inputs)
+    }
+
+    /// The endgame's turn-radius floor at the airspeed estimate, metres (plan B vitals `r_min_m`).
+    pub fn landing_turn_radius(&self) -> Option<f32> {
+        self.guidance.landing_turn_radius(self.governor.airspeed())
+    }
+
+    /// Seed the airspeed estimate (a warm start's crumb, plan B flight.seed_airspeed), its fin cap with it.
+    pub fn seed_airspeed(&mut self, airspeed: f32) {
+        self.governor.seed_airspeed(&mut self.mixer, airspeed);
     }
 
     /// The slice since the last step in seconds; the nominal one on the first step or after a gap past 0.5 s

@@ -106,8 +106,9 @@ fn replay(case: &Value) -> Vec<String> {
             drift: [0.0; 2],
         };
         // the fixture lists the fins sorted by surface name; take the law's in that order, whatever the mixer's
+        law.step(&step);
         let mut named: Vec<(String, i32)> = law
-            .step(&step)
+            .angles()
             .to_vec()
             .into_iter()
             .zip(law.mixer().surfaces())
@@ -212,4 +213,45 @@ fn the_flight_law_answers_as_plan_b() {
         mismatches.len(),
         mismatches.iter().take(25).cloned().collect::<Vec<_>>().join("\n")
     );
+}
+
+#[test]
+fn the_law_actuates_nothing_on_the_pad_until_it_engages() {
+    let fixture: Value = serde_json::from_str(TRACE).expect("the fixture parses");
+    let input = &fixture["cases"][0]["input"];
+    let mut law = FlightLaw::new(&input["flight"], &input["fins"]);
+    let step = |stage: Stage, armed: bool, now_us: u64| Step {
+        stage,
+        armed,
+        now_us,
+        attitude: Some([30.0, 5.0, -6.0]),
+        rate: Some([0.0; 3]),
+        readings: Readings::default(),
+        guidance: Inputs::default(),
+        ground: None,
+        ground_stamp: None,
+        drift: [0.0; 2],
+    };
+    let neutral = law.angles().to_vec();
+    // on the pad, armed or not, a never-engaged law writes no fin: an operator's command stands
+    assert!(!law.step(&step(Stage::Setting, false, 10_000)));
+    assert!(!law.step(&step(Stage::Setting, true, 20_000)));
+    // gliding and armed it controls; disarmed in the glide it centres once, then holds off
+    assert!(law.step(&step(Stage::Gliding, true, 30_000)));
+    assert!(law.active());
+    assert!(
+        law.step(&step(Stage::Gliding, false, 40_000)),
+        "leaving control centres the fins"
+    );
+    assert_eq!(law.angles(), neutral.as_slice());
+    assert!(!law.active());
+    assert!(!law.step(&step(Stage::Gliding, false, 50_000)), "then nothing");
+    // engaged without a fresh attitude: neutral, every tick
+    assert!(law.step(&step(Stage::Gliding, true, 60_000)));
+    let blind = Step {
+        attitude: None,
+        ..step(Stage::Gliding, true, 70_000)
+    };
+    assert!(law.step(&blind));
+    assert_eq!(law.angles(), neutral.as_slice());
 }

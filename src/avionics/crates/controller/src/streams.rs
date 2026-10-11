@@ -64,6 +64,29 @@ pub const PITOT_FIELDS: [&str; 3] = ["dynamic_pressure", "airspeed_cms", "temper
 /// The INA226's columns (plan B drivers/ina226.py:93-95): mV, mA, mW and the over-current ALERT trips since boot.
 pub const POWER_FIELDS: [&str; 4] = ["voltage_mv", "current_ma", "power_mw", "alerts"];
 
+/// The flight loop's columns (plan B tasks/flight.py:146-148), as `flight.csv` whatever the entry's name: the stage id,
+/// active, the airspeed estimate in cm/s, the fin cap, the roll and pitch setpoints in centidegrees, the heading error,
+/// the per-axis demands in whole degrees, the wind in cm/s and its from-direction, and whether it navigates
+/// dead-reckoned.
+pub const FLIGHT_FIELDS: [&str; 13] = [
+    "stage",
+    "active",
+    "airspeed_cms",
+    "fin_cap",
+    "roll_sp",
+    "pitch_sp",
+    "heading_err",
+    "roll_cmd",
+    "pitch_cmd",
+    "yaw_cmd",
+    "wind_cms",
+    "wind_from",
+    "reckoning",
+];
+
+/// flight.csv, the flight loop's stream whatever its entry's name (plan B's `Telemetry('flight.csv', ...)`).
+const FLIGHT_FILE: &str = "flight.csv";
+
 /// The fin servos' columns (plan B drivers/sg90.py:187, the MG90S alike): the commanded angle in whole degrees, the
 /// pulse driven in us, and done (0 a command issued, 1 a move completed by its estimate).
 pub const SERVO_FIELDS: [&str; 3] = ["angle", "pulse_us", "done"];
@@ -164,6 +187,7 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
         "ina226" => (named(), &POWER_FIELDS, false),
         "vl53l1x" | "vl53l4cx" => (named(), &LASER_FIELDS, false),
         "sg90" | "mg90s" => (named(), &SERVO_FIELDS, false),
+        "flight" => (FLIGHT_FILE.to_string(), &FLIGHT_FIELDS, false),
         driver if GNSS_DRIVERS.contains(&driver) => (named(), &GNSS_FIELDS, false),
         "attitude" => (attitude::STREAM.to_string(), &attitude::FIELDS, false),
         "separation" => (SEPARATION_FILE.to_string(), &SEPARATION_FIELDS, true),
@@ -217,8 +241,8 @@ pub fn vetoes(entry: &Entry) -> Option<Stream> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, LASER_FIELDS, MAGNETOMETER_FIELDS, PITOT_FIELDS, POWER_FIELDS,
-        SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, VETOES_FIELDS, stream, vetoes,
+        BAROMETER_FIELDS, CHECKPOINT_FIELDS, FLIGHT_FIELDS, IMU_FIELDS, LASER_FIELDS, MAGNETOMETER_FIELDS,
+        PITOT_FIELDS, POWER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, VETOES_FIELDS, stream, vetoes,
     };
     use super::{EVENT_FIELDS, GGA_FIELDS, GNSS_FIELDS, SERVO_FIELDS, SKY_FIELDS, companions};
     use board_config::{directory, entries};
@@ -306,6 +330,7 @@ mod tests {
                 ("servo_eleron_right", measured("servo_eleron_right.csv", &SERVO_FIELDS)),
                 ("sequencer", event("sequencer.csv", &SEQUENCER_FIELDS)),
                 ("checkpoint", event("checkpoint.csv", &CHECKPOINT_FIELDS)),
+                ("flight", measured("flight.csv", &FLIGHT_FIELDS)),
             ]
         );
         let vetoes: Vec<(&str, Stream)> = entries(&document)
@@ -480,10 +505,26 @@ mod tests {
     }
 
     #[test]
+    fn the_flight_loop_writes_plan_b_s_columns_to_flight_csv_whatever_its_name() {
+        assert_eq!(
+            FLIGHT_FIELDS.join(";"),
+            "stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;roll_cmd;pitch_cmd;yaw_cmd;wind_cms;\
+             wind_from;reckoning",
+            "plan B tasks/flight.py:146"
+        );
+        assert_eq!(
+            only(&json!({"components": [{"name": "law", "activity": "flight", "telemetry_ms": 100}]})),
+            Some(measured("flight.csv", &FLIGHT_FIELDS)),
+            "renamed and with plan B's window: still flight.csv, never decimated"
+        );
+    }
+
+    #[test]
     fn the_stage_machine_is_known_by_its_activity_not_its_name() {
         assert_eq!(
             only(&json!({"components": [{"name": "sequencer", "activity": "flight"}]})),
-            None
+            Some(measured("flight.csv", &FLIGHT_FIELDS)),
+            "the flight loop, not the stage machine"
         );
         assert_eq!(
             only(&json!({"components": [{"name": "sequencer", "activity": "sequencers"}]})),

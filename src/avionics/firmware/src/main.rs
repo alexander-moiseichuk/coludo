@@ -21,6 +21,7 @@ mod devices;
 mod diagnostics;
 mod files;
 mod fins;
+mod flight;
 mod gnss;
 mod link;
 mod logging;
@@ -205,6 +206,7 @@ fn main() -> anyhow::Result<()> {
         field,
         hitl,
         servos,
+        flight,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     // the warm start, while the parts and the flight word's one writer are still main's and nothing else runs: a reset
     // in flight resumes the crumb's stage, its barometers rebased to the pad and the mission's launch point and zone
@@ -270,6 +272,7 @@ fn main() -> anyhow::Result<()> {
         sequencer,
         attitude,
         fins,
+        flight,
         topology,
         table,
         writer,

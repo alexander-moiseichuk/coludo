@@ -22,9 +22,9 @@
 //! and no launch point yet (none set by the operator, none pinned at arm) takes the live GNSS fix there, as plan B's
 //! freeze_launch at BOOSTING entry did; the zone's centre stands in when there is none.
 //!
-//! Not restored yet, each logged once at the restore when a crumb carries it: the airspeed seed (no flight law runs
-//! yet; M10 restores the pitot tare), and the ground of a barometer other than the ICP-10111 (none other publishes an
-//! elevation yet). A warm-started flight records no video (the camera starts only when armed in SETTING) and never
+//! The airspeed seed goes to the flight law when the control thread starts (crate::flight, M13); M10 restores the
+//! pitot tare. Not restored yet, logged once at the restore when a crumb carries it: the ground of a barometer other
+//! than the ICP-10111. A warm-started flight records no video (the camera starts only when armed in SETTING) and never
 //! rejoins the link (it is launched).
 //!
 //! The crumb lives in the shared `nvs` partition, namespace `coludo`, which plan B and the boot count share, while
@@ -285,7 +285,7 @@ fn apply(plan: &ApplyPlan, mission: &mut Mission, members: &mut [Vec<Member>; 2]
         }
     }
     if let Some(airspeed) = plan.airspeed_ms {
-        log::info!("warmstart :: airspeed {airspeed} m/s not seeded: no flight law runs yet");
+        crate::flight::keep_warm_airspeed(airspeed); // the flight law's seed when the control thread starts
     }
     if writer.restore(plan.stage, plan.armed).is_none() {
         return;
@@ -326,6 +326,8 @@ static MISSION: Mutex<(Option<[Position; 2]>, Option<Position>)> = Mutex::new((N
 /// Publishes `mission`'s zone and launch point for the checkpoint's freeze: the operator's point or the one `arm`
 /// pinned, None without one (the freeze then takes the live fix).
 pub fn publish_mission(mission: &Mission) {
+    // the flight loop's own view, lock-free: the control thread may take no lock
+    crate::flight::publish_mission(mission);
     let zone = mission.zone.map(|zone| [zone.top_left, zone.bottom_right]);
     *MISSION.lock().unwrap_or_else(PoisonError::into_inner) = (zone, mission.launch_point(None));
 }
@@ -444,7 +446,7 @@ impl Keeping {
         let live = Live {
             altitude_m,
             speed_ms: None,
-            airspeed_ms: None,
+            airspeed_ms: crate::flight::airspeed(),
             ticks_ms: now_us / 1000,
         };
         let topology = self.topology;
@@ -508,7 +510,7 @@ impl Keeping {
     }
 
     /// One checkpoint's row at `now_us` (plan B warmstart.py `_checkpoint`): the stage's id, the altitude, the speed
-    /// and the airspeed (none runs yet), the uptime in ms; then its log line. A refused row is logged once a run: the
+    /// (none) and the flight law's airspeed, the uptime in ms; then its log line. A refused row is logged once a run: the
     /// crumb went first either way.
     fn record(&mut self, now_us: u64, stage: Stage, altitude_m: Option<f32>) {
         if let Some(telemetry) = &mut self.telemetry {
@@ -516,7 +518,7 @@ impl Keeping {
                 Cell::I32(i32::from(stage as u8)),
                 altitude_m.map_or(Cell::None, Cell::F32),
                 Cell::None, // speed
-                Cell::None, // airspeed
+                crate::flight::airspeed().map_or(Cell::None, Cell::F32),
                 Cell::I64((now_us / 1000) as i64),
             ];
             match telemetry.push(now_us, &row) {
