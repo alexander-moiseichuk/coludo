@@ -1471,7 +1471,7 @@ servo; ordered); a cap on warm cycles and a BOOSTING crumb that already reads se
 
 **Operator gains.** Active control in HITL. The fin-zero calibration UI works unchanged.
 
-### M14. HITL acceptance and SITL (2 days)
+### M14. HITL acceptance and SITL (2 days; DONE 2026-10-11 on the taster and the host)
 
 **Scope**
 - Fly the 12 `hitl_matrix.sh` scenarios × {E16, F15} on the taster (realtime).
@@ -1481,6 +1481,34 @@ servo; ordered); a cap on warm cycles and a BOOSTING crumb that already reads se
 **Proof.** `hitl_compare.py` against `doc/sims/TMS-7-postaudit_regression` r1..r3. Each scenario and panel must
 stay inside its family's own run-to-run spread (wind median miss 7.7 m, low-noise 11.9 m; the high-noise and
 corner families are not gated on miss). All silent-success guards are kept.
+
+**As built (2026-10-11):**
+- **The reference is plan B's own code on today's sim, not the post-audit runs** (a divergence from the proof
+  above): those board runs flew the sim of 2026-08-30, before the measured polar and the endgame work, and only
+  their reduced numbers are kept. `tools/virtual_flight.py` is no reference either: its loop feeds no wind estimator
+  and hands its law the clean total speed, where plan B's on-board HITL (`tasks/hitl.py`) publishes the noised ground
+  speed and track. `tools/planb_sitl.py` runs plan B's Controller, `tasks/sequencer.py` and `tasks/flight.py` under the
+  golden shims behind the sim-link; fed the same frames it flies the Rust stack's flight. The post-audit study's
+  family spreads stay the miss tolerances.
+- **Lockstep is the SITLs'**: `tools/hitl_host.py --sitl` flies a host stack frame by frame, its clock the frame's
+  (doc/specs/sim-link.md); the board stays realtime on its gptimer.
+- **`src/avionics/sitl`** composes the board's crates with the firmware's own plumbing, moved into crates/controller
+  (the topology from the config, `HitlWriters`, `StageSources`, `FlightQuantities`), so the host cannot fly other
+  plumbing than the board.
+- `tools/hitl_matrix_host.sh` (the board's matrix, `hitl_matrix.sh`'s table, artefacts counted) and
+  `tools/hitl_matrix_compare.py` (`reference`, `sitl`, `compare`; gates: the apogee within 3 %, GLIDING within 0.5 s
+  and DONE everywhere, the miss on the wind and low-noise families within plan B's seeds widened by 7.7 m and
+  11.9 m). `tools/recorder_flight.py` anchors a cut on the BOOSTING row when no |a| holds 3 g (the sim's boost).
+
+**Proof (2026-10-11; doc/sims/TMS-7-rust_hitl_m14):**
+- SITL, 3 seeds × 12 scenarios × 2 motors: **72 of 72** Rust flights inside plan B's; seed for seed GLIDING never
+  differs, the miss differs by a median 0.3-1.1 m outside the high-noise family (where the flights fork).
+- The taster, run r1, realtime: **23 of 24** pass. E16 corner_stress's apogee came 0.9 s early once; three re-flights
+  and 10 seeds on each SITL stayed inside plan B's range. Not gated by the family rule; recorded.
+- The board on the shared plumbing: F15 clean 38.7 m in the zone, as before the refactor.
+
+**Not here:** a second board run (r2) for the board's own run-to-run spread; the matrix's reboot and drop scenarios
+on the SITLs (they are realtime events).
 
 **Operator gains.** Evidence that the Rust board flies like plan B, which is the precondition to migrate 7F.
 
