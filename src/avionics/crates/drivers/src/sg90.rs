@@ -426,13 +426,20 @@ impl Servo {
         Ok((applied, command))
     }
 
-    /// The probe sweep's stops, in order: (`min`, min_deg), (`max`, max_deg), (`neutral`, neutral).
-    pub fn probe_targets(&self) -> [(&'static str, i32); 3] {
-        [
-            ("min", self.min_degrees),
-            ("max", self.max_degrees),
-            ("neutral", self.neutral),
-        ]
+    /// The probe sweep's stops, in order: (`min`, ...), (`max`, ...), (`neutral`, neutral). With no `limit`, plan
+    /// B's full range, min_deg and max_deg. With `limit` (whole degrees, the board config's `fins.mixer.limit_deg`),
+    /// neutral -/+ limit inside min_deg..max_deg: the port's own, at the operator's word (2026-10-11) -- a sweep
+    /// to the servo's own ends drives the fins past the linkage's deflection range, so the wings had to be opened
+    /// for every probe; the configured range is the one the fins fly.
+    pub fn probe_targets(&self, limit: Option<i32>) -> [(&'static str, i32); 3] {
+        let (low, high) = limit.map_or((self.min_degrees, self.max_degrees), |limit| {
+            let limit = limit.max(0);
+            (
+                (self.neutral - limit).max(self.min_degrees),
+                (self.neutral + limit).min(self.max_degrees),
+            )
+        });
+        [("min", low), ("max", high), ("neutral", self.neutral)]
     }
 
     /// Judge a probe sweep (sg90.probe's close): `watching` says a fresh INA226 power baseline was taken, `sampled`

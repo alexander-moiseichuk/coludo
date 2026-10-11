@@ -47,6 +47,25 @@ fn probe_parts(
         );
         verdicts.push((switch, None));
     }
+    // the fins: swept one at a time on the control thread, their owner, within the flown deflection range (plan B
+    // sg90.probe sweeps the servos' whole range; the operator, 2026-10-11)
+    match crate::control::probe_fins(name) {
+        Some(Ok(swept)) => {
+            for fin in swept {
+                log_sweep(&fin);
+                let verdict = fin.verdict.map_or_else(
+                    || Some("not swept: the board left SETTING, armed or launched".to_string()),
+                    |verdict| verdict.failure(),
+                );
+                verdicts.push((fin.name, verdict));
+            }
+        }
+        Some(Err(error)) => {
+            log::warn!("probe :: {error}");
+            errors.push(("fins", error));
+        }
+        None => {}
+    }
     for (port, label) in [(0, "i2c0"), (1, "i2c1")] {
         match crate::owner::probe_port(port, name) {
             Ok(probed) => verdicts.extend(probed),
@@ -75,6 +94,30 @@ fn probe_parts(
         verdicts.push((crate::recorder::NAME, verdict));
     }
     (verdicts, errors)
+}
+
+/// A fin sweep's probe lines, plan B's (drivers/sg90.py probe): each stop reached, the power it drew over its
+/// baseline when the INA226 watched, and the failure.
+fn log_sweep(fin: &crate::fins::Swept) {
+    let name = fin.name;
+    for &(label, degrees) in &fin.stops[..fin.reached] {
+        log::info!("{name} :: probe: sweep to {label} {degrees} ...");
+        log::info!("{name} :: probe: at {label} {degrees} ok");
+    }
+    if fin.watching && fin.sampled == 0 {
+        log::info!("{name} :: probe: INA went stale during the sweep -- no closed-loop verdict");
+    } else if fin.watching {
+        let high = matches!(fin.verdict, Some(drivers::sg90::ProbeVerdict::Drew { high: true, .. }));
+        log::info!(
+            "{name} :: probe: peak draw {} mW over {} mW baseline{}",
+            fin.peak_rise_mw,
+            fin.baseline_mw,
+            if high { " (HIGH -- stall/binding?)" } else { "" }
+        );
+    }
+    if let Some(failure) = fin.verdict.and_then(|verdict| verdict.failure()) {
+        log::warn!("{name} :: probe FAILED: {failure}");
+    }
 }
 
 /// `probe [name|all]`: {name: null | problem} for the objects with a self-test, as plan B answers it

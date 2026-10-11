@@ -195,10 +195,21 @@ enum Request {
         properties: Value,
         reply: SyncSender<Result<FinAnswer, ChangeRefused>>,
     },
+    /// Sweep every fin, or the one named, through its probe stops (M13): answered when the sweep is over.
+    ProbeFins {
+        only: Option<String>,
+        reply: SyncSender<SweepAnswer>,
+    },
 }
 
 /// A fin update's answer: None for a name that is no fin, else the keys applied or the servo's refusal.
 type FinAnswer = Option<Result<Vec<&'static str>, String>>;
+
+/// A probe sweep's answer: each fin's sweep, or why none ran.
+type SweepAnswer = Result<Vec<crate::fins::Swept>, String>;
+
+/// The probe sweep under way and where its answer goes.
+type Sweeping = Option<(crate::fins::Sweep, SyncSender<SweepAnswer>)>;
 
 /// The control thread's mailbox, once it runs.
 static MAILBOX: OnceLock<SyncSender<Request>> = OnceLock::new();
@@ -1347,6 +1358,9 @@ fn run(
     );
     let mut first_us = None;
     let mut ticks: i64 = 0;
+    // the fins' probe sweep under way, and the INA226's power it samples
+    let mut sweeping: Sweeping = None;
+    let power = topology.scalar("power");
     RUNNING.store(true, Ordering::Release);
     loop {
         // SAFETY: this task's own notification value, index 0, cleared on take.
@@ -1393,8 +1407,23 @@ fn run(
             imu.as_mut(),
             spi_bus.as_ref(),
             fins.as_mut(),
+            &mut sweeping,
             writer.flight().stage,
         );
+        if let (Some(fins), Some((sweep, _))) = (fins.as_mut(), sweeping.as_mut()) {
+            let flight = writer.flight();
+            let may_move = flight.stage == Stage::Setting && !flight.armed && !flight.launched;
+            // SAFETY: a plain read of the monotonic timer.
+            let sweep_us = unsafe { sys::esp_timer_get_time() } as u64;
+            let power = power
+                .and_then(|parameter| parameter.read(sweep_us))
+                .map(|reading| reading.value);
+            if let Some(swept) = fins.step_sweep(sweep, sweep_us, power, may_move)
+                && let Some((_, reply)) = sweeping.take()
+            {
+                let _ = reply.send(Ok(swept));
+            }
+        }
         // the consumers' view of the IMU channels, where the stage machine reads them
         // SAFETY: a plain read of the monotonic timer.
         let read_us = unsafe { sys::esp_timer_get_time() } as u64;
@@ -1464,6 +1493,7 @@ fn serve(
     mut imu: Option<&mut Imu>,
     bus: Option<&SpiBus>,
     mut fins: Option<&mut crate::fins::Fins>,
+    sweeping: &mut Sweeping,
     stage: Stage,
 ) {
     for _ in 0..REQUESTS_PER_TICK {
@@ -1511,8 +1541,52 @@ fn serve(
                 };
                 let _ = reply.send(answer);
             }
+            Request::ProbeFins { only, reply } => {
+                if let Some(refusal) = refusal {
+                    let _ = reply.send(Err(refusal.to_string()));
+                } else if sweeping.is_some() {
+                    let _ = reply.send(Err("a fin probe sweep is under way".to_string()));
+                } else {
+                    match fins.as_deref().and_then(|fins| fins.sweep(only.as_deref())) {
+                        Some(sweep) => *sweeping = Some((sweep, reply)),
+                        None => {
+                            let _ = reply.send(Ok(Vec::new()));
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+/// The fins' probe sweep (plan B sg90.probe, M13): every fin, or the one named `only`, one at a time through its
+/// stops on the control thread, the INA226's power sampled as each travels. SETTING and disarmed only; a launch, an
+/// arm or a stage change before a fin leaves the fins left unswept.
+///
+/// Returns: each fin's sweep; None when no fin runs, or `only` names none.
+///
+/// Errors: the control thread is not running, busy, refused outside SETTING, already sweeping, or did not answer.
+pub fn probe_fins(only: Option<&str>) -> Option<Result<Vec<crate::fins::Swept>, String>> {
+    let count = crate::fins::count(only)?;
+    let Some(mailbox) = MAILBOX.get() else {
+        return Some(Err("the control thread is not running".to_string()));
+    };
+    let (reply, answer) = sync_channel(1);
+    if mailbox
+        .try_send(Request::ProbeFins {
+            only: only.map(str::to_string),
+            reply,
+        })
+        .is_err()
+    {
+        return Some(Err("the control thread is busy".to_string()));
+    }
+    // each fin: the settle, three stops of the sampling window, with a wide margin
+    let deadline = PROBE_DEADLINE + Duration::from_secs(3) * count as u32;
+    Some(match answer.recv_timeout(deadline) {
+        Ok(answer) => answer,
+        Err(_) => Err("the control thread did not finish the fin sweep".to_string()),
+    })
 }
 
 /// The operator's `update <servo> {trim|angle}` (M13): posted to the control thread, the fins' owner.

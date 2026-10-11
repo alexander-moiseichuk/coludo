@@ -250,7 +250,11 @@ fn main() -> anyhow::Result<()> {
         .then(|| {
             let names: Vec<&'static str> = servos.iter().map(|member| member.name).collect();
             let concurrency = loaded.document["fins"]["concurrency"].as_u64().unwrap_or(3) as usize;
-            fins::open(servos, concurrency)
+            // the probe sweeps the flown deflection range, not the servos' own (the operator, 2026-10-11)
+            let probe_limit = loaded.document["fins"]["mixer"]["limit_deg"]
+                .as_i64()
+                .and_then(|limit| i32::try_from(limit).ok());
+            fins::open(servos, concurrency, probe_limit)
                 .inspect_err(|error| {
                     log::error!("fins :: the PWM did not start: {error}");
                     devices::crash(table, names.iter().map(|name| Some(*name)), &error.to_string());

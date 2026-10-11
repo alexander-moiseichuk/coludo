@@ -2792,6 +2792,10 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 - **Stale values in inspect:** a stale channel reads null instead of plan B's extrapolated `value()`.
 - **HITL sensor mask:** after masking the `_SIM_SENSORS` sensors by config name, `sim_link.rs` refuses to start
   if one is still enabled; plan B only masks (M12).
+- **The fin probe sweeps the flown range (the operator, 2026-10-11):** neutral -/+ `fins.mixer.limit_deg`, inside
+  each servo's `min_deg..max_deg`. Plan B sweeps the servo's whole 0..180 deg range, past the linkage's deflection, so
+  the wings had to be opened for every probe. The boot centring is staggered by `fins.concurrency`, where plan B
+  centred every servo at once (M13).
 - **`_readiness` and `enabled`:** Rust reads a missing `enabled` as enabled everywhere, the Controller's
   meaning. Python's `_readiness` read it as disabled, an inconsistency that is not ported.
 - **`config_id` floats:** the CPython f64-repr semantics are used. Identical for every committed file (all

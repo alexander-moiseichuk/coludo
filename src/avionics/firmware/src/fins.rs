@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
-use drivers::sg90::{Command, PERIOD_US, Servo};
+use drivers::sg90::{Command, PERIOD_US, PROBE_SAMPLE_MS, PROBE_SAMPLES, PROBE_SETTLE_MS, ProbeVerdict, Servo};
 use esp_idf_svc::sys;
 use recorder::{Cell, Telemetry};
 use serde_json::Value;
@@ -68,6 +68,54 @@ struct Fin {
 pub struct Fins {
     /// In config order.
     fins: Vec<Fin>,
+    /// The probe sweep's half-range, whole degrees: the board config's `fins.mixer.limit_deg` (None sweeps the
+    /// servos' own ranges, plan B's).
+    probe_limit: Option<i32>,
+}
+
+/// One fin's probe sweep, for the probe's lines (crate::commands, plan B sg90.probe) and its verdict.
+#[derive(Clone, Copy, Debug)]
+pub struct Swept {
+    /// The fin.
+    pub name: &'static str,
+    /// The stops, (label, degrees): min, max, neutral.
+    pub stops: [(&'static str, i32); 3],
+    /// How many stops it reached.
+    pub reached: usize,
+    /// A fresh INA226 power baseline was taken.
+    pub watching: bool,
+    /// That baseline, mW.
+    pub baseline_mw: i32,
+    /// The fresh power readings taken during the sweep.
+    pub sampled: u32,
+    /// The largest reading over the baseline, mW (0 when none rose).
+    pub peak_rise_mw: i32,
+    /// The verdict; None when the fin was not swept.
+    pub verdict: Option<ProbeVerdict>,
+}
+
+/// Where a fin's sweep stands.
+#[derive(Clone, Copy, Debug)]
+enum Phase {
+    /// The next fin starts at the next step.
+    Start,
+    /// At neutral, the power settling to its baseline until this time, µs.
+    Settle(u64),
+    /// At stop `stop`, `samples` taken, the next due at `next_us`.
+    Stop { stop: usize, samples: u32, next_us: u64 },
+}
+
+/// The probe sweep in progress (plan B sg90.probe, as a control-thread state machine): one fin at a time, each to
+/// its stops with the power sampled while it travels; stepped every control tick, never waiting.
+pub struct Sweep {
+    /// The fins to sweep, by index.
+    order: Vec<usize>,
+    /// The fin under way, an index into `order`.
+    position: usize,
+    /// Where it stands.
+    phase: Phase,
+    /// One per fin in `order`.
+    swept: Vec<Swept>,
 }
 
 /// Drives every servo pin of `document` (sensors and components with a servo driver, enabled or not) LOW as an
@@ -95,10 +143,10 @@ pub fn hold_low(document: &Value) {
 }
 
 /// Gives each servo its LEDC channel (no pulse yet), then centres the fins `concurrency` at a time, each group
-/// given its travel time; the fins, for the control thread.
+/// given its travel time; the fins, for the control thread. `probe_limit` bounds the probe sweep ([`Sweep`]).
 ///
 /// Errors: the LEDC timer or a channel would not configure (the fins are then crashed by the caller).
-pub fn open(members: Vec<ServoMember>, concurrency: usize) -> anyhow::Result<Fins> {
+pub fn open(members: Vec<ServoMember>, concurrency: usize, probe_limit: Option<i32>) -> anyhow::Result<Fins> {
     let timer = sys::ledc_timer_config_t {
         speed_mode: MODE,
         duty_resolution: RESOLUTION_BITS,
@@ -137,7 +185,7 @@ pub fn open(members: Vec<ServoMember>, concurrency: usize) -> anyhow::Result<Fin
         });
     }
     let _ = NAMES.set(fins.iter().map(|fin| fin.name).collect());
-    let mut owned = Fins { fins };
+    let mut owned = Fins { fins, probe_limit };
     owned.centre(concurrency.max(1));
     Ok(owned)
 }
@@ -223,6 +271,139 @@ impl Fins {
             Err(refusal) => Err(refusal.to_string()),
         })
     }
+}
+
+impl Fins {
+    /// A probe sweep of every fin, or of the one named `only`; None when `only` names no fin.
+    pub fn sweep(&self, only: Option<&str>) -> Option<Sweep> {
+        let order: Vec<usize> = (0..self.fins.len())
+            .filter(|&index| only.is_none_or(|only| self.fins[index].name == only))
+            .collect();
+        if order.is_empty() {
+            return None;
+        }
+        let swept = order
+            .iter()
+            .map(|&index| Swept {
+                name: self.fins[index].name,
+                stops: self.fins[index].servo.probe_targets(self.probe_limit),
+                reached: 0,
+                watching: false,
+                baseline_mw: 0,
+                sampled: 0,
+                peak_rise_mw: 0,
+                verdict: None,
+            })
+            .collect();
+        Some(Sweep {
+            order,
+            position: 0,
+            phase: Phase::Start,
+            swept,
+        })
+    }
+
+    /// One control tick of `sweep` at `now_us`: `power` the INA226's fresh reading (mW), `may_move` whether a fin
+    /// may move now (SETTING, disarmed, no launch), checked before each fin -- when it may not, the fins left are not
+    /// swept. Returns the fins' sweeps once it is over.
+    pub fn step_sweep(
+        &mut self,
+        sweep: &mut Sweep,
+        now_us: u64,
+        power: Option<f32>,
+        may_move: bool,
+    ) -> Option<Vec<Swept>> {
+        let sample_us = u64::from(PROBE_SAMPLE_MS) * 1000;
+        while let Some(&index) = sweep.order.get(sweep.position) {
+            let swept = &mut sweep.swept[sweep.position];
+            match sweep.phase {
+                Phase::Start => {
+                    if !may_move {
+                        sweep.position = sweep.order.len(); // the fins left stay unswept: verdict None
+                        break;
+                    }
+                    let command = self.fins[index].servo.apply(f64::from(swept.stops[2].1));
+                    self.write(index, command, false);
+                    swept.watching = power.is_some();
+                    sweep.phase = if swept.watching {
+                        Phase::Settle(now_us + u64::from(PROBE_SETTLE_MS) * 1000)
+                    } else {
+                        Phase::Stop {
+                            stop: 0,
+                            samples: 0,
+                            next_us: now_us,
+                        }
+                    };
+                }
+                Phase::Settle(until_us) => {
+                    if now_us < until_us {
+                        return None;
+                    }
+                    match power {
+                        Some(power) => swept.baseline_mw = power as i32,
+                        None => swept.watching = false, // the INA went stale while settling: no verdict
+                    }
+                    sweep.phase = Phase::Stop {
+                        stop: 0,
+                        samples: 0,
+                        next_us: now_us,
+                    };
+                }
+                Phase::Stop { stop, samples, next_us } => {
+                    if now_us < next_us {
+                        return None;
+                    }
+                    if samples == 0 {
+                        let command = self.fins[index].servo.apply(f64::from(swept.stops[stop].1));
+                        self.write(index, command, false);
+                    }
+                    if swept.watching
+                        && let Some(power) = power
+                    {
+                        swept.sampled += 1;
+                        swept.peak_rise_mw = swept.peak_rise_mw.max(power as i32 - swept.baseline_mw);
+                    }
+                    let samples = samples + 1;
+                    if samples < PROBE_SAMPLES {
+                        sweep.phase = Phase::Stop {
+                            stop,
+                            samples,
+                            next_us: next_us + sample_us,
+                        };
+                        return None;
+                    }
+                    swept.reached = stop + 1;
+                    if stop + 1 < swept.stops.len() {
+                        sweep.phase = Phase::Stop {
+                            stop: stop + 1,
+                            samples: 0,
+                            next_us: next_us + sample_us,
+                        };
+                        return None;
+                    }
+                    swept.verdict = Some(self.fins[index].servo.probe_verdict(
+                        swept.watching,
+                        swept.sampled,
+                        swept.peak_rise_mw,
+                    ));
+                    sweep.position += 1;
+                    sweep.phase = Phase::Start;
+                    return None; // the next fin starts at the next tick
+                }
+            }
+        }
+        Some(std::mem::take(&mut sweep.swept))
+    }
+}
+
+/// How many fins a sweep of `only` (every fin when None) covers; None when no fin runs, or `only` names none.
+pub fn count(only: Option<&str>) -> Option<usize> {
+    let names = NAMES.get()?;
+    let count = names
+        .iter()
+        .filter(|name| only.is_none_or(|only| **name == only))
+        .count();
+    (count > 0).then_some(count)
 }
 
 /// Fin `name`'s state for `inspect` (plan B sg90 inspect): the commanded angle, the pulse driven (us), the trim; None
