@@ -17,14 +17,14 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use board_config::{Hub, Network, Wifi};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
+use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, WifiEvent};
 
 use crate::commands::Executor;
 use crate::config::Credentials;
@@ -41,8 +41,15 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 const TICK: Duration = Duration::from_secs(1);
 /// How long a cancelled association settles before the next one starts (plan B `_DISCONNECT_SETTLE_MS`).
 const DISCONNECT_SETTLE: Duration = Duration::from_millis(300);
+/// How long a join waits for its address (esp-idf-svc's own connect timeout), and how often it looks.
+const JOIN_TIMEOUT: Duration = Duration::from_secs(15);
+const JOIN_POLL: Duration = Duration::from_millis(50);
 
-/// Join, dial, serve -- forever.
+/// The station's last disconnect reason (IDF's `wifi_err_reason_t`, at least 1), 0 since a join cleared it: a join
+/// that drops ends at once instead of waiting out [`JOIN_TIMEOUT`] (the boot's first association on this C6 drops
+/// ~2.4 s in and the second joins in ~4 s: the board joined at 27 s, the operator asked why, 2026-10-11).
+static DISCONNECTED: AtomicU32 = AtomicU32::new(0);
+
 /// Whether the TCP/IP stack is up: the Wi-Fi driver brings it up in [`run`], and a socket opened before it asserts in
 /// lwIP (the sim-link's UDP socket waits for it, crate::sim_link).
 static STACK_UP: AtomicBool = AtomicBool::new(false);
@@ -52,6 +59,7 @@ pub fn stack_up() -> bool {
     STACK_UP.load(Ordering::Acquire)
 }
 
+/// Join, dial, serve -- forever.
 pub fn run(
     modem: Modem<'static>,
     event_loop: EspSystemEventLoop,
@@ -60,6 +68,7 @@ pub fn run(
     credentials: Credentials,
     executor: &Executor,
 ) -> ! {
+    let events = event_loop.clone();
     let mut driver = BlockingWifi::wrap(
         EspWifi::new(modem, event_loop.clone(), Some(partition)).expect("the C6 Wi-Fi driver"),
         event_loop,
@@ -76,6 +85,15 @@ pub fn run(
         ))
         .inspect_err(|error| log::warn!("link :: wifi storage: {error}"));
     }
+    // the station's drops, for join(): the subscription lives as long as this loop, forever
+    let _disconnects = events
+        .subscribe::<WifiEvent, _>(|event| {
+            if let WifiEvent::StaDisconnected(info) = event {
+                DISCONNECTED.store(u32::from(info.reason()).max(1), Ordering::Release);
+            }
+        })
+        .inspect_err(|error| log::warn!("link :: no disconnect events, a dropped join waits its timeout: {error}"))
+        .ok();
     STACK_UP.store(true, Ordering::Release);
     // the microSD over HTTP (recordings, logs) -- only now: the Wi-Fi driver brought up the TCP/IP stack it needs
     let _files = crate::files::serve()
@@ -90,8 +108,12 @@ pub fn run(
     let mut rotation = Rotation::new(wifi.networks.len());
     let mut parked = false;
     let mut gave_up = false;
+    let mut first = true;
     loop {
-        std::thread::sleep(TICK);
+        // the first look at once, the boot's join not a tick later
+        if !std::mem::take(&mut first) {
+            std::thread::sleep(TICK);
+        }
         // SAFETY: reads the flag hosted_no_reboot sets when it parks the failed C6 transport.
         if unsafe { esp_idf_svc::sys::hosted_link_down() } {
             // every Wi-Fi call would now wait out a 5 s RPC timeout, for nothing: the link is gone until the next
@@ -239,15 +261,10 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: 
         },
         ..Default::default()
     };
-    if wifi.is_started()? {
-        // an attempt at an absent network stays pending, and the next connect then answers ESP_ERR_WIFI_CONN
-        // forever (plan B wifi._clear_pending, measured on this C6): disconnect clears it, harmless when idle.
-        // The RPC to the C6 is asynchronous, so the cancel settles before the next attempt starts.
-        let _ = wifi.wifi_mut().disconnect();
-        std::thread::sleep(DISCONNECT_SETTLE);
-    }
-    wifi.set_configuration(&Configuration::Client(configuration))?;
     if !wifi.is_started()? {
+        // the station mode with the network before the start: a mode change on a started radio raises the station's
+        // start again, and its connect with it
+        wifi.set_configuration(&Configuration::Client(configuration.clone()))?;
         wifi.start()?;
         // modem sleep (the C6's default) parks every incoming packet until the next DTIM beacon: ~150 ms per
         // hub round trip instead of ~2 ms. The pad link wants the latter.
@@ -256,6 +273,14 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: 
             esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE)
         })?;
     }
+    // an attempt at an absent network stays pending, and the next connect then answers ESP_ERR_WIFI_CONN forever
+    // (plan B wifi._clear_pending, measured on this C6); the station's start raises a connect of its own, before any
+    // configuration, which failed ESP_ERR_WIFI_SSID and left the boot's first join to drop and wait out its 15 s
+    // (joined at 27 s). Disconnect clears either, harmless when idle; the RPC to the C6 is asynchronous, so the
+    // cancel settles before the configuration
+    let _ = wifi.wifi_mut().disconnect();
+    std::thread::sleep(DISCONNECT_SETTLE);
+    wifi.set_configuration(&Configuration::Client(configuration))?;
     if let Some(dbm) = network.tx_power_dbm {
         // the radio's cap in quarter-dBm (MicroPython's txpower): the operator's signal-level knob
         // SAFETY: a plain driver call on the started Wi-Fi.
@@ -268,11 +293,23 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: 
     }
     // the C6 keeps the last network in its own NVS and may already be connecting to it; it then answers
     // ESP_ERR_WIFI_CONN, which here means "in progress", so wait for the address all the same
+    DISCONNECTED.store(0, Ordering::Release);
     match wifi.wifi_mut().connect() {
         Err(error) if error.code() == esp_idf_svc::sys::ESP_ERR_WIFI_CONN => {}
         other => other?,
     }
-    wifi.wait_netif_up()?;
+    // the address, or the drop: a join that drops ends now, and the link's next tick tries again
+    let started = Instant::now();
+    while !wifi.wifi().is_up()? {
+        let reason = DISCONNECTED.load(Ordering::Acquire);
+        anyhow::ensure!(reason == 0, "dropped (reason {reason})");
+        anyhow::ensure!(
+            started.elapsed() < JOIN_TIMEOUT,
+            "no address within {} s",
+            JOIN_TIMEOUT.as_secs()
+        );
+        std::thread::sleep(JOIN_POLL);
+    }
     Ok(())
 }
 
