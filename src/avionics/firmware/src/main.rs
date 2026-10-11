@@ -20,6 +20,7 @@ mod control;
 mod devices;
 mod diagnostics;
 mod files;
+mod gnss;
 mod link;
 mod logging;
 mod owner;
@@ -189,6 +190,7 @@ fn main() -> anyhow::Result<()> {
         attitude,
         checkpoint,
         watchdog,
+        gnss,
     } = devices::bring_up(&loaded.document, &mut lent, recorder::get().is_some());
     // the warm start, while the parts and the flight word's one writer are still main's and nothing else runs: a reset
     // in flight resumes the crumb's stage, its barometers rebased to the pad and the mission's launch point and zone
@@ -252,6 +254,14 @@ fn main() -> anyhow::Result<()> {
     let tick_ms = 1000.0 / schedule_hz.max(1) as f32;
     if let Err(error) = supervisor::start(board.clone(), table, keeping, watchdog, tick_ms) {
         log::error!("supervisor :: did not start: {error}");
+    }
+    // the GNSS on UART2, on its own core-0 thread (M11): a UART that would not open crashes its entry, so `arm` refuses
+    if let Some(member) = gnss {
+        let name = member.name;
+        if let Err(error) = gnss::start(member, peripherals.uart2, topology) {
+            log::error!("{name} :: did not start: {error}");
+            devices::crash(table, [Some(name)], &error.to_string());
+        }
     }
     let wifi = board_config::wifi(&loaded.document);
     let credentials = config::Credentials::new(settings);

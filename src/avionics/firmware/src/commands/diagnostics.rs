@@ -58,6 +58,8 @@ fn probe_parts(
     }
     // the attitude filter: its gyro rate fresh (plan B tasks/attitude.py probe)
     verdicts.extend(crate::control::probe_attitude(name));
+    // the GNSS: its NMEA lines advance (plan B gnss.py probe)
+    verdicts.extend(crate::gnss::probe(name));
     // the bluetooth stubs: plan B's probe on a board with no BLE radio, which passes (bluetooth.py:20-31)
     for entry in table.entries().iter().filter(|entry| {
         entry.active() && entry.implementation == "bluetooth" && name.is_none_or(|name| name == entry.name)
@@ -198,11 +200,12 @@ pub fn verify(_message: &Message, context: &mut Context) -> Reply {
 pub fn probe_mission(context: &Context) -> Option<String> {
     log::info!("mission :: probe: launch position ...");
     // plan B logs the position as soon as it resolves, before the zone range check can fail
-    if let Some(origin) = context.mission.launch_point(None) {
+    let fix = crate::gnss::position(context.topology);
+    if let Some(origin) = context.mission.launch_point(fix) {
         let [latitude, longitude] = origin.degrees();
         log::info!("mission :: probe: position ok ({latitude:.5}, {longitude:.5})");
     }
-    let problem = context.mission.probe(None);
+    let problem = context.mission.probe(fix);
     if let Some(problem) = &problem {
         log::warn!("mission :: probe FAILED: {problem}");
     }

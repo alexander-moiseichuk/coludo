@@ -68,6 +68,23 @@ pub const POWER_FIELDS: [&str; 4] = ["voltage_mv", "current_ma", "power_mw", "al
 /// the data-ready edges its read took.
 pub const LASER_FIELDS: [&str; 2] = ["agl", "irq_runs"];
 
+/// The GNSS fix's columns (plan B gnss.py:173): lat and lon (written from the 1e-7 degree integers, 7 decimals), the
+/// ground speed in knots and the course in degrees, as an RMC gives them.
+pub const GNSS_FIELDS: [&str; 4] = ["lat", "lon", "speed_kn", "course"];
+
+/// The GNSS's GGA columns (plan B gnss.py:186-188, `<name>_gga.csv`): altitude and elevation in m, the fix quality,
+/// the satellites used and the HDOP in hundredths.
+pub const GGA_FIELDS: [&str; 5] = ["altitude_m", "elevation_m", "quality", "satellites", "hdop_cd"];
+
+/// The GNSS's sky columns (plan B gnss.py:195-197, `<name>_sky.csv`): one row per diagnostics burst.
+pub const SKY_FIELDS: [&str; 8] = ["in_view", "used", "mode", "cn0_1", "cn0_2", "cn0_3", "cn0_4", "antenna"];
+
+/// A task's durable event record (plan B task.py:104, `<name>_events.csv`): one text per event.
+pub const EVENT_FIELDS: [&str; 1] = ["event"];
+
+/// The GNSS drivers (plan B's two NMEA modules): each writes `<name>.csv` and the three companions ([`companions`]).
+const GNSS_DRIVERS: [&str; 2] = ["neo6mv2", "atgm336h"];
+
 /// The separation switch's columns: plan B's event (`separated` or `nested`, and the port's `blip`) and the stage after
 /// it (drivers/separation.py:57), then the port's `moment`, the uptime (µs) of the first edge of the episode the event
 /// concludes (drivers::separation `Event::moment_us`: for a separation, the separation moment), and `duration`, the µs
@@ -142,6 +159,7 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
         "sdp810" => (named(), &PITOT_FIELDS, false),
         "ina226" => (named(), &POWER_FIELDS, false),
         "vl53l1x" | "vl53l4cx" => (named(), &LASER_FIELDS, false),
+        driver if GNSS_DRIVERS.contains(&driver) => (named(), &GNSS_FIELDS, false),
         "attitude" => (attitude::STREAM.to_string(), &attitude::FIELDS, false),
         "separation" => (SEPARATION_FILE.to_string(), &SEPARATION_FIELDS, true),
         SEQUENCER => (named(), &SEQUENCER_FIELDS, true),
@@ -154,6 +172,30 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
         decimate_us: NEVER_DECIMATED,
         durable,
     })
+}
+
+/// The streams an entry writes beside its own `<name>.csv`, each with the device key it is registered under: the
+/// GNSS's `<name>_gga.csv`, `<name>_sky.csv` and the durable `<name>_events.csv` (plan B gnss.py, task.py:104), all
+/// never decimated. Empty for any other entry.
+pub fn companions(entry: &Entry) -> Vec<(String, Stream)> {
+    if !GNSS_DRIVERS.contains(&entry.implementation) {
+        return Vec::new();
+    }
+    let companion = |suffix: &str, fields: &'static [&'static str], durable: bool| {
+        let key = format!("{}_{suffix}", entry.name);
+        let stream = Stream {
+            file: format!("{key}.csv"),
+            fields,
+            decimate_us: NEVER_DECIMATED,
+            durable,
+        };
+        (key, stream)
+    };
+    vec![
+        companion("gga", &GGA_FIELDS, false),
+        companion("sky", &SKY_FIELDS, false),
+        companion("events", &EVENT_FIELDS, true),
+    ]
 }
 
 /// The stream the stage machine's entry writes beside its own `<name>.csv`: its veto episodes, the fixed `vetoes.csv`
@@ -173,6 +215,7 @@ mod tests {
         BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, LASER_FIELDS, MAGNETOMETER_FIELDS, PITOT_FIELDS, POWER_FIELDS,
         SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, VETOES_FIELDS, stream, vetoes,
     };
+    use super::{EVENT_FIELDS, GGA_FIELDS, GNSS_FIELDS, SKY_FIELDS, companions};
     use board_config::{directory, entries};
     use serde_json::{Value, json};
 
@@ -251,6 +294,7 @@ mod tests {
                 ("laser_agl", measured("laser_agl.csv", &LASER_FIELDS)),
                 ("laser_agl_l1x", measured("laser_agl_l1x.csv", &LASER_FIELDS)),
                 ("power_ina226", measured("power_ina226.csv", &POWER_FIELDS)),
+                ("gnss", measured("gnss.csv", &GNSS_FIELDS)),
                 ("separation", event("separation.csv", &SEPARATION_FIELDS)),
                 ("sequencer", event("sequencer.csv", &SEQUENCER_FIELDS)),
                 ("checkpoint", event("checkpoint.csv", &CHECKPOINT_FIELDS)),
@@ -499,8 +543,35 @@ mod tests {
     }
 
     #[test]
+    fn the_gnss_writes_its_fix_and_three_companions() {
+        for driver in ["neo6mv2", "atgm336h"] {
+            let document = sensor("gnss", driver, Some(json!(200)));
+            assert_eq!(only(&document), Some(measured("gnss.csv", &GNSS_FIELDS)), "{driver}");
+            let found = companions(&entries(&document)[0]);
+            assert_eq!(
+                found,
+                vec![
+                    ("gnss_gga".to_string(), measured("gnss_gga.csv", &GGA_FIELDS)),
+                    ("gnss_sky".to_string(), measured("gnss_sky.csv", &SKY_FIELDS)),
+                    ("gnss_events".to_string(), event("gnss_events.csv", &EVENT_FIELDS)),
+                ]
+            );
+        }
+        assert!(companions(&entries(&sensor("imu", "lsm6dso32", None))[0]).is_empty());
+        assert_eq!(GNSS_FIELDS.join(";"), "lat;lon;speed_kn;course");
+        assert_eq!(
+            GGA_FIELDS.join(";"),
+            "altitude_m;elevation_m;quality;satellites;hdop_cd"
+        );
+        assert_eq!(
+            SKY_FIELDS.join(";"),
+            "in_view;used;mode;cn0_1;cn0_2;cn0_3;cn0_4;antenna"
+        );
+    }
+
+    #[test]
     fn a_part_the_port_does_not_record_has_no_stream() {
-        for driver in ["adxl375", "bno055", "bmp280", "atgm336h"] {
+        for driver in ["adxl375", "bno055", "bmp280"] {
             assert_eq!(only(&sensor("part", driver, Some(json!(10)))), None, "{driver}");
         }
         assert_eq!(only(&json!({"sensors": [{"name": "no_implementation"}]})), None);

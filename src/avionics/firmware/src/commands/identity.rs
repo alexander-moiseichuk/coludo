@@ -72,7 +72,7 @@ struct Health<'a> {
     stage: &'static str,
     /// The board revision the firmware runs as: 'v1.1', 'v0.1 (declared)' or 'undecided' (layout::Resolved::label).
     layout: &'a str,
-    /// The board's own GNSS fix, null until there is a fresh one (the GNSS driver lands with port plan M11).
+    /// The board's own GNSS fix, [latitude, longitude] degrees, null while none is fresh (M11).
     position: Option<[f64; 2]>,
     /// The laser height above ground, null unless fresh (M10).
     agl: Option<f32>,
@@ -107,6 +107,7 @@ struct Task<'a> {
 pub fn health(_message: &Message, context: &mut Context) -> Reply {
     let mission = &context.mission;
     let flight = FLIGHT.load();
+    let fix = crate::gnss::position(context.topology);
     let info = Health {
         temp: context.board.celsius(),
         mem_free: board::heap_free(sys::MALLOC_CAP_8BIT),
@@ -119,7 +120,7 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         uptime: board::uptime_ms(),
         stage: flight.stage.name(),
         layout: &context.layout,
-        position: None,
+        position: fix.map(|fix| fix.degrees()),
         // plan B cc_client: the laser's AGL when fresh (a stale range-limited value is no AGL)
         agl: context.topology.scalar("agl").and_then(|agl| {
             // SAFETY: a plain read of the monotonic timer.
@@ -129,7 +130,7 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         clock: clock::text(),
         epoch: clock::epoch(),
         // decimal degrees on the wire: f64 at this JSON boundary only (f32 prints 25.514379 as 25.51438)
-        launchpad: mission.launch_point(None).map(|point| point.degrees()),
+        launchpad: mission.launch_point(fix).map(|point| point.degrees()),
         launchpad_set: mission.position_set(),
         site: Some(mission.site.clone()).filter(|site| !site.is_empty()),
         armed: flight.armed,

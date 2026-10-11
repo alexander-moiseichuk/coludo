@@ -442,6 +442,32 @@ pub fn spi_bus(document: &Value, id: u8) -> Option<SpiSpecification> {
     })
 }
 
+/// A UART bus as the GNSS opens it (M11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UartSpecification {
+    /// The bus id, its key under `buses.uart`: the ESP32-P4's UART<id>.
+    pub id: u8,
+    /// The transmit line's GPIO (`tx`, to the module's RX).
+    pub tx: u8,
+    /// The receive line's GPIO (`rx`, from the module's TX).
+    pub rx: u8,
+    /// The baud rate (`baud`).
+    pub baud: u32,
+}
+
+/// The UART bus `id`, as plan B opens it: `UART(id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])`
+/// (gnss.py setup). None when the config defines no such bus (plan B's setup returns False), or for a spec that lacks
+/// `tx`, `rx` or a whole `baud` in 1..=u32::MAX, or names no GPIO for a line (plan B's constructor raises).
+pub fn uart_bus(document: &Value, id: u8) -> Option<UartSpecification> {
+    let specification = bus(document, "uart", id)?;
+    Some(UartSpecification {
+        id,
+        tx: gpio(specification.get("tx")?)?,
+        rx: gpio(specification.get("rx")?)?,
+        baud: Some(clock_hz(specification.get("baud"), 0)).filter(|&baud| baud > 0)?,
+    })
+}
+
 /// Plan B's `config.bus` (config.py:681-696): the spec under `buses.<kind>.<id>`, looked up by the id's text
 /// (`str(ident)`), since the keys of a JSON object are text. None when a level is missing, or is not an object
 /// (plan B raises on a level that is present but no dict; validate() refuses one).
@@ -874,8 +900,8 @@ fn implementation(device: &Map<String, Value>) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, DEFAULT_SCHEDULE_HZ, Hub, Network, Watchdog, board_id,
-        camera, checkpoint, max_range_m, mcu, schedule_hz, warm_start, watchdog, wifi,
+        Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, DEFAULT_SCHEDULE_HZ, Hub, Network, UartSpecification,
+        Watchdog, board_id, camera, checkpoint, max_range_m, mcu, schedule_hz, uart_bus, warm_start, watchdog, wifi,
     };
     use serde_json::{Value, json};
 
@@ -887,6 +913,35 @@ mod tests {
             password: password.to_string(),
             tx_power_dbm: None,
         }
+    }
+
+    #[test]
+    fn a_uart_bus_needs_both_lines_and_a_whole_baud() {
+        let at = |spec: Value| uart_bus(&json!({"buses": {"uart": {"2": spec}}}), 2);
+        assert_eq!(
+            at(json!({"baud": 9600, "tx": 22, "rx": 23})),
+            Some(UartSpecification {
+                id: 2,
+                tx: 22,
+                rx: 23,
+                baud: 9600
+            })
+        );
+        assert_eq!(
+            at(json!({"baud": 9600.0, "tx": 22, "rx": 23})).map(|spec| spec.baud),
+            Some(9600)
+        );
+        // the log UART's spec names no rx: no GNSS on it; nor on a baud that is no whole number, or a pin past a GPIO
+        for refused in [
+            json!({"baud": 921600, "tx": 20}),
+            json!({"tx": 22, "rx": 23}),
+            json!({"baud": "9600", "tx": 22, "rx": 23}),
+            json!({"baud": 9600.5, "tx": 22, "rx": 23}),
+            json!({"baud": 9600, "tx": 22, "rx": 300}),
+        ] {
+            assert_eq!(at(refused.clone()), None, "{refused}");
+        }
+        assert_eq!(uart_bus(&json!({"buses": {"uart": {}}}), 2), None);
     }
 
     #[test]

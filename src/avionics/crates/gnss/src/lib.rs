@@ -61,6 +61,9 @@ const SENTENCE_GAP_US: i64 = 3_000_000;
 const BURST_QUIET_US: i64 = 500_000;
 
 /// RMC's speed is in knots; the airspeed governor wants m/s (plan B `_KNOTS_TO_MS`, the same truncated figure).
+/// The configuration families whose refusal is an event ([`Event::Rejected`]): CASIC's, MTK's and u-blox's.
+const REJECTED_FAMILIES: [&str; 3] = ["PCAS", "PMTK", "PUBX"];
+
 const KNOTS_TO_METRES_PER_SECOND: f32 = 0.514444;
 
 /// The ATGM's antenna supervisor (`$GPTXT,01,01,01,ANTENNA OPEN`) as the sky row's code. OPEN means the feed draws
@@ -231,6 +234,14 @@ pub enum Event {
     SkyOn,
     /// The diagnostics were switched off for the flight.
     SkyOff,
+    /// The module refused a configuration sentence of this family (`PCAS`, `PMTK`, `PUBX`): a u-blox answers one it
+    /// does not take with `$GPTXT,01,01,01,<family> inv format`. The port's own (plan B dropped the text), raised once
+    /// per family a session: a driver that does not match the module (the ATGM's PCAS sent to a NEO-6M) leaves the
+    /// module at its power-on output, and this is the only sign of it.
+    Rejected {
+        /// The family the refused sentence belongs to.
+        family: &'static str,
+    },
 }
 
 impl fmt::Display for Event {
@@ -254,6 +265,11 @@ impl fmt::Display for Event {
             }
             Event::SkyOn => formatter.write_str("sky diagnostics on"),
             Event::SkyOff => formatter.write_str("sky diagnostics off for flight"),
+            Event::Rejected { family } => write!(
+                formatter,
+                "the module refused a {family} sentence (inv format): its configuration did not take -- is the driver \
+                 the module's?"
+            ),
         }
     }
 }
@@ -377,6 +393,8 @@ pub struct Gnss {
     /// The diagnostics are on. The init ends with them on (the pad); a warm start into flight switches them off at
     /// its first tick.
     diagnosing: bool,
+    /// The sentence families the module refused this session, each evented once.
+    rejected: Vec<&'static str>,
 }
 
 impl Default for Gnss {
@@ -407,6 +425,7 @@ impl Gnss {
             lines: 0,
             ground_m: None,
             diagnosing: true,
+            rejected: Vec::new(),
         }
     }
 
@@ -533,6 +552,14 @@ impl Gnss {
                 }
             }
             "TXT" if fields.len() > 4 => {
+                if let Some(family) = REJECTED_FAMILIES
+                    .into_iter()
+                    .find(|family| fields[4].strip_prefix(family) == Some(" inv format"))
+                    && !self.rejected.contains(&family)
+                {
+                    self.rejected.push(family);
+                    events.push(Event::Rejected { family });
+                }
                 let Some(antenna) = Antenna::from_text(fields[4]) else {
                     return Ok(());
                 };

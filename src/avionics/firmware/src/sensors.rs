@@ -60,6 +60,8 @@ pub enum Kind {
     Checkpoint,
     /// The watchdog: its settings read from the entry, the task watchdog and the stall check on the supervisor.
     Watchdog,
+    /// The GNSS on its UART: its own thread reads it (crate::gnss, M11).
+    Gnss,
     /// Run natively by the firmware, with nothing to set up: up.
     Native,
     /// A plan B implementation not ported yet: failed with [`NOT_PORTED_YET`].
@@ -74,12 +76,10 @@ pub enum Kind {
 const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "bluetooth"];
 
 /// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 11] = [
+const NOT_PORTED: [&str; 9] = [
     "adxl375",
     "bno055",
     "bmp280",
-    "atgm336h",
-    "neo6mv2",
     "gnss_calib",
     "field",
     "sg90",
@@ -102,6 +102,7 @@ pub fn classify(entry: &Entry) -> Kind {
         "attitude" => Kind::Attitude,
         "checkpoint" => Kind::Checkpoint,
         "watchdog" => Kind::Watchdog,
+        "neo6mv2" | "atgm336h" => Kind::Gnss,
         implementation if NATIVE.contains(&implementation) => Kind::Native,
         implementation if NOT_PORTED.contains(&implementation) => Kind::NotPorted,
         _ => Kind::Unknown,

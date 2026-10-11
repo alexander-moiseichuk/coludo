@@ -729,6 +729,7 @@ dependencies = [
  "embuild",
  "esp-idf-svc",
  "flash_ring",
+ "gnss",
  "layout",
  "log",
  "mission",

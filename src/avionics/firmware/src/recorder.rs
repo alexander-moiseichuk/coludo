@@ -364,6 +364,18 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool)
             Ok(id) => devices.push((entry.name.to_string(), id)),
             Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", stream.file),
         }
+        // the GNSS also writes its GGA, sky and events streams (M11), each under its own device key
+        for (key, companion) in controller::companions(&entry) {
+            match registry.add(
+                &companion.file,
+                companion.fields,
+                companion.decimate_us,
+                companion.durable,
+            ) {
+                Ok(id) => devices.push((key, id)),
+                Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", companion.file),
+            }
+        }
         // the stage machine's entry also writes the veto episodes (M9), once whatever the entries
         if let Some(vetoes) = controller::vetoes(&entry)
             && !devices.iter().any(|(name, _)| name == VETOES)

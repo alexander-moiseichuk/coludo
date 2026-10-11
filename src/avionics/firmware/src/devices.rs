@@ -116,6 +116,21 @@ pub struct WatchdogMember {
     pub settings: board_config::Watchdog,
 }
 
+/// The GNSS once its entry came up: its thread takes it with UART2 (crate::gnss, M11).
+pub struct GnssMember {
+    /// The entry's name: the source of its quantities and its streams' prefix.
+    pub name: &'static str,
+    /// The module.
+    pub module: crate::gnss::Module,
+    /// The fix rate asked of the module (`hz`, plan B's default 1).
+    pub hz: i32,
+    /// Its UART, `buses.uart.<id>`.
+    pub uart: board_config::UartSpecification,
+}
+
+/// The UART the GNSS runs on: the one the firmware hands its thread (plan B's default `id`).
+const GNSS_UART: u8 = 2;
+
 /// The LSM6DSO32's sampling period when its entry gives none, ms (plan B lsm6dso32.py:39 `period_ms` 10).
 const IMU_PERIOD_MS: u32 = 10;
 
@@ -181,6 +196,14 @@ impl Topology {
     /// The vector quantity `quantity` (accel, rate, mag, attitude), when a provider of it came up.
     pub fn vector(&self, quantity: &str) -> Option<&Parameter<[f32; 3]>> {
         self.vectors
+            .iter()
+            .find(|parameter| parameter.name() == quantity)
+            .map(|parameter| &**parameter)
+    }
+
+    /// The position quantity `quantity` (`position`, 1e-7 degree), when a provider of it came up (M11).
+    pub fn position(&self, quantity: &str) -> Option<&Parameter<[i32; 2]>> {
+        self.positions
             .iter()
             .find(|parameter| parameter.name() == quantity)
             .map(|parameter| &**parameter)
@@ -378,6 +401,8 @@ pub struct Devices {
     pub checkpoint: Option<CheckpointMember>,
     /// The watchdog, when its entry came up.
     pub watchdog: Option<WatchdogMember>,
+    /// The GNSS, when its entry came up.
+    pub gnss: Option<GnssMember>,
 }
 
 /// Crashes each entry of `table` named in `names` that came up, with `reason`: the thread that would run it did not
@@ -405,6 +430,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut first_checkpoint = None;
     let mut watchdog = None;
     let mut first_watchdog = None;
+    let mut gnss = None;
     let spi_bus = open_spi(document, &entries);
     let mut outcomes = Vec::with_capacity(entries.len());
     for entry in &entries {
@@ -446,6 +472,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
             Kind::Separation => set_up_separation(document, entry, attempts, &mut separation),
             Kind::Sequencer => set_up_sequencer(entry, &mut sequencer),
             Kind::Attitude => set_up_attitude(entry, &mut attitude),
+            Kind::Gnss => set_up_gnss(document, entry, &mut gnss),
             Kind::Checkpoint => {
                 let (outcome, came_up) =
                     set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
@@ -488,6 +515,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         attitude,
         checkpoint,
         watchdog,
+        gnss,
     }
 }
 
@@ -669,6 +697,77 @@ fn set_up_separation(
         |line| log::info!("{line}"),
     );
     *separation = came_up;
+    outcome
+}
+
+/// The GNSS's bring-up (plan B gnss.py setup): its UART's spec from `buses.<bus>.<id>` (`uart`, 2 by default), in
+/// one attempt, since a config read again reads the same. No spec fails the entry with plan B's diagnosis (`no
+/// transport -- uart bus <id> undefined in config`); a UART other than UART2, or a second GNSS, fails it too (the
+/// firmware hands UART2 to one GNSS thread). The UART opens when the thread starts (main), which crashes the entry if
+/// it would not.
+fn set_up_gnss(document: &Value, entry: &Entry<'static>, gnss: &mut Option<GnssMember>) -> Result<(), String> {
+    let id = entry
+        .fields
+        .get("id")
+        .map_or(Some(GNSS_UART), |id| id.as_u64().and_then(|id| u8::try_from(id).ok()));
+    let kind = entry.fields.get("bus").and_then(Value::as_str).unwrap_or("uart");
+    let specification = id
+        .filter(|_| kind == "uart")
+        .and_then(|id| board_config::uart_bus(document, id));
+    let module = if entry.implementation == "atgm336h" {
+        crate::gnss::Module::Atgm
+    } else {
+        crate::gnss::Module::Neo6
+    };
+    let hz = entry
+        .fields
+        .get("hz")
+        .and_then(Value::as_i64)
+        .and_then(|hz| i32::try_from(hz).ok())
+        .unwrap_or(1);
+    let running = gnss.as_ref().map(|member: &GnssMember| member.name);
+    let mut came_up = None;
+    let outcome = controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| match (specification, running) {
+            (_, Some(running)) => Attempt::Raised {
+                error: format!("one GNSS only: '{running}' has uart:{GNSS_UART}"),
+                diagnosis: None,
+            },
+            (None, None) => Attempt::Failed {
+                diagnosis: Some(format!(
+                    "no transport -- {kind} bus {} undefined in config",
+                    entry
+                        .fields
+                        .get("id")
+                        .map_or_else(|| GNSS_UART.to_string(), Value::to_string)
+                )),
+            },
+            (Some(uart), None) if uart.id != GNSS_UART => Attempt::Raised {
+                error: format!(
+                    "uart:{} is not the GNSS's: the firmware runs it on uart:{GNSS_UART}",
+                    uart.id
+                ),
+                diagnosis: None,
+            },
+            (Some(uart), None) => {
+                came_up = Some(GnssMember {
+                    name: entry.name,
+                    module,
+                    hz,
+                    uart,
+                });
+                Attempt::Up
+            }
+        },
+        |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
+        |line| log::info!("{line}"),
+    );
+    if came_up.is_some() {
+        *gnss = came_up;
+    }
     outcome
 }
 

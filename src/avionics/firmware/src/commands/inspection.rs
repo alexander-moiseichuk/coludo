@@ -127,6 +127,26 @@ enum Own {
         power_mw: Option<i32>,
         alerts: u32,
     },
+    /// The GNSS (plan B gnss.py inspect): the fix, its quality, satellites and HDOP, its own channels' latest (the
+    /// position in degrees), the sky (in view, used, the GSA mode, the four strongest C/N0 and their mean, the
+    /// antenna), and the port's own: the NMEA lines read since boot.
+    Gnss {
+        fix: bool,
+        satellites: i32,
+        hdop: f32,
+        fix_quality: i32,
+        position: Option<[f64; 2]>,
+        altitude_m: Option<f32>,
+        elevation_m: Option<f32>,
+        speed_ms: Option<f32>,
+        in_view: i32,
+        used: i32,
+        mode: i32,
+        cn0: [i32; 4],
+        cn0_mean: f32,
+        antenna: &'static str,
+        lines: u32,
+    },
     /// A laser ranger (plan B vl53l1x.py inspect): whether its data-ready line is wired, its channel's latest.
     Ranger { interrupt: bool, agl_m: Option<f32> },
     /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
@@ -247,6 +267,29 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 alerts: reading.map_or(0, |(_, alerts)| alerts),
             }
         }
+        "neo6mv2" | "atgm336h" => match crate::gnss::inspection() {
+            Some(state) => Own::Gnss {
+                fix: state.fix,
+                satellites: state.satellites,
+                hdop: state.hdop,
+                fix_quality: state.fix_quality,
+                position: topology
+                    .position("position")
+                    .and_then(|parameter| parameter.channel(name)?.recent(parameter.window_us(), now_us))
+                    .map(|[latitude, longitude]| [f64::from(latitude) * 1e-7, f64::from(longitude) * 1e-7]),
+                altitude_m: scalar("altitude"),
+                elevation_m: scalar("elevation"),
+                speed_ms: scalar("speed"),
+                in_view: state.sky[0],
+                used: state.sky[1],
+                mode: state.sky[2],
+                cn0: [state.sky[3], state.sky[4], state.sky[5], state.sky[6]],
+                cn0_mean: state.sky[3..7].iter().sum::<i32>() as f32 / 4.0,
+                antenna: state.antenna,
+                lines: state.lines,
+            },
+            None => Own::None {},
+        },
         "vl53l1x" | "vl53l4cx" => Own::Ranger {
             interrupt: false,
             agl_m: scalar("agl"),

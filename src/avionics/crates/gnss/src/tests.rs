@@ -544,6 +544,33 @@ fn a_burst_makes_one_sky_row_once_it_is_quiet() {
 }
 
 #[test]
+fn a_refused_configuration_is_one_event_per_family() {
+    let mut gnss = Gnss::new();
+    let refused = |gnss: &mut Gnss, family: &str| {
+        let body = format!("GPTXT,01,01,01,{family} inv format");
+        let line = nmea(&body);
+        gnss.line(&line, 1_000_000).events
+    };
+    let first = refused(&mut gnss, "PCAS");
+    assert_eq!(first, [Event::Rejected { family: "PCAS" }]);
+    assert!(
+        first[0]
+            .to_string()
+            .starts_with("the module refused a PCAS sentence (inv format)")
+    );
+    assert!(refused(&mut gnss, "PCAS").is_empty(), "once per family");
+    assert_eq!(refused(&mut gnss, "PMTK"), [Event::Rejected { family: "PMTK" }]);
+    // another text is no refusal, and a refusal is no sky sentence: no burst pends
+    assert!(refused(&mut gnss, "XYZW").is_empty());
+    assert!(
+        gnss.line(&nmea("GPTXT,01,01,01,PCASinv format"), 1_000_000)
+            .events
+            .is_empty()
+    );
+    assert!(gnss.settle(10_000_000).is_none());
+}
+
+#[test]
 fn the_antenna_text_events_only_a_change() {
     let mut gnss = Gnss::new();
     let event = |gnss: &mut Gnss, sentence: &str| gnss.parse(sentence, 0).events;
