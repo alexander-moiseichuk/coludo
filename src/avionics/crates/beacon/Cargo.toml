@@ -1,0 +1,18 @@
+[package]
+name = "beacon"
+description = "The recovery beacon (M11b, M20): its page, its beacon.csv report, and its captive portal, shared by the glider and the remote recorder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+# the access point's glue on ESP-IDF (the portal's addressing, the DNS responder, the page server): the firmware and
+# the receiver turn it on; the host tests leave it off
+esp = ["dep:esp-idf-svc", "dep:anyhow", "dep:log"]
+
+[dependencies]
+recorder_wire.workspace = true
+esp-idf-svc = { version = "0.53", optional = true }
+anyhow = { version = "1", optional = true }
+log = { version = "0.4", optional = true }

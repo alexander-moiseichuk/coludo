@@ -1,151 +1,132 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The recovery beacon (M11b; doc/specs/avionics-port.md M11b): at DONE the link thread, the radio's one owner, turns
-//! the C6 from a station into an open access point `<BOARD>_glider` on channel 3 at the maximum TX power, and serves
-//! one page on port 80 for a searcher's phone: the last good fix with a map link, the elevation from every source (the
-//! GNSS, each barometer, the laser: how high the glider hangs, should it land in a tree), the battery where an INA226
-//! is fitted, and the flash->SD copy still to go. The page refreshes itself every 5 s. Power-off or a reset ends it;
-//! any power-up after DONE is a new session in SETTING.
+//! The recovery beacons (M11b, M20; doc/specs/avionics-port.md), the page and the report shared with the remote
+//! recorder through crates/beacon:
 //!
-//! The figures are read from the databoard's channels at each request, every source's latest value whatever its age
-//! (a fix lost in the trees is still the best guess), with that age shown.
+//! - This board's own: at DONE the link thread, the radio's one owner, turns the C6 co-processor from a station into
+//!   the open access point `<BOARD>_glider` on channel 3 at the maximum TX power, a captive portal serving one page
+//!   for a searcher's phone ([`Beacon::start`]): the last good fix with a map link, the elevation from every source
+//!   (the GNSS, each barometer, the laser: how high the glider hangs, should it land in a tree), the battery where an
+//!   INA226 is fitted, and the flash->SD copy still to go. Power-off or a reset ends it; any power-up after DONE is a
+//!   new session in SETTING.
+//! - The remote recorder's (receiver/, an ESP32-C6 on the recorder's UART, M20): every [`REPORT_EVERY`] the
+//!   beacon_feed thread writes the same page's figures and that beacon's radio to beacon.csv, an ordinary recorder
+//!   stream ([`spawn_feed`]). The recorder replays the last row: `<BOARD>_beacon` three channels above this board's own
+//!   (operator 2026-10-11), a minute on and a minute silent. It comes on BEFORE launch, with the camera: armed in
+//!   SETTING and standing on the rod (crates/sequencer `video::Trigger`, the same look), or any stage past SETTING (a
+//!   launch, a warm start in the air, `stage done`); then it stays on until power-off, so a glider that dies in flight
+//!   owes it nothing. Until then its name is empty, which keeps it off: a new session in SETTING turns it off. Never
+//!   in a HITL flight, whose frames ride this board's Wi-Fi.
 //!
-//! The page opens by itself (a captive portal, operator 2026-10-11): the AP's address is 192.168.4.1, its DHCP server
-//! offers the board as the DNS server, a DNS responder answers every name with the board, and every other path
-//! redirects to the page, so a phone's connectivity check (Android's /generate_204, iOS's /hotspot-detect.html,
-//! Windows' /connecttest.txt) finds a portal and the phone opens it. No DHCP option 114 (RFC 8910): phones take it
-//! only as an HTTPS captive-portal API (RFC 8908), which a beacon cannot serve. The first build left the server's
-//! wildcard matching off, so the probes got 404 (no portal, only "no internet") and the page stayed shut.
+//! The figures are read from the databoard's channels at each request and each report, every source's latest value
+//! whatever its age (a fix lost in the trees is still the best guess), with that age.
 
-use std::fmt::Write as _;
-use std::net::UdpSocket;
+use std::time::{Duration, Instant};
 
+use ::beacon::{Backlog, Battery, Height, Point, Radio, Report, Snapshot};
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
-use esp_idf_svc::handle::RawHandle;
-use esp_idf_svc::http::Method;
 use esp_idf_svc::http::server::{Configuration as HttpConfiguration, EspHttpServer};
-use esp_idf_svc::io::Write as _;
 use esp_idf_svc::sys;
-use esp_idf_svc::wifi::{AccessPointConfiguration, AuthMethod, BlockingWifi, Configuration, EspWifi};
+use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
+use recorder::Telemetry;
+use sequencer::Stage;
+use sequencer::video::{Duty, Trigger};
 
 use crate::devices::Topology;
+use crate::status::FLIGHT;
 
-/// The beacon's channel (operator, 2026-10-06): the separate recorder's beacon takes 6 (M20), so the two never share
-/// one.
+/// This board's beacon channel (operator, 2026-10-06).
 const CHANNEL: u8 = 3;
 
-/// The radio's TX cap at the beacon, quarter-dBm: IDF's ceiling, 21 dBm.
-const MAXIMUM_TX_POWER: i8 = 84;
+/// The remote beacon's channel: three above this board's, so the two never share one (operator, 2026-10-11).
+const REMOTE_CHANNEL: u8 = CHANNEL + 3;
 
-/// The page's port: a phone opens the access point's address as it is.
-const PORT: u16 = 80;
+/// This board's TX cap at the beacon, dBm: IDF's ceiling.
+const POWER_DBM: u8 = 21;
 
-/// Phones at once.
-const MAXIMUM_CONNECTIONS: u16 = 4;
+/// The remote beacon's TX cap, dBm: the C6's ceiling.
+const REMOTE_POWER_DBM: u8 = 20;
 
-/// The access point's address, the one the ESP-IDF examples and most beacons use.
-const ADDRESS: [u8; 4] = [192, 168, 4, 1];
+/// The remote beacon's cycle, seconds on then silent: its battery's share (operator, 2026-10-11).
+const REMOTE_ON_S: u32 = 60;
+const REMOTE_OFF_S: u32 = 60;
 
-/// The DNS responder's stack (PSRAM: a slow core-0 thread that never calls esp_mmu_map/unmap).
-const DNS_STACK: usize = 4 << 10;
+/// How often the beacon_feed thread writes a report (and at once when the remote beacon comes on).
+pub const REPORT_EVERY: Duration = Duration::from_secs(5);
 
-/// A DNS answer's lifetime, seconds: short, the board is the only name server while it lasts.
-const DNS_TTL_S: u32 = 60;
+/// How often the beacon_feed thread looks for the rod: the trigger's 8 looks in a row are 2 s at this, as the video's.
+const LOOK_EVERY: Duration = Duration::from_millis(250);
 
-/// A 1S LiPo's open-circuit voltage (mV) against its charge (%), for the page's charge estimate: the usual table,
-/// coarse, under load it reads low.
-const LIPO_CHARGE: [(f32, f32); 9] = [
-    (3300.0, 0.0),
-    (3500.0, 10.0),
-    (3600.0, 20.0),
-    (3700.0, 35.0),
-    (3800.0, 50.0),
-    (3900.0, 65.0),
-    (4000.0, 80.0),
-    (4100.0, 90.0),
-    (4200.0, 100.0),
-];
+/// The beacon_feed thread's stack (PSRAM): a report's text.
+const FEED_STACK: usize = 8 << 10;
 
-/// Above this the INA226 reads no 1S LiPo (the bench's 5 V USB): no charge estimate.
-const LIPO_CEILING_MV: f32 = 4350.0;
+/// The recorder's device key the beacon.csv stream is registered under (crate::recorder `device_stream`).
+pub const STREAM: &str = "beacon";
 
-/// The beacon of one board.
+/// The beacons of one board.
 #[derive(Clone)]
 pub struct Beacon {
-    /// The access point's name, `<BOARD>_glider`.
-    ssid: String,
+    /// The board's id: the access points' names.
+    board_id: String,
     /// The board's quantities.
     topology: &'static Topology,
-    /// The battery's capacity, mAh (the INA226 entry's `battery_mah`), for the remaining time.
+    /// The battery's capacity, mAh (the INA226 entry's `battery_mah`), for the time left.
     battery_mah: Option<f32>,
 }
 
 impl Beacon {
-    /// The beacon of board `board_id` reading `topology`, its battery `battery_mah` when the config gives one.
+    /// The beacons of board `board_id` reading `topology`, its battery `battery_mah` when the config gives one.
     pub fn new(board_id: &str, topology: &'static Topology, battery_mah: Option<f32>) -> Beacon {
         Beacon {
-            ssid: format!("{board_id}_glider"),
+            board_id: board_id.to_string(),
             topology,
             battery_mah,
         }
     }
 
-    /// The access point up on `wifi` (the station dropped) and the page served: the server lives as long as the board.
-    ///
-    /// Errors: the AP would not configure or start, or the server would not start.
-    pub fn start(&self, wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<EspHttpServer<'static>> {
-        let _ = wifi.wifi_mut().disconnect();
-        let access_point = AccessPointConfiguration {
-            ssid: self
-                .ssid
-                .as_str()
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("{} is longer than 32 bytes", self.ssid))?,
+    /// This board's access point, `<BOARD>_glider`.
+    fn radio(&self) -> Radio {
+        Radio {
+            ssid: format!("{}_glider", self.board_id),
+            password: String::new(),
             channel: CHANNEL,
-            auth_method: AuthMethod::None,
-            max_connections: MAXIMUM_CONNECTIONS,
-            ..Default::default()
-        };
-        wifi.set_configuration(&Configuration::AccessPoint(access_point))?;
-        if !wifi.is_started()? {
-            wifi.start()?;
+            power_dbm: POWER_DBM,
+            on_s: 0,
+            off_s: 0,
         }
-        // SAFETY: a plain driver call on the started Wi-Fi.
-        sys::esp!(unsafe { sys::esp_wifi_set_max_tx_power(MAXIMUM_TX_POWER) })?;
-        portal(wifi.wifi().ap_netif().handle())?;
-        spawn_dns()?;
-        let address = wifi.wifi().ap_netif().get_ip_info().map(|info| info.ip.to_string());
-        let mut server = EspHttpServer::new(&HttpConfiguration {
-            http_port: PORT,
-            // the file server's control port is the default one: this one takes the next
-            ctrl_port: 32769,
-            // `/*` below must match every path: without it the connectivity probes got 404, and no portal opened
-            uri_match_wildcard: true,
-            stack_size: 8192,
-            core: Some(Core::Core0),
-            // a PSRAM stack, as the file server's (crate::files): it never calls esp_mmu_map/unmap
-            task_caps: sys::MALLOC_CAP_SPIRAM | sys::MALLOC_CAP_8BIT,
+    }
+
+    /// This board's access point up on `wifi` (the station dropped) and the page served: the server lives as long as
+    /// the board.
+    ///
+    /// Errors: the AP would not configure or start, or the DNS responder or the server would not start.
+    pub fn start(&self, wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<EspHttpServer<'static>> {
+        let radio = self.radio();
+        ::beacon::esp::start(wifi, &radio)?;
+        // core 0, PSRAM stacks: slow threads that never call esp_mmu_map/unmap
+        ::beacon::esp::spawn_dns(ThreadSpawnConfiguration {
+            priority: 2,
+            pin_to_core: Some(Core::Core0),
+            stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
             ..Default::default()
         })?;
         let beacon = self.clone();
-        server.fn_handler::<anyhow::Error, _>("/", Method::Get, move |request| {
-            let page = beacon.page();
-            request
-                .into_response(200, None, &[("Content-Type", "text/html; charset=utf-8")])?
-                .write_all(page.as_bytes())?;
-            Ok(())
-        })?;
-        // every other path to the page: the phones' connectivity checks find a portal and offer to open it
-        server.fn_handler::<anyhow::Error, _>("/*", Method::Get, |request| {
-            request
-                .into_response(302, Some("Found"), &[("Location", "http://192.168.4.1/")])?
-                .write_all(b"the beacon's page: http://192.168.4.1/\n")?;
-            Ok(())
-        })?;
+        let server = ::beacon::esp::serve(
+            HttpConfiguration {
+                // the file server's control port is the default one: this one takes the next
+                ctrl_port: 32769,
+                stack_size: 8192,
+                core: Some(Core::Core0),
+                task_caps: sys::MALLOC_CAP_SPIRAM | sys::MALLOC_CAP_8BIT,
+                ..Default::default()
+            },
+            move || beacon.page(),
+        )?;
+        let address = wifi.wifi().ap_netif().get_ip_info().map(|info| info.ip.to_string());
         log::info!(
             "beacon :: {} open on channel {CHANNEL}, the page on http://{}/",
-            self.ssid,
+            radio.ssid,
             address.as_deref().unwrap_or("?")
         );
         Ok(server)
@@ -153,20 +134,34 @@ impl Beacon {
 
     /// The page, read now (also on the file server as `/beacon`: the bench sees it before DONE).
     pub fn page(&self) -> String {
+        ::beacon::page(&self.radio().ssid, &self.snapshot(), None)
+    }
+
+    /// The report for the remote beacon: its radio (`on`, or an empty name), and the page's figures read now.
+    fn report(&self, on: bool) -> Report {
+        Report {
+            radio: Radio {
+                ssid: if on {
+                    format!("{}_beacon", self.board_id)
+                } else {
+                    String::new()
+                },
+                password: String::new(),
+                channel: REMOTE_CHANNEL,
+                power_dbm: REMOTE_POWER_DBM,
+                on_s: REMOTE_ON_S,
+                off_s: REMOTE_OFF_S,
+            },
+            snapshot: self.snapshot(),
+        }
+    }
+
+    /// The page's figures, read now from the databoard, the mission and the recorder.
+    fn snapshot(&self) -> Snapshot {
         // SAFETY: a plain read of the monotonic timer.
         let now_us = unsafe { sys::esp_timer_get_time() } as u64;
-        let age = |pushed: Option<u64>| pushed.map(|at| now_us.saturating_sub(at) / 1_000_000);
-        let mut page = String::with_capacity(4096);
-        let _ = write!(
-            page,
-            "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" \
-             content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"5\">\
-             <title>{name}</title><style>body{{font-family:sans-serif;margin:16px;font-size:18px}}\
-             td{{padding:4px 12px 4px 0}}h2{{margin:20px 0 6px}}</style></head><body><h1>{name}</h1>",
-            name = escape(&self.ssid)
-        );
+        let age = |pushed: Option<u64>| pushed.map_or(0, |at| now_us.saturating_sub(at) / 1_000_000);
         // the last good fix, whatever its age: the newest any source pushed
-        page.push_str("<h2>Where</h2>");
         let fix = self.topology.position("position").and_then(|parameter| {
             parameter
                 .sources()
@@ -176,53 +171,22 @@ impl Beacon {
                 })
                 .max_by_key(|(_, pushed)| *pushed)
         });
-        match fix {
-            Some(([latitude, longitude], pushed)) => {
-                let (latitude, longitude) = (f64::from(latitude) * 1e-7, f64::from(longitude) * 1e-7);
-                let _ = write!(
-                    page,
-                    "<p>{latitude:.6}, {longitude:.6} ({} s ago)<br><a href=\"https://maps.google.com/?q={latitude:.6},\
-                     {longitude:.6}\">open in Google Maps</a></p>",
-                    age(pushed).unwrap_or_default()
-                );
-            }
-            None => page.push_str("<p>no GNSS fix this boot</p>"),
-        }
-        // the launch pad, always: where the flight began, a map link even before any fix
-        if let Some((latitude, longitude)) = crate::flight::launch_degrees() {
-            let _ = write!(
-                page,
-                "<p>launch pad: {latitude:.6}, {longitude:.6}<br><a href=\"https://maps.google.com/?q={latitude:.6},\
-                 {longitude:.6}\">open the pad in Google Maps</a></p>"
-            );
-        }
-        // every source's height: each barometer's and the GNSS's elevation above the pad, the laser's AGL
-        page.push_str("<h2>How high</h2><table>");
-        for (quantity, label) in [("elevation", "above the pad"), ("agl", "above the ground (laser)")] {
+        let heights = |quantity: &str| -> Vec<Height> {
             let Some(parameter) = self.topology.scalar(quantity) else {
-                continue;
+                return Vec::new();
             };
-            for source in parameter.sources() {
-                let Some(channel) = parameter.channel(source) else {
-                    continue;
-                };
-                match channel.latest() {
-                    Some(metres) => {
-                        let _ = write!(
-                            page,
-                            "<tr><td>{}</td><td>{metres:.1} m {label}</td><td>{} s ago</td></tr>",
-                            escape(source),
-                            age(channel.pushed_at()).unwrap_or_default()
-                        );
-                    }
-                    None => {
-                        let _ = write!(page, "<tr><td>{}</td><td>no reading</td></tr>", escape(source));
-                    }
-                }
-            }
-        }
-        page.push_str("</table>");
-        // the battery, where an INA226 measures it
+            parameter
+                .sources()
+                .filter_map(|source| {
+                    let channel = parameter.channel(source)?;
+                    Some(Height {
+                        source: source.to_string(),
+                        metres: channel.latest(),
+                        age_s: age(channel.pushed_at()),
+                    })
+                })
+                .collect()
+        };
         let latest = |quantity: &str| {
             self.topology.scalar(quantity).and_then(|parameter| {
                 parameter
@@ -230,158 +194,88 @@ impl Beacon {
                     .find_map(|source| parameter.channel(source)?.latest())
             })
         };
-        if let Some(millivolts) = latest("voltage") {
-            let milliamps = latest("current");
-            let _ = write!(page, "<h2>Battery</h2><p>{:.2} V", millivolts / 1000.0);
-            if let Some(milliamps) = milliamps {
-                let _ = write!(page, ", {milliamps:.0} mA");
-            }
-            match charge(millivolts) {
-                Some(percent) => {
-                    let _ = write!(page, ", about {percent:.0} % (1S LiPo)");
-                    if let (Some(capacity), Some(milliamps)) = (self.battery_mah, milliamps.filter(|draw| *draw > 1.0))
-                    {
-                        let hours = capacity * percent / 100.0 / milliamps;
-                        let _ = write!(page, ", about {:.1} h left", hours);
-                    }
-                }
-                None => page.push_str(" (no 1S LiPo: on USB?)"),
-            }
-            page.push_str("</p>");
+        Snapshot {
+            fix: fix.map(|([latitude, longitude], pushed)| (Point { latitude, longitude }, age(pushed))),
+            pad: crate::flight::launch_e7().map(|(latitude, longitude)| Point { latitude, longitude }),
+            elevations: heights("elevation"),
+            agl: heights("agl"),
+            battery: latest("voltage").map(|millivolts| Battery {
+                millivolts,
+                milliamps: latest("current"),
+                capacity_mah: self.battery_mah,
+            }),
+            backlog: crate::recorder::backlog().map(|(blocks, seconds)| Backlog {
+                blocks: u64::from(blocks),
+                seconds,
+            }),
         }
-        // the recording still to copy from the flash to the card
-        if let Some((blocks, seconds)) = crate::recorder::backlog() {
-            let _ = write!(page, "<h2>Recording</h2><p>{blocks} blocks to copy to the card");
-            if let Some(seconds) = seconds {
-                let _ = write!(page, " ({seconds:.0} s of recording)");
-            }
-            page.push_str(": keep the glider powered until 0</p>");
-        }
-        page.push_str("</body></html>");
-        page
     }
 }
 
-/// The AP `netif` re-addressed to [`ADDRESS`], its DHCP server offering the board as the DNS server (the server
-/// stopped for the change, then started again).
-fn portal(netif: *mut sys::esp_netif_t) -> anyhow::Result<()> {
-    let address = sys::esp_ip4_addr {
-        addr: u32::from_le_bytes(ADDRESS),
+/// The beacon_feed thread (core 0, priority 2, a PSRAM stack: it never touches the flash): a look for the rod every
+/// [`LOOK_EVERY`], and a report to beacon.csv every [`REPORT_EVERY`] and at once when the remote beacon comes on,
+/// forever (see the module notes). Without a recorder, or with its stream unregistered, there is nothing to feed.
+///
+/// Errors: the thread would not spawn.
+pub fn spawn_feed(beacon: Beacon) -> anyhow::Result<()> {
+    let Some(mut telemetry) = crate::recorder::get()
+        .zip(crate::recorder::device_stream(STREAM))
+        .and_then(|(recorder, stream)| Telemetry::new(recorder, stream))
+    else {
+        log::warn!("beacon :: no recorder stream: the remote beacon gets no report");
+        return Ok(());
     };
-    let information = sys::esp_netif_ip_info_t {
-        ip: address,
-        netmask: sys::esp_ip4_addr {
-            addr: u32::from_le_bytes([255, 255, 255, 0]),
-        },
-        gw: address,
-    };
-    let mut dns = sys::esp_netif_dns_info_t::default();
-    dns.ip.u_addr.ip4 = address;
-    dns.ip.type_ = 0; // IPADDR_TYPE_V4
-    let mut offer_dns: u8 = 1;
-    // SAFETY: plain esp_netif calls on the AP's live netif; the option value outlives the call.
-    unsafe {
-        let _ = sys::esp_netif_dhcps_stop(netif);
-        sys::esp!(sys::esp_netif_set_ip_info(netif, &information))?;
-        sys::esp!(sys::esp_netif_set_dns_info(
-            netif,
-            sys::esp_netif_dns_type_t_ESP_NETIF_DNS_MAIN,
-            &mut dns
-        ))?;
-        sys::esp!(sys::esp_netif_dhcps_option(
-            netif,
-            sys::esp_netif_dhcp_option_mode_t_ESP_NETIF_OP_SET,
-            sys::esp_netif_dhcp_option_id_t_ESP_NETIF_DOMAIN_NAME_SERVER,
-            (&mut offer_dns as *mut u8).cast(),
-            1
-        ))?;
-        sys::esp!(sys::esp_netif_dhcps_start(netif))?;
-    }
-    Ok(())
-}
-
-/// The DNS responder (core 0, priority 2): every A query answered with [`ADDRESS`], every other one with no answer,
-/// forever.
-fn spawn_dns() -> anyhow::Result<()> {
-    let socket = UdpSocket::bind(("0.0.0.0", 53))?;
+    let accel = beacon.topology.vector("accel");
     ThreadSpawnConfiguration {
-        name: Some(c"beacon_dns"),
-        stack_size: DNS_STACK,
+        name: Some(c"beacon_feed"),
+        stack_size: FEED_STACK,
         priority: 2,
         pin_to_core: Some(Core::Core0),
         stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
         ..Default::default()
     }
     .set()?;
-    let spawned = std::thread::Builder::new().stack_size(DNS_STACK).spawn(move || {
-        let mut query = [0u8; 512];
+    let spawned = std::thread::Builder::new().stack_size(FEED_STACK).spawn(move || {
+        let mut trigger = Trigger::new(accel.is_some());
+        let mut on = false;
+        let mut reported: Option<Instant> = None;
+        let mut overflowing = false;
         loop {
-            let Ok((length, sender)) = socket.recv_from(&mut query) else {
-                continue;
-            };
-            if let Some(answer) = answer(&query[..length]) {
-                let _ = socket.send_to(&answer, sender);
+            // SAFETY: a plain read of the monotonic timer.
+            let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+            let flight = FLIGHT.load();
+            if !on && !crate::sim_link::running() {
+                let reading = accel
+                    .and_then(|parameter| parameter.read(now_us))
+                    .map(|reading| reading.value);
+                let on_the_rod = trigger.look(flight, reading, None) == Some(Duty::StartFlight);
+                if on_the_rod || flight.launched || flight.stage != Stage::Setting {
+                    on = true;
+                    reported = None;
+                    log::info!(
+                        "beacon :: the remote beacon on until power-off ({})",
+                        flight.stage.name()
+                    );
+                }
             }
+            if reported.is_none_or(|at| at.elapsed() >= REPORT_EVERY) {
+                reported = Some(Instant::now());
+                let report = beacon.report(on);
+                let heights = report.height_texts();
+                // telemetry raises (the error policy): the recorder counts the refused row, the first of a run logged
+                match telemetry.push(now_us, &report.cells(&heights)) {
+                    Ok(()) => overflowing = false,
+                    Err(overflow) if !overflowing => {
+                        log::warn!("beacon :: beacon.csv row: {overflow}");
+                        overflowing = true;
+                    }
+                    Err(_) => {}
+                }
+            }
+            std::thread::sleep(LOOK_EVERY);
         }
     });
     ThreadSpawnConfiguration::default().set()?;
     spawned?;
     Ok(())
-}
-
-/// The answer to one DNS `query` (RFC 1035): its id and question echoed, an A record of [`ADDRESS`] for an A query,
-/// no record for any other type; None for a datagram that is no single-question query.
-fn answer(query: &[u8]) -> Option<Vec<u8>> {
-    if query.len() < 12 || query[2] & 0x80 != 0 || u16::from_be_bytes([query[4], query[5]]) != 1 {
-        return None;
-    }
-    // the question's name: labels up to the zero length
-    let mut end = 12;
-    loop {
-        let label = usize::from(*query.get(end)?);
-        end += 1 + label;
-        if label == 0 {
-            break;
-        }
-        if label & 0xc0 != 0 {
-            return None; // a pointer has no place in a question
-        }
-    }
-    let question = query.get(12..end + 4)?;
-    let address_query = u16::from_be_bytes([question[question.len() - 4], question[question.len() - 3]]) == 1;
-    let mut answer = Vec::with_capacity(12 + question.len() + 16);
-    answer.extend_from_slice(&query[..2]); // the id
-    answer.extend_from_slice(&[0x81, 0x80]); // a response, recursion desired and available, no error
-    answer.extend_from_slice(&[0, 1, 0, u8::from(address_query), 0, 0, 0, 0]);
-    answer.extend_from_slice(question);
-    if address_query {
-        answer.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1]); // the question's name, type A, class IN
-        answer.extend_from_slice(&DNS_TTL_S.to_be_bytes());
-        answer.extend_from_slice(&[0, 4]);
-        answer.extend_from_slice(&ADDRESS);
-    }
-    Some(answer)
-}
-
-/// A 1S LiPo's charge (%) at `millivolts`, interpolated in [`LIPO_CHARGE`]; None above [`LIPO_CEILING_MV`].
-fn charge(millivolts: f32) -> Option<f32> {
-    if millivolts > LIPO_CEILING_MV {
-        return None;
-    }
-    let (lowest, _) = LIPO_CHARGE[0];
-    if millivolts <= lowest {
-        return Some(0.0);
-    }
-    for pair in LIPO_CHARGE.windows(2) {
-        let [(low_mv, low), (high_mv, high)] = [pair[0], pair[1]];
-        if millivolts <= high_mv {
-            return Some(low + (high - low) * (millivolts - low_mv) / (high_mv - low_mv));
-        }
-    }
-    Some(100.0)
-}
-
-/// `text` safe inside HTML.
-fn escape(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }

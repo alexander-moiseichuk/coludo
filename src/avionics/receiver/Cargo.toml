@@ -13,6 +13,7 @@ harness = false
 
 [dependencies]
 recorder_wire.workspace = true
+beacon = { workspace = true, features = ["esp"] }
 esp-idf-svc = "0.53"
 anyhow = "1"
 log = "0.4"

@@ -26,6 +26,7 @@ drivers.workspace = true
 flash_ring.workspace = true
 gnss.workspace = true
 sim_link.workspace = true
+beacon = { workspace = true, features = ["esp"] }
 embedded-hal.workspace = true
 layout.workspace = true
 panics.workspace = true

@@ -381,7 +381,7 @@ fn main() -> anyhow::Result<()> {
         console.serve(executor.clone())?;
     }
     log::info!("{}", board.banner());
-    // the recovery beacon at DONE (M11b): the battery's capacity from the INA226 entry, when the config gives one
+    // the recovery beacons at DONE (M11b, M20): the battery's capacity from the INA226 entry, when the config gives one
     let battery_mah = board_config::directory(&loaded.document)
         .iter()
         .find(|entry| entry.implementation == "ina226")
@@ -389,6 +389,10 @@ fn main() -> anyhow::Result<()> {
         .and_then(serde_json::Value::as_f64)
         .map(|capacity| capacity as f32);
     let beacon = beacon::Beacon::new(&board.id, topology, battery_mah);
+    // the remote recorder's beacon (M20): its report to beacon.csv every few seconds, its radio off until DONE
+    if let Err(error) = beacon::spawn_feed(beacon.clone()) {
+        log::error!("beacon :: the feed did not start, the remote beacon gets no report: {error}");
+    }
     link::run(
         peripherals.modem,
         event_loop,

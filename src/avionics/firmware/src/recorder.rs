@@ -386,6 +386,11 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool)
             }
         }
     }
+    // the recovery beacon's report for the remote recorder (M20, crate::beacon), every few seconds, whatever the board
+    match registry.add(::beacon::FILE, &::beacon::FIELDS, -1, false) {
+        Ok(id) => devices.push((crate::beacon::STREAM.to_string(), id)),
+        Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", ::beacon::FILE),
+    }
     let buffers = Buffers {
         producers: PRODUCER_BYTES
             .iter()
@@ -817,6 +822,12 @@ fn start_saver(
 /// (crates/recorder LineRing). Set before the recorder starts, when the config gives the recorder its UART.
 static UART_QUEUE: OnceLock<LineRing> = OnceLock::new();
 
+/// The uart_saver's UART port, once its driver is installed ([`drain_uart`] waits on it).
+static UART_PORT: OnceLock<sys::uart_port_t> = OnceLock::new();
+
+/// How often [`drain_uart`] looks at the queue.
+const DRAIN_POLL: Duration = Duration::from_millis(10);
+
 /// The uart_saver's queue, bytes (PSRAM): ~10 s of the flight's ~26 KB/s of text, so a receiver that stalls a few
 /// seconds loses nothing.
 const UART_QUEUE_BYTES: usize = 256 << 10;
@@ -878,6 +889,7 @@ pub fn start_uart<U: esp_idf_svc::hal::uart::Uart + 'static>(_uart: U, tx: u8, b
             0
         ))?;
     }
+    let _ = UART_PORT.set(port);
     spawn(c"uart_saver", UART_STACK, Stack::Psram, UART_PRIORITY, move || {
         let mut line = Vec::new();
         let mut batch = Vec::with_capacity(UART_BATCH_BYTES + 1024);
@@ -903,6 +915,25 @@ pub fn start_uart<U: esp_idf_svc::hal::uart::Uart + 'static>(_uart: U, tx: u8, b
     })?;
     log::info!("ring :: uart_saver on GPIO{tx} at {baud} baud");
     Ok(())
+}
+
+/// Waits, at most `limit`, until the uart_saver has sent everything queued and its UART has shifted the last byte
+/// out: a deliberate reset first lets the receiver have what the ring_saver committed. The saver tees a part as it
+/// stages it, the card has it a commit later, and the next boot sends again only what the card lacks; so a part
+/// committed but still in the queue at a reset never reached the receiver (the taster's `reboot`: ~1.5 s missing on
+/// the C6's card, 2026-10-11). No uart_saver, nothing to wait for. A crash keeps that window, until the uart_saver
+/// walks the ring with a cursor of its own (M19's next step).
+pub fn drain_uart(limit: Duration) {
+    let (Some(queue), Some(&port)) = (UART_QUEUE.get(), UART_PORT.get()) else {
+        return;
+    };
+    let started = Instant::now();
+    while queue.queued() > 0 && started.elapsed() < limit {
+        std::thread::sleep(DRAIN_POLL);
+    }
+    let left = limit.saturating_sub(started.elapsed());
+    // SAFETY: a plain wait on the installed driver's transmitter.
+    let _ = unsafe { sys::uart_wait_tx_done(port, TickType::from(left).ticks()) };
 }
 
 /// The ring_saver thread: [`Saver::step`] again and again, forever (spec "The ring_saver"). The saver collects what
