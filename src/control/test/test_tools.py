@@ -35,6 +35,7 @@ import flight_telemetry  # noqa: E402
 import gen_schema  # noqa: E402
 import glide_polar  # noqa: E402
 import hitl_compare  # noqa: E402
+import hitl_host  # noqa: E402
 import recorder_flight  # noqa: E402
 import recorder_wire  # noqa: E402
 
@@ -1800,6 +1801,28 @@ _FAKE_ADB = '\n'.join([
     ''])
 
 
+def test_hitl_host_frames_are_the_boards_bytes():
+    """
+    The host's sim-link codec against the bytes crates/sim_link pins (src/avionics/crates/sim_link/src/tests.rs):
+    a SENSORS frame with every field but the laser's, a FINS answer, and the refusals.
+    """
+    fields = {'accel': [0.0, 0.0, 1.0], 'rate': [1.5, -2.25, 0.5], 'attitude': [123.5, -10.0, 5.25],
+              'mag': [1000.0, -200.0, 700.0], 'altitude': 12.5, 'elevation': 2.5, 'agl': None, 'airspeed': 12.0,
+              'dynamic_pressure': 88.2, 'position': [455000000, -735000000], 'speed': 11.5, 'course': 270.0}
+    full = ('43534c310101bf0f070000003930000000000000000000000000803f0000c03f000010c00000003f0000f742000020c10000a84'
+            '000007a44000048c300002f44000048410000204000000000000040416666b042c0bf1e1b40ca30d400003841000087433a68f729')
+    assert hitl_host.encode_sensors(7, 12345, fields).hex() == full
+    answer = bytes.fromhex('43534c31010201000700000092100000030101005f0055005a000000cdd3a798')
+    assert hitl_host.decode_fins(answer) == {'seq': 7, 'uptime_ms': 4242, 'stage': 3, 'armed': True, 'launched': True,
+                                             'fins': [95, 85, 90]}
+    passive = bytearray(answer)
+    passive[6] = 0  # no fins: re-seal the CRC
+    passive[28:] = (__import__('binascii').crc32(bytes(passive[:28]))).to_bytes(4, 'little')
+    assert hitl_host.decode_fins(bytes(passive))['fins'] is None
+    for broken in (answer[:31], b'X' + answer[1:], answer[:5] + b'\x01' + answer[6:], answer[:-1] + b'\x00'):
+        assert hitl_host.decode_fins(broken) is None, broken.hex()
+
+
 def test_flight_pull_takes_a_session_not_a_junk_name():
     """
     flight_pull.sh with no session pulls the newest one: the session whose second-newest file is the newest.
@@ -1896,6 +1919,7 @@ test_recorder_flight_times_the_log_from_this_boot_only()
 test_recorder_flight_files_a_log_line_found_in_a_stream()
 test_recorder_flight_never_times_by_a_wrap_its_file_missed()
 test_every_reader_takes_a_damaged_byte()
+test_hitl_host_frames_are_the_boards_bytes()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
       'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '
       'airspeed calibration fit, parser edge cases, session-tag eras (boot id included), '
