@@ -1,0 +1,19 @@
+# The receiver's build: ESP32-C6 (RISC-V, no FPU), ESP-IDF via esp-idf-sys. Host crates do not read this.
+[build]
+target = "riscv32imac-esp-espidf"
+
+[target.riscv32imac-esp-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor --chip esp32c6"
+rustflags = ["--cfg", "espidf_time64"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = "esp32c6"
+ESP_IDF_SYS_ROOT_CRATE = "receiver"
+# The P4 firmware's pin, for one ESP-IDF install under ~/.espressif
+ESP_IDF_VERSION = "tag:v5.5.5"
+ESP_IDF_TOOLS_INSTALL_DIR = "global"
+ESP_IDF_SDKCONFIG_DEFAULTS = { value = "sdkconfig.defaults", relative = true }
