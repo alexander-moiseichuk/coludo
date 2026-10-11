@@ -246,6 +246,23 @@ pub fn session_prefix(label: &SessionLabel, boot_id: Option<u32>, epoch: i64, ra
     alloc::format!("{year:04}{month:02}{day:02}_{hour:02}{minute:02}{second:02}_{suffix}")
 }
 
+/// The session a line's `routing` names and the rest after the session's `_` (`000671_imu.csv` is `000671` and
+/// `imu.csv`): a boot id or a label ([`is_label`]: no `_` of its own) up to the first `_`, the legacy clock prefix
+/// `YYYYMMDD_HHMMSS_<6 digits>` ([`session_prefix`]) whole. None for a routing that names no session (the bare
+/// `session.csv`).
+pub fn routing_session(routing: &str) -> Option<(&str, &str)> {
+    let digits = |text: &str, count: usize| text.len() == count && text.bytes().all(|byte| byte.is_ascii_digit());
+    let mut parts = routing.splitn(4, '_');
+    if let (Some(date), Some(time), Some(suffix), Some(rest)) = (parts.next(), parts.next(), parts.next(), parts.next())
+        && digits(date, 8)
+        && digits(time, 6)
+        && digits(suffix, 6)
+    {
+        return Some((&routing[..routing.len() - rest.len() - 1], rest));
+    }
+    routing.split_once('_').filter(|(session, _)| !session.is_empty())
+}
+
 /// One session.csv row (recorder.py `Recorder.index_session`): this boot tied to the wall clock, written at the
 /// `boot`, at every successful time set and at the `anchor`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -394,7 +411,7 @@ fn civil(epoch: i64) -> (i64, i64, i64, i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::{Cell, Counters, SessionLabel, SessionRow, cell, civil, header, is_label, log_line, row};
-    use super::{session_label, session_prefix, status_message};
+    use super::{routing_session, session_label, session_prefix, status_message};
     use alloc::string::{String, ToString};
     use alloc::vec::Vec;
 
@@ -760,5 +777,34 @@ mod tests {
         assert_eq!(civil(951_782_400), (2000, 2, 29, 0, 0, 0), "a leap day of a 400th year");
         assert_eq!(civil(4_107_542_400), (2100, 3, 1, 0, 0, 0), "2100 has no 29 February");
         assert_eq!(civil(-1), (1969, 12, 31, 23, 59, 59));
+    }
+
+    #[test]
+    fn a_routing_names_its_session() {
+        assert_eq!(
+            routing_session("000671_imu_lsm6dso32.csv"),
+            Some(("000671", "imu_lsm6dso32.csv"))
+        );
+        assert_eq!(routing_session("000671_recorder.log"), Some(("000671", "recorder.log")));
+        assert_eq!(
+            routing_session("catapult-run3_session.csv"),
+            Some(("catapult-run3", "session.csv"))
+        );
+        assert_eq!(
+            routing_session("20261011_171500_123456_flight.csv"),
+            Some(("20261011_171500_123456", "flight.csv")),
+            "the legacy clock prefix, whole"
+        );
+        // negative: no session named, an empty one, and a clock-like prefix that is not one
+        assert_eq!(routing_session("session.csv"), None);
+        assert_eq!(routing_session("_imu.csv"), None);
+        assert_eq!(
+            routing_session("2026101_171500_123456_flight.csv"),
+            Some(("2026101", "171500_123456_flight.csv"))
+        );
+        assert_eq!(
+            routing_session("20261011_171500_12345x_flight.csv"),
+            Some(("20261011", "171500_12345x_flight.csv"))
+        );
     }
 }

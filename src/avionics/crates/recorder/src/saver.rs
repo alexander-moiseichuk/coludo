@@ -513,6 +513,8 @@ pub struct Saver<'r, 't, F: Flash, S: Fs> {
     tail: Vec<u8>,
     /// The uart_saver's queue (M19): every staged line's wire bytes, routing included, before any goes to the card.
     uart: Option<&'r LineRing>,
+    /// A line for the uart_saver's queue whose routing [`tee`] named the session of.
+    teed: Vec<u8>,
 }
 
 impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
@@ -548,11 +550,13 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
             path: String::new(),
             tail: vec![0; TAIL_BYTES],
             uart: None,
+            teed: Vec::new(),
         }
     }
 
     /// The saver handing every line it stages to `queue` too (M19's uart_saver): each line once, as `GET /ring`
-    /// streams it, before any of it goes to the card, so an SD stall never holds the UART back.
+    /// streams it (a log line's and a session.csv line's routing naming their session, [`tee`]), before any of it goes
+    /// to the card, so an SD stall never holds the UART back.
     pub fn with_uart(mut self, queue: &'r LineRing) -> Saver<'r, 't, F, S> {
         self.uart = Some(queue);
         self
@@ -609,11 +613,12 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
             staged,
             path,
             uart,
+            teed,
             ..
         } = self;
         walk.decode(|line| {
             if let Some(queue) = uart {
-                queue.push(line.wire);
+                queue.push(tee(teed, &line));
             }
             stage_line(staged, path, line)
         });
@@ -717,6 +722,29 @@ fn put<S: Fs>(
         known.torn = false;
     }
     Ok(())
+}
+
+/// `line` as the uart_saver sends it, built in `teed` when it differs from the wire line: a routed line as it is; a
+/// log line routed `<session>_recorder.log` and a session.csv line `<session>_session.csv`, their bodies unchanged.
+///
+/// Neither names its session on the wire, and a receiver that took it from the last routed line filed a new boot's
+/// session.csv rows and first log lines (they come before its first routed line) under the boot before (the C6
+/// receiver, 2026-10-11). The body keeps its checks, made under the line's own routing (none, `session.csv`): the
+/// receiver files exactly the bytes this saver files, and verifies them under that routing.
+fn tee<'l>(teed: &'l mut Vec<u8>, line: &DecodedLine<'l>) -> &'l [u8] {
+    let name = match line.routing {
+        Some(SESSION_INDEX) => SESSION_INDEX,
+        Some(_) => return line.wire,
+        None => LOG_FILE,
+    };
+    teed.clear();
+    teed.push(b'@');
+    teed.extend_from_slice(line.session.as_bytes());
+    teed.push(b'_');
+    teed.extend_from_slice(name.as_bytes());
+    teed.push(b'@');
+    teed.extend_from_slice(line.body());
+    teed
 }
 
 /// Routes one decoded line into `staged`, its path built in `path`: to its file in its session's recordings

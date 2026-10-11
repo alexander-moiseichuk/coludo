@@ -1005,8 +1005,9 @@ fn the_backlog_counts_against_the_saver_and_the_write_rate_makes_it_ring_unsaved
 }
 
 #[test]
-fn the_uart_queue_gets_every_line_the_saver_stages_with_its_routing_once_and_in_order() {
-    // M19: the saver hands each line it stages to the uart_saver's queue, as `GET /ring` streams it
+fn the_uart_queue_gets_every_line_the_saver_stages_with_its_session_once_and_in_order() {
+    // M19: the saver hands each line it stages to the uart_saver's queue, as `GET /ring` streams it, a log line and a
+    // session.csv line routed under their session (the receiver files them where the saver does)
     let run = |capacity: usize| {
         let geometry = Geometry::new(128).unwrap();
         let flash = MemoryFlash::new(geometry.bytes());
@@ -1033,7 +1034,15 @@ fn the_uart_queue_gets_every_line_the_saver_stages_with_its_routing_once_and_in_
                 .any(|later| later.header.boot_id == block.header.boot_id);
             decoder
                 .block(slot_bytes(&image, block.slot), boot_goes_on, |line| {
-                    expected.push(line.wire.to_vec())
+                    let named = match line.routing {
+                        Some("session.csv") => Some("session.csv"),
+                        Some(_) => None,
+                        None => Some("recorder.log"),
+                    };
+                    expected.push(match named {
+                        Some(name) => [format!("@{}_{name}@", line.session).as_bytes(), line.body()].concat(),
+                        None => line.wire.to_vec(),
+                    })
                 })
                 .unwrap();
         }
@@ -1051,6 +1060,23 @@ fn the_uart_queue_gets_every_line_the_saver_stages_with_its_routing_once_and_in_
     assert!(
         got.iter().any(|line| line.starts_with(b"@000123_imu_lsm6dso32.csv@")),
         "a stream line keeps its routing for the receiver"
+    );
+    // a log line and a session.csv line name their session, their bodies verifying under their own routing
+    let body = |line: &[u8], routing: &str| line[routing.len() + 2..line.len() - 1].to_vec();
+    let log = got
+        .iter()
+        .find(|line| line.starts_with(b"@000123_recorder.log@"))
+        .expect("a log line");
+    assert!(recorder_wire::verify(None, &body(log, "000123_recorder.log")).is_some());
+    let index = got
+        .iter()
+        .find(|line| line.starts_with(b"@000123_session.csv@"))
+        .expect("a session.csv line");
+    assert!(recorder_wire::verify(Some(b"session.csv"), &body(index, "000123_session.csv")).is_some());
+    assert!(
+        !got.iter()
+            .any(|line| line.starts_with(b"@session.csv@") || line.starts_with(b"{")),
+        "no line leaves without its session"
     );
     // NEGATIVE: a queue nobody drains keeps the newest lines only, each dropped one counted
     let (expected, got, dropped) = run(4096);
