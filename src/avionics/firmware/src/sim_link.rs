@@ -18,8 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use ::sim_link::{Fins, Refusal, Sensors};
-use control::change::Change;
-use databoard::Writer;
+use controller::HitlWriters;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::sys;
@@ -107,36 +106,6 @@ pub fn start(member: HitlMember, topology: &'static Topology) -> anyhow::Result<
     Ok(())
 }
 
-/// The `hitl` source's writers, one per quantity the frame carries.
-struct Writers {
-    /// g.
-    accel: Option<Writer<'static, [f32; 3]>>,
-    /// deg/s.
-    rate: Option<Writer<'static, [f32; 3]>>,
-    /// degrees.
-    attitude: Option<Writer<'static, [f32; 3]>>,
-    /// Calibrated counts.
-    mag: Option<Writer<'static, [f32; 3]>>,
-    /// m MSL.
-    altitude: Option<Writer<'static, f32>>,
-    /// m above the pad.
-    elevation: Option<Writer<'static, f32>>,
-    /// m/s, from the altitude.
-    change: Option<Writer<'static, f32>>,
-    /// m.
-    agl: Option<Writer<'static, f32>>,
-    /// m/s.
-    airspeed: Option<Writer<'static, f32>>,
-    /// Pa.
-    dynamic_pressure: Option<Writer<'static, f32>>,
-    /// 1e-7 degree.
-    position: Option<Writer<'static, [i32; 2]>>,
-    /// m/s over ground.
-    speed: Option<Writer<'static, f32>>,
-    /// degrees.
-    course: Option<Writer<'static, f32>>,
-}
-
 /// The simulated sensors' streams, each when its entry has one registered.
 struct Streams {
     /// imu_lsm6dso32.csv: accel g, rate centideg/s, irq_runs.
@@ -159,25 +128,8 @@ struct Streams {
 fn run(member: HitlMember, topology: &'static Topology) {
     let name = member.name;
     let source = name;
-    let scalar = |quantity: &str| topology.scalar(quantity).and_then(|parameter| parameter.writer(source));
-    let vector = |quantity: &str| topology.vector(quantity).and_then(|parameter| parameter.writer(source));
-    let mut writers = Writers {
-        accel: vector("accel"),
-        rate: vector("rate"),
-        attitude: vector("attitude"),
-        mag: vector("mag"),
-        altitude: scalar("altitude"),
-        elevation: scalar("elevation"),
-        change: scalar("change"),
-        agl: scalar("agl"),
-        airspeed: scalar("airspeed"),
-        dynamic_pressure: scalar("dynamic_pressure"),
-        position: topology
-            .position("position")
-            .and_then(|parameter| parameter.writer(source)),
-        speed: scalar("speed"),
-        course: scalar("course"),
-    };
+    // the hitl source's writers and the climb its altitude derives (crates/controller, the SITL's too)
+    let mut writers = HitlWriters::new(topology, source);
     let stream = |entry: &str| {
         crate::recorder::get()
             .zip(crate::recorder::device_stream(entry))
@@ -195,7 +147,6 @@ fn run(member: HitlMember, topology: &'static Topology) {
     let socket = bind(name, member.port);
     BOUND.store(true, Ordering::Relaxed);
     log::info!("{name} :: sim-link on udp:{}", member.port);
-    let mut climb = Change::default();
     let mut last_seq: Option<u32> = None;
     let mut datagram = [0u8; DATAGRAM_BYTES];
     loop {
@@ -215,11 +166,7 @@ fn run(member: HitlMember, topology: &'static Topology) {
             continue;
         }
         last_seq = Some(sensors.seq);
-        let change = sensors
-            .altitude
-            .or(sensors.elevation)
-            .and_then(|altitude| climb.push(altitude, now_us));
-        publish(&sensors, change, now_us, &mut writers);
+        let change = writers.publish(&sensors, now_us);
         record(name, &sensors, change, now_us, &mut streams);
         APPLIED.fetch_add(1, Ordering::Relaxed);
         LAST[0].store(sensors.seq, Ordering::Relaxed);
@@ -260,37 +207,6 @@ fn bind(name: &str, port: u16) -> UdpSocket {
                 std::thread::sleep(Duration::from_secs(1));
             }
         }
-    }
-}
-
-/// Every present quantity of `sensors` through the `hitl` writers, stamped `now_us`.
-fn publish(sensors: &Sensors, change: Option<f32>, now_us: u64, writers: &mut Writers) {
-    for (value, writer) in [
-        (sensors.accel, &mut writers.accel),
-        (sensors.rate, &mut writers.rate),
-        (sensors.attitude, &mut writers.attitude),
-        (sensors.mag, &mut writers.mag),
-    ] {
-        if let (Some(value), Some(writer)) = (value, writer) {
-            writer.push(value, now_us);
-        }
-    }
-    for (value, writer) in [
-        (sensors.altitude, &mut writers.altitude),
-        (sensors.elevation, &mut writers.elevation),
-        (change, &mut writers.change),
-        (sensors.agl, &mut writers.agl),
-        (sensors.airspeed, &mut writers.airspeed),
-        (sensors.dynamic_pressure, &mut writers.dynamic_pressure),
-        (sensors.speed, &mut writers.speed),
-        (sensors.course, &mut writers.course),
-    ] {
-        if let (Some(value), Some(writer)) = (value, writer) {
-            writer.push(value, now_us);
-        }
-    }
-    if let (Some(position), Some(writer)) = (sensors.position, &mut writers.position) {
-        writer.push(position, now_us);
     }
 }
 

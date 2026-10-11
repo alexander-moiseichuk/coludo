@@ -28,8 +28,8 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use board_config::Entry;
+pub use controller::Topology;
 use controller::{Attempt, Binding, Table};
-use databoard::Parameter;
 use drivers::axes::Axes;
 use drivers::lsm6dso32::{Lsm6dso32, OverSpi};
 use drivers::separation::Separation;
@@ -161,27 +161,6 @@ pub struct HitlMember {
 /// The sim-link's UDP port when the entry names none (doc/specs/sim-link.md).
 const SIM_PORT: u16 = 1236;
 
-/// The quantities the `hitl` entry provides (plan B hitl.py's `Databoard.provide` at setup, its entry has no
-/// `provides`), each at priority 0 with plan B's 1 s timeout; `change` the port's own, as every barometer's.
-const HITL_QUANTITIES: [&str; 13] = [
-    "accel",
-    "rate",
-    "attitude",
-    "mag",
-    "agl",
-    "altitude",
-    "elevation",
-    "change",
-    "position",
-    "speed",
-    "course",
-    "airspeed",
-    "dynamic_pressure",
-];
-
-/// The `hitl` source's timeout, ms (plan B hitl.py `provided`).
-const HITL_TIMEOUT_MS: u32 = 1000;
-
 /// The flight loop once its entry came up: the control thread runs it (crate::flight, M13).
 pub struct FlightMember {
     /// The entry's name: its log lines'.
@@ -214,259 +193,6 @@ const IMU_PERIOD_MS: u32 = 10;
 
 /// The pin name plan B's separation driver takes when its entry names none (`_pin_gpio('pin', 'separation_switch')`).
 const SEPARATION_PIN: &str = "separation_switch";
-
-/// The quantities scalars are (D14 of the M5 plan): one f32 each. `change` is the port's own (M9): each barometer's
-/// climb rate, registered with its `elevation` ([`BAROMETERS`]).
-const SCALARS: [&str; 13] = [
-    "altitude",
-    "elevation",
-    "change",
-    "pressure",
-    "temperature",
-    "airspeed",
-    "dynamic_pressure",
-    "agl",
-    "voltage",
-    "current",
-    "power",
-    "speed",
-    "course",
-];
-
-/// The barometers: each one that provides `elevation` also provides `change` (m/s, climb positive; M9, the operator's
-/// fifth barometer quantity) at that elevation's priority and timeout, with no entry in the board config, so no board
-/// file or `config_id` changes; never reconciled (a rate has no offset).
-const BAROMETERS: [&str; 3] = ["icp10111", "bmp581", "bmp280"];
-
-/// The quantities that are vectors: three f32 (plan B pushes 3-tuples).
-const VECTORS: [&str; 4] = ["accel", "rate", "mag", "attitude"];
-
-/// The quantities that are positions: latitude and longitude in 1e-7 degrees.
-const POSITIONS: [&str; 1] = ["position"];
-
-/// The databoard's quantities, by sample type, each with its sources: built once at bring-up, then shared
-/// read-only.
-///
-/// Each Parameter is boxed on its own (~0.42 KB), so every one is allocated internal, the flight readers' memory
-/// (§4.7): a run of them in one Vec would pass SPIRAM_MALLOC_ALWAYSINTERNAL (4 KB) at ten scalars and land in PSRAM.
-#[expect(
-    clippy::vec_box,
-    reason = "each Parameter is boxed for its memory: see the type's notes"
-)]
-pub struct Topology {
-    /// The scalar quantities.
-    scalars: Vec<Box<Parameter<f32>>>,
-    /// The vector quantities.
-    vectors: Vec<Box<Parameter<[f32; 3]>>>,
-    /// The positions.
-    positions: Vec<Box<Parameter<[i32; 2]>>>,
-}
-
-impl Topology {
-    /// The scalar quantity `quantity` (altitude, pressure, ...), when a provider of it came up.
-    pub fn scalar(&self, quantity: &str) -> Option<&Parameter<f32>> {
-        self.scalars
-            .iter()
-            .find(|parameter| parameter.name() == quantity)
-            .map(|parameter| &**parameter)
-    }
-
-    /// The vector quantity `quantity` (accel, rate, mag, attitude), when a provider of it came up.
-    pub fn vector(&self, quantity: &str) -> Option<&Parameter<[f32; 3]>> {
-        self.vectors
-            .iter()
-            .find(|parameter| parameter.name() == quantity)
-            .map(|parameter| &**parameter)
-    }
-
-    /// The position quantity `quantity` (`position`, 1e-7 degree), when a provider of it came up (M11).
-    pub fn position(&self, quantity: &str) -> Option<&Parameter<[i32; 2]>> {
-        self.positions
-            .iter()
-            .find(|parameter| parameter.name() == quantity)
-            .map(|parameter| &**parameter)
-    }
-
-    /// Plan B's `inspect databoard` (databoard.py:506-511): each quantity's fused reading at `now_us` -- its value
-    /// (a scalar, a vector, a position in degrees), the source that won, its age in ms, all null when no source is
-    /// fresh -- and the learned reconcile offsets by source.
-    pub fn inspect(&self, now_us: u64) -> serde_json::Map<String, Value> {
-        let mut quantities = serde_json::Map::new();
-        for parameter in &self.scalars {
-            quantities.insert(
-                parameter.name().to_string(),
-                fused(parameter, now_us, |value| value.into()),
-            );
-        }
-        for parameter in &self.vectors {
-            quantities.insert(
-                parameter.name().to_string(),
-                fused(parameter, now_us, |value| value.to_vec().into()),
-            );
-        }
-        for parameter in &self.positions {
-            quantities.insert(
-                parameter.name().to_string(),
-                fused(parameter, now_us, |[latitude, longitude]| {
-                    vec![f64::from(latitude) * 1e-7, f64::from(longitude) * 1e-7].into()
-                }),
-            );
-        }
-        quantities
-    }
-
-    /// Plan B's `stats databoard` (databoard.py:513-515): each quantity's sources, sorted by name as plan B's
-    /// `sources()` sorted them.
-    pub fn stats(&self) -> serde_json::Map<String, Value> {
-        let sources = |names: Vec<&'static str>| {
-            let mut names = names;
-            names.sort_unstable();
-            Value::from(names)
-        };
-        self.scalars
-            .iter()
-            .map(|parameter| (parameter.name().to_string(), sources(parameter.sources().collect())))
-            .chain(
-                self.vectors
-                    .iter()
-                    .map(|parameter| (parameter.name().to_string(), sources(parameter.sources().collect()))),
-            )
-            .chain(
-                self.positions
-                    .iter()
-                    .map(|parameter| (parameter.name().to_string(), sources(parameter.sources().collect()))),
-            )
-            .collect()
-    }
-
-    /// The topology of the entries that came up, in setup order, with one log line per quantity: its sources in rank
-    /// order with their priorities, and its shared window. M6 adds the readers.
-    fn build(entries: &[Entry<'static>], table: &Table) -> Topology {
-        let mut topology = Topology {
-            scalars: Vec::new(),
-            vectors: Vec::new(),
-            positions: Vec::new(),
-        };
-        let up = entries
-            .iter()
-            .zip(table.entries())
-            .filter(|(_, device)| device.active());
-        for (entry, _) in up {
-            let mut provides = board_config::provides(entry);
-            if entry.implementation == "hitl" {
-                provides = HITL_QUANTITIES
-                    .iter()
-                    .map(|quantity| board_config::Provide {
-                        quantity,
-                        priority: 0,
-                        timeout_ms: HITL_TIMEOUT_MS,
-                        reconcile: false,
-                    })
-                    .collect();
-            }
-            if BAROMETERS.contains(&entry.implementation) {
-                let change = provides
-                    .iter()
-                    .find(|provide| provide.quantity == "elevation")
-                    .map(|elevation| board_config::Provide {
-                        quantity: "change",
-                        reconcile: false,
-                        ..*elevation
-                    });
-                provides.extend(change);
-            }
-            for provide in provides {
-                let quantity = provide.quantity;
-                let added = if SCALARS.contains(&quantity) {
-                    add(&mut topology.scalars, entry.name, &provide)
-                } else if VECTORS.contains(&quantity) {
-                    add(&mut topology.vectors, entry.name, &provide)
-                } else if POSITIONS.contains(&quantity) {
-                    add(&mut topology.positions, entry.name, &provide)
-                } else {
-                    log::warn!(
-                        "databoard :: '{quantity}' of {} is no quantity the board knows: skipped",
-                        entry.name
-                    );
-                    continue;
-                };
-                if !added {
-                    log::warn!(
-                        "databoard :: {quantity} has {} sources already: {} not added",
-                        databoard::MAXIMUM_SOURCES,
-                        entry.name
-                    );
-                }
-            }
-        }
-        for line in topology
-            .scalars
-            .iter()
-            .map(|parameter| describe(parameter))
-            .chain(topology.vectors.iter().map(|parameter| describe(parameter)))
-            .chain(topology.positions.iter().map(|parameter| describe(parameter)))
-        {
-            log::info!("{line}");
-        }
-        topology
-    }
-}
-
-/// One quantity's `inspect databoard` entry: `value` through `json`, `source` and `age_ms` of the fused reading at
-/// `now_us` (all null when no source is fresh), and the reconcile `offsets` by source.
-fn fused<T: databoard::Sample>(parameter: &Parameter<T>, now_us: u64, json: impl Fn(T) -> Value) -> Value {
-    let reading = parameter.read(now_us);
-    let offsets: serde_json::Map<String, Value> = parameter
-        .offsets()
-        .map(|(source, offset)| (source.to_string(), offset.into()))
-        .collect();
-    serde_json::json!({
-        "value": reading.map(|reading| json(reading.value)),
-        "source": reading.map(|reading| reading.source),
-        "age_ms": reading.map(|reading| reading.age_us / 1000),
-        "offsets": offsets,
-    })
-}
-
-/// Registers `source` for `provide`'s quantity in `parameters`, making the quantity on its first source. Whether it
-/// was added (a quantity holds [`databoard::MAXIMUM_SOURCES`] at most).
-#[expect(
-    clippy::vec_box,
-    reason = "each Parameter is boxed for its memory: see Topology's notes"
-)]
-fn add<T: databoard::Sample>(
-    parameters: &mut Vec<Box<Parameter<T>>>,
-    source: &'static str,
-    provide: &board_config::Provide<'static>,
-) -> bool {
-    let index = match parameters
-        .iter()
-        .position(|parameter| parameter.name() == provide.quantity)
-    {
-        Some(index) => index,
-        None => {
-            parameters.push(Box::new(Parameter::new(provide.quantity)));
-            parameters.len() - 1
-        }
-    };
-    parameters[index]
-        .add_source(source, provide.priority, provide.timeout_ms, provide.reconcile)
-        .is_ok()
-}
-
-/// A quantity's log line: `databoard :: pressure <- baro_icp10111 p0, baro_bmp581 p1; window 200 ms`.
-fn describe<T: databoard::Sample>(parameter: &Parameter<T>) -> String {
-    let sources: Vec<String> = parameter
-        .sources()
-        .map(|source| format!("{source} p{}", parameter.rank(source).unwrap_or_default()))
-        .collect();
-    format!(
-        "databoard :: {} <- {}; window {} ms",
-        parameter.name(),
-        sources.join(", "),
-        parameter.window_us() / 1000
-    )
-}
 
 /// What the bring-up leaves.
 pub struct Devices {
@@ -616,7 +342,14 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         log::info!("{line}");
     }
     log::info!("controller :: bring-up {} ms", started.elapsed().as_millis());
-    let topology: &'static Topology = Box::leak(Box::new(Topology::build(&entries, table)));
+    let (topology, warnings) = controller::topology(&entries, table);
+    for line in warnings {
+        log::warn!("{line}");
+    }
+    for line in topology.describe() {
+        log::info!("{line}");
+    }
+    let topology: &'static Topology = Box::leak(Box::new(topology));
     Devices {
         table,
         topology,

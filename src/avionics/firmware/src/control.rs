@@ -57,7 +57,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 use control::attitude::{Attitude, Pace, Quantities, assemble};
-use controller::{DeviceEntry, Table};
+use controller::{DeviceEntry, StageSources, Table};
 use databoard::{Parameter, Writer};
 use drivers::axes::Axes;
 use drivers::debounce::StampPair;
@@ -70,8 +70,7 @@ use firmware::buses::spi::{SpiBus, SpiHandle};
 use firmware::gcl::{self, Command, Gate, Reach};
 use recorder::{Cell, Telemetry};
 use sequencer::{
-    Binding, ChangeRefused, Commit, Decider, FlightFlag, FlightWriter, RequestSlot, Stage, StageMachine, Transition,
-    VetoEdge,
+    ChangeRefused, Commit, Decider, FlightFlag, FlightWriter, RequestSlot, Stage, StageMachine, Transition, VetoEdge,
 };
 
 use crate::devices::{AttitudeMember, SeparationMember, SequencerMember, SpiMember, Topology};
@@ -746,18 +745,13 @@ struct Sequencer {
     name: &'static str,
     /// The machine, boxed on the internal heap at the thread's start (~2.4 KB the control stack does not carry).
     machine: Box<StageMachine>,
-    /// Which slot each source holds, bound once at the thread's start from the databoard's sources in rank order (M9).
-    binding: Binding,
+    /// Which slot each source holds, bound once at the thread's start from the databoard's sources in rank order (M9),
+    /// and the quantities each reads from (crates/controller, the SITL's too).
+    sources: StageSources<'static>,
     /// `vetoes.csv`, the veto episodes' begin and end rows, with a recorder (M9).
     vetoes: Option<Telemetry<'static>>,
     /// A veto row was refused and logged: once.
     veto_refusal_logged: bool,
-    /// The `accel` quantity (g), when a provider of it came up.
-    accel: Option<&'static Parameter<[f32; 3]>>,
-    /// The `elevation` quantity (m above the pad).
-    elevation: Option<&'static Parameter<f32>>,
-    /// The `agl` quantity (the laser's m above the ground).
-    height_above_ground: Option<&'static Parameter<f32>>,
     /// `<name>.csv`, with a recorder.
     telemetry: Option<Telemetry<'static>>,
     /// A row was refused and logged: once, never again (plan B's `note`, which this task never re-arms).
@@ -772,16 +766,8 @@ impl Sequencer {
     /// The machine of `member`, its quantities found in `topology`, each source bound to its slot (one line per class,
     /// and one per source past its class's slots), its streams opened.
     fn new(member: SequencerMember, topology: &'static Topology) -> Sequencer {
-        let accel = topology.vector("accel");
-        let elevation = topology.scalar("elevation");
-        let height_above_ground = topology.scalar("agl");
-        let binding = Binding::new(
-            accel.into_iter().flat_map(|parameter| parameter.sources()),
-            elevation.into_iter().flat_map(|parameter| parameter.sources()),
-            height_above_ground
-                .into_iter()
-                .flat_map(|parameter| parameter.sources()),
-        );
+        let sources = StageSources::new(topology);
+        let binding = sources.binding();
         let slots = |decider: fn(usize) -> Decider, count: usize| {
             (0..count)
                 .filter_map(|slot| binding.source(decider(slot)))
@@ -807,12 +793,9 @@ impl Sequencer {
         Sequencer {
             name: member.name,
             machine: Box::new(StageMachine::new(member.settings)),
-            binding,
+            sources,
             vetoes: open(crate::recorder::device_stream(crate::recorder::VETOES)),
             veto_refusal_logged: false,
-            accel,
-            elevation,
-            height_above_ground,
             telemetry: open(crate::recorder::device_stream(member.name)),
             refusal_logged: false,
             period_us: u64::from(member.settings.period_ms) * 1000,
@@ -835,11 +818,7 @@ impl Sequencer {
         // SAFETY: a plain read of the monotonic timer.
         let read_us = unsafe { sys::esp_timer_get_time() } as u64;
         // each bound source's own channel, fresh in its quantity's shared window (M9: the multi-source machine)
-        let readings = self.binding.readings(
-            |source| own_reading(self.accel, source, read_us),
-            |source| own_reading(self.elevation, source, read_us),
-            |source| own_reading(self.height_above_ground, source, read_us),
-        );
+        let readings = self.sources.readings(read_us);
         let flight = writer.flight();
         let step = self
             .machine
@@ -868,7 +847,7 @@ impl Sequencer {
         let row = [
             Cell::Text(veto.detector.name()),
             Cell::Text(edge.name()),
-            Cell::Text(self.binding.source(veto.decider).unwrap_or("")),
+            Cell::Text(self.sources.binding().source(veto.decider).unwrap_or("")),
             Cell::Text(veto.kinds()),
             Cell::I32(i32::from(veto.contrary)),
             Cell::I32(i32::from(veto.live)),
@@ -1062,13 +1041,6 @@ pub fn probe_attitude(only: Option<&str>) -> Option<(&'static str, Option<String
 /// Whether the attitude filter is blind (`attitude-blind`, plan B cc_client): no fresh gyro for its blind window.
 pub fn attitude_blind() -> bool {
     ATTITUDE_BLIND.load(Ordering::Relaxed)
-}
-
-/// One source's own reading of `parameter` at `now_us`, as the multi-source machine takes it: its channel's latest
-/// value when fresh in the quantity's shared window (plan B's `read()` freshness, health not consulted), else None.
-fn own_reading<T: databoard::Sample>(parameter: Option<&Parameter<T>>, source: &str, now_us: u64) -> Option<T> {
-    let parameter = parameter?;
-    parameter.channel(source)?.recent(parameter.window_us(), now_us)
 }
 
 /// The stage machine's binding as `inspect sequencer` shows it: the slots' sources, and each source past its class's

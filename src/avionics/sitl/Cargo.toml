@@ -1,0 +1,20 @@
+[package]
+name = "sitl"
+description = "The Rust flight code on the host behind the HITL sim-link, lockstep with the host's physics (M14)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sitl"
+path = "src/main.rs"
+
+[dependencies]
+board_config.workspace = true  # the board config: the mask, the directory, the entries' settings
+control.workspace = true  # the flight law
+controller.workspace = true  # the topology and the shared inputs, the firmware's own
+mission.workspace = true  # the zone and the launch point
+sequencer.workspace = true  # the stage machine and the flight word
+serde_json.workspace = true
+sim_link.workspace = true  # the SENSORS and FINS frames

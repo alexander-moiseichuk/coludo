@@ -12,11 +12,10 @@
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
-use control::flight::{FlightLaw, Step};
-use control::governor::Readings;
-use control::guidance::{Fix, Heading, Inputs, Landing};
+use control::flight::FlightLaw;
+use control::guidance::{Heading, Landing};
 use control::navigation::Position;
-use databoard::Parameter;
+use controller::FlightQuantities;
 use mission::Mission;
 use recorder::{Cell, Telemetry};
 use sequencer::{Flight as FlightWord, Stage};
@@ -161,28 +160,6 @@ pub fn keep_warm_airspeed(airspeed: f32) {
     log::info!("flight :: airspeed {airspeed} m/s kept as the law's seed (warm start)");
 }
 
-/// The quantities the law reads.
-struct Quantities {
-    /// [heading, roll, pitch], degrees.
-    attitude: Option<&'static Parameter<[f32; 3]>>,
-    /// [roll, pitch, yaw], deg/s.
-    rate: Option<&'static Parameter<[f32; 3]>>,
-    /// g.
-    accel: Option<&'static Parameter<[f32; 3]>>,
-    /// GNSS ground speed, m/s.
-    speed: Option<&'static Parameter<f32>>,
-    /// GNSS course, degrees.
-    course: Option<&'static Parameter<f32>>,
-    /// The pitot's airspeed, m/s.
-    pitot: Option<&'static Parameter<f32>>,
-    /// The fix.
-    position: Option<&'static Parameter<[i32; 2]>>,
-    /// The laser's height, m.
-    agl: Option<&'static Parameter<f32>>,
-    /// The baro height above the pad, m.
-    elevation: Option<&'static Parameter<f32>>,
-}
-
 /// The flight loop, the control thread's.
 pub struct FlightLoop {
     /// The law.
@@ -190,7 +167,7 @@ pub struct FlightLoop {
     /// Each mixer surface's fin index, None for a surface with no servo.
     fins: Vec<Option<usize>>,
     /// What it reads.
-    quantities: Quantities,
+    quantities: FlightQuantities<'static>,
     /// flight.csv, with a recorder.
     telemetry: Option<Telemetry<'static>>,
     /// A refused row was logged since the last accepted one.
@@ -234,17 +211,7 @@ impl FlightLoop {
         FlightLoop {
             law,
             fins: bound,
-            quantities: Quantities {
-                attitude: topology.vector("attitude"),
-                rate: topology.vector("rate"),
-                accel: topology.vector("accel"),
-                speed: topology.scalar("speed"),
-                course: topology.scalar("course"),
-                pitot: topology.scalar("airspeed"),
-                position: topology.position("position"),
-                agl: topology.scalar("agl"),
-                elevation: topology.scalar("elevation"),
-            },
+            quantities: FlightQuantities::new(topology),
             telemetry: crate::recorder::get()
                 .zip(crate::recorder::device_stream(member.name))
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
@@ -258,54 +225,15 @@ impl FlightLoop {
     /// written, and every 100 ms the flight.csv row and the vitals.
     #[inline(never)]
     pub fn tick(&mut self, now_us: u64, flight: FlightWord, fins: Option<&mut Fins>) {
-        let quantities = &self.quantities;
-        let vector = |parameter: Option<&'static Parameter<[f32; 3]>>| {
-            parameter
-                .and_then(|parameter| parameter.read(now_us))
-                .map(|reading| reading.value)
-        };
-        let scalar = |parameter: Option<&'static Parameter<f32>>| {
-            parameter
-                .and_then(|parameter| parameter.read(now_us))
-                .map(|reading| reading.value)
-        };
-        let fix = quantities
-            .position
-            .and_then(|parameter| parameter.read(now_us))
-            .map(|reading| Fix {
-                position: Position {
-                    latitude_e7: reading.value[0],
-                    longitude_e7: reading.value[1],
-                },
-                age_ms: reading.age_us / 1000,
-            });
-        let course = quantities.course.and_then(|parameter| parameter.read(now_us));
-        let speed = scalar(quantities.speed);
         let (landing, set_launch) = mission_view();
-        let step = Step {
-            stage: flight.stage,
-            armed: flight.armed,
+        let step = self.quantities.step(
             now_us,
-            attitude: vector(quantities.attitude),
-            rate: vector(quantities.rate),
-            readings: Readings {
-                acceleration: vector(quantities.accel),
-                gnss_speed: speed,
-                pitot: scalar(quantities.pitot),
-            },
-            guidance: Inputs {
-                landing,
-                launch: set_launch.or(fix.map(|fix| fix.position)),
-                position: fix,
-                agl: scalar(quantities.agl),
-                elevation: scalar(quantities.elevation),
-                ..Inputs::default()
-            },
-            ground: course.zip(speed).map(|(course, speed)| [course.value, speed]),
-            // the course's push time: the same between samples, new with each
-            ground_stamp: course.map(|course| now_us.saturating_sub(u64::from(course.age_us))),
-            drift: crate::gnss::drift(),
-        };
+            flight.stage,
+            flight.armed,
+            landing,
+            set_launch,
+            crate::gnss::drift(),
+        );
         if self.law.step(&step)
             && let Some(fins) = fins
         {

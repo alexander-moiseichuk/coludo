@@ -292,8 +292,11 @@ version = "0.1.0"
 dependencies = [
  "board_config",
  "control",
+ "databoard",
  "golden",
+ "sequencer",
  "serde_json",
+ "sim_link",
 ]
 
 [[package]]
@@ -1427,6 +1430,19 @@ name = "sim_link"
 version = "0.1.0"
 dependencies = [
  "recorder_wire",
+]
+
+[[package]]
+name = "sitl"
+version = "0.1.0"
+dependencies = [
+ "board_config",
+ "control",
+ "controller",
+ "mission",
+ "sequencer",
+ "serde_json",
+ "sim_link",
 ]
 
 [[package]]

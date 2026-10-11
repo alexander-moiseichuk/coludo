@@ -46,10 +46,12 @@
 //!  * A device whose loop crashed stays in plan B's `failures` in crash order; [`Table`] lists every reader in
 //!    directory order. Only the key order of a JSON object differs.
 
+mod inputs;
 mod readiness;
 mod ring_gate;
 mod stale_arm;
 mod streams;
+mod topology;
 mod watchdog;
 
 use std::fmt;
@@ -60,6 +62,7 @@ use board_config::Entry;
 use board_config::python::formatted;
 use serde_json::Value;
 
+pub use inputs::{FlightQuantities, HitlWriters, StageSources};
 pub use readiness::readiness;
 pub use ring_gate::ring_gate;
 pub use stale_arm::stale_arm;
@@ -67,6 +70,7 @@ pub use streams::{
     BAROMETER_FIELDS, CHECKPOINT_FIELDS, IMU_FIELDS, MAGNETOMETER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS,
     SERVO_FIELDS, Stream, VETOES_FIELDS, companions, stream, vetoes,
 };
+pub use topology::{HITL_QUANTITIES, Kind, Topology, topology};
 pub use watchdog::Stall;
 
 /// The pause between two setup attempts of one device, in milliseconds: a flaky breadboard contact settles
