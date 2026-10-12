@@ -13,7 +13,8 @@ path = "src/main.rs"
 [dependencies]
 board_config.workspace = true  # the board config: the mask, the directory, the entries' settings
 control.workspace = true  # the flight law
-controller.workspace = true  # the topology and the shared inputs, the firmware's own
+controller.workspace = true
+databoard.workspace = true  # the attitude filter's writer  # the topology and the shared inputs, the firmware's own
 mission.workspace = true  # the zone and the launch point
 sequencer.workspace = true  # the stage machine and the flight word
 serde_json.workspace = true

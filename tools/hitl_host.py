@@ -384,12 +384,29 @@ class _Sim:
         self.socket.settimeout(_LOCKSTEP_WAIT_S)
         self.clock = 0.0
         pad_steps, steps, last_stage = round(pad_s / fixed), 0, None
+        # the realtime run's drops, timed in sim time from GLIDING (M14): the attitude's for good, the GNSS's for
+        # gnss_drop_s from 2-6 s in (seeded); a reboot needs a warm start and stays realtime-only
+        drop_attitude_at = drop_gnss_at = recover_gnss_at = None
         while True:
             stage = self.stage()
             if stage != last_stage:
                 print('STAGE', stage, _STAGES.get(stage))
                 self.row('sequencer', _STAGES.get(stage, str(stage)))
+                if stage == _GLIDING and self.args.attitude_drop_s > 0:
+                    drop_attitude_at = self.sim_time + self.args.attitude_drop_s
+                if stage == _GLIDING and self.args.gnss_drop_s > 0:
+                    drop_gnss_at = self.sim_time + 2.0 + random.random() * 4.0
                 last_stage = stage
+            if drop_attitude_at is not None and self.sim_time >= drop_attitude_at and not self.drop_attitude:
+                self.drop_attitude = True
+                print('ATTITUDE DROP: sim attitude off, the attitude filter carries the glide')
+            if drop_gnss_at is not None and self.sim_time >= drop_gnss_at and recover_gnss_at is None:
+                self.drop_gnss = True
+                recover_gnss_at = self.sim_time + self.args.gnss_drop_s
+                print('GNSS DROP: position/speed/course out for %.1fs' % self.args.gnss_drop_s)
+            if recover_gnss_at is not None and self.drop_gnss and self.sim_time >= recover_gnss_at:
+                self.drop_gnss = False
+                print('GNSS RECOVER: fix reacquired')
             if stage >= _DONE:
                 print('DONE')
                 return 0
@@ -539,8 +556,8 @@ def _sitl(args: argparse.Namespace) -> int:
     One scenario against the SITL (M14): the board config made HITL as a board's is, the mission the host seeds a
     board with, the binary started on localhost, flown lockstep; 0 on DONE, 1 otherwise.
     """
-    if args.reboot or args.attitude_drop_s or args.gnss_drop_s:
-        raise SystemExit('--sitl flies neither a reboot nor a timed drop: they are realtime events')
+    if args.reboot:
+        raise SystemExit('--sitl flies no reboot: it needs a warm start of the binary (a realtime event)')
     with open(args.config) as handle:
         saved = json.load(handle)
     scenario = sim_model.HPRC
