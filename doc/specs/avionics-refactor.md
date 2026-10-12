@@ -1,135 +1,142 @@
 # Avionics refactoring plan (Phase 6, after M21)
 
 The Rust port (`src/avionics`, [avionics-port.md](avionics-port.md)) reached plan B's behaviour milestone by
-milestone, and its shape shows it: each milestone added its arms to the same few functions. This plan restructures
-the code without changing what it does. Every stage is proven by the same checks as a milestone (below), and is
-committed on its own.
+milestone, and its shape shows it: each milestone added its arms to the same few firmware functions. This plan
+restructures the code without changing what it does. Every stage is proven like a milestone (§4), and is committed
+on its own.
 
 The operator's asks (2026-10-12):
 1. No huge functions such as `main`: decompose them.
 2. Restore plan B's reflection (its `Inspectable` objects and `Task` lifecycle) and a driver abstraction, naming
    the crate each abstraction lives in and any crate it needs.
-3. API docs generated as for Python: the legacy one as `doc/glider_api.md`, the new one as `doc/avionics_api.md`.
+3. API docs generated as for Python: the legacy one as `doc/glider_api.md`, the new one as `doc/avionics_api.md`
+   (done in R0).
+4. Investigate the codebase first, so the decomposition is the most effective one (§1).
 
-## 1. Where it stands (measured 2026-10-12)
+## 1. What the investigation found (measured 2026-10-12)
 
-**Long functions** (firmware, excluding the bench binaries), by lines:
+**The crates are healthy, the firmware crate is not.** Function lengths, with comments and string literals blanked
+(the API generator's lexer, so a `{` inside a `format!` text is not code):
 
-| function | lines | what it does |
-|---|---|---|
-| `main.rs` `main` | 369 | the whole boot: storage, ports, layout, recorder, bring-up, warm start, threads, commands, link |
-| `control.rs` `run` | 222 | the control thread: set-up, then every tick's duties inline |
-| `files.rs` `serve` | 202 | every HTTP route in one function |
-| `commands/inspection.rs` `device` | 199 | `inspect <device>`: one arm per implementation |
-| `ota.rs` `register_commands` | 157 | six GCL commands, their bodies inline |
-| `recorder.rs` `write` | 143 | the ring writer's loop |
-| `link.rs` `run` | 135 | the Wi-Fi link's states in one loop |
-| `devices.rs` `bring_up` | 131 | every entry kind's bring-up |
-| `sensors.rs` `Part::tick` | 116 | one arm per part |
-| `owner.rs` `serve` | 113 | one arm per owner request |
+| | functions | over 100 lines | over 60 lines | host-tested |
+|---|---|---|---|---|
+| `crates/*` (19 crates) | 2169 | 0 | 6 | yes, every crate |
+| `firmware/src` (bench binaries excluded) | 591 | 13 | 41 | no: it builds for the ESP32-P4 only |
 
-55 firmware functions run over 60 lines, and 16 over 100. `sensors.rs` (2062 lines) and `control.rs` (1963) are the
-two largest files.
+The longest firmware functions: `main` 369 lines, `control::run` 222, `files::serve` 202, `inspection::device` 199,
+`ota::register_commands` 157, `recorder::write` 143, `link::run` 135, `devices::bring_up` 131, `Part::tick` 116,
+`owner::serve` 113.
 
-**No reflection.** Plan B answered `inspect`, `update`, `stats`, `probe`, `calibrate` and `calibration` through one
-interface (`inspector.Inspectable`, `task.Task`) and one registry (`Inspector`). The port answers them through
-`match` statements on the implementation name: `inspection.rs` `device` for inspect, `Part`'s methods for the rest.
-Each part also publishes its own ad-hoc statics for those answers (`MAGNETOMETER_*`, `ABSOLUTE_*`, `PITOT_STATE`,
-`POWER_STATE`, `BACKUP_TORN`, ...).
+**Much of the firmware crate is no hardware code.** It holds logic that would test on the host, but nothing tests
+it there, so it grows where it stands. Calls into ESP-IDF (`sys::`) per file:
 
-**No driver abstraction above `Device`.** `crates/drivers` has `Device { setup, rearm }`. The firmware's `Part` enum
-dispatches everything else by hand: an `each!` macro plus 87 `Part::` arms in `sensors.rs`, and a `Run` enum beside
-it for the outputs. Adding the BNO055 (M18) touched about 17 places in 7 files:
-- `sensors.rs`: the enum, the macro, build, diagnose, probe (step and outcome), tick, first, calibrate,
-  apply_calibration, update, and a new run with its statics;
-- `inspection.rs`, `identity.rs`, `diagnostics.rs`, `owner.rs`, `main.rs` (the profile restore needed the ports), and
-  `controller` `streams.rs`.
+| file | lines | `sys::` calls | what it is |
+|---|---|---|---|
+| `sensors.rs` | 2062 | 1 | every I2C part's run: publish, stall and freshness judgement, calibration, inspection state |
+| `commands/*` | 2163 | ~2 | the CC answers: JSON shapes, readiness, degraded flags |
+| `gnss.rs` | 480 | 1 | the GNSS thread's line handling around `crates/gnss` |
+| `gcl.rs` | 405 | 0 | the command registry and its validation |
+| `control.rs` | 1963 | 74 | eight subsystems in one file (below), half of them pure |
 
-## 2. Target design
+**State crosses threads through 116 static atomics in 17 files** (`control.rs` 36, `sensors.rs` 25), plus 28
+`Mutex`/`OnceLock` statics. Almost every `inspect` field, `health` flag and readiness item has its own static and
+its own accessor function (`absolute_inspection`, `magnetometer_inspection`, `power_inspection`, ...).
 
-### 2.1 The part trait (`crates/drivers`, firmware glue)
+**The SITL duplicates the board's orchestration.** `sitl/src/main.rs` has its own `Filter` (the attitude filter's
+pacing and publish) and `Flight` (the stage machine's step and the law's step). They mirror `control.rs`'s `Filter`
+and `Sequencer` and the flight loop. That is plan B's sim-mirrors-flight-code trap: two copies drift, and a
+comparison then grades the copy. Plan B moved its detectors into commons to escape it.
 
-`crates/drivers` gains the capabilities every part shares, next to `Device`, bus-generic over embedded-hal:
+**`control.rs` is eight subsystems:** the thread and its gptimer alarm, the request mailbox, the separation switch,
+the SPI IMU, the lapse watches, the stage machine's glue, the attitude filter, and the GPIO interrupts. The INA226
+ALERT and the BMI323 INT1 sit there only because this thread installs the ISR service.
 
-```rust
-/// What the operator's `probe` reads: the part identifies itself and one reading comes back.
-pub trait Probe<Bus: I2c> {
-    /// The step's name in the log (`chip id + read`, `data`, ...).
-    const STEP: &'static str;
-    /// The reading as the log shows it, or why it failed.
-    fn probe(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs) -> Result<String, String>;
-}
+**`devices.rs` is plan B's task registry by hand:** 13 `*Member` types and 12 `set_up_*` functions, one per kind.
 
-/// The wire-level classification of a failed setup (`diagnose`).
-pub trait Diagnose<Bus: I2c> {
-    fn diagnose(&self, bus: &mut Bus) -> String;
-}
-```
+**Adding a part is scattered.** The BNO055 (M18) touched about 17 places in 7 files:
+- `sensors.rs`: the enum, the macro, build, diagnose, probe, tick, first, calibrate, apply_calibration, update, a
+  new run and its statics;
+- `inspection.rs`, `identity.rs`, `diagnostics.rs`, `owner.rs`, `main.rs` and `controller` `streams.rs`.
 
-The firmware keeps one `Part` enum, its variants being one glue type per part (`parts::Bno055`: the driver, its
-databoard writers, its stream, its published snapshot), and dispatches through a firmware trait with
-**`enum_dispatch`** (crate `enum_dispatch`, a proc macro with no runtime part). That replaces the `each!` macro and
-the hand-written arms with static dispatch: the owner's tick stays as cheap as today's `match`, with no `Box<dyn>`
-and no heap.
+**Boilerplate repeated by hand:**
+- 42 uptime reads, each `unsafe` with its own SAFETY comment;
+- 15 thread spawns, each with the same PSRAM-stack `ThreadSpawnConfiguration` block;
+- 24 log-once flags (`failing`, `stale`, `overflowing` ...);
+- 38 GCL commands whose bodies sit inline in long `register_commands` functions.
 
-```rust
-#[enum_dispatch]
-pub trait I2cPart {
-    fn setup(&mut self, port: &mut I2cPort, delay: &mut Delay) -> Result<(), SetupFault>;
-    fn rearm(&mut self, port: &mut I2cPort, delay: &mut Delay) -> Result<(), String>;
-    fn diagnose(&self, port: &mut I2cPort) -> String;
-    fn probe(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Option<String>;
-    fn tick(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay, now_us: u64) -> Option<Event>;
-    fn calibrate(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Calibrated { .. default .. }
-    fn update(&mut self, properties: &Value, now_us: u64) -> Result<Vec<&'static str>, String> { Ok(vec![]) }
-    fn first(&self) -> bool { false }       // an IMU: first on each owner wake
-    fn rezeroes(&self) -> bool { false }    // a barometer: calibrate and update at DONE too
-}
-```
+**What already serves:** `crates/drivers` is bus-generic over embedded-hal (`I2cPort` implements its `I2c`). The
+host crates also already provide the rest of what the parts glue uses: `crates/databoard` (writers),
+`crates/recorder` (`Telemetry`), `crates/controller` (`Topology`, `DeviceEntry`, streams). The parts glue's only
+firmware ties:
+- the recorder's globals (a `Telemetry` can be handed in);
+- the control thread's interrupt counters (a counter can be handed in);
+- NVS for the calibrations (stays in the firmware);
+- the esp-hal types: `Delay`, `PinDriver`, `I2cPort`, each with an embedded-hal trait.
 
-Each part lives in its own file, `firmware/src/parts/<part>.rs`. It implements the trait once and folds today's
-`Run` into the same type. One registration table, `parts::KNOWN`, gives each implementation name:
-- its kind (I2C, SPI, native...);
-- its default address;
+## 2. The decomposition: extract, then split
+
+Splitting the long functions in place would leave the logic untested and in the firmware. The decomposition with
+the most effect moves the hardware-free logic into host-tested crates, where this codebase already stays short and
+tested. The firmware is left as the platform: threads, ESP-IDF calls, buses, NVS, radio, card and camera. Most long
+functions then dissolve on the way, and the rest are split last.
+
+### 2.1 `crates/parts` (new): the parts, with reflection
+
+Every I2C part's run moves out of `sensors.rs`, generic over embedded-hal (`I2c`, `DelayNs`, `OutputPin`), one file
+per part:
+- `parts::bno055` is the driver plus its databoard writers, its stream and its snapshot;
+- the stall withhold, the calibration latch, the alert count and the freshness judgements become host-tested with
+  `drivers`' `MockBus`, positive and negative.
+
+A `Part` enum and a `Run` trait (setup, rearm, diagnose, probe, tick, calibrate, update, first, rezeroes) replace the
+`each!` macro and the 87 hand arms. The dispatch is static, so the owner's tick stays as cheap as today's `match`
+(no `Box<dyn>`, no heap). `enum_dispatch` (a compile-time proc macro) writes it if it takes the generic trait;
+otherwise one small macro inside the crate does.
+
+One table, `parts::KNOWN`, gives each implementation name:
+- its kind and its default address;
 - its builder;
-- its stream's columns, which `crates/controller` `streams.rs` reads instead of its own `match`.
+- its stream's columns, which `crates/controller` `streams.rs` then reads instead of its own `match`.
 
-Adding a part becomes one driver file in `crates/drivers`, one glue file in `firmware/src/parts`, and one line in
-`KNOWN`.
+Adding a part becomes one driver file, one parts file and one table line.
 
-### 2.2 Reflection (`crates/controller`, firmware registry)
+**Reflection, plan B's `Inspectable`, comes back with it:**
+- each part publishes a plain `Copy` snapshot into a `Published<T>` slot (a seqlock, in the crate, host-tested);
+- the snapshot implements `Inspectable`: `kind`, `inspect` (plan B's keys, as JSON), `stats`, `calibration`;
+- the firmware keeps a registry, `name -> &Published<_>`, so `inspect <name>`, `stats`, `calibrate`'s pending list,
+  `health`'s `imu_calibration` and `verify`'s readiness all look the part up by name.
 
-Plan B's `Inspectable` came back as a trait, with plan B's object model: each operator-facing object answers in its
-own words.
+`inspection::device`'s 199-line match goes, and so do the parts' statics. The parts never run on the executor's
+core: the owner (core 1) writes, and the executor (core 0) reads and renders.
 
-```rust
-/// An operator-facing object (plan B inspector.Inspectable): what `inspect`, `stats` and `calibrate` answer for it.
-pub trait Inspectable {
-    fn kind(&self) -> &'static str;                     // its implementation: 'bno055', 'sequencer', ...
-    fn inspect(&self) -> serde_json::Value;             // the snapshot, plan B's keys
-    fn stats(&self) -> serde_json::Value { json!({}) }
-    fn calibration(&self) -> Option<String> { None }    // what it still waits for
-}
-```
+The firmware keeps about 200 lines of glue: building the parts over `I2cPort`, arming their interrupts, and the
+calibrations' NVS.
 
-The parts run on the bus owners (core 1), and `inspect` runs on the executor (core 0), so the executor never calls a
-part. Each run publishes a plain snapshot struct (numbers, `Copy`) into a lock-free slot, `Published<T>`. A seqlock
-in `crates/controller` replaces the per-part atomics: the owner writes it on its tick, and the executor reads it and
-renders the JSON (the `Inspectable` impl is on the snapshot). One registry, `firmware::inspector`, maps each entry
-name to its slot's renderer:
-- `inspect <name>`, `stats <name>` and `calibrate` (the pending list) look the name up;
-- the `device` match (199 lines) and the ad-hoc statics go;
-- `health`'s `imu_calibration` and `verify`'s readiness ask the registry, not a part's own function.
+### 2.2 `crates/controller`: one control core for the board and the SITL
 
-The plan B lifecycle maps onto it as before:
-- `Task.setup` is the trait's `setup` with `controller::set_up`'s retries;
-- `run` is `tick`;
-- `probe`, `diagnose`, `calibrate` and `update` are the trait methods;
-- `inspect`, `stats` and `calibration` are the snapshot's.
+The control tick's pure duties move into `crates/controller` as `ControlCore`:
+- the attitude filter's pacing, assembly and publish;
+- the stage machine's step and its records (`sequencer.csv`, `vetoes.csv`);
+- the flight law's step;
+- the lapse watches.
 
-### 2.3 Long functions
+It records through a `Telemetry` handed in, and logs only constant texts through a sink (core 1 formats nothing, as
+today), with no allocation per tick. The firmware's control thread keeps what is hardware: the gptimer and its
+waking, the SPI IMU's reads, the separation pin and its edges, the GPIO interrupts and the fins' LEDC.
 
-- **`main`**: a `boot` module, one function per phase, each documented with what it needs and gives:
+The SITL then runs the same `ControlCore` and deletes its own `Filter` and `Flight`. The SITL becomes the board's
+code path minus the platform, which closes the sim-mirrors gap.
+
+### 2.3 The firmware: the platform, by subsystem
+
+- **Utilities first:**
+  - `clock::uptime_us()` for the 42 timer reads (one `unsafe`, one SAFETY comment);
+  - `threads::spawn(Spec)` for the 15 spawns (name, stack, priority, core, PSRAM stack);
+  - a `LogOnce` latch for the 24 log-once flags.
+- **`control.rs`** becomes `control/`: `thread.rs` (alarm, wakers, start, run), `requests.rs`, `imu.rs` (SPI),
+  `separation.rs`, `interrupts.rs` (the ISR service and every GPIO counter: INT1, the second IMU, the ALERT, the
+  separation edges). The duties `ControlCore` took leave with it.
+- **`main`** becomes a `boot` module. One function per phase, each documented with what it needs and gives:
   1. `storage` (NVS, boot id, config, recorder);
   2. `ports` (the lent I2C ports);
   3. `layout` (scan, resolve, mask, clocks);
@@ -139,55 +146,57 @@ The plan B lifecycle maps onto it as before:
   7. `operator` (commands, executor, console, entry);
   8. `radio` (beacon, link).
 
-  A `Boot` struct carries what passes between them. `main` reads as the list of phases, under 40 lines.
-- **`control::run`**: its set-up (`Control::new`) apart from its tick; the tick as named duties (requests, IMU,
-  separation, watches, filter, machine, flight, fins), each a method.
-- **`files::serve`**: one handler function per route, registered from a table.
-- **`register_commands`** (ota, sd, diagnostics, video): each command's body a named function; the registration
-  lists the `Command`s only.
-- **`recorder::write`**, **`link::run`**, **`owner::serve`**, **`devices::bring_up`**: by state or request kind.
+  A `Boot` struct carries what passes between them, and `main` reads as the list of phases, under 40 lines.
+- **`devices.rs`** brings up from tables: `parts::KNOWN` for the I2C parts, a component table for the rest
+  (sequencer, attitude, GNSS, servos ...), each kind's `set_up_*` kept as its entry.
+- **The rest of the long functions:**
+  - `files::serve` becomes one handler per route, from a table;
+  - the `register_commands` functions (ota, sd, diagnostics, video) list `Command`s whose bodies are named
+    functions;
+  - `recorder::write`, `link::run` and `owner::serve` split by state or request kind.
 - **A guard:** clippy's `too_many_lines` at 80 for the firmware crate (`clippy.toml`), with a short allow-list of
-  measured exceptions, each saying why. Plus a test of the longest function in `make test`, so a new long function
-  fails the build.
+  measured exceptions, each saying why. A length test in `make test` fails the build on a new long function.
 
-### 2.4 API docs (`tools/`)
+### 2.4 API docs (R0, done)
 
-- `doc/api.md` becomes `doc/glider_api.md`: plan B and the control hub, as `tools/gen_docs.py` writes them now.
-  Its references move with it (`architecture.md`, `skills.md`, the generator's header).
-- `tools/gen_avionics_docs.py` writes `doc/avionics_api.md` from the Rust sources, as `gen_docs.py` does from
-  Python. It parses, never builds (no cargo, no toolchain):
-  - one chapter per crate (`crates/*`, `firmware`, `recorder`, `sitl`), in dependency order, with the crate's
-    `//!` text and the crates it uses;
-  - per module, its `//!` text, then each public item (`pub fn`, `struct`, `enum`, `trait`, `const`, `static`,
-    `type`) with its signature and its `///` summary.
+`doc/glider_api.md` (`tools/gen_docs.py`, plan B and the hub) and `doc/avionics_api.md`
+(`tools/gen_avionics_docs.py`, the Rust crates from their `//!` and `///` docs, parsed, never built). `make
+docs-check` fails on a stale one. A new crate gets a chapter on its own.
 
-  The test file that tests a module is named as Python's is.
-- Both generators take `--check` (exit 1 when the file on disk is stale). `make test` runs both, so the docs never
-  drift.
+## 3. Expected result
 
-## 3. Stages
+| | now | after |
+|---|---|---|
+| firmware functions over 60 lines | 41 | under 5, each allow-listed |
+| `sensors.rs` | 2062 lines in the firmware | about 200 of glue; the rest in `crates/parts`, host-tested |
+| `control.rs` | 1963 lines, eight subsystems | `control/` by subsystem; the pure tick in `crates/controller` |
+| cross-thread statics | 116 atomics + 28 locks | the ISR counters and the platform's own; the inspection state in `Published<T>` |
+| SITL orchestration | its own copy | the board's `ControlCore` |
+| adding an I2C part | about 17 places, 7 files | a driver, a parts file, a table line |
+
+## 4. Stages and proof
 
 Each stage keeps the behaviour. Its proof:
-- host: every crate's tests, clippy `-D warnings`, the firmware build, and the API docs' `--check`;
-- taster: boot, the boot log's lines unchanged (timestamps and the build masked), and `tools/cc_contract.py
-  taster --milestone M21 --allow-active` at 0 violations with every `inspect` answer identical to before;
+- host: every crate's tests (the new ones included), clippy `-D warnings`, the firmware build, `make docs-check`;
+- taster: boot, the boot log's lines unchanged (timestamps and the build masked), and `tools/cc_contract.py taster
+  --milestone M21 --allow-active` at 0 violations with every `inspect` answer identical to before (captured once
+  per board before R2, diffed after each stage);
 - one clean HITL flight;
-- for the parts stages, also a probe, calibrate and update round on the taster's SEN0253 and SEN0697.
-
-Each stage is committed before the next.
+- for the parts and control stages, also the SITL matrix seed for seed identical to before, and a 10-minute soak
+  for the owner tick's lateness and the lapses.
 
 | stage | what | risk |
 |---|---|---|
-| R0 | API docs: `glider_api.md`, `gen_avionics_docs.py`, `avionics_api.md`, both `--check` in `make test` | none (tools and docs) |
-| R1 | `main` into the `boot` phases | low: a pure move, proven by the boot log |
-| R2 | `Published<T>` and the `Inspectable` registry; parts' snapshots moved over one by one; the `device` match removed | medium: every inspect answer must stay identical |
-| R3 | `I2cPart` with `enum_dispatch`, one file per part, `parts::KNOWN`; `Run` folded in; streams' columns from `KNOWN` | medium: the owner tick's timing (a soak checks the tick lateness and lapses) |
-| R4 | the remaining long functions (`control::run`, `files::serve`, the `register_commands`, `recorder::write`, `link::run`, `owner::serve`) | low to medium |
-| R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test in `make test` | none |
+| R0 | API docs (`27cc539`) | done |
+| R1 | the utilities: `uptime_us`, `threads::spawn`, `LogOnce` | low: mechanical, proven by the boot log |
+| R2 | `crates/parts` with `Published<T>` and `Inspectable`, part by part (the BNO055 first), `parts::KNOWN`, the registry; `inspection::device` and the parts' statics removed | medium: every inspect answer must stay identical |
+| R3 | `ControlCore` in `crates/controller`; `control/` split by subsystem; the SITL on `ControlCore` | medium: the SITL matrix must stay seed for seed |
+| R4 | the `boot` phases; `devices` from tables; the remaining long functions | low to medium |
+| R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test | none |
 
-**Crates this needs:** `enum_dispatch` (R3, compile-time only). Everything else is already in the workspace:
-`embedded-hal` (the part traits), `serde`/`serde_json` (the snapshots' JSON), and `crates/controller` (the registry
-and the seqlock, host-tested there).
+**Crates this needs:** possibly `enum_dispatch` (R2, compile-time only), if it takes the generic part trait.
+Everything else is already in the workspace: `embedded-hal`, `serde`/`serde_json`, `crates/controller`,
+`crates/databoard` and `crates/recorder`.
 
-**Not in this plan:** behaviour changes. A finding the refactor turns up gets its own commit, as every finding
-did in the milestones.
+**Not in this plan:** behaviour changes. A finding the refactor turns up gets its own commit, as every finding did
+in the milestones.
