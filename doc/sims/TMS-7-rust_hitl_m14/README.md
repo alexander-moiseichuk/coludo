@@ -152,6 +152,41 @@ SITL on the same frames, 20 seeds. Table: [`board_r3_vs_planb20_newframes.md`](b
 So 26 of 26 flights flown on the new frames pass. The noise100 pad keeps a false-launch risk that is the
 scenario's own, not the board's.
 
+## 3e. The SITL on the board's control tick (R3, 2026-10-12)
+
+The refactor's R3 (doc/specs/avionics-refactor.md) moved the control tick's duties (the attitude filter, the stage
+machine, the flight law) into crates/controller `ControlCore`, and the SITL now runs it instead of its own copies.
+
+The copies differed in one place: the stage machine's pacing. With the config's 50 ms step on the 10 ms tick:
+- the board's control thread steps within half a tick of slack, at 0, 40, 90, 140 ms;
+- the old SITL stepped at 0, 30, 80, 130 ms, a phase no board runs. It is plan B's SITL's phase too
+  (`tools/planb_sitl.py` paces with the same `max(due + period, now + period / 2)`), which is why §2 found the two
+  stage machines never apart.
+
+The extraction is exact otherwise. Proof: the old SITL with only the board's pacing formula patched in flies the
+same 72 flights as the new SITL, every figure identical.
+
+On the board's phase, against plan B's 20 seeds on the new frames (§3c):
+
+| seeds | old SITL | the board's tick |
+|---|---|---|
+| 3 (72 flights) | 0 gate failures | 1 |
+| 10 (240 flights) | 0 | 3 |
+
+- The wind and low-noise families stay within a few metres of before, and every apogee is identical.
+- The GLIDING times move by the 20 ms of the new phase.
+- The three failures sit in the noisiest families:
+  - E16 noise25 seed 3, 182 m against plan B's 75–157 m;
+  - F15 noise25 seed 10, 161 m against 89–114 m;
+  - E16 noise100 seed 9, GLIDING at 8.3 s against 5.8–7.3 s.
+
+There, a 10 ms shift in when the stage machine looks changes the boost and apogee detections by a step, and the
+endgame's orbit phase does the rest (the same lottery as §2's high-noise forks).
+
+The board ran this phase all along: the realtime matrices of §3–§3d are the board's code. The SITL now grades
+that code, not a near copy. Open: plan B's reference still steps on the old phase. Moving `planb_sitl.py` to the
+board's pacing would compare the two laws on one stage-machine phase, and the 20-seed reference would be flown again.
+
 ## 4. What it took
 
 - `tools/hitl_matrix_host.sh`: the matrix for a Rust board, the scenario table of `hitl_matrix.sh` (a test keeps the

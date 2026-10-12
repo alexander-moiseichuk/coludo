@@ -3650,479 +3650,6 @@ Whether sequence number `seq` is newer than `last` across the wrap: `(seq - last
 - `const MAGIC: [u8; 4] = *b"CSL1"` — Every frame's first four bytes.
 - `const VERSION: u8 = 1` — The frame layout's version.
 
-# `controller` — `src/avionics/crates/controller`
-
-_Uses: `board_config`, `control`, `databoard`, `sequencer`, `sim_link`. External: serde_json._
-
-_Integration tests: `tests/golden.rs`, `tests/golden_readiness.rs`._
-
-## `controller`
-
-_Tested by its own `mod tests`._
-
-The device bring-up's rules: the port of src/glider controller.py's setup pass, and of the operator lines
-cc_client.py builds from its outcome (doc/specs/avionics-port.md M5, "The registry"). The firmware's controller
-(M5 stage 5) owns the buses and the parts and runs each attempt; this crate decides everything around them, with
-no bus and no clock of its own:
- * [`set_up`] -- one entry's attempts: `board.setup_retries` of them, [`RETRY_GAP_MS`] apart and never after the
-   last, the driver's diagnose folded into the reason on the last, plan B's log lines word for word
-   (controller.py:385-445);
- * [`candidate`] and [`sort_alternatives`] -- the alternatives pass: a failed entry that an up device stands in
-   for (the same I2C socket, the same data, another driver, and no XSHUT pulse of its own) is not fitted rather
-   than failed (controller.py:130-241);
- * [`Table`] -- the outcome per directory entry (Up, Failed, Unfitted, and Crashed once an Up part's loop dies,
-   M6+), the lines the bring-up ends with (controller.py:378-382), and the readers CC answers from: `health.tasks`,
-   `verify`'s devices, problems and alternatives, the failure lines `probe` and `arm` print (cc_client.py:292-349,
-   513, 807-816), and `inspect controller` (controller.py:630-632);
- * [`binding`] -- plan B's bind() defaults: the bus and address an entry's driver talks over (i2cbus.py:275-301,
-   spibus.py:196-219), ported once so no call site compares the raw `bus`, `id` and `addr` fields itself;
- * [`stream`] and [`vetoes`] -- the telemetry stream a recorded entry writes, and the stage machine's second, its
-   veto episodes: the file, columns, window (never decimated: measured -> reported) and durability (module
-   `streams`);
- * [`readiness`] -- `verify`'s flight-readiness verdict, the config choices no probe can see (cc_client.py:47-107);
- * [`ring_gate`] -- the flash ring's refusal of `arm` and `verify`, under plan B's recorder probe's words;
- * [`stale_arm`] -- the refusal of an `arm` that waited on the board until the hub may have given up on it;
- * [`Stall`] -- the supervisor's rule for a control thread that stopped ticking while the board controls a flight
-   (module `watchdog`).
-
-The device directory, its pins and its `provides` come from board_config's typed view, read from the post-layout
-document, as plan B's Controller reads the config layout.resolve has rewritten (main.py:97-101).
-
-The port, against plan B:
- * Plan B creates a Task per attempt and awaits its setup(); here the caller's closure makes the attempt and
-   reports its [`Attempt`], and [`set_up`] keeps the rules: the reasons, the retry gaps, the diagnose on the last
-   attempt, the log lines.
- * Plan B logs `cleanup raised` when a half-set-up task's finish() raises; a Rust part is dropped, and a drop cannot
-   fail, so the line has no counterpart. Nor has `[diagnose raised ...]`: a Rust diagnose answers a text, it does
-   not raise.
- * Plan B's Controller may run setup() again, keeping the tasks already up; the firmware brings a board up once
-   per boot, so a [`Table`] is built from one pass. [`sort_alternatives`] itself takes any up set in any order, as
-   plan B's re-run hands it, and the golden fixture replays that too.
- * The socket's bus id is Python's `str(id)`: an entry with no `id` (absent or null) sits on bus 'None', which
-   matches only another id-less entry, never id 0 (controller.py:149), although bind() puts both on i2c:0. Kept,
-   because the alternatives rule is plan B's.
- * An `addr` outside 0..=0x7f, or not an int, is no address (board_config's `Entry`), so the entry has no socket;
-   plan B keeps it as a socket and its driver fails at the first transfer. validate() refuses all but the first.
- * A device whose loop crashed stays in plan B's `failures` in crash order; [`Table`] lists every reader in
-   directory order. Only the key order of a JSON object differs.
-
-### `pub struct Socket`
-
-An I2C socket: the place a part answers, a bus and an address (controller.py:130-149 `_socket`).
-
-Only an I2C address identifies one. Two UART or PWM devices on one bus are two devices, and an SPI entry's
-`addr` is its fallback for an I2C wiring: on SPI the chip select is the place, so two SPI parts sharing a fallback
-address are two parts.
-
-### `pub struct Candidate<'d>`
-
-One directory entry, as the alternatives pass compares it.
-
-### `pub enum Attempt`
-
-What one setup attempt did, as the caller reports it to [`set_up`].
-
-### `pub enum Binding`
-
-The bus a device's driver talks over, as plan B's bind() resolves an entry (i2cbus.py:275-301, spibus.py:196-219).
-
-### `pub enum Status<'t>`
-
-A directory entry's status, as CC reads it.
-
-### `pub struct DeviceEntry<'d>`
-
-One directory entry of the board and how its bring-up ended.
-
-The table is built once at boot and shared read-only (the firmware leaks it). It sees two changes afterwards, and
-neither needs a lock: a crash, set at most once, and the part's runtime health, an atomic its producer writes.
-That atomic is why an entry is neither `Clone` nor `PartialEq`: it is a live flag, not a value.
-
-- `fn status(&self) -> Status<'_>` — The entry's status: its bring-up's outcome, or [`Status::Crashed`] once an up part's loop died.
-- `fn active(&self) -> bool` — Whether the part came up, crashed or not: plan B's `active(name)` is not None (controller.py:287-299), which is what `health.tasks` lists.
-- `fn crash(&self, reason: String) -> bool` — Record that the part's loop died: true when this is the entry's crash, false for an entry that never came up or has crashed already (the first reason stays, as a dead loop dies once).
-- `fn healthy(&self) -> bool` — Whether the part's latest read succeeded (plan B's `inspect()['healthy']`).
-- `fn set_healthy(&self, healthy: bool) -> bool` — Record the outcome of the part's latest read, from its producer (its one writer): true when this changed the health, the transition plan B's `note()` logs on. It writes only on a change, so a producer may call it every read without dirtying the cache line the readers on the other core share. Relaxed: the flag publishes nothing else. An entry that never came up has no reads and stays unhealthy: false, nothing written, as [`DeviceEntry::crash`] refuses it too.
-
-### `pub struct Table<'d>`
-
-The board's devices after bring-up: one entry per directory entry, in directory order, and the readers CC
-answers from.
-
-- `fn new(bring_up: Vec<(Candidate<'d>, Result<(), String>)>) -> Table<'d>` — The table one bring-up pass leaves: each directory entry's candidate with what [`set_up`] returned for it, in directory order (the order plan B sets them up in), and the alternatives pass run over the result ([`sort_alternatives`], with the entries that came up in that order).
-- `fn entries(&self) -> &[DeviceEntry<'d>]` — The entries, in directory order; [`Status::Unfitted`] indexes this slice.
-- `fn find(&self, name: &str) -> Option<&DeviceEntry<'d>>` — The entry named `name`, if the directory has one.
-- `fn tasks(&self) -> Vec<(&str, bool)>` — `health.tasks`: every part that came up, with false once its loop crashed (cc_client.py:513 `{name, ok: validate()}` over the Controller's tasks).
-- `fn failures(&self) -> Vec<(&str, String)>` — The failure line of every entry in plan B's `failures`: the never-up ones and the crashed ones, as `verify`'s and `arm`'s problems and `probe all` list them (cc_client.py:566, 765, 816).
-- `fn alternatives(&self) -> Vec<(&str, String)>` — The not-fitted line of every alternative: `verify.alternatives` and `probe`'s second map (cc_client.py:768, 807), and what [`Table::bring_up_lines`] logs for each.
-- `fn devices(&self) -> Vec<(&str, String)>` — `verify.devices` (cc_client.py:807-815): every entry's line, `'<driver> -- up'`, `'<driver> -- down: <reason>'` (a crashed part is down too), or its not-fitted line.
-- `fn not_up_line(&self) -> Option<String>` — The bring-up's summary line, `controller :: <n> device(s) not up: <names, sorted>`, over plan B's `failures` (controller.py:380-382); None when every entry is up or an alternative.
-- `fn bring_up_lines(&self) -> Vec<String>` — The lines plan B's setup() logs once every entry has had its attempts (controller.py:378-382): `controller :: <name>: <not-fitted line>` for each alternative, in directory order, then [`Table::not_up_line`] when there is one. Read them before any crash, as plan B logs them at bring-up: a crashed winner's line says it is down.
-- `fn inspect(&self) -> Inspection<'_>` — The `inspect controller` snapshot: see [`Inspection`].
-- `fn failure(&self, name: &str) -> Option<String>` — The failure line for one device (cc_client.py:311-326 `_failure`); None for a name that is no failed or crashed entry (plan B raises KeyError there).
-- `fn probed(&self, name: &str, result: Option<&str>) -> Option<String>` — One probe result as the operator reads it (cc_client.py:329-349 `_probed`): a failing `result` named after the device's implementation (unchanged for a name that is no entry); for a passing one (None), the failure line of a device in `failures`, because a crashed part whose probe still answers is not healthy; otherwise None.
-- `fn unfitted(&self, name: &str) -> Option<String>` — The not-fitted line for one alternative (controller.py:243-263 `unfitted`); None for a name that is no alternative.
-
-### `pub struct Inspection<'t>`
-
-What `inspect controller` reports of the bring-up: plan B's `inspect()` keys `tasks`, `failures` and
-`alternatives` (controller.py:630-632), each as plan B holds it, not as CC words it. Its `stage`, `armed` and
-`manual` are the sequencer's, not the table's.
-
-### `pub fn candidate<'d>(document: &Value, entry: &Entry<'d>) -> Candidate<'d>`
-
-The candidate a directory entry of `document` is.
-
-The socket is plan B's `_socket`: an entry whose `bus` is 'i2c' and that has an address; an entry without a `bus`
-key has none, whatever its driver defaults to (bind() would still put it on I2C). The quantities are its
-`provides` keys as board_config reads them: a quantity whose spec is not an object is not one (validate()
-refuses it; plan B's setup raises on it, so the entry fails anyway). The reset pin is plan B's `_reset_gpio`,
-the board's `pins` map through `xshut_pin`, read as task.py `_pin_gpio` reads a pin.
-
-### `pub fn set_up(name: &str, implementation: &str, attempts: u32, mut attempt: impl FnMut(u32, bool) -> Attempt, mut sleep_ms: impl FnMut(u32), mut log: impl FnMut(String)) -> Result<(), String>`
-
-Bring one device up: plan B's `_bring_up` (controller.py:385-420) with its `_diagnose` (controller.py:422-445).
-
-`attempt(number, last)` makes attempt `number` (from 1) and reports it; `last` is true on the final one, the only
-one whose diagnosis is used. There are `attempts` of them, at least 1 (plan B's `max(1, setup_retries)`,
-controller.py:368; board_config::setup_retries reads the count). An attempt that fails is followed by
-`sleep_ms(RETRY_GAP_MS)` unless it was the last. `log` receives plan B's lines:
- * `controller :: task '<name>' up` when an attempt brings the part up (controller.py:376);
- * `controller :: no driver/activity '<implementation>' for '<name>'` for [`Attempt::NoDriver`], which ends the
-   attempts (controller.py:283, 402);
- * `controller :: task '<name>' setup raised: <error>` for [`Attempt::Raised`] (controller.py:409);
- * `controller :: task '<name>' setup attempt <n>/<attempts> failed, retrying` before each gap (controller.py:417);
- * `controller :: task '<name>' setup found another part, not retried` for [`Attempt::Foreign`] (new).
-
-Returns the failure reason when no attempt brought the part up: [`SETUP_FAILED`], or a raised attempt's error,
-as the last attempt left it, with its diagnosis folded in ([`diagnosed`]); [`NO_DRIVER`] when the first attempt
-found no driver. A later attempt that finds no driver keeps the reason the attempt before it left, as plan B's
-loop does.
-
-### `pub fn diagnosed(reason: &str, detail: &str) -> String`
-
-A failure reason with the driver's diagnosis folded in: `'<reason> -- <detail>'`, or the reason alone when the
-diagnosis is empty (controller.py:445).
-
-### `pub fn sort_alternatives(candidates: &[Candidate], up_in_setup_order: &[usize], failures: &mut Vec<(usize, String)>) -> Vec<(usize, usize)>`
-
-Plan B's alternatives pass (controller.py:185-241): move each failed entry that an up device stands in for from
-`failures` to the returned (loser, winner) pairs.
-
-Two parts that cannot share one address on one bus are declared for one socket (the VL53L4CX and the VL53L1X at
-0x29), and the part that is soldered wins; the other entry's setup fails BY DESIGN. Each failure, in `failures`'
-order, takes the FIRST entry of `up_in_setup_order` that passes the four rules:
- 1. the same I2C socket ([`Socket`]): an SPI entry, or one without an address, is never a candidate;
- 2. the same non-empty set of quantities: an entry that provides nothing has nothing to stand in for;
- 3. a different implementation: one driver twice on one socket is a config mistake, and the duplicate's setup
-    re-initialises the winner's own part;
- 4. no XSHUT of the loser's own: its setup pulses that pin and reboots whatever part sits in the socket, so a
-    loser with a [`Candidate::reset_gpio`] stays a failure, in either setup order, its reason extended with
-    `'; shares XSHUT GPIO<n> with <winner> (<driver>): its setup resets the fitted laser -- enable exactly one of
-    <both names, sorted> on this board'`.
-
-When no up entry passes, the failure stays: a missing laser must still block arming. `candidates` is the
-directory, and the other arguments hold indices into it (an index past it names no candidate). `failures` keeps
-its order; the pairs come in that order too.
-
-### `pub fn unfitted(loser_implementation: &str, winner_name: &str, winner_implementation: &str, socket: &Socket, winner_down: bool) -> String`
-
-The operator's line for an unfitted alternative: which part is absent and which one took its socket
-(controller.py:243-263).
-
-`'<loser driver> not fitted -- <winner driver> (<winner>) answers i2c:1 0x29'` while the winner runs; once its
-loop has crashed, `'... answered i2c:1 0x29 at setup, now down'`: the loser stays not fitted (the winner
-identified itself at setup), but the line must not say the winner answers while `probe` and `arm` call it failed.
-
-### `pub fn named(implementation: &str, why: &str) -> String`
-
-A verdict that names the device's implementation: `'<driver> -- <why>'`, or `why` alone when there is none (a
-name that is no configured device, such as 'mission') (cc_client.py:292-308 `_named`).
-
-### `pub fn failure_line(implementation: &str, reason: &str, crashed: bool) -> String`
-
-The verdict for a device that failed (cc_client.py:311-326 `_failure`): `'<driver> -- not connected: <reason>'`
-for one that never came up, `'<driver> -- <reason>'` for one that came up and whose loop then crashed (it was
-connected).
-
-### `pub fn binding(entry: &Entry, default_kind: &str, default_address: Option<u8>) -> Binding`
-
-Plan B's bind() defaults for one entry, ported once: which transport its driver opens and where.
-
-`default_kind` is the driver's own transport when the entry names no `bus`: 'i2c' for most drivers and the
-ADXL375 (adxl375.py:107 `get('bus', 'i2c') == 'spi'`), 'spi' for the LSM6DSO32 (lsm6dso32.py:144). An absent `id`
-is 0 on I2C (i2cbus.py:297) and 1 on SPI (spibus.py:217); an absent `addr` is `default_address`, the driver's
-datasheet address (i2cbus.py:301). An explicit null is NOT absent: plan B's `get(key, default)` returns it, so a
-null `id` binds no bus and a null `addr` gives the driver no address. A single-transport driver reads an answer of
-the other kind as no bus (plan B's would raise building its bus from the other kind's spec).
-
-### Constants
-
-- `const RETRY_GAP_MS: u32 = 200` — The pause between two setup attempts of one device, in milliseconds: a flaky breadboard contact settles (controller.py:418 `asyncio.sleep_ms(200)`).
-- `const NO_DRIVER: &str = "no driver/activity"` — The failure reason of an entry whose implementation nothing runs (controller.py:398), and the start of the line logged for it (controller.py:283).
-- `const SETUP_FAILED: &str = "setup failed (absent / miswired?)"` — The failure reason of a setup that did not bring its part up (controller.py:406), before diagnose adds the why.
-
-## `controller::inputs`
-
-_Tested by its own `mod tests`._
-
-The flight threads' inputs from the board's quantities ([`crate::Topology`]), one implementation for the firmware
-and the SITL (M14): the flight law's step ([`FlightQuantities`]), the stage machine's per-source readings
-([`StageSources`]), and a simulated frame published as the `hitl` source ([`HitlWriters`]). A host that composed
-its own would grade itself, not the board (the virtual_flight lesson: its private launch detector).
-
-### `pub struct FlightQuantities<'t>`
-
-The quantities the flight law reads.
-
-- `fn new(topology: &'t Topology) -> FlightQuantities<'t>` — The law's quantities in `topology`.
-- `fn step(&self, now_us: u64, stage: Stage, armed: bool, landing: Option<Landing>, set_launch: Option<Position>, drift: [f32; 2]) -> Step` — The law's step at `now_us` in `stage` (`armed`) from the fresh quantities: the mission's `landing` zone, the set launch point `set_launch` (else the fix), and the GNSS calibration's `drift`. The course's push time is the ground stamp: the same between samples, new with each.
-
-### `pub struct StageSources<'t>`
-
-The stage machine's sources: each class's bound to its slots (crates/sequencer [`Binding`]), and the quantities
-they push into.
-
-- `fn new(topology: &'t Topology) -> StageSources<'t>` — The sources in `topology`, bound to their slots in rank order.
-- `fn binding(&self) -> &Binding` — The slots.
-- `fn readings(&self, now_us: u64) -> SourceReadings` — Each bound source's own channel at `now_us`, fresh in its quantity's shared window (M9: the multi-source machine).
-
-### `pub struct HitlWriters<'t>`
-
-The `hitl` source's writers, one per quantity a SENSORS frame carries (doc/specs/sim-link.md), and the climb its
-altitude derives (`change`, as every barometer's).
-
-- `fn new(topology: &'t Topology, source: &str) -> HitlWriters<'t>` — `source`'s writers in `topology`.
-- `fn publish(&mut self, sensors: &Sensors, now_us: u64) -> Option<f32>` — Every quantity `sensors` carries pushed at `now_us`, and the climb its altitude (else its elevation) derives; that climb, None until its window fills.
-
-## `controller::readiness`
-
-_Tested by its own `mod tests`._
-
-The flight-readiness gate (doc/specs/avionics-port.md M7, "Arm and verify"): plan B's `_readiness`
-(cc_client.py:47-107), the config choices that leave the board ballistic or unrecoverable in flight while every
-part still probes healthy -- the watchdog off, the flight loop off or without a gain on an axis, a bench fin
-derating still applied, and no landing zone with no CC-less site to pick one from. `verify` reports them as its
-separate `ready` verdict and leaves the hardware `pass` alone: bench and HITL sessions trip them on purpose.
-
-The port, against plan B:
- * A component without `enabled` is enabled, as the Controller reads it ([`board_config::directory`]). Plan B's
-   `_readiness` alone read it as disabled, an inconsistency that is not ported (§6, "`_readiness` and `enabled`").
- * Plan B's `fins` check (a control surface whose servo has no driver) reads the flight loop's mixer, which the
-   port has not built yet. The caller adds it once the mixer exists, as `verify` adds the BNO055's
-   `imu_calibration` to the same map.
- * Plan B raises, so its `verify` answers an error, on two documents validate() admits: a null `fins`, and a
-   `gains` that is not an object. Here the first is no derating and the second holds no gain on any axis.
- * A document validate() refuses is never run (load() falls back to the defaults), but the answer stays defined:
-   a bool multiplier is Python's int, as plan B prints it (`false` is `0`); any other multiplier that is not a
-   number is printed as Python's `%s` prints it, a derating all the same, where plan B's `%g` raises; an axis
-   that is not an object holds no gain; and a name used twice is its first enabled component, as the Controller
-   lists them, where plan B's dict keeps the last component of the name, enabled or not.
-
-### `pub fn readiness(document: &Value, zone_set: bool, has_sites: bool) -> BTreeMap<&'static str, String>`
-
-The flight-readiness problems of the board config `document`, `{check: problem}`, in plan B's words; empty when
-the board is flight-ready (plan B's `_readiness`, cc_client.py:47-107).
-
-`zone_set` and `has_sites` are the mission's: whether it holds a landing zone, and whether it holds CC-less sites
-to select one from. The checks:
- * `watchdog` -- no enabled component named `watchdog`: a wedged flight loop never reboots;
- * `flight` -- no enabled component named `flight`: the fins hold neutral;
- * `gains` -- an enabled `flight` whose `gains` has no non-zero term (Python's truthiness) on roll, pitch or yaw,
-   naming each such axis: the loop computes but cannot act;
- * `fins.limit_multiplier` -- the top-level `fins.limit_multiplier` present and unequal to 1.0 under Python's
-   `==` (an int 1 is no derating), printed as Python's `%g` prints it;
- * `zone` -- neither a zone nor a site.
-
-## `controller::ring_gate`
-
-_Tested by its own `mod tests`._
-
-The ring gate (doc/specs/avionics-port.md M7, "Ring gate"; §3.7 "The ring_eraser and newest wins"): `arm` and
-`verify` require the flash ring to take a flight -- its bring-up scan has run, its eraser runs, and the eraser holds
-its reserve (about 1 % of the ring, flash_ring's `Geometry::reserve_blocks`) erased ahead of the writer. A refusal
-plan B never had: its recorder probe asked only that its two RAM rings exist (tasks/recorder.py:30-48). The
-verdict keeps that probe's shape, `recorder rings: <why>`, reported under the recorder's name, so CC shows it as it
-showed plan B's.
-
-Not refusals: no card (`no-sd`, a health token), a saver behind, and newest wins erasing an unsaved block
-(`ring-full`). Newest wins keeps one block more than the reserve erased, so without a card the gate does not
-flicker as the writer opens blocks.
-
-### `pub fn ring_gate(scanned: bool, eraser_running: bool, erased_ahead: u32, reserve_blocks: u32) -> Option<String>`
-
-Why the flash ring cannot take a flight, as the recorder's probe verdict `recorder rings: <why>`; None when it
-can.
-
-`scanned` says the writer's bring-up scan has run, `eraser_running` that the ring_eraser thread started,
-`erased_ahead` counts the erased blocks ahead of the writer (flash_ring's `Figures::erased_ahead`), and
-`reserve_blocks` is the reserve the eraser keeps (`Geometry::reserve_blocks`). The first check that fails names
-the why, in this order: a ring never scanned has no figures to trust, and one with no eraser never refills its
-reserve, whatever it holds now.
-
-## `controller::stale_arm`
-
-_Tested by its own `mod tests`._
-
-The arm's age rule (doc/specs/avionics-port.md §4.4, "The arrival stamp and the 25 s rule"): the executor stamps
-each request line as it arrives, and before it posts an `arm` it refuses one that has waited too long. A line waits
-behind the commands queued ahead of it (a hub probe sweep is up to ~18 s) and then through its own sweep, and the
-hub gives up on an answer after 30 s (src/control/board.py): an arm posted later than that would arm a board whose
-operator was told it did not answer. Plan B had no such rule: its one asyncio loop served the hub's lines in
-lockstep.
-
-### `pub fn stale_arm(waited: Duration) -> Option<String>`
-
-Why an `arm` that has waited `waited` since it arrived must not be posted, as `arm` refuses it under the key
-`arm`: `the request waited <n> s: send it again`, `<n>` in tenths of a second rounded up, so a wait just past the
-limit never reads as the limit itself. None while the wait is within [`ARM_WAIT_LIMIT`].
-
-## `controller::streams`
-
-_Tested by its own `mod tests`._
-
-The telemetry streams (doc/specs/avionics-port.md M6, M9): which entry writes which stream, with its file, its
-columns, its decimation window and whether it is durable, as plan B's drivers and tasks build their Telemetry at
-setup (drivers/lsm6dso32.py:124-126, drivers/bmi323.py:100-102, drivers/icp10111.py:123-125,
-drivers/bmp581.py:69-71, drivers/bmm350.py:99-100, tasks/attitude.py:100-102, drivers/separation.py:57,
-tasks/sequencer.py:110, warmstart.py:318). M6 records the LSM6DSO32, the ICP-10111 and the separation switch, M7
-the stage machine's transitions, M8 the checkpoint's timeline, and M9 the SEN0697 (the BMI323, the BMP581 and the
-BMM350), the attitude filter and the stage machine's veto episodes; every other part has none yet.
-
-The port, against plan B:
- * Plan B registers a stream in its task's setup. The firmware registers one at `recorder::open` for every named
-   entry, enabled or not (board_config's `entries`), so a part the layout enables at boot still has its stream.
- * MEASURED -> REPORTED (the operator, 2026-10-08): no device stream is decimated. Plan B thinned each one to its
-   entry's `telemetry_ms` (0 or absent: the global `recorder.telemetry_ms`) and attitude.csv to 100 ms by default,
-   a MicroPython-era economy. Here every sample a part measures, and every attitude the filter publishes, is a row,
-   and each part runs at the rate its consumers need instead. `telemetry_ms` is read by nothing here, whatever it
-   holds (plan B multiplied it by 1000: null raised at setup, text made a text that failed later, a bool read as 0
-   or 1 ms; validate() still refuses all three).
- * Plan B passes `separation.csv` no window, so the global decimates it, while its note says "durable, every
-   event". Here the stream is durable and never decimated.
- * Plan B's sequencer passes its `<name>.csv` no window either. Its rows are the stage transitions, a handful a
-   flight, so here that stream too is durable and never decimated.
- * Plan B's checkpoint passes `checkpoint.csv` no window either. Its rows come once a stage change and once a
-   `checkpoint_s` aloft, and the last one before a reset is the post-mortem's record of where the flight was, so
-   here it is durable and never decimated too.
- * So every stream here is never decimated; the device streams stay not durable (many rows a second, which the
-   ring_writer's own cadence carries), the event records durable.
- * A barometer's row gains a fifth column, `change`, its climb rate in m/s (crates/control `change`), appended so
-   plan B's four stay where they were. A reader takes plan B's four-column rows as they are
-   (tools/recorder_flight.py).
- * separation.csv gains two columns, `moment` and `duration`: the first edge of the contact's episode the row
-   concludes, on the uptime column's own clock, microseconds, and the microseconds from it to the episode's last
-   edge (the wobble). A row's `uptime` is the tick that concluded the episode, a quiet after its last edge, so the
-   latency is in the data. A reader takes plan B's two-column rows as they are (tools/recorder_flight.py).
- * Its `event` gains a third value: plan B's `separated` and `nested`, and the port's `blip`, an episode that ended
-   on the level the latch already held (the contact moved and came back), so a flight shows every movement of the
-   contact. A blip moves neither the latch nor the stage; the readers take the event as a word, whichever it is.
- * The stage machine's entry writes a second stream, the port's own ([`vetoes`]): `vetoes.csv`, a begin and an end
-   row per veto episode of the multi-source machine (crates/sequencer `VetoEdge`), fixed, durable and never
-   decimated like the transitions' record. Those rows stay out of `<name>.csv`, whose every row
-   tools/assemble_capture.py takes for a stage event.
-
-### `pub struct Stream`
-
-A telemetry stream, as the recorder registers it.
-
-### `pub fn stream(entry: &Entry) -> Option<Stream>`
-
-The stream `entry` writes, when its part is one the port records, every one never decimated: the IMUs (LSM6DSO32,
-BMI323), the barometers (ICP-10111, BMP581) and the BMM350 as `<name>.csv`, the attitude filter as the fixed
-`attitude.csv`, the fin servos as `<name>.csv`; the separation switch as the fixed `separation.csv`, the stage machine as `<name>.csv` and the
-checkpoint as the fixed `checkpoint.csv`, the last three durable. None for any other part. The stage machine's
-second stream is [`vetoes`].
-
-### `pub fn companions(entry: &Entry) -> Vec<(String, Stream)>`
-
-The streams an entry writes beside its own `<name>.csv`, each with the device key it is registered under: the
-GNSS's `<name>_gga.csv`, `<name>_sky.csv` and the durable `<name>_events.csv` (plan B gnss.py, task.py:104), all
-never decimated. Empty for any other entry.
-
-### `pub fn vetoes(entry: &Entry) -> Option<Stream>`
-
-The stream the stage machine's entry writes beside its own `<name>.csv`: its veto episodes, the fixed `vetoes.csv`
-whatever the entry's name, durable and never decimated like the transitions' record. None for any other entry.
-
-### Constants
-
-- `const IMU_FIELDS: [&str; 7] = ["ax", "ay", "az", "gx", "gy", "gz", "irq_runs"]` — The IMUs' columns, the LSM6DSO32's and the BMI323's alike (plan B drivers/lsm6dso32.py:125, drivers/bmi323.py:101): accel in g, the gyro as raw centidegrees a second, and the INT1 edges the tick saw.
-- `const BAROMETER_FIELDS: [&str; 5] = ["altitude", "temperature", "pressure", "elevation", "change"]` — The barometers' columns, the ICP-10111's and the BMP581's alike: plan B's four (drivers/icp10111.py:124, drivers/bmp581.py:70), m AMSL, degrees C, Pa and m above the ground, then the port's `change`, the climb rate in m/s (crates/control `change`), appended.
-- `const ABSOLUTE_FIELDS: [&str; 6] = ["heading", "roll", "pitch", "ax", "ay", "az"]` — The BNO055's columns (plan B drivers/bno055.py:105, M18): the heading in degrees, the roll and the pitch in centidegrees (integers, as plan B pushed its fixnums), the accelerometer in g.
-- `const MAGNETOMETER_FIELDS: [&str; 3] = ["mx", "my", "mz"]` — The BMM350's columns (plan B drivers/bmm350.py:99): the field per axis in the part's own counts, raw until the operator calibrates it, then centred and normalised (crates/drivers `bmm350`).
-- `const PITOT_FIELDS: [&str; 3] = ["dynamic_pressure", "airspeed_cms", "temperature"]` — The SDP810 pitot's columns (plan B drivers/sdp810.py:164-166): the tared dynamic pressure in Pa x 100, the airspeed in cm/s and the temperature in degrees C x 100, all integers as plan B pushed them.
-- `const POWER_FIELDS: [&str; 4] = ["voltage_mv", "current_ma", "power_mw", "alerts"]` — The INA226's columns (plan B drivers/ina226.py:93-95): mV, mA, mW and the over-current ALERT trips since boot.
-- `const FLIGHT_FIELDS: [&str; 13] = [` — The flight loop's columns (plan B tasks/flight.py:146-148), as `flight.csv` whatever the entry's name: the stage id, active, the airspeed estimate in cm/s, the fin cap, the roll and pitch setpoints in centidegrees, the heading error, the per-axis demands in whole degrees, the wind in cm/s and its from-direction, and whether it navigates dead-reckoned.
-- `const SERVO_FIELDS: [&str; 3] = ["angle", "pulse_us", "done"]` — The fin servos' columns (plan B drivers/sg90.py:187, the MG90S alike): the commanded angle in whole degrees, the pulse driven in us, and done (0 a command issued, 1 a move completed by its estimate).
-- `const LASER_FIELDS: [&str; 2] = ["agl", "irq_runs"]` — The laser rangers' columns (plan B drivers/vl53l1x.py:150, vl53l4cx.py alike): the height above ground in m and the data-ready edges its read took.
-- `const GNSS_FIELDS: [&str; 4] = ["lat", "lon", "speed_kn", "course"]` — The GNSS fix's columns (plan B gnss.py:173): lat and lon (written from the 1e-7 degree integers, 7 decimals), the ground speed in knots and the course in degrees, as an RMC gives them.
-- `const GGA_FIELDS: [&str; 5] = ["altitude_m", "elevation_m", "quality", "satellites", "hdop_cd"]` — The GNSS's GGA columns (plan B gnss.py:186-188, `<name>_gga.csv`): altitude and elevation in m, the fix quality, the satellites used and the HDOP in hundredths.
-- `const SKY_FIELDS: [&str; 8] = ["in_view", "used", "mode", "cn0_1", "cn0_2", "cn0_3", "cn0_4", "antenna"]` — The GNSS's sky columns (plan B gnss.py:195-197, `<name>_sky.csv`): one row per diagnostics burst.
-- `const EVENT_FIELDS: [&str; 1] = ["event"]` — A task's durable event record (plan B task.py:104, `<name>_events.csv`): one text per event.
-- `const SEPARATION_FIELDS: [&str; 4] = ["event", "stage", "moment", "duration"]` — The separation switch's columns: plan B's event (`separated` or `nested`, and the port's `blip`) and the stage after it (drivers/separation.py:57), then the port's `moment`, the uptime (µs) of the first edge of the episode the event concludes (drivers::separation `Event::moment_us`: for a separation, the separation moment), and `duration`, the µs from it to the episode's last edge (`Event::duration_us`: the contact's wobble, 0 for a clean single edge).
-- `const SEQUENCER_FIELDS: [&str; 2] = ["stage", "reason"]` — The stage machine's columns (plan B tasks/sequencer.py:110): the stage it moved to, or found the board moved to, and why (`launch |a|=...`, or `external` for a move it did not make).
-- `const VETOES_FIELDS: [&str; 7] = ["detector", "edge", "decider", "kinds", "contrary", "live", "value"]` — The stage machine's veto episodes' columns, the port's own (crates/sequencer `VetoEdge`, one row per edge): * `detector` -- the detector held (`Detector::name`: `launch_altitude`, `launch_acceleration`, `apogee` or `stillness`); * `edge` -- `begin` on the episode's first vetoed step, `end` on the first step after it (`VetoEdge::name`); both rows carry a vetoed step, an end row the episode's last; * `decider` -- the deciding source's device name (`Binding::source` of `Veto::decider`); * `kinds` -- the vetoes that held it (`Veto::kinds`: `peer`, `at_rest` or `thrust`, two joined by `+`); * `contrary` and `live` -- how many of the decider's live peers were contrary, and how many voting sources were live, the decider included (`Veto::contrary`, `Veto::live`); * `value` -- the decider's value (`Veto::value`): |accel| in g for the accel launch and the stillness, the elevation in m for the altitude launch and the apogee.
-- `const CHECKPOINT_FIELDS: [&str; 5] = ["stage", "altitude", "speed", "airspeed", "ticks_ms"]` — The checkpoint's columns (plan B warmstart.py:318-319): the stage's id, 1 (SETTING) to 5 (DONE), as plan B pushes `controller.stage`; the altitude in m AMSL, the speed and the airspeed in m/s; and the uptime in ms the checkpoint was taken at.
-
-## `controller::topology`
-
-The board's quantities, by sample type, each with its sources: built once at bring-up (crates/controller
-`topology`, from the entries that came up), then shared read-only by the flight threads, the firmware's and the
-SITL's alike.
-
-### `pub struct Topology`
-
-- `fn scalar(&self, quantity: &str) -> Option<&Parameter<f32>>` — The scalar quantity `quantity` (altitude, pressure, ...), when a provider of it came up.
-- `fn vector(&self, quantity: &str) -> Option<&Parameter<[f32; 3]>>` — The vector quantity `quantity` (accel, rate, mag, attitude), when a provider of it came up.
-- `fn position(&self, quantity: &str) -> Option<&Parameter<[i32; 2]>>` — The position quantity `quantity` (`position`), when a provider of it came up.
-- `fn add(&mut self, kind: Kind, quantity: &'static str, source: &'static str, priority: i32, timeout_ms: u32, reconcile: bool) -> bool` — Registers `source` for `quantity` of `kind` at `priority` with `timeout_ms`, the quantity made on its first source. Whether it was added (a quantity holds [`databoard::MAXIMUM_SOURCES`] at most).
-- `fn describe(&self) -> Vec<String>` — One line per quantity: `databoard :: pressure <- baro_icp10111 p0, baro_bmp581 p1; window 200 ms`.
-- `fn inspect(&self, now_us: u64) -> serde_json::Map<String, Value>` — Plan B's `inspect databoard` (databoard.py:506-511): each quantity's fused reading at `now_us` -- its value (a scalar, a vector, a position in degrees), the source that won, its age in ms, all null when no source is fresh -- and the learned reconcile offsets by source.
-- `fn stats(&self) -> serde_json::Map<String, Value>` — Plan B's `stats databoard` (databoard.py:513-515): each quantity's sources, sorted by name as plan B's `sources()` sorted them.
-
-### `pub enum Kind`
-
-One kind of quantity: what its samples are.
-
-### `pub fn topology(entries: &[Entry<'static>], table: &Table) -> (Topology, Vec<String>)`
-
-The topology of the entries `table` holds as up, in setup order, and its warnings: a quantity no board knows, a
-source past its quantity's limit. The firmware's bring-up and the SITL build it alike.
-
-### Constants
-
-- `const HITL_QUANTITIES: [&str; 13] = [` — The quantities the `hitl` entry provides (plan B hitl.py's `Databoard.provide` at setup, its entry has no `provides`), each at priority 0 with plan B's 1 s timeout; `change` the port's own, as every barometer's.
-
-## `controller::watchdog`
-
-_Tested by its own `mod tests`._
-
-The supervisor's stall rule (doc/specs/avionics-port.md M8, "Warm start, checkpoint, supervisor watchdog"): while
-the board controls a flight, the control thread must keep ticking, and one whose last tick is older than
-`stall_ms` has stalled, so the supervisor restarts the board. Plan B's watchdog task judged the same by the flight
-task's heartbeat TIMESTAMP (tasks/watchdog.py `_stalled`), independent of its own poll: a supervisor that checks
-late, or a check that lands between two ticks, sees the true age of the last tick.
-
-The port, against plan B:
- * The heartbeat is the uptime in ms as a wrapping u32, which the control thread stores beside its tick count (the
-   P4 has no 64-bit atomics), and the age is the signed wrapping difference. So the u32 wrap (every 49.7 days) is
-   no stall, and neither is a `now` the supervisor read just before the control thread stored a newer tick (the
-   two run on different cores): that age is negative. An age past `i32::MAX` ms (24.8 days) reads negative too,
-   but the supervisor checks every `period_ms`, so a stall is caught long before it is that old.
- * The limit is at least two tick periods: one late tick is jitter, not a stall, so a `stall_ms` below that
-   cannot restart a healthy board.
- * A control thread that has never ticked is a failed bring-up, not a stall: the rule judges only one that has.
- * Whether the board controls a flight is the caller's to say: armed, launched, in an airborne stage. Plan B
-   judged only while its flight task controlled the fins, so never on a passive flight.
-
-### `pub struct Stall`
-
-The stall rule, its limit fixed at bring-up from the watchdog's `stall_ms` and the control tick's period.
-
-- `fn new(stall_ms: f32, tick_ms: f32) -> Stall` — The rule for a `stall_ms` limit on a control thread that ticks every `tick_ms`.
-- `fn step(&self, now_ms: u32, last_tick_ms: u32, ticked: bool, controlling: bool) -> bool` — Whether the control thread has stalled: the board controls a flight, the thread has ticked, and its last tick is older than the limit.
-
 # `drivers` — `src/avionics/crates/drivers`
 
 _Uses: `board_config`, `control`, `sequencer`. External: embedded-hal, serde_json._
@@ -7731,6 +7258,538 @@ config's (name, driver) pairs for the baro rebase.
 - `const GROUND_SLOTS: usize = REBASED_BAROS.len()` — The rebased barometers whose own pad ground a crumb carries ([`Identity::grounds_m`]): one per driver in [`REBASED_BAROS`].
 - `const WARM_CAP: u32 = 3` — A flight's warm starts after which the next recovers DISARMED (the port's own, with no plan B counterpart): the law and the fins stay off, the stage machine still walks the flight to DONE and its beacon. A crash that returns every boot (a fault in the law, the fins, or what they read) would otherwise reset the board over and over in the air; a cold boot mid-air instead would never reach DONE, so nothing would beacon.
 
+# `controller` — `src/avionics/crates/controller`
+
+_Uses: `board_config`, `control`, `databoard`, `recorder`, `sequencer`, `sim_link`. External: log, serde_json._
+
+_Integration tests: `tests/golden.rs`, `tests/golden_readiness.rs`._
+
+## `controller`
+
+_Tested by its own `mod tests`._
+
+The device bring-up's rules: the port of src/glider controller.py's setup pass, and of the operator lines
+cc_client.py builds from its outcome (doc/specs/avionics-port.md M5, "The registry"). The firmware's controller
+(M5 stage 5) owns the buses and the parts and runs each attempt; this crate decides everything around them, with
+no bus and no clock of its own:
+ * [`set_up`] -- one entry's attempts: `board.setup_retries` of them, [`RETRY_GAP_MS`] apart and never after the
+   last, the driver's diagnose folded into the reason on the last, plan B's log lines word for word
+   (controller.py:385-445);
+ * [`candidate`] and [`sort_alternatives`] -- the alternatives pass: a failed entry that an up device stands in
+   for (the same I2C socket, the same data, another driver, and no XSHUT pulse of its own) is not fitted rather
+   than failed (controller.py:130-241);
+ * [`Table`] -- the outcome per directory entry (Up, Failed, Unfitted, and Crashed once an Up part's loop dies,
+   M6+), the lines the bring-up ends with (controller.py:378-382), and the readers CC answers from: `health.tasks`,
+   `verify`'s devices, problems and alternatives, the failure lines `probe` and `arm` print (cc_client.py:292-349,
+   513, 807-816), and `inspect controller` (controller.py:630-632);
+ * [`binding`] -- plan B's bind() defaults: the bus and address an entry's driver talks over (i2cbus.py:275-301,
+   spibus.py:196-219), ported once so no call site compares the raw `bus`, `id` and `addr` fields itself;
+ * [`stream`] and [`vetoes`] -- the telemetry stream a recorded entry writes, and the stage machine's second, its
+   veto episodes: the file, columns, window (never decimated: measured -> reported) and durability (module
+   `streams`);
+ * [`readiness`] -- `verify`'s flight-readiness verdict, the config choices no probe can see (cc_client.py:47-107);
+ * [`ring_gate`] -- the flash ring's refusal of `arm` and `verify`, under plan B's recorder probe's words;
+ * [`stale_arm`] -- the refusal of an `arm` that waited on the board until the hub may have given up on it;
+ * [`Stall`] -- the supervisor's rule for a control thread that stopped ticking while the board controls a flight
+   (module `watchdog`).
+
+The device directory, its pins and its `provides` come from board_config's typed view, read from the post-layout
+document, as plan B's Controller reads the config layout.resolve has rewritten (main.py:97-101).
+
+The port, against plan B:
+ * Plan B creates a Task per attempt and awaits its setup(); here the caller's closure makes the attempt and
+   reports its [`Attempt`], and [`set_up`] keeps the rules: the reasons, the retry gaps, the diagnose on the last
+   attempt, the log lines.
+ * Plan B logs `cleanup raised` when a half-set-up task's finish() raises; a Rust part is dropped, and a drop cannot
+   fail, so the line has no counterpart. Nor has `[diagnose raised ...]`: a Rust diagnose answers a text, it does
+   not raise.
+ * Plan B's Controller may run setup() again, keeping the tasks already up; the firmware brings a board up once
+   per boot, so a [`Table`] is built from one pass. [`sort_alternatives`] itself takes any up set in any order, as
+   plan B's re-run hands it, and the golden fixture replays that too.
+ * The socket's bus id is Python's `str(id)`: an entry with no `id` (absent or null) sits on bus 'None', which
+   matches only another id-less entry, never id 0 (controller.py:149), although bind() puts both on i2c:0. Kept,
+   because the alternatives rule is plan B's.
+ * An `addr` outside 0..=0x7f, or not an int, is no address (board_config's `Entry`), so the entry has no socket;
+   plan B keeps it as a socket and its driver fails at the first transfer. validate() refuses all but the first.
+ * A device whose loop crashed stays in plan B's `failures` in crash order; [`Table`] lists every reader in
+   directory order. Only the key order of a JSON object differs.
+
+### `pub struct Socket`
+
+An I2C socket: the place a part answers, a bus and an address (controller.py:130-149 `_socket`).
+
+Only an I2C address identifies one. Two UART or PWM devices on one bus are two devices, and an SPI entry's
+`addr` is its fallback for an I2C wiring: on SPI the chip select is the place, so two SPI parts sharing a fallback
+address are two parts.
+
+### `pub struct Candidate<'d>`
+
+One directory entry, as the alternatives pass compares it.
+
+### `pub enum Attempt`
+
+What one setup attempt did, as the caller reports it to [`set_up`].
+
+### `pub enum Binding`
+
+The bus a device's driver talks over, as plan B's bind() resolves an entry (i2cbus.py:275-301, spibus.py:196-219).
+
+### `pub enum Status<'t>`
+
+A directory entry's status, as CC reads it.
+
+### `pub struct DeviceEntry<'d>`
+
+One directory entry of the board and how its bring-up ended.
+
+The table is built once at boot and shared read-only (the firmware leaks it). It sees two changes afterwards, and
+neither needs a lock: a crash, set at most once, and the part's runtime health, an atomic its producer writes.
+That atomic is why an entry is neither `Clone` nor `PartialEq`: it is a live flag, not a value.
+
+- `fn status(&self) -> Status<'_>` — The entry's status: its bring-up's outcome, or [`Status::Crashed`] once an up part's loop died.
+- `fn active(&self) -> bool` — Whether the part came up, crashed or not: plan B's `active(name)` is not None (controller.py:287-299), which is what `health.tasks` lists.
+- `fn crash(&self, reason: String) -> bool` — Record that the part's loop died: true when this is the entry's crash, false for an entry that never came up or has crashed already (the first reason stays, as a dead loop dies once).
+- `fn healthy(&self) -> bool` — Whether the part's latest read succeeded (plan B's `inspect()['healthy']`).
+- `fn set_healthy(&self, healthy: bool) -> bool` — Record the outcome of the part's latest read, from its producer (its one writer): true when this changed the health, the transition plan B's `note()` logs on. It writes only on a change, so a producer may call it every read without dirtying the cache line the readers on the other core share. Relaxed: the flag publishes nothing else. An entry that never came up has no reads and stays unhealthy: false, nothing written, as [`DeviceEntry::crash`] refuses it too.
+
+### `pub struct Table<'d>`
+
+The board's devices after bring-up: one entry per directory entry, in directory order, and the readers CC
+answers from.
+
+- `fn new(bring_up: Vec<(Candidate<'d>, Result<(), String>)>) -> Table<'d>` — The table one bring-up pass leaves: each directory entry's candidate with what [`set_up`] returned for it, in directory order (the order plan B sets them up in), and the alternatives pass run over the result ([`sort_alternatives`], with the entries that came up in that order).
+- `fn entries(&self) -> &[DeviceEntry<'d>]` — The entries, in directory order; [`Status::Unfitted`] indexes this slice.
+- `fn find(&self, name: &str) -> Option<&DeviceEntry<'d>>` — The entry named `name`, if the directory has one.
+- `fn tasks(&self) -> Vec<(&str, bool)>` — `health.tasks`: every part that came up, with false once its loop crashed (cc_client.py:513 `{name, ok: validate()}` over the Controller's tasks).
+- `fn failures(&self) -> Vec<(&str, String)>` — The failure line of every entry in plan B's `failures`: the never-up ones and the crashed ones, as `verify`'s and `arm`'s problems and `probe all` list them (cc_client.py:566, 765, 816).
+- `fn alternatives(&self) -> Vec<(&str, String)>` — The not-fitted line of every alternative: `verify.alternatives` and `probe`'s second map (cc_client.py:768, 807), and what [`Table::bring_up_lines`] logs for each.
+- `fn devices(&self) -> Vec<(&str, String)>` — `verify.devices` (cc_client.py:807-815): every entry's line, `'<driver> -- up'`, `'<driver> -- down: <reason>'` (a crashed part is down too), or its not-fitted line.
+- `fn not_up_line(&self) -> Option<String>` — The bring-up's summary line, `controller :: <n> device(s) not up: <names, sorted>`, over plan B's `failures` (controller.py:380-382); None when every entry is up or an alternative.
+- `fn bring_up_lines(&self) -> Vec<String>` — The lines plan B's setup() logs once every entry has had its attempts (controller.py:378-382): `controller :: <name>: <not-fitted line>` for each alternative, in directory order, then [`Table::not_up_line`] when there is one. Read them before any crash, as plan B logs them at bring-up: a crashed winner's line says it is down.
+- `fn inspect(&self) -> Inspection<'_>` — The `inspect controller` snapshot: see [`Inspection`].
+- `fn failure(&self, name: &str) -> Option<String>` — The failure line for one device (cc_client.py:311-326 `_failure`); None for a name that is no failed or crashed entry (plan B raises KeyError there).
+- `fn probed(&self, name: &str, result: Option<&str>) -> Option<String>` — One probe result as the operator reads it (cc_client.py:329-349 `_probed`): a failing `result` named after the device's implementation (unchanged for a name that is no entry); for a passing one (None), the failure line of a device in `failures`, because a crashed part whose probe still answers is not healthy; otherwise None.
+- `fn unfitted(&self, name: &str) -> Option<String>` — The not-fitted line for one alternative (controller.py:243-263 `unfitted`); None for a name that is no alternative.
+
+### `pub struct Inspection<'t>`
+
+What `inspect controller` reports of the bring-up: plan B's `inspect()` keys `tasks`, `failures` and
+`alternatives` (controller.py:630-632), each as plan B holds it, not as CC words it. Its `stage`, `armed` and
+`manual` are the sequencer's, not the table's.
+
+### `pub fn candidate<'d>(document: &Value, entry: &Entry<'d>) -> Candidate<'d>`
+
+The candidate a directory entry of `document` is.
+
+The socket is plan B's `_socket`: an entry whose `bus` is 'i2c' and that has an address; an entry without a `bus`
+key has none, whatever its driver defaults to (bind() would still put it on I2C). The quantities are its
+`provides` keys as board_config reads them: a quantity whose spec is not an object is not one (validate()
+refuses it; plan B's setup raises on it, so the entry fails anyway). The reset pin is plan B's `_reset_gpio`,
+the board's `pins` map through `xshut_pin`, read as task.py `_pin_gpio` reads a pin.
+
+### `pub fn set_up(name: &str, implementation: &str, attempts: u32, mut attempt: impl FnMut(u32, bool) -> Attempt, mut sleep_ms: impl FnMut(u32), mut log: impl FnMut(String)) -> Result<(), String>`
+
+Bring one device up: plan B's `_bring_up` (controller.py:385-420) with its `_diagnose` (controller.py:422-445).
+
+`attempt(number, last)` makes attempt `number` (from 1) and reports it; `last` is true on the final one, the only
+one whose diagnosis is used. There are `attempts` of them, at least 1 (plan B's `max(1, setup_retries)`,
+controller.py:368; board_config::setup_retries reads the count). An attempt that fails is followed by
+`sleep_ms(RETRY_GAP_MS)` unless it was the last. `log` receives plan B's lines:
+ * `controller :: task '<name>' up` when an attempt brings the part up (controller.py:376);
+ * `controller :: no driver/activity '<implementation>' for '<name>'` for [`Attempt::NoDriver`], which ends the
+   attempts (controller.py:283, 402);
+ * `controller :: task '<name>' setup raised: <error>` for [`Attempt::Raised`] (controller.py:409);
+ * `controller :: task '<name>' setup attempt <n>/<attempts> failed, retrying` before each gap (controller.py:417);
+ * `controller :: task '<name>' setup found another part, not retried` for [`Attempt::Foreign`] (new).
+
+Returns the failure reason when no attempt brought the part up: [`SETUP_FAILED`], or a raised attempt's error,
+as the last attempt left it, with its diagnosis folded in ([`diagnosed`]); [`NO_DRIVER`] when the first attempt
+found no driver. A later attempt that finds no driver keeps the reason the attempt before it left, as plan B's
+loop does.
+
+### `pub fn diagnosed(reason: &str, detail: &str) -> String`
+
+A failure reason with the driver's diagnosis folded in: `'<reason> -- <detail>'`, or the reason alone when the
+diagnosis is empty (controller.py:445).
+
+### `pub fn sort_alternatives(candidates: &[Candidate], up_in_setup_order: &[usize], failures: &mut Vec<(usize, String)>) -> Vec<(usize, usize)>`
+
+Plan B's alternatives pass (controller.py:185-241): move each failed entry that an up device stands in for from
+`failures` to the returned (loser, winner) pairs.
+
+Two parts that cannot share one address on one bus are declared for one socket (the VL53L4CX and the VL53L1X at
+0x29), and the part that is soldered wins; the other entry's setup fails BY DESIGN. Each failure, in `failures`'
+order, takes the FIRST entry of `up_in_setup_order` that passes the four rules:
+ 1. the same I2C socket ([`Socket`]): an SPI entry, or one without an address, is never a candidate;
+ 2. the same non-empty set of quantities: an entry that provides nothing has nothing to stand in for;
+ 3. a different implementation: one driver twice on one socket is a config mistake, and the duplicate's setup
+    re-initialises the winner's own part;
+ 4. no XSHUT of the loser's own: its setup pulses that pin and reboots whatever part sits in the socket, so a
+    loser with a [`Candidate::reset_gpio`] stays a failure, in either setup order, its reason extended with
+    `'; shares XSHUT GPIO<n> with <winner> (<driver>): its setup resets the fitted laser -- enable exactly one of
+    <both names, sorted> on this board'`.
+
+When no up entry passes, the failure stays: a missing laser must still block arming. `candidates` is the
+directory, and the other arguments hold indices into it (an index past it names no candidate). `failures` keeps
+its order; the pairs come in that order too.
+
+### `pub fn unfitted(loser_implementation: &str, winner_name: &str, winner_implementation: &str, socket: &Socket, winner_down: bool) -> String`
+
+The operator's line for an unfitted alternative: which part is absent and which one took its socket
+(controller.py:243-263).
+
+`'<loser driver> not fitted -- <winner driver> (<winner>) answers i2c:1 0x29'` while the winner runs; once its
+loop has crashed, `'... answered i2c:1 0x29 at setup, now down'`: the loser stays not fitted (the winner
+identified itself at setup), but the line must not say the winner answers while `probe` and `arm` call it failed.
+
+### `pub fn named(implementation: &str, why: &str) -> String`
+
+A verdict that names the device's implementation: `'<driver> -- <why>'`, or `why` alone when there is none (a
+name that is no configured device, such as 'mission') (cc_client.py:292-308 `_named`).
+
+### `pub fn failure_line(implementation: &str, reason: &str, crashed: bool) -> String`
+
+The verdict for a device that failed (cc_client.py:311-326 `_failure`): `'<driver> -- not connected: <reason>'`
+for one that never came up, `'<driver> -- <reason>'` for one that came up and whose loop then crashed (it was
+connected).
+
+### `pub fn binding(entry: &Entry, default_kind: &str, default_address: Option<u8>) -> Binding`
+
+Plan B's bind() defaults for one entry, ported once: which transport its driver opens and where.
+
+`default_kind` is the driver's own transport when the entry names no `bus`: 'i2c' for most drivers and the
+ADXL375 (adxl375.py:107 `get('bus', 'i2c') == 'spi'`), 'spi' for the LSM6DSO32 (lsm6dso32.py:144). An absent `id`
+is 0 on I2C (i2cbus.py:297) and 1 on SPI (spibus.py:217); an absent `addr` is `default_address`, the driver's
+datasheet address (i2cbus.py:301). An explicit null is NOT absent: plan B's `get(key, default)` returns it, so a
+null `id` binds no bus and a null `addr` gives the driver no address. A single-transport driver reads an answer of
+the other kind as no bus (plan B's would raise building its bus from the other kind's spec).
+
+### Constants
+
+- `const RETRY_GAP_MS: u32 = 200` — The pause between two setup attempts of one device, in milliseconds: a flaky breadboard contact settles (controller.py:418 `asyncio.sleep_ms(200)`).
+- `const NO_DRIVER: &str = "no driver/activity"` — The failure reason of an entry whose implementation nothing runs (controller.py:398), and the start of the line logged for it (controller.py:283).
+- `const SETUP_FAILED: &str = "setup failed (absent / miswired?)"` — The failure reason of a setup that did not bring its part up (controller.py:406), before diagnose adds the why.
+
+## `controller::control_core`
+
+_Tested by its own `mod tests`._
+
+[`ControlCore`]: the control tick's pure duties (doc/specs/avionics-refactor.md R3), one code path for the board's
+control thread and the SITL, so the SITL flies the board's code and not a copy of it (plan B's sim-mirrors trap):
+
+1. the attitude filter (plan B tasks/attitude.py, M9): paced on its `period_ms`, reading the fused `rate`, `accel`
+   and `mag` through the marks map, its attitude pushed and recorded on every publish; stopped at DONE;
+2. the stage machine (plan B's Sequencer task, M7, M9): stepped every `period_ms` within half a tick of the wake,
+   on each bound source's channel; a move made from outside writes its row, a veto episode's edges theirs, and its
+   own advance commits, then the console's line, then the recorded line and the row, the recorder's flight flag
+   raised before those rows and lowered after them (plan B `_tick`, `_advance`);
+3. the flight law (plan B tasks/flight.py, M13): every tick, on the fresh quantities and the mission, its fins
+   handed on when it actuates, and every 100 ms (a second at DONE) the flight.csv row and the vitals.
+
+What a board has and the SITL has not comes in through [`Hooks`]: the clock read after the IMU's push (the
+databoard refuses a stamp from the future), the mission and the GNSS drift, the recorder's flight flag, the
+console, the state published for the executor, and the fins. The board's control thread keeps the hardware: the
+gptimer, the SPI IMU, the separation switch, the GPIO interrupts and the lapse watches. Nothing here allocates or
+formats text on a tick but the machine's own transition (six or fewer a flight).
+
+### `pub trait Hooks`
+
+What the tick needs of its host beyond the databoard: each call is cheap, never blocks and never allocates.
+
+- `fn now_us(&mut self) -> u64` — The clock now, µs: the board's uptime read again after the IMU's push, the SITL's tick time.
+- `fn mission(&mut self) -> (Option<Landing>, Option<Position>)` — The mission's landing zone and its set launch point, as the law reads them now.
+- `fn drift(&mut self) -> [f32; 2]` — The pad drift's estimate (east, north, m/s), the wind's de-bias (M11).
+- `fn flight_flag(&mut self, raised: bool)` — The recorder's flight flag: raised before a transition's rows, lowered after them.
+- `fn moved(&mut self, stage: Stage)` — The stage machine moved itself to `stage`: the console's line, before the recorded one.
+- `fn veto_edge(&mut self)` — A veto episode's edge, to count.
+- `fn attitude(&mut self, row: [i32; 6], seeded: bool, blind: bool)` — The attitude filter's state after a step: its row, whether it mirrored a source that outranks it, whether it is blind.
+- `fn fins(&mut self, angles: &[i32])` — The law actuated: its whole-degree fin angles, by the mixer's surfaces.
+- `fn vitals(&mut self, law: &FlightLaw)` — A flight.csv sample was taken: the law's vitals.
+
+### `pub struct SequencerSetup`
+
+The stage machine's setup.
+
+### `pub struct FilterSetup`
+
+The attitude filter's setup.
+
+### `pub struct FlightSetup`
+
+The flight loop's setup.
+
+### `pub struct ControlCore`
+
+The control tick's pure duties, each present when its entry came up.
+
+- `fn new(topology: &'static Topology, tick_us: u64, now_us: u64, filter: Option<FilterSetup>, sequencer: Option<SequencerSetup>, flight: Option<FlightSetup>) -> ControlCore` — The duties set up on `topology` for a tick of `tick_us`, started at `now_us`; a filter with no `attitude` quantity does not run (logged).
+- `fn binding(&self) -> Option<(String, Vec<String>)>` — The stage machine's bound sources as one line, and the sources past their class's slots; None without one.
+- `fn filter(&self) -> Option<&'static str>` — The filter's entry name, when it runs.
+- `fn sequencer(&self) -> Option<&'static str>` — The stage machine's entry name, when it runs.
+- `fn law(&self) -> Option<&FlightLaw>` — The flight law, when it runs: its mixer's surfaces, its fin angles.
+- `fn tick(&mut self, now_us: u64, slack_us: u64, done: bool, writer: &mut FlightWriter<'_>, hooks: &mut dyn Hooks)` — One control tick that woke at `now_us`, `slack_us` being half a tick, `done` whether the flight was at DONE when it woke: the filter (not at DONE), then the stage machine, then the law, in the board's order (D11 of the M9 plan: the attitude before the stage machine).
+
+## `controller::inputs`
+
+_Tested by its own `mod tests`._
+
+The flight threads' inputs from the board's quantities ([`crate::Topology`]), one implementation for the firmware
+and the SITL (M14): the flight law's step ([`FlightQuantities`]), the stage machine's per-source readings
+([`StageSources`]), and a simulated frame published as the `hitl` source ([`HitlWriters`]). A host that composed
+its own would grade itself, not the board (the virtual_flight lesson: its private launch detector).
+
+### `pub struct FlightQuantities<'t>`
+
+The quantities the flight law reads.
+
+- `fn new(topology: &'t Topology) -> FlightQuantities<'t>` — The law's quantities in `topology`.
+- `fn step(&self, now_us: u64, stage: Stage, armed: bool, landing: Option<Landing>, set_launch: Option<Position>, drift: [f32; 2]) -> Step` — The law's step at `now_us` in `stage` (`armed`) from the fresh quantities: the mission's `landing` zone, the set launch point `set_launch` (else the fix), and the GNSS calibration's `drift`. The course's push time is the ground stamp: the same between samples, new with each.
+
+### `pub struct StageSources<'t>`
+
+The stage machine's sources: each class's bound to its slots (crates/sequencer [`Binding`]), and the quantities
+they push into.
+
+- `fn new(topology: &'t Topology) -> StageSources<'t>` — The sources in `topology`, bound to their slots in rank order.
+- `fn binding(&self) -> &Binding` — The slots.
+- `fn readings(&self, now_us: u64) -> SourceReadings` — Each bound source's own channel at `now_us`, fresh in its quantity's shared window (M9: the multi-source machine).
+
+### `pub struct HitlWriters<'t>`
+
+The `hitl` source's writers, one per quantity a SENSORS frame carries (doc/specs/sim-link.md), and the climb its
+altitude derives (`change`, as every barometer's).
+
+- `fn new(topology: &'t Topology, source: &str) -> HitlWriters<'t>` — `source`'s writers in `topology`.
+- `fn publish(&mut self, sensors: &Sensors, now_us: u64) -> Option<f32>` — Every quantity `sensors` carries pushed at `now_us`, and the climb its altitude (else its elevation) derives; that climb, None until its window fills.
+
+## `controller::readiness`
+
+_Tested by its own `mod tests`._
+
+The flight-readiness gate (doc/specs/avionics-port.md M7, "Arm and verify"): plan B's `_readiness`
+(cc_client.py:47-107), the config choices that leave the board ballistic or unrecoverable in flight while every
+part still probes healthy -- the watchdog off, the flight loop off or without a gain on an axis, a bench fin
+derating still applied, and no landing zone with no CC-less site to pick one from. `verify` reports them as its
+separate `ready` verdict and leaves the hardware `pass` alone: bench and HITL sessions trip them on purpose.
+
+The port, against plan B:
+ * A component without `enabled` is enabled, as the Controller reads it ([`board_config::directory`]). Plan B's
+   `_readiness` alone read it as disabled, an inconsistency that is not ported (§6, "`_readiness` and `enabled`").
+ * Plan B's `fins` check (a control surface whose servo has no driver) reads the flight loop's mixer, which the
+   port has not built yet. The caller adds it once the mixer exists, as `verify` adds the BNO055's
+   `imu_calibration` to the same map.
+ * Plan B raises, so its `verify` answers an error, on two documents validate() admits: a null `fins`, and a
+   `gains` that is not an object. Here the first is no derating and the second holds no gain on any axis.
+ * A document validate() refuses is never run (load() falls back to the defaults), but the answer stays defined:
+   a bool multiplier is Python's int, as plan B prints it (`false` is `0`); any other multiplier that is not a
+   number is printed as Python's `%s` prints it, a derating all the same, where plan B's `%g` raises; an axis
+   that is not an object holds no gain; and a name used twice is its first enabled component, as the Controller
+   lists them, where plan B's dict keeps the last component of the name, enabled or not.
+
+### `pub fn readiness(document: &Value, zone_set: bool, has_sites: bool) -> BTreeMap<&'static str, String>`
+
+The flight-readiness problems of the board config `document`, `{check: problem}`, in plan B's words; empty when
+the board is flight-ready (plan B's `_readiness`, cc_client.py:47-107).
+
+`zone_set` and `has_sites` are the mission's: whether it holds a landing zone, and whether it holds CC-less sites
+to select one from. The checks:
+ * `watchdog` -- no enabled component named `watchdog`: a wedged flight loop never reboots;
+ * `flight` -- no enabled component named `flight`: the fins hold neutral;
+ * `gains` -- an enabled `flight` whose `gains` has no non-zero term (Python's truthiness) on roll, pitch or yaw,
+   naming each such axis: the loop computes but cannot act;
+ * `fins.limit_multiplier` -- the top-level `fins.limit_multiplier` present and unequal to 1.0 under Python's
+   `==` (an int 1 is no derating), printed as Python's `%g` prints it;
+ * `zone` -- neither a zone nor a site.
+
+## `controller::ring_gate`
+
+_Tested by its own `mod tests`._
+
+The ring gate (doc/specs/avionics-port.md M7, "Ring gate"; §3.7 "The ring_eraser and newest wins"): `arm` and
+`verify` require the flash ring to take a flight -- its bring-up scan has run, its eraser runs, and the eraser holds
+its reserve (about 1 % of the ring, flash_ring's `Geometry::reserve_blocks`) erased ahead of the writer. A refusal
+plan B never had: its recorder probe asked only that its two RAM rings exist (tasks/recorder.py:30-48). The
+verdict keeps that probe's shape, `recorder rings: <why>`, reported under the recorder's name, so CC shows it as it
+showed plan B's.
+
+Not refusals: no card (`no-sd`, a health token), a saver behind, and newest wins erasing an unsaved block
+(`ring-full`). Newest wins keeps one block more than the reserve erased, so without a card the gate does not
+flicker as the writer opens blocks.
+
+### `pub fn ring_gate(scanned: bool, eraser_running: bool, erased_ahead: u32, reserve_blocks: u32) -> Option<String>`
+
+Why the flash ring cannot take a flight, as the recorder's probe verdict `recorder rings: <why>`; None when it
+can.
+
+`scanned` says the writer's bring-up scan has run, `eraser_running` that the ring_eraser thread started,
+`erased_ahead` counts the erased blocks ahead of the writer (flash_ring's `Figures::erased_ahead`), and
+`reserve_blocks` is the reserve the eraser keeps (`Geometry::reserve_blocks`). The first check that fails names
+the why, in this order: a ring never scanned has no figures to trust, and one with no eraser never refills its
+reserve, whatever it holds now.
+
+## `controller::stale_arm`
+
+_Tested by its own `mod tests`._
+
+The arm's age rule (doc/specs/avionics-port.md §4.4, "The arrival stamp and the 25 s rule"): the executor stamps
+each request line as it arrives, and before it posts an `arm` it refuses one that has waited too long. A line waits
+behind the commands queued ahead of it (a hub probe sweep is up to ~18 s) and then through its own sweep, and the
+hub gives up on an answer after 30 s (src/control/board.py): an arm posted later than that would arm a board whose
+operator was told it did not answer. Plan B had no such rule: its one asyncio loop served the hub's lines in
+lockstep.
+
+### `pub fn stale_arm(waited: Duration) -> Option<String>`
+
+Why an `arm` that has waited `waited` since it arrived must not be posted, as `arm` refuses it under the key
+`arm`: `the request waited <n> s: send it again`, `<n>` in tenths of a second rounded up, so a wait just past the
+limit never reads as the limit itself. None while the wait is within [`ARM_WAIT_LIMIT`].
+
+## `controller::streams`
+
+_Tested by its own `mod tests`._
+
+The telemetry streams (doc/specs/avionics-port.md M6, M9): which entry writes which stream, with its file, its
+columns, its decimation window and whether it is durable, as plan B's drivers and tasks build their Telemetry at
+setup (drivers/lsm6dso32.py:124-126, drivers/bmi323.py:100-102, drivers/icp10111.py:123-125,
+drivers/bmp581.py:69-71, drivers/bmm350.py:99-100, tasks/attitude.py:100-102, drivers/separation.py:57,
+tasks/sequencer.py:110, warmstart.py:318). M6 records the LSM6DSO32, the ICP-10111 and the separation switch, M7
+the stage machine's transitions, M8 the checkpoint's timeline, and M9 the SEN0697 (the BMI323, the BMP581 and the
+BMM350), the attitude filter and the stage machine's veto episodes; every other part has none yet.
+
+The port, against plan B:
+ * Plan B registers a stream in its task's setup. The firmware registers one at `recorder::open` for every named
+   entry, enabled or not (board_config's `entries`), so a part the layout enables at boot still has its stream.
+ * MEASURED -> REPORTED (the operator, 2026-10-08): no device stream is decimated. Plan B thinned each one to its
+   entry's `telemetry_ms` (0 or absent: the global `recorder.telemetry_ms`) and attitude.csv to 100 ms by default,
+   a MicroPython-era economy. Here every sample a part measures, and every attitude the filter publishes, is a row,
+   and each part runs at the rate its consumers need instead. `telemetry_ms` is read by nothing here, whatever it
+   holds (plan B multiplied it by 1000: null raised at setup, text made a text that failed later, a bool read as 0
+   or 1 ms; validate() still refuses all three).
+ * Plan B passes `separation.csv` no window, so the global decimates it, while its note says "durable, every
+   event". Here the stream is durable and never decimated.
+ * Plan B's sequencer passes its `<name>.csv` no window either. Its rows are the stage transitions, a handful a
+   flight, so here that stream too is durable and never decimated.
+ * Plan B's checkpoint passes `checkpoint.csv` no window either. Its rows come once a stage change and once a
+   `checkpoint_s` aloft, and the last one before a reset is the post-mortem's record of where the flight was, so
+   here it is durable and never decimated too.
+ * So every stream here is never decimated; the device streams stay not durable (many rows a second, which the
+   ring_writer's own cadence carries), the event records durable.
+ * A barometer's row gains a fifth column, `change`, its climb rate in m/s (crates/control `change`), appended so
+   plan B's four stay where they were. A reader takes plan B's four-column rows as they are
+   (tools/recorder_flight.py).
+ * separation.csv gains two columns, `moment` and `duration`: the first edge of the contact's episode the row
+   concludes, on the uptime column's own clock, microseconds, and the microseconds from it to the episode's last
+   edge (the wobble). A row's `uptime` is the tick that concluded the episode, a quiet after its last edge, so the
+   latency is in the data. A reader takes plan B's two-column rows as they are (tools/recorder_flight.py).
+ * Its `event` gains a third value: plan B's `separated` and `nested`, and the port's `blip`, an episode that ended
+   on the level the latch already held (the contact moved and came back), so a flight shows every movement of the
+   contact. A blip moves neither the latch nor the stage; the readers take the event as a word, whichever it is.
+ * The stage machine's entry writes a second stream, the port's own ([`vetoes`]): `vetoes.csv`, a begin and an end
+   row per veto episode of the multi-source machine (crates/sequencer `VetoEdge`), fixed, durable and never
+   decimated like the transitions' record. Those rows stay out of `<name>.csv`, whose every row
+   tools/assemble_capture.py takes for a stage event.
+
+### `pub struct Stream`
+
+A telemetry stream, as the recorder registers it.
+
+### `pub fn stream(entry: &Entry) -> Option<Stream>`
+
+The stream `entry` writes, when its part is one the port records, every one never decimated: the IMUs (LSM6DSO32,
+BMI323), the barometers (ICP-10111, BMP581) and the BMM350 as `<name>.csv`, the attitude filter as the fixed
+`attitude.csv`, the fin servos as `<name>.csv`; the separation switch as the fixed `separation.csv`, the stage machine as `<name>.csv` and the
+checkpoint as the fixed `checkpoint.csv`, the last three durable. None for any other part. The stage machine's
+second stream is [`vetoes`].
+
+### `pub fn companions(entry: &Entry) -> Vec<(String, Stream)>`
+
+The streams an entry writes beside its own `<name>.csv`, each with the device key it is registered under: the
+GNSS's `<name>_gga.csv`, `<name>_sky.csv` and the durable `<name>_events.csv` (plan B gnss.py, task.py:104), all
+never decimated. Empty for any other entry.
+
+### `pub fn vetoes(entry: &Entry) -> Option<Stream>`
+
+The stream the stage machine's entry writes beside its own `<name>.csv`: its veto episodes, the fixed `vetoes.csv`
+whatever the entry's name, durable and never decimated like the transitions' record. None for any other entry.
+
+### Constants
+
+- `const IMU_FIELDS: [&str; 7] = ["ax", "ay", "az", "gx", "gy", "gz", "irq_runs"]` — The IMUs' columns, the LSM6DSO32's and the BMI323's alike (plan B drivers/lsm6dso32.py:125, drivers/bmi323.py:101): accel in g, the gyro as raw centidegrees a second, and the INT1 edges the tick saw.
+- `const BAROMETER_FIELDS: [&str; 5] = ["altitude", "temperature", "pressure", "elevation", "change"]` — The barometers' columns, the ICP-10111's and the BMP581's alike: plan B's four (drivers/icp10111.py:124, drivers/bmp581.py:70), m AMSL, degrees C, Pa and m above the ground, then the port's `change`, the climb rate in m/s (crates/control `change`), appended.
+- `const ABSOLUTE_FIELDS: [&str; 6] = ["heading", "roll", "pitch", "ax", "ay", "az"]` — The BNO055's columns (plan B drivers/bno055.py:105, M18): the heading in degrees, the roll and the pitch in centidegrees (integers, as plan B pushed its fixnums), the accelerometer in g.
+- `const MAGNETOMETER_FIELDS: [&str; 3] = ["mx", "my", "mz"]` — The BMM350's columns (plan B drivers/bmm350.py:99): the field per axis in the part's own counts, raw until the operator calibrates it, then centred and normalised (crates/drivers `bmm350`).
+- `const PITOT_FIELDS: [&str; 3] = ["dynamic_pressure", "airspeed_cms", "temperature"]` — The SDP810 pitot's columns (plan B drivers/sdp810.py:164-166): the tared dynamic pressure in Pa x 100, the airspeed in cm/s and the temperature in degrees C x 100, all integers as plan B pushed them.
+- `const POWER_FIELDS: [&str; 4] = ["voltage_mv", "current_ma", "power_mw", "alerts"]` — The INA226's columns (plan B drivers/ina226.py:93-95): mV, mA, mW and the over-current ALERT trips since boot.
+- `const FLIGHT_FIELDS: [&str; 13] = [` — The flight loop's columns (plan B tasks/flight.py:146-148), as `flight.csv` whatever the entry's name: the stage id, active, the airspeed estimate in cm/s, the fin cap, the roll and pitch setpoints in centidegrees, the heading error, the per-axis demands in whole degrees, the wind in cm/s and its from-direction, and whether it navigates dead-reckoned.
+- `const SERVO_FIELDS: [&str; 3] = ["angle", "pulse_us", "done"]` — The fin servos' columns (plan B drivers/sg90.py:187, the MG90S alike): the commanded angle in whole degrees, the pulse driven in us, and done (0 a command issued, 1 a move completed by its estimate).
+- `const LASER_FIELDS: [&str; 2] = ["agl", "irq_runs"]` — The laser rangers' columns (plan B drivers/vl53l1x.py:150, vl53l4cx.py alike): the height above ground in m and the data-ready edges its read took.
+- `const GNSS_FIELDS: [&str; 4] = ["lat", "lon", "speed_kn", "course"]` — The GNSS fix's columns (plan B gnss.py:173): lat and lon (written from the 1e-7 degree integers, 7 decimals), the ground speed in knots and the course in degrees, as an RMC gives them.
+- `const GGA_FIELDS: [&str; 5] = ["altitude_m", "elevation_m", "quality", "satellites", "hdop_cd"]` — The GNSS's GGA columns (plan B gnss.py:186-188, `<name>_gga.csv`): altitude and elevation in m, the fix quality, the satellites used and the HDOP in hundredths.
+- `const SKY_FIELDS: [&str; 8] = ["in_view", "used", "mode", "cn0_1", "cn0_2", "cn0_3", "cn0_4", "antenna"]` — The GNSS's sky columns (plan B gnss.py:195-197, `<name>_sky.csv`): one row per diagnostics burst.
+- `const EVENT_FIELDS: [&str; 1] = ["event"]` — A task's durable event record (plan B task.py:104, `<name>_events.csv`): one text per event.
+- `const SEPARATION_FIELDS: [&str; 4] = ["event", "stage", "moment", "duration"]` — The separation switch's columns: plan B's event (`separated` or `nested`, and the port's `blip`) and the stage after it (drivers/separation.py:57), then the port's `moment`, the uptime (µs) of the first edge of the episode the event concludes (drivers::separation `Event::moment_us`: for a separation, the separation moment), and `duration`, the µs from it to the episode's last edge (`Event::duration_us`: the contact's wobble, 0 for a clean single edge).
+- `const SEQUENCER_FIELDS: [&str; 2] = ["stage", "reason"]` — The stage machine's columns (plan B tasks/sequencer.py:110): the stage it moved to, or found the board moved to, and why (`launch |a|=...`, or `external` for a move it did not make).
+- `const VETOES_FIELDS: [&str; 7] = ["detector", "edge", "decider", "kinds", "contrary", "live", "value"]` — The stage machine's veto episodes' columns, the port's own (crates/sequencer `VetoEdge`, one row per edge): * `detector` -- the detector held (`Detector::name`: `launch_altitude`, `launch_acceleration`, `apogee` or `stillness`); * `edge` -- `begin` on the episode's first vetoed step, `end` on the first step after it (`VetoEdge::name`); both rows carry a vetoed step, an end row the episode's last; * `decider` -- the deciding source's device name (`Binding::source` of `Veto::decider`); * `kinds` -- the vetoes that held it (`Veto::kinds`: `peer`, `at_rest` or `thrust`, two joined by `+`); * `contrary` and `live` -- how many of the decider's live peers were contrary, and how many voting sources were live, the decider included (`Veto::contrary`, `Veto::live`); * `value` -- the decider's value (`Veto::value`): |accel| in g for the accel launch and the stillness, the elevation in m for the altitude launch and the apogee.
+- `const CHECKPOINT_FIELDS: [&str; 5] = ["stage", "altitude", "speed", "airspeed", "ticks_ms"]` — The checkpoint's columns (plan B warmstart.py:318-319): the stage's id, 1 (SETTING) to 5 (DONE), as plan B pushes `controller.stage`; the altitude in m AMSL, the speed and the airspeed in m/s; and the uptime in ms the checkpoint was taken at.
+
+## `controller::topology`
+
+The board's quantities, by sample type, each with its sources: built once at bring-up (crates/controller
+`topology`, from the entries that came up), then shared read-only by the flight threads, the firmware's and the
+SITL's alike.
+
+### `pub struct Topology`
+
+- `fn scalar(&self, quantity: &str) -> Option<&Parameter<f32>>` — The scalar quantity `quantity` (altitude, pressure, ...), when a provider of it came up.
+- `fn vector(&self, quantity: &str) -> Option<&Parameter<[f32; 3]>>` — The vector quantity `quantity` (accel, rate, mag, attitude), when a provider of it came up.
+- `fn position(&self, quantity: &str) -> Option<&Parameter<[i32; 2]>>` — The position quantity `quantity` (`position`), when a provider of it came up.
+- `fn add(&mut self, kind: Kind, quantity: &'static str, source: &'static str, priority: i32, timeout_ms: u32, reconcile: bool) -> bool` — Registers `source` for `quantity` of `kind` at `priority` with `timeout_ms`, the quantity made on its first source. Whether it was added (a quantity holds [`databoard::MAXIMUM_SOURCES`] at most).
+- `fn describe(&self) -> Vec<String>` — One line per quantity: `databoard :: pressure <- baro_icp10111 p0, baro_bmp581 p1; window 200 ms`.
+- `fn inspect(&self, now_us: u64) -> serde_json::Map<String, Value>` — Plan B's `inspect databoard` (databoard.py:506-511): each quantity's fused reading at `now_us` -- its value (a scalar, a vector, a position in degrees), the source that won, its age in ms, all null when no source is fresh -- and the learned reconcile offsets by source.
+- `fn stats(&self) -> serde_json::Map<String, Value>` — Plan B's `stats databoard` (databoard.py:513-515): each quantity's sources, sorted by name as plan B's `sources()` sorted them.
+
+### `pub enum Kind`
+
+One kind of quantity: what its samples are.
+
+### `pub fn topology(entries: &[Entry<'static>], table: &Table) -> (Topology, Vec<String>)`
+
+The topology of the entries `table` holds as up, in setup order, and its warnings: a quantity no board knows, a
+source past its quantity's limit. The firmware's bring-up and the SITL build it alike.
+
+### Constants
+
+- `const HITL_QUANTITIES: [&str; 13] = [` — The quantities the `hitl` entry provides (plan B hitl.py's `Databoard.provide` at setup, its entry has no `provides`), each at priority 0 with plan B's 1 s timeout; `change` the port's own, as every barometer's.
+
+## `controller::watchdog`
+
+_Tested by its own `mod tests`._
+
+The supervisor's stall rule (doc/specs/avionics-port.md M8, "Warm start, checkpoint, supervisor watchdog"): while
+the board controls a flight, the control thread must keep ticking, and one whose last tick is older than
+`stall_ms` has stalled, so the supervisor restarts the board. Plan B's watchdog task judged the same by the flight
+task's heartbeat TIMESTAMP (tasks/watchdog.py `_stalled`), independent of its own poll: a supervisor that checks
+late, or a check that lands between two ticks, sees the true age of the last tick.
+
+The port, against plan B:
+ * The heartbeat is the uptime in ms as a wrapping u32, which the control thread stores beside its tick count (the
+   P4 has no 64-bit atomics), and the age is the signed wrapping difference. So the u32 wrap (every 49.7 days) is
+   no stall, and neither is a `now` the supervisor read just before the control thread stored a newer tick (the
+   two run on different cores): that age is negative. An age past `i32::MAX` ms (24.8 days) reads negative too,
+   but the supervisor checks every `period_ms`, so a stall is caught long before it is that old.
+ * The limit is at least two tick periods: one late tick is jitter, not a stall, so a `stall_ms` below that
+   cannot restart a healthy board.
+ * A control thread that has never ticked is a failed bring-up, not a stall: the rule judges only one that has.
+ * Whether the board controls a flight is the caller's to say: armed, launched, in an airborne stage. Plan B
+   judged only while its flight task controlled the fins, so never on a passive flight.
+
+### `pub struct Stall`
+
+The stall rule, its limit fixed at bring-up from the watchdog's `stall_ms` and the control tick's period.
+
+- `fn new(stall_ms: f32, tick_ms: f32) -> Stall` — The rule for a `stall_ms` limit on a control thread that ticks every `tick_ms`.
+- `fn step(&self, now_ms: u32, last_tick_ms: u32, ticked: bool, controlling: bool) -> bool` — Whether the control thread has stalled: the board controls a flight, the thread has ticked, and its last tick is older than the limit.
+
 # `parts` — `src/avionics/crates/parts`
 
 _Uses: `board_config`, `control`, `controller`, `databoard`, `drivers`, `recorder`. External: embedded-hal, log, serde, serde_json._
@@ -8047,7 +8106,7 @@ calibration (plan B bmm350._restore).
 
 # `sitl` — `src/avionics/sitl`
 
-_Uses: `board_config`, `control`, `controller`, `databoard`, `mission`, `sequencer`, `sim_link`. External: serde_json._
+_Uses: `board_config`, `control`, `controller`, `mission`, `recorder`, `sequencer`, `sim_link`. External: log, serde_json._
 
 ## `sitl`
 
@@ -8056,14 +8115,12 @@ lockstep with the host's physics. tools/hitl_host.py `--sitl` flies it as it fli
 
 The pieces are the board's own, from the same crates: the topology the board's bring-up builds from its config
 (crates/controller `topology`, the `hitl` entry its only provider: every sensor it masks is simulated), a SENSORS
-frame published into it as the `hitl` source (`HitlWriters`), the stage machine stepped on its per-source readings
-(`StageSources`, `StageMachine`) and the flight law on the fused ones (`FlightQuantities`, `FlightLaw`), the mission
-from the launch payload the host sends a board, and the attitude filter, stepped before the law on each tick as the
-board's control thread steps it (in HITL the simulated attitude outranks it and the filter mirrors it, warm, until
-that attitude drops out: then the filter carries the glide, as on a board -- without it here a dropped attitude
-left the law with none, and the SITL flew 1.8 km off where a board would not). What the host has none of is not
-here: the servos (a FINS answer carries the law's angles, as a board's centred fins at its start), the separation
-switch, the checkpoint and the warm start, the GNSS drift calibration.
+frame published into it as the `hitl` source (`HitlWriters`), and the board's control tick itself
+(crates/controller `ControlCore`: the attitude filter, the stage machine and the flight law, in the board's order,
+R3 of doc/specs/avionics-refactor.md), with the mission from the launch payload the host sends a board. The SITL is
+the board's code path minus the platform, never a copy of it. What the host has none of is not here: the servos (a
+FINS answer carries the law's angles, as a board's centred fins at its start), the separation switch, the
+checkpoint and the warm start, the GNSS drift calibration (no drift), the recorder (no rows).
 
 Lockstep: the clock is the frame's physics time (`sim_time_ms`, after a 10 s boot as the golden shims'), never the
 wall's. Each frame first runs the control ticks due before it on what the earlier frames left, then is published,
@@ -8844,6 +8901,89 @@ Take over UART0: its driver in place and the console's stdio through it, interru
 
 Errors: the driver would not install (the console then stays IDF's polling one, and has no reader).
 
+## `firmware::control::duties`
+
+The board's side of the control tick's duties (crates/controller `ControlCore`, R3): the hooks, and the state the
+executor reads of the filter and the stage machine.
+
+### `pub fn attitude_inspection() -> Option<serde_json::Value>`
+
+What `inspect` shows of the attitude filter (plan B tasks/attitude.py `inspect`): its flags, angles and magnetic
+reference as the filter last published them; None when no filter runs.
+
+### `pub fn probe_attitude(only: Option<&str>) -> Option<(&'static str, Option<String>)>`
+
+The attitude filter's probe (plan B tasks/attitude.py `probe`), on the executor: its name and verdict, the gyro
+`rate` fresh now (None healthy, else plan B's text), logged in plan B's shape; None when no filter runs or
+`only` names another object.
+
+### `pub fn attitude_blind() -> bool`
+
+Whether the attitude filter is blind (`attitude-blind`, plan B cc_client): no fresh gyro for its blind window.
+
+### `pub fn sequencer_inspection() -> Option<(String, Vec<String>, u32)>`
+
+What `inspect` shows of the stage machine beyond the table (M9): its slots' sources, the ignored ones, and the veto
+edges it reported. None before the control thread binds it.
+
+## `firmware::control::imu`
+
+The primary IMU on SPI2 (M6): its read on each tick, its INT1 edges, its probe, its clock rung and its mute.
+
+### `pub struct SpiRung`
+
+A `bustune spi` rung's outcome: the IMU's name, its verdict at the asked clock (None healthy, else why), and the
+clock its handle runs at afterwards (the configured one when the driver refused the asked one, 0 when neither came
+back).
+
+### `pub fn bustune_spi(clock_hz: u32) -> Option<Result<SpiRung, String>>`
+
+A `bustune spi` rung on the control thread (SPI2's owner); None when the thread drives no IMU. A clock above
+[`MAXIMUM_SPI_HZ`] is the IMU failing the rung, answered here and never sent: the handle is not touched, and the
+CC's ladder (5, 8, 10, 16, 20 MHz) still finds the part's ceiling.
+
+Errors: the control thread is busy, did not answer in time, or refused the rung outside SETTING.
+
+### `pub fn probe_imu() -> Option<Result<(&'static str, Option<String>), String>>`
+
+The IMU's probe on the control thread (CC `probe`): its name and verdict (None healthy, else why); None when the
+thread drives no IMU.
+
+Errors: the control thread is busy, did not answer in time, or refused the probe outside SETTING.
+
+### `pub fn imu() -> Option<(&'static str, bool, bool)>`
+
+What `inspect` shows of the IMU the control thread drives (plan B lsm6dso32.py:300-308, beyond the channels and
+the table's `healthy`): its name, whether INT1 is wired, whether INT1 is silent. None without one.
+
+## `firmware::control::interrupts`
+
+The GPIO interrupts the control thread serves: the service it installs on core 1, the second IMU's INT1 and the
+INA226's ALERT, counted.
+
+### `pub fn arm_second_interrupt(gpio: u8) -> Result<(), sys::EspError>`
+
+Arms the second IMU's INT1 (the BMI323's, M9) on GPIO `gpio`, counting into [`take_second_edges`]. Only once the
+control thread runs ([`running`]): it installed the GPIO interrupt service on core 1 before it ran.
+
+Errors: the pin would not configure, or its handler would not attach.
+
+### `pub fn arm_alert_interrupt(gpio: u8) -> Result<(), sys::EspError>`
+
+Arms the INA226's ALERT on GPIO `gpio`: falling edges, the internal pull-up holding the open-drain, active-low line
+high (plan B `Pin(gpio, Pin.IN, Pin.PULL_UP)`, IRQ_FALLING), counting into [`alert_edges`]. Only once the control
+thread runs ([`running`]): it installed the GPIO interrupt service on core 1 before it ran.
+
+Errors: the pin would not configure, or its handler would not attach.
+
+### `pub fn alert_edges() -> u32`
+
+The INA226's ALERT trips since boot.
+
+### `pub fn take_second_edges() -> u32`
+
+The second IMU's INT1 edges since the last take.
+
 ## `firmware::control`
 
 The control thread (doc/specs/avionics-port.md §4.2, §4.3; M6): the flight tick on core 1 at priority 20, paced by
@@ -8885,6 +9025,12 @@ Each tick stores its heartbeat, the uptime in ms as a wrapping u32 (the P4 has n
 supervisor's stall check reads (crate::supervisor): one Relaxed store, and one Relaxed load of the flag
 `panic kind=stall` sets, on which the thread stops for good, so the check is proved on the board.
 
+By subsystem (R3 of doc/specs/avionics-refactor.md): this module is the thread itself -- its timer, its wakers,
+its start and its tick, the figures `control` shows; the filter, the stage machine and the flight law are the
+control tick's duties (crates/controller `ControlCore`, the SITL's too) behind the board's hooks ([`duties`]);
+the SPI IMU ([`imu`]), the separation switch ([`separation`]), the GPIO interrupts ([`interrupts`]), the lapse
+watches ([`watch`]) and the requests ([`requests`]) each have their own file.
+
 The flight word's one writer lives here (M7, crate::status): this thread commits every change of the stage, the
 hold, the arming and the launch, between two ticks' work, so no change races a detector. The separation's GLIDING
 commits through it, and so do the operator's requests: the executor posts each one to its request slot, which the
@@ -8894,63 +9040,6 @@ checked against the stage again where it is served: a launch detected during a p
 recorder's flight flag follows each commit: raised before a transition's rows, lowered after them. `control` shows
 the tick's work time (from the wake to the end of its work), whether the flight word holds the machine's launch,
 and what the thrust gate has seen.
-
-### `pub struct SpiRung`
-
-A `bustune spi` rung's outcome: the IMU's name, its verdict at the asked clock (None healthy, else why), and the
-clock its handle runs at afterwards (the configured one when the driver refused the asked one, 0 when neither came
-back).
-
-### `pub fn publish_separated(separated: bool)`
-
-Publishes the separation latch: bring-up seeds it from the level it read, the tick keeps it.
-
-### `pub fn switch_level() -> Option<(&'static str, bool)>`
-
-The separation switch's name and pin level (true = HIGH = nested), for its probe; None without one.
-
-### `pub fn attitude_inspection() -> Option<serde_json::Value>`
-
-What `inspect` shows of the attitude filter (plan B tasks/attitude.py `inspect`): its flags, angles and magnetic
-reference as the filter last published them; None when no filter runs.
-
-### `pub fn probe_attitude(only: Option<&str>) -> Option<(&'static str, Option<String>)>`
-
-The attitude filter's probe (plan B tasks/attitude.py `probe`), on the executor: its name and verdict, the gyro
-`rate` fresh now (None healthy, else plan B's text), logged in plan B's shape; None when no filter runs or
-`only` names another object.
-
-### `pub fn attitude_blind() -> bool`
-
-Whether the attitude filter is blind (`attitude-blind`, plan B cc_client): no fresh gyro for its blind window.
-
-### `pub fn sequencer_inspection() -> Option<(String, Vec<String>, u32)>`
-
-What `inspect` shows of the stage machine beyond the table (M9): its slots' sources, the ignored ones, and the veto
-edges it reported. None before the control thread binds it.
-
-### `pub fn arm_second_interrupt(gpio: u8) -> Result<(), sys::EspError>`
-
-Arms the second IMU's INT1 (the BMI323's, M9) on GPIO `gpio`, counting into [`take_second_edges`]. Only once the
-control thread runs ([`running`]): it installed the GPIO interrupt service on core 1 before it ran.
-
-Errors: the pin would not configure, or its handler would not attach.
-
-### `pub fn arm_alert_interrupt(gpio: u8) -> Result<(), sys::EspError>`
-
-Arms the INA226's ALERT on GPIO `gpio`: falling edges, the internal pull-up holding the open-drain, active-low line
-high (plan B `Pin(gpio, Pin.IN, Pin.PULL_UP)`, IRQ_FALLING), counting into [`alert_edges`]. Only once the control
-thread runs ([`running`]): it installed the GPIO interrupt service on core 1 before it ran.
-
-Errors: the pin would not configure, or its handler would not attach.
-
-### `pub fn alert_edges() -> u32`
-
-The INA226's ALERT trips since boot.
-
-### `pub fn take_second_edges() -> u32`
-
-The second IMU's INT1 edges since the last take.
 
 ### `pub fn running() -> bool`
 
@@ -8971,6 +9060,20 @@ straddles the first tick never pairs `true` with the boot's 0 (controller::Stall
 
 Stops the control thread at its next tick (`panic kind=stall`): the supervisor's stall check is what restarts the
 board. The caller checks first that it will (crate::supervisor::stall_refused).
+
+### `pub fn register_commands()`
+
+The control thread's console command (the Glider Command Language): `control`, the tick's figures.
+
+### Constants
+
+- `const LATENESS_BUDGET_US: u32 = 200` — The lateness budget a tick must keep, microseconds (the M6 proof: max <= 200 us under FHD@25 and bus load).
+- `const GNSS_SOURCE: &str = "gnss"` — The device name the GNSS publishes `elevation` under (plan B tasks/sequencer.py `_GNSS_SOURCE`): the stage machine binds it to its own slot, which never starts a flight (sequencer::GNSS_SOURCE).
+
+## `firmware::control::requests`
+
+The control thread's requests: the executor's flight-word slot and the mailbox of probes, bus tunes and fin updates,
+served on the tick.
 
 ### `pub fn probe_fins(only: Option<&str>) -> Option<Result<Vec<crate::fins::Swept>, String>>`
 
@@ -9002,42 +9105,29 @@ Returns: the answer: the flight committed, or why an arm was refused.
 
 Errors: why there is no answer, saying whether the request was applied.
 
-### `pub fn bustune_spi(clock_hz: u32) -> Option<Result<SpiRung, String>>`
+## `firmware::control::separation`
 
-A `bustune spi` rung on the control thread (SPI2's owner); None when the thread drives no IMU. A clock above
-[`MAXIMUM_SPI_HZ`] is the IMU failing the rung, answered here and never sent: the handle is not touched, and the
-CC's ladder (5, 8, 10, 16, 20 MHz) still finds the part's ceiling.
+The separation switch (M6, M7): its edges, its debounced episodes and the thrust gate that counts one.
 
-Errors: the control thread is busy, did not answer in time, or refused the rung outside SETTING.
+### `pub fn publish_separated(separated: bool)`
 
-### `pub fn probe_imu() -> Option<Result<(&'static str, Option<String>), String>>`
+Publishes the separation latch: bring-up seeds it from the level it read, the tick keeps it.
 
-The IMU's probe on the control thread (CC `probe`): its name and verdict (None healthy, else why); None when the
-thread drives no IMU.
+### `pub fn switch_level() -> Option<(&'static str, bool)>`
 
-Errors: the control thread is busy, did not answer in time, or refused the probe outside SETTING.
-
-### `pub fn imu() -> Option<(&'static str, bool, bool)>`
-
-What `inspect` shows of the IMU the control thread drives (plan B lsm6dso32.py:300-308, beyond the channels and
-the table's `healthy`): its name, whether INT1 is wired, whether INT1 is silent. None without one.
+The separation switch's name and pin level (true = HIGH = nested), for its probe; None without one.
 
 ### `pub fn separated() -> bool`
 
 The separation switch's debounced latch (plan B `separated()`): true = separated.
 
-### `pub fn register_commands()`
+## `firmware::control::watch`
 
-The control thread's console command (the Glider Command Language): `control`, the tick's figures.
+The lapse watches (M9): a tick at which an IMU channel is not fresh while its part is healthy.
 
 ### `pub fn lapses_of(source: &str) -> Vec<(String, u32)>`
 
 `source`'s watched channels' lapses, by quantity (`inspect` of an IMU); empty before the thread starts.
-
-### Constants
-
-- `const LATENESS_BUDGET_US: u32 = 200` — The lateness budget a tick must keep, microseconds (the M6 proof: max <= 200 us under FHD@25 and bus load).
-- `const GNSS_SOURCE: &str = "gnss"` — The device name the GNSS publishes `elevation` under (plan B tasks/sequencer.py `_GNSS_SOURCE`): the stage machine binds it to its own slot, which never starts a flight (sequencer::GNSS_SOURCE).
 
 ## `firmware::devices`
 
@@ -9332,26 +9422,24 @@ for a name that is no fin.
 
 ## `firmware::flight`
 
-The flight loop on the control thread (M13; plan B tasks/flight.py, its law in crates/control flight): every
-control tick the law reads the databoard's fresh quantities and the mission, and when it actuates, its whole-degree
-fin angles go to the servos through their compare-and-set (crate::fins), so a held fin costs nothing. Every 100 ms
-a flight.csv row samples what the loop believed and demanded (plan B's columns and units), and the vitals the
-`health` panel shows are published through atomics.
+The board's side of the flight loop (M13; plan B tasks/flight.py). The loop itself is the control tick's
+(crates/controller `ControlCore`): every tick the law reads the databoard's fresh quantities and the mission, and
+every 100 ms a flight.csv row samples what it believed and demanded. Here: its surfaces bound to the fin servos
+([`bind`]), whose compare-and-set (crate::fins) takes the angles when it actuates, so a held fin costs nothing; the
+vitals the `health` panel shows, published through atomics ([`publish_vitals`]); and the warm start's seed.
 
 The mission is the executor's: it publishes the zone, the launch point and the endgame pattern after every line
 ([`publish_mission`]) into a sequence-locked view the control thread reads without a lock.
-
-### `pub struct FlightLoop`
-
-The flight loop, the control thread's.
-
-- `fn new(member: &FlightMember, topology: &'static Topology, fins: Option<&Fins>) -> FlightLoop` — The loop of `member` on `topology`, its surfaces bound to `fins` by name (a surface with no servo is logged: a third of the authority lost). Never inlined, nor [`FlightLoop::tick`]: their locals stay out of the control thread's loop frame.
-- `fn tick(&mut self, now_us: u64, flight: FlightWord, fins: Option<&mut Fins>)` — One control tick at `now_us` under `flight`: the law's step on the fresh quantities, the fins it actuated written, and every 100 ms the flight.csv row and the vitals.
 
 ### `pub fn publish_mission(mission: &Mission)`
 
 Publishes `mission`'s zone, launch point and endgame pattern for the control thread (the executor, after every
 line; main once before the threads start).
+
+### `pub fn mission_view() -> (Option<Landing>, Option<Position>)`
+
+The mission as the control thread reads it: the landing zone and the set launch point, read again when the
+executor wrote meanwhile.
 
 ### `pub fn launch_e7() -> Option<(i32, i32)>`
 
@@ -9362,6 +9450,20 @@ The mission's launch point as the flight loop reads it (set by CC, or pinned at 
 
 Keeps a warm start's airspeed for the law's seed (crate::warm, before the control thread starts), logged here: a
 float formatted on the control thread costs its stack.
+
+### `pub fn bind(name: &str, law: &FlightLaw, fins: Option<&Fins>) -> Vec<Option<usize>>`
+
+The law's mixer surfaces bound to the fin servos by name, for the flight loop of entry `name`: each surface's fin
+index, None for a surface with no servo (logged: a third of the authority lost). The surfaces are kept for
+`health` and the readiness.
+
+### `pub fn warm_airspeed() -> Option<f32>`
+
+A warm start's airspeed, the law's seed; None when none was kept.
+
+### `pub fn publish_vitals(law: &FlightLaw)`
+
+Publishes the law's vitals for `health` (plan B flight.vitals): after each flight.csv sample, on the control thread.
 
 ### `pub fn vitals(attitude: Option<[i32; 3]>) -> Option<Value>`
 

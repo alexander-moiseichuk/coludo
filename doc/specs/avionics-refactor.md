@@ -190,7 +190,7 @@ Each stage keeps the behaviour. Its proof:
 | R0 | API docs (`27cc539`) | done |
 | R1 | the utilities: `uptime_us`, `threads::spawn`, `Rows`/`LogOnce` (`8939dab`) | done |
 | R2 | `crates/parts` with `Published<T>`, the parts' published state and its inspect keys, `parts::KNOWN`, the registry; `inspection::device` and the parts' statics removed (as built: below) | done |
-| R3 | `ControlCore` in `crates/controller`; `control/` split by subsystem; the SITL on `ControlCore` | medium: the SITL matrix must stay seed for seed |
+| R3 | `ControlCore` in `crates/controller`; `control/` split by subsystem; the SITL on `ControlCore` (as built: below) | done |
 | R4 | the `boot` phases; `devices` from tables; the remaining long functions | low to medium |
 | R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test | none |
 | R6 | the hardware's own types (operator, 2026-10-12): see below | medium: the numbers change |
@@ -213,6 +213,28 @@ drivers' mock bus:
 Measured: `sensors.rs` went from 1963 lines to 215 and `inspection::device` from 199 to 26; its other arms are
 `component()` (100 lines, for R4). The firmware lost about 2100 lines, the new crate holds 3000 with its tests, and
 `sensors.rs`'s 27 statics became two (the platform and the registry).
+
+**R3 as built.** `crates/controller` `ControlCore` holds the control tick's pure duties, in the board's order:
+- the attitude filter, stopped at DONE;
+- the stage machine, with its rows, its vetoes and its transition's lines;
+- the flight law, with flight.csv.
+
+The host comes in through `controller::Hooks`: the clock read after the IMU's push, the mission and the drift, the
+recorder's flight flag, the console's stage line, the published state, the fins and the vitals. The SITL runs it
+with a lockstep host (the tick's time, the launch payload's mission, no drift, no rows) and lost its own `Flight`
+and `Filter`. The board's `control.rs` became `control/` (the thread, `imu`, `separation`, `interrupts`, `watch`,
+`duties`, `requests`; 605 lines the largest, from 1892), and `flight.rs` kept only the board's side (the surfaces'
+servos, the vitals, the mission's view).
+
+The proof changed, as this stage showed it had to. The SITL cannot stay seed for seed, because its copies were not
+the board's: it stepped the stage machine on a 10 ms phase no board runs (0, 30, 80 ms where the board steps at 0,
+40, 90). Two runs prove the extraction exact:
+- the old SITL with only the board's pacing patched in flies the new SITL's 72 flights, every figure identical;
+- against plan B's 20 seeds, the SITL on the board's phase fails 3 gates in 240 flights, all in the noisiest
+  families (doc/sims/TMS-7-rust_hitl_m14 §3e).
+
+On the boards, as every stage: identical inspect shapes, boot lines equal but for the log targets, the contract at 0
+violations, one HITL flight, a soak.
 
 **R6, the 32-bit types.** The P4 is RV32 with a single-precision FPU: a u64 or i64 takes two registers, and its
 division is a library call. An f64 is all software. The tree has 480 lines with a u64, 235 with an i64 and 166

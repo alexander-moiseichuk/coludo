@@ -46,6 +46,7 @@
 //!  * A device whose loop crashed stays in plan B's `failures` in crash order; [`Table`] lists every reader in
 //!    directory order. Only the key order of a JSON object differs.
 
+mod control_core;
 mod inputs;
 mod readiness;
 mod ring_gate;
@@ -62,6 +63,7 @@ use board_config::Entry;
 use board_config::python::formatted;
 use serde_json::Value;
 
+pub use control_core::{ControlCore, FilterSetup, FlightSetup, Hooks, SequencerSetup};
 pub use inputs::{FlightQuantities, HitlWriters, StageSources};
 pub use readiness::readiness;
 pub use ring_gate::ring_gate;

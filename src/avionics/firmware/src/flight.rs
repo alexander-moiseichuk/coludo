@@ -1,10 +1,10 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The flight loop on the control thread (M13; plan B tasks/flight.py, its law in crates/control flight): every
-//! control tick the law reads the databoard's fresh quantities and the mission, and when it actuates, its whole-degree
-//! fin angles go to the servos through their compare-and-set (crate::fins), so a held fin costs nothing. Every 100 ms
-//! a flight.csv row samples what the loop believed and demanded (plan B's columns and units), and the vitals the
-//! `health` panel shows are published through atomics.
+//! The board's side of the flight loop (M13; plan B tasks/flight.py). The loop itself is the control tick's
+//! (crates/controller `ControlCore`): every tick the law reads the databoard's fresh quantities and the mission, and
+//! every 100 ms a flight.csv row samples what it believed and demanded. Here: its surfaces bound to the fin servos
+//! ([`bind`]), whose compare-and-set (crate::fins) takes the angles when it actuates, so a held fin costs nothing; the
+//! vitals the `health` panel shows, published through atomics ([`publish_vitals`]); and the warm start's seed.
 //!
 //! The mission is the executor's: it publishes the zone, the launch point and the endgame pattern after every line
 //! ([`publish_mission`]) into a sequence-locked view the control thread reads without a lock.
@@ -15,19 +15,10 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use control::flight::FlightLaw;
 use control::guidance::{Heading, Landing};
 use control::navigation::Position;
-use controller::FlightQuantities;
 use mission::Mission;
-use recorder::{Cell, Rows};
-use sequencer::{Flight as FlightWord, Stage};
 use serde_json::Value;
 
-use crate::devices::{FlightMember, Topology};
 use crate::fins::Fins;
-
-/// The flight.csv sample period, µs (plan B `telemetry_ms` 100: the control state SAMPLED, not traced).
-const SAMPLE_US: u64 = 100_000;
-/// At DONE, µs (M11b).
-const DONE_SAMPLE_US: u64 = 1_000_000;
 
 /// The mission view's sequence: odd while the executor writes it.
 static MISSION_SEQUENCE: AtomicU32 = AtomicU32::new(0);
@@ -124,7 +115,7 @@ pub fn publish_mission(mission: &Mission) {
 
 /// The mission as the control thread reads it: the landing zone and the set launch point, read again when the
 /// executor wrote meanwhile.
-fn mission_view() -> (Option<Landing>, Option<Position>) {
+pub fn mission_view() -> (Option<Landing>, Option<Position>) {
     loop {
         let before = MISSION_SEQUENCE.load(Ordering::Acquire);
         if before % 2 == 1 {
@@ -169,138 +160,61 @@ pub fn keep_warm_airspeed(airspeed: f32) {
     log::info!("flight :: airspeed {airspeed} m/s kept as the law's seed (warm start)");
 }
 
-/// The flight loop, the control thread's.
-pub struct FlightLoop {
-    /// The law.
-    law: FlightLaw,
-    /// Each mixer surface's fin index, None for a surface with no servo.
-    fins: Vec<Option<usize>>,
-    /// What it reads.
-    quantities: FlightQuantities<'static>,
-    /// Its stream: a refused row logged once a run (recorder::Rows).
-    rows: Rows<'static>,
-    /// The next flight.csv sample, µs.
-    next_sample_us: u64,
+/// The law's mixer surfaces bound to the fin servos by name, for the flight loop of entry `name`: each surface's fin
+/// index, None for a surface with no servo (logged: a third of the authority lost). The surfaces are kept for
+/// `health` and the readiness.
+pub fn bind(name: &str, law: &FlightLaw, fins: Option<&Fins>) -> Vec<Option<usize>> {
+    let surfaces: Vec<&'static str> = law
+        .mixer()
+        .surfaces()
+        .iter()
+        .map(|surface| leak(&surface.name))
+        .collect();
+    let bound: Vec<Option<usize>> = surfaces
+        .iter()
+        .map(|surface| fins.and_then(|fins| fins.index(surface)))
+        .collect();
+    for (surface, index) in surfaces.iter().zip(&bound) {
+        if index.is_none() {
+            log::warn!("{name} :: surface {surface} has NO driver -- reduced authority");
+        }
+    }
+    let _ = RUNNING.set(surfaces);
+    bound
 }
 
-impl FlightLoop {
-    /// The loop of `member` on `topology`, its surfaces bound to `fins` by name (a surface with no servo is logged:
-    /// a third of the authority lost). Never inlined, nor [`FlightLoop::tick`]: their locals stay out of the control
-    /// thread's loop frame.
-    #[inline(never)]
-    pub fn new(member: &FlightMember, topology: &'static Topology, fins: Option<&Fins>) -> FlightLoop {
-        let mut law = FlightLaw::new(&member.entry, &member.fins);
-        let seed = f32::from_bits(WARM_AIRSPEED.load(Ordering::Relaxed));
-        if seed > 0.0 {
-            law.seed_airspeed(seed);
-        }
-        let surfaces: Vec<&'static str> = law
-            .mixer()
-            .surfaces()
-            .iter()
-            .map(|surface| leak(&surface.name))
-            .collect();
-        let bound: Vec<Option<usize>> = surfaces
-            .iter()
-            .map(|surface| fins.and_then(|fins| fins.index(surface)))
-            .collect();
-        for (surface, index) in surfaces.iter().zip(&bound) {
-            if index.is_none() {
-                log::warn!(
-                    "{} :: surface {surface} has NO driver -- reduced authority",
-                    member.name
-                );
-            }
-        }
-        let _ = RUNNING.set(surfaces);
-        FlightLoop {
-            law,
-            fins: bound,
-            quantities: FlightQuantities::new(topology),
-            rows: crate::recorder::rows(member.name),
-            next_sample_us: 0,
-        }
-    }
+/// A warm start's airspeed, the law's seed; None when none was kept.
+pub fn warm_airspeed() -> Option<f32> {
+    let seed = f32::from_bits(WARM_AIRSPEED.load(Ordering::Relaxed));
+    (seed > 0.0).then_some(seed)
+}
 
-    /// One control tick at `now_us` under `flight`: the law's step on the fresh quantities, the fins it actuated
-    /// written, and every 100 ms the flight.csv row and the vitals.
-    #[inline(never)]
-    pub fn tick(&mut self, now_us: u64, flight: FlightWord, fins: Option<&mut Fins>) {
-        let (landing, set_launch) = mission_view();
-        let step = self.quantities.step(
-            now_us,
-            flight.stage,
-            flight.armed,
-            landing,
-            set_launch,
-            crate::gnss::drift(),
-        );
-        if self.law.step(&step)
-            && let Some(fins) = fins
-        {
-            for (&angle, index) in self.law.angles().iter().zip(&self.fins) {
-                if let Some(index) = *index {
-                    fins.set_angle(index, f64::from(angle));
-                }
-            }
+/// Publishes the law's vitals for `health` (plan B flight.vitals): after each flight.csv sample, on the control thread.
+pub fn publish_vitals(law: &FlightLaw) {
+    let guidance = law.guidance();
+    let wind = law.wind();
+    VITALS.airspeed.store(law.airspeed().to_bits(), Ordering::Relaxed);
+    VITALS.cap.store(law.cap(), Ordering::Relaxed);
+    VITALS.active.store(law.active(), Ordering::Relaxed);
+    VITALS.heading_error.store(guidance.heading_error(), Ordering::Relaxed);
+    VITALS.wind[0].store(wind.speed().to_bits(), Ordering::Relaxed);
+    VITALS.wind[1].store(wind.direction().to_bits(), Ordering::Relaxed);
+    match law.reach() {
+        Some(reach) => {
+            VITALS.reach[0].store(i32::from(reach.reachable), Ordering::Relaxed);
+            VITALS.reach[1].store(reach.margin_m, Ordering::Relaxed);
+            VITALS.reach[2].store(reach.distance_m, Ordering::Relaxed);
+            VITALS.reach[3].store(reach.headwind_mps.to_bits() as i32, Ordering::Relaxed);
+            VITALS.reach_known.store(true, Ordering::Relaxed);
         }
-        if now_us >= self.next_sample_us {
-            // DONE (M11b): the recording a trickle, a row a second
-            self.next_sample_us = now_us
-                + if flight.stage == Stage::Done {
-                    DONE_SAMPLE_US
-                } else {
-                    SAMPLE_US
-                };
-            self.sample(now_us, flight.stage);
-        }
+        None => VITALS.reach_known.store(false, Ordering::Relaxed),
     }
-
-    /// The flight.csv row (plan B's columns: centi-units where plan B wrote fixnums) and the vitals.
-    fn sample(&mut self, now_us: u64, stage: Stage) {
-        let law = &self.law;
-        let guidance = law.guidance();
-        let [roll, pitch, yaw] = law.commands();
-        let wind = law.wind();
-        let row = [
-            Cell::I32(i32::from(stage as u8)),
-            Cell::I32(i32::from(law.active())),
-            Cell::I32((law.airspeed() * 100.0) as i32),
-            Cell::I32(law.cap()),
-            Cell::I32((guidance.roll_setpoint() * 100.0).round() as i32),
-            Cell::I32((guidance.pitch_setpoint() * 100.0).round() as i32),
-            Cell::I32(guidance.heading_error()),
-            Cell::I32(roll),
-            Cell::I32(pitch),
-            Cell::I32(yaw),
-            Cell::I32((wind.speed() * 100.0) as i32),
-            Cell::I32(wind.direction() as i32),
-            Cell::I32(i32::from(guidance.reckoning())),
-        ];
-        self.rows.push(now_us, &row);
-        VITALS.airspeed.store(law.airspeed().to_bits(), Ordering::Relaxed);
-        VITALS.cap.store(law.cap(), Ordering::Relaxed);
-        VITALS.active.store(law.active(), Ordering::Relaxed);
-        VITALS.heading_error.store(guidance.heading_error(), Ordering::Relaxed);
-        VITALS.wind[0].store(wind.speed().to_bits(), Ordering::Relaxed);
-        VITALS.wind[1].store(wind.direction().to_bits(), Ordering::Relaxed);
-        match law.reach() {
-            Some(reach) => {
-                VITALS.reach[0].store(i32::from(reach.reachable), Ordering::Relaxed);
-                VITALS.reach[1].store(reach.margin_m, Ordering::Relaxed);
-                VITALS.reach[2].store(reach.distance_m, Ordering::Relaxed);
-                VITALS.reach[3].store(reach.headwind_mps.to_bits() as i32, Ordering::Relaxed);
-                VITALS.reach_known.store(true, Ordering::Relaxed);
-            }
-            None => VITALS.reach_known.store(false, Ordering::Relaxed),
-        }
-        VITALS.turn_radius.store(
-            law.landing_turn_radius().unwrap_or(f32::NAN).to_bits(),
-            Ordering::Relaxed,
-        );
-        for (published, &angle) in VITALS.angles.iter().zip(law.angles()) {
-            published.store(angle, Ordering::Relaxed);
-        }
+    VITALS.turn_radius.store(
+        law.landing_turn_radius().unwrap_or(f32::NAN).to_bits(),
+        Ordering::Relaxed,
+    );
+    for (published, &angle) in VITALS.angles.iter().zip(law.angles()) {
+        published.store(angle, Ordering::Relaxed);
     }
 }
 
