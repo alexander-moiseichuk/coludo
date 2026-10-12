@@ -38,6 +38,8 @@
 //!  * [`icp10111`] -- the primary barometer: the TDK polynomial, the two-phase measurement, the general call;
 //!  * [`bmp581`] -- the SEN0697's backup barometer;
 //!  * [`bmm350`] -- the SEN0697's magnetometer and its hard/soft-iron calibration;
+//!  * [`bmp280`] and [`bno055`] -- the SEN0253's backup barometer and backup attitude (the v0.1 boards): the
+//!    BNO055's own NDOF fusion, its stall judge and its learned profile;
 //!  * [`sg90`] and [`mg90s`] -- the fin servos' degree-to-pulse map;
 //!  * [`bluetooth`] -- the BLE radio switch, a stub in plan B's no-BLE shape: the requested state and its `update`.
 
@@ -47,6 +49,7 @@ pub mod bmi323;
 pub mod bmm350;
 pub mod bmp280;
 pub mod bmp581;
+pub mod bno055;
 pub mod commons;
 pub mod debounce;
 pub mod device;

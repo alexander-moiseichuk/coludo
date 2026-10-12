@@ -1465,6 +1465,7 @@ dependencies = [
  "board_config",
  "control",
  "controller",
+ "databoard",
  "mission",
  "sequencer",
  "serde_json",

@@ -24,6 +24,8 @@ use drivers::bmp280;
 use drivers::bmp280::Bmp280;
 use drivers::bmp581;
 use drivers::bmp581::Bmp581;
+use drivers::bno055;
+use drivers::bno055::{Bno055, CalibrationState};
 use drivers::device::Device;
 use drivers::freshness;
 use drivers::icp10111::{Icp10111, Poll, Reading};
@@ -87,16 +89,15 @@ pub enum Kind {
 /// the commands').
 const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "bluetooth"];
 
-/// Plan B implementations whose port comes with a later milestone.
-const NOT_PORTED: [&str; 3] = ["adxl375", "bno055", "bmp280"];
+/// Plan B implementations not ported: the ADXL375, no longer fitted (M18 leaves it out).
+const NOT_PORTED: [&str; 1] = ["adxl375"];
 
 /// What runs `entry`. The LSM6DSO32 is an SPI part unless its entry binds it to I2C (plan B's lsm6dso32.py:144: the
 /// `bus` defaults to 'spi').
 pub fn classify(entry: &Entry) -> Kind {
     match entry.implementation {
-        "bmi323" | "bmm350" | "bmp280" | "bmp581" | "icp10111" | "ina226" | "sdp810" | "vl53l1x" | "vl53l4cx" => {
-            Kind::I2c
-        }
+        "bmi323" | "bmm350" | "bmp280" | "bmp581" | "bno055" | "icp10111" | "ina226" | "sdp810" | "vl53l1x"
+        | "vl53l4cx" => Kind::I2c,
         "lsm6dso32" => match controller::binding(entry, "spi", Some(drivers::lsm6dso32::ADDRESS)) {
             controller::Binding::I2c { .. } => Kind::I2c,
             _ => Kind::Spi,
@@ -139,6 +140,7 @@ pub fn default_address(implementation: &str) -> Option<u8> {
         "bmm350" => Some(drivers::bmm350::ADDRESS),
         "bmp280" => Some(drivers::bmp280::ADDRESS),
         "bmp581" => Some(drivers::bmp581::ADDRESS),
+        "bno055" => Some(drivers::bno055::ADDRESS),
         "icp10111" => Some(drivers::icp10111::ADDRESS),
         "ina226" => Some(drivers::ina226::ADDRESS),
         "lsm6dso32" => Some(drivers::lsm6dso32::ADDRESS),
@@ -151,6 +153,8 @@ pub fn default_address(implementation: &str) -> Option<u8> {
 /// What a part does on its owner's tick beyond its bus work: where its readings go (M6: the ICP-10111; M9: the
 /// BMI323). Each variant is boxed, so the other members of a port do not pay for the largest inline (M9).
 pub enum Run {
+    /// The BNO055's attitude, accel and stream (M18).
+    Absolute(Box<Absolute>),
     /// A barometer's channels, its climb rate and its stream.
     Barometer(Box<Barometer>),
     /// The second IMU's channels and stream.
@@ -180,6 +184,13 @@ impl Run {
             // ICP -> BMP581 handover is never a climb (M9)
             Part::Bmp280(_) | Part::Bmp581(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
             Part::Bmm350(_) => Some(Run::Magnetometer(Box::new(Magnetometer::new(name, topology, entry)))),
+            Part::Bno055(_) => Some(Run::Absolute(Box::new(Absolute::new(
+                name,
+                member.period_ms.unwrap_or(drivers::bno055::DEFAULT_PERIOD_MS),
+                member.axes,
+                topology,
+                entry,
+            )))),
             Part::Sdp810(_) => Some(Run::Pitot(Box::new(Pitot::new(
                 name,
                 member.period_ms.unwrap_or(drivers::sdp810::DEFAULT_PERIOD_MS),
@@ -744,6 +755,199 @@ impl Magnetometer {
     }
 }
 
+/// The BNO055's run name, once its run is built: whose calibration [`absolute_instruction`] words (M18).
+static ABSOLUTE: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+/// Its last CALIB_STAT ([`CalibrationState::encode`]), once [`ABSOLUTE_READ`] says one was read.
+static ABSOLUTE_CALIBRATION: AtomicU8 = AtomicU8::new(0);
+/// Whether CALIB_STAT was read at least once.
+static ABSOLUTE_READ: AtomicBool = AtomicBool::new(false);
+/// The convergence latch: mag reached 3 once, or a profile was restored.
+static ABSOLUTE_CONVERGED: AtomicBool = AtomicBool::new(false);
+/// The latch came from a restored profile, not a figure-8 this session.
+static ABSOLUTE_RESTORED: AtomicBool = AtomicBool::new(false);
+/// The learned profile is saved in NVS.
+static ABSOLUTE_SAVED: AtomicBool = AtomicBool::new(false);
+/// The fusion is latched stalled: the attitude withheld.
+static ABSOLUTE_STALLED: AtomicBool = AtomicBool::new(false);
+
+/// Publishes the BNO055's calibration and fusion state (its run's, the bring-up's restore, the executor's save).
+fn note_absolute(part: &Bno055) {
+    if let Some(state) = part.calibration_state() {
+        ABSOLUTE_CALIBRATION.store(state.encode(), Ordering::Relaxed);
+        ABSOLUTE_READ.store(true, Ordering::Release);
+    }
+    ABSOLUTE_CONVERGED.store(part.calibrated(), Ordering::Relaxed);
+    ABSOLUTE_RESTORED.store(part.restored(), Ordering::Relaxed);
+    ABSOLUTE_SAVED.store(part.saved(), Ordering::Relaxed);
+    ABSOLUTE_STALLED.store(part.stalled(), Ordering::Relaxed);
+}
+
+/// The BNO055's last CALIB_STAT, None before the first read.
+fn absolute_state() -> Option<CalibrationState> {
+    ABSOLUTE_READ
+        .load(Ordering::Acquire)
+        .then(|| CalibrationState::decode(ABSOLUTE_CALIBRATION.load(Ordering::Relaxed)))
+}
+
+/// The BNO055's pending calibration, in plan B's words (bno055.calibration()), from its run's atomics, as the
+/// magnetometer's ([`magnetometer_instruction`]). None when no BNO055 runs or nothing is owed.
+pub fn absolute_instruction() -> Option<(&'static str, String)> {
+    let name = *ABSOLUTE.get()?;
+    bno055::owed(
+        absolute_state(),
+        ABSOLUTE_CONVERGED.load(Ordering::Relaxed),
+        ABSOLUTE_SAVED.load(Ordering::Relaxed),
+    )
+    .map(|text| (name, text))
+}
+
+/// What `inspect`, `verify` and the heartbeat show of the BNO055 beyond its channels (plan B bno055.inspect).
+#[derive(Clone, Copy)]
+pub struct AbsoluteState {
+    /// The fusion is latched stalled: the attitude withheld.
+    pub fusion_stalled: bool,
+    /// The live CALIB_STAT (sys, gyr, acc, mag), None before the first read.
+    pub calibration: Option<[u8; 4]>,
+    /// The convergence latch, which the live register regularly disagrees with.
+    pub calibrated: bool,
+    /// The latch came from a restored profile.
+    pub calibration_restored: bool,
+}
+
+/// The BNO055's state; None when no BNO055 runs.
+pub fn absolute_inspection() -> Option<AbsoluteState> {
+    ABSOLUTE.get()?;
+    Some(AbsoluteState {
+        fusion_stalled: ABSOLUTE_STALLED.load(Ordering::Relaxed),
+        calibration: absolute_state().map(|state| [state.system, state.gyro, state.accel, state.mag]),
+        calibrated: ABSOLUTE_CONVERGED.load(Ordering::Relaxed),
+        calibration_restored: ABSOLUTE_RESTORED.load(Ordering::Relaxed),
+    })
+}
+
+/// The BNO055's outputs (M18, plan B bno055.run): every period one block read; the fused Euler to `attitude` unless
+/// the fusion is stalled (the channel then goes stale and the databoard falls to the next source), the accelerometer
+/// through the airframe's axes to `accel` always (that half still works), a row to its stream, and CALIB_STAT read
+/// about once a second for the operator.
+pub struct Absolute {
+    /// The `attitude` writer (heading, roll, pitch, degrees).
+    attitude: Option<Writer<'static, [f32; 3]>>,
+    /// The `accel` writer (g, the airframe's axes).
+    accel: Option<Writer<'static, [f32; 3]>>,
+    /// How the part's axes map onto the airframe's (`axes`): the accelerometer's; the Euler is the chip's own.
+    axes: Axes,
+    /// Its stream, with a recorder.
+    telemetry: Option<Telemetry<'static>>,
+    /// Its table entry, whose `healthy` the run writes.
+    entry: Option<&'static DeviceEntry<'static>>,
+    /// When the next block read is due.
+    due: Due,
+    /// When the next CALIB_STAT read is due.
+    calibration_due: Due,
+    /// A read failed and none succeeded since: one log line per run.
+    failing: bool,
+    /// A row was refused and none written since: one log line per run.
+    overflowing: bool,
+}
+
+impl Absolute {
+    /// The outputs of source `name`, read every `period_ms`, writing the health of `entry`.
+    fn new(
+        name: &'static str,
+        period_ms: u32,
+        axes: Axes,
+        topology: &'static Topology,
+        entry: Option<&'static DeviceEntry<'static>>,
+    ) -> Absolute {
+        let _ = ABSOLUTE.set(name);
+        let writer = |quantity: &str| topology.vector(quantity).and_then(|parameter| parameter.writer(name));
+        Absolute {
+            attitude: writer("attitude"),
+            accel: writer("accel"),
+            axes,
+            telemetry: crate::recorder::get()
+                .zip(crate::recorder::device_stream(name))
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            entry,
+            due: Due::every(period_ms),
+            calibration_due: Due::every(drivers::bno055::CALIBRATION_PERIOD_MS),
+            failing: false,
+            overflowing: false,
+        }
+    }
+
+    /// Records a read's outcome in the table entry; a failure logged once per run of them.
+    fn outcome<Error: core::fmt::Debug>(&mut self, name: &str, fault: Option<drivers::device::Fault<Error>>) {
+        if let Some(entry) = self.entry {
+            entry.set_healthy(fault.is_none());
+        }
+        match fault {
+            None => self.failing = false,
+            Some(fault) if !self.failing => {
+                log::warn!("{name} :: read {fault}");
+                self.failing = true;
+            }
+            Some(_) => {}
+        }
+    }
+
+    /// One owner wake for the part named `name`: when due, the block read, judged, pushed and rowed; when its own
+    /// period is due, CALIB_STAT.
+    fn tick(&mut self, name: &str, part: &mut Bno055, port: &mut I2cPort, now_us: u64) {
+        if !self.due.take(now_us) {
+            return;
+        }
+        let sample = match part.read(port) {
+            Ok(sample) => sample,
+            Err(fault) => return self.outcome(name, Some(fault)),
+        };
+        self.outcome::<()>(name, None);
+        match part.judge(&sample) {
+            bno055::Fusion::Live => {
+                if let Some(writer) = &mut self.attitude {
+                    writer.push(sample.euler, now_us);
+                }
+            }
+            // withheld: the channel goes stale and the databoard moves on; logged on the transition only
+            bno055::Fusion::Stalled => {
+                log::warn!("{name} :: fusion STALLED (frozen euler while the part rotates) -- attitude withheld")
+            }
+            bno055::Fusion::StillStalled => {}
+        }
+        let accel = self.axes.apply(sample.accel);
+        if let Some(writer) = &mut self.accel {
+            writer.push(accel, now_us);
+        }
+        // plan B's row: heading in degrees, roll and pitch in centidegrees (raw x 100 / 16, floored), accel in g
+        let [_, roll, pitch] = sample.euler_raw.map(i32::from);
+        let [ax, ay, az] = accel;
+        record(
+            name,
+            &mut self.telemetry,
+            &mut self.overflowing,
+            now_us,
+            &[
+                Cell::F32(sample.euler[0]),
+                Cell::I32((roll * 100).div_euclid(16)),
+                Cell::I32((pitch * 100).div_euclid(16)),
+                Cell::F32(ax),
+                Cell::F32(ay),
+                Cell::F32(az),
+            ],
+        );
+        if self.calibration_due.take(now_us) {
+            match part.poll_calibration(port) {
+                Ok(true) => log::info!(
+                    "{name} :: calibration converged (mag 3) -- run `calibrate {name}` to keep it across reboots"
+                ),
+                Ok(false) => {}
+                Err(fault) => self.outcome(name, Some(fault)),
+            }
+        }
+        note_absolute(part);
+    }
+}
+
 /// When a polled run is due: every period, on its own grid, a stalled run starting a new grid (a burst never
 /// follows a gap).
 #[derive(Clone, Copy)]
@@ -1138,19 +1342,48 @@ pub enum Calibrated {
     Done(Option<String>),
     /// A calibration computed but not in force: the executor persists `blob` under NVS `key`, then has the owner apply
     /// it (D9 of the M9 plan: persist, then apply, as plan B; no flash work on the flight core).
-    Persist {
-        key: &'static str,
-        blob: [u8; drivers::bmm350::CALIBRATION_BYTES],
-    },
+    Persist { key: &'static str, blob: Vec<u8> },
 }
 
-/// Restores each magnetometer's hard/soft-iron calibration from NVS after its setup (plan B bmm350._restore), so a
-/// power cycle does not cost the operator a turn: once at bring-up, on main, before the owners run.
+/// Restores what each part learned from NVS after its setup, so a power cycle does not cost the operator a turn: the
+/// pitot's tare, each magnetometer's hard/soft-iron calibration (plan B bmm350._restore), and the BNO055's profile
+/// (plan B bno055._restore_profile), written over its lent `ports` (CONFIG mode, the profile, NDOF). Once at
+/// bring-up, on main, before the owners run; best effort, as plan B's: no profile or a bus error leaves the figure-8
+/// owed.
 pub fn restore_calibrations(
     partition: &esp_idf_svc::nvs::EspDefaultNvsPartition,
     members: &mut [Vec<crate::devices::Member>; 2],
+    ports: &mut [(crate::owner::Parked, I2cPort)],
 ) {
     use warmstart::Nvs;
+    let mut delay = Delay::new_default();
+    for (_, port) in ports.iter_mut() {
+        let id = usize::from(port.id());
+        for member in &mut members[id] {
+            let Part::Bno055(fused) = &mut member.part else {
+                continue;
+            };
+            let mut profile = [0u8; drivers::bno055::PROFILE_BYTES];
+            let read = crate::warm::ColudoNvs::open(partition)
+                .map_err(|error| error.to_string())
+                .and_then(|mut nvs| {
+                    nvs.get_blob(drivers::bno055::NVS_KEY, &mut profile)
+                        .map_err(|error| format!("NVS error {:#x}", error.0))
+                });
+            match read {
+                Ok(drivers::bno055::PROFILE_BYTES) => match fused.restore_profile(port, &mut delay, &profile) {
+                    Ok(()) => log::info!("{} :: calibration profile restored from NVS", member.name),
+                    Err(fault) => log::warn!("{} :: calibration restore failed: {fault}", member.name),
+                },
+                Ok(length) => log::warn!(
+                    "{} :: the saved profile is no profile ({length} bytes): the figure-8 is owed",
+                    member.name
+                ),
+                Err(why) => log::info!("{} :: no saved profile ({why}): the figure-8 is owed", member.name),
+            }
+            note_absolute(fused);
+        }
+    }
     for member in members.iter_mut().flatten() {
         let Part::Sdp810(pitot) = &mut member.part else {
             continue;
@@ -1249,6 +1482,8 @@ pub enum Part {
     Bmp280(Bmp280),
     /// The SEN0697's barometer.
     Bmp581(Bmp581),
+    /// The SEN0253's 9-DOF IMU: the backup attitude of the v0.1 boards (M18).
+    Bno055(Bno055),
     /// The primary barometer.
     Icp10111(Icp10111),
     /// The power monitor.
@@ -1269,6 +1504,7 @@ macro_rules! each {
             Part::Bmm350($driver) => $body,
             Part::Bmp280($driver) => $body,
             Part::Bmp581($driver) => $body,
+            Part::Bno055($driver) => $body,
             Part::Icp10111($driver) => $body,
             Part::Ina226($driver) => $body,
             Part::Lsm6dso32($driver) => $body,
@@ -1298,6 +1534,10 @@ impl Part {
             }
             "bmp280" => Part::Bmp280(Bmp280::new(address)),
             "bmp581" => Part::Bmp581(Bmp581::new(address)),
+            "bno055" => {
+                imu_axes(entry)?;
+                Part::Bno055(Bno055::new(address))
+            }
             "icp10111" => {
                 let period_ms = fields
                     .get("period_ms")
@@ -1356,6 +1596,7 @@ impl Part {
             Part::Bmm350(driver) => driver.diagnose(port, id),
             Part::Bmp280(driver) => driver.diagnose(port),
             Part::Bmp581(driver) => driver.diagnose(port),
+            Part::Bno055(driver) => driver.diagnose(port),
             Part::Icp10111(driver) => driver.diagnose(port),
             Part::Ina226(driver) => driver.diagnose(port),
             Part::Lsm6dso32(driver) => driver.diagnose(port),
@@ -1371,7 +1612,7 @@ impl Part {
     /// identifies and reads in one call, so a two-step probe logs its steps as one.
     pub fn probe(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Option<String> {
         let step = match self {
-            Part::Bmi323(_) | Part::Bmm350(_) | Part::Bmp280(_) | Part::Bmp581(_) => "chip id + read",
+            Part::Bmi323(_) | Part::Bmm350(_) | Part::Bmp280(_) | Part::Bmp581(_) | Part::Bno055(_) => "chip id + read",
             Part::Icp10111(_) | Part::Sdp810(_) => "data",
             Part::Ina226(_) => "die id + read",
             Part::Lsm6dso32(_) => "who_am_i + sample",
@@ -1395,6 +1636,16 @@ impl Part {
             Part::Bmp581(driver) => driver
                 .probe(port)
                 .map(|reading| format!("{:.0} Pa", reading.pressure))
+                .map_err(|fault| fault.to_string()),
+            Part::Bno055(driver) => driver
+                .probe(port)
+                .map(|sample| {
+                    let [heading, roll, pitch] = sample.euler;
+                    format!(
+                        "heading {heading:.1} roll {roll:.1} pitch {pitch:.1} |a| {:.3} g",
+                        magnitude(sample.accel)
+                    )
+                })
                 .map_err(|fault| fault.to_string()),
             Part::Icp10111(driver) => driver
                 .probe(port, delay)
@@ -1538,6 +1789,10 @@ impl Part {
                 outputs.tick(name, magnetometer, port, now_us);
                 None
             }
+            (Part::Bno055(fused), Run::Absolute(outputs)) => {
+                outputs.tick(name, fused, port, now_us);
+                None
+            }
             (Part::Sdp810(pitot), Run::Pitot(outputs)) => {
                 outputs.tick(name, pitot, port, delay, now_us);
                 None
@@ -1555,9 +1810,9 @@ impl Part {
     }
 
     /// Whether the part is an IMU, whose run goes first in each owner wake (D13 of the M9 plan): the lowest latency
-    /// for the backup IMU.
+    /// for the backup IMU, the BMI323 on v1.x, the BNO055 on v0.1 (never both fitted).
     pub fn first(&self) -> bool {
-        matches!(self, Part::Bmi323(_))
+        matches!(self, Part::Bmi323(_) | Part::Bno055(_))
     }
 
     /// The calibration the part waits for, in plan B's words (`calibration()`); empty when none. The ICP-10111 asks
@@ -1614,18 +1869,40 @@ impl Part {
                 Ok(calibration) => {
                     return Calibrated::Persist {
                         key: drivers::bmm350::NVS_KEY,
-                        blob: calibration.to_bytes(),
+                        blob: calibration.to_bytes().to_vec(),
                     };
                 }
                 Err(why) => Some(why),
+            },
+            // the figure-8 is the operator's; once it converged, the learned profile is read here and persisted on
+            // the executor (plan B bno055.calibrate), then marked saved by apply_calibration
+            Part::Bno055(fused) if !fused.calibrated() => fused.owed(),
+            Part::Bno055(fused) => match fused.read_profile(port, delay) {
+                Ok(profile) => {
+                    return Calibrated::Persist {
+                        key: drivers::bno055::NVS_KEY,
+                        blob: profile.to_vec(),
+                    };
+                }
+                Err(fault) => Some(format!("profile read failed: {fault}")),
             },
             other => Some(other.calibration().to_string()).filter(|pending| !pending.is_empty()),
         })
     }
 
     /// Puts the calibration `blob` in force once the executor persisted it (D9 of the M9 plan): the BMM350's, logged
-    /// in plan B's words. None on success, else why.
+    /// in plan B's words; the BNO055's profile is in force already, so it is only marked saved. None on success, else
+    /// why.
     pub fn apply_calibration(&mut self, name: &str, blob: &[u8]) -> Option<String> {
+        if let Part::Bno055(fused) = self {
+            fused.mark_saved();
+            note_absolute(fused);
+            log::info!(
+                "{name} :: calibration profile saved ({} bytes) -- survives power cycles",
+                blob.len()
+            );
+            return None;
+        }
         let Part::Bmm350(magnetometer) = self else {
             return Some(format!("{name} takes no calibration blob"));
         };
@@ -1656,7 +1933,14 @@ impl Part {
                         .altitude
                         .as_ref()
                         .and_then(|writer| writer.recent(window_us, now_us)),
-                    Some(Run::Imu(_) | Run::Magnetometer(_) | Run::Pitot(_) | Run::Power(_) | Run::Ranger(_))
+                    Some(
+                        Run::Absolute(_)
+                        | Run::Imu(_)
+                        | Run::Magnetometer(_)
+                        | Run::Pitot(_)
+                        | Run::Power(_)
+                        | Run::Ranger(_),
+                    )
                     | None => None,
                 };
                 barometer

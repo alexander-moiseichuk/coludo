@@ -53,6 +53,10 @@ pub const IMU_FIELDS: [&str; 7] = ["ax", "ay", "az", "gx", "gy", "gz", "irq_runs
 /// m/s (crates/control `change`), appended.
 pub const BAROMETER_FIELDS: [&str; 5] = ["altitude", "temperature", "pressure", "elevation", "change"];
 
+/// The BNO055's columns (plan B drivers/bno055.py:105, M18): the heading in degrees, the roll and the pitch in
+/// centidegrees (integers, as plan B pushed its fixnums), the accelerometer in g.
+pub const ABSOLUTE_FIELDS: [&str; 6] = ["heading", "roll", "pitch", "ax", "ay", "az"];
+
 /// The BMM350's columns (plan B drivers/bmm350.py:99): the field per axis in the part's own counts, raw until the
 /// operator calibrates it, then centred and normalised (crates/drivers `bmm350`).
 pub const MAGNETOMETER_FIELDS: [&str; 3] = ["mx", "my", "mz"];
@@ -183,6 +187,7 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
         "lsm6dso32" | "bmi323" => (named(), &IMU_FIELDS, false),
         "icp10111" | "bmp280" | "bmp581" => (named(), &BAROMETER_FIELDS, false),
         "bmm350" => (named(), &MAGNETOMETER_FIELDS, false),
+        "bno055" => (named(), &ABSOLUTE_FIELDS, false),
         "sdp810" => (named(), &PITOT_FIELDS, false),
         "ina226" => (named(), &POWER_FIELDS, false),
         "vl53l1x" | "vl53l4cx" => (named(), &LASER_FIELDS, false),
@@ -241,8 +246,9 @@ pub fn vetoes(entry: &Entry) -> Option<Stream> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BAROMETER_FIELDS, CHECKPOINT_FIELDS, FLIGHT_FIELDS, IMU_FIELDS, LASER_FIELDS, MAGNETOMETER_FIELDS,
-        PITOT_FIELDS, POWER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, VETOES_FIELDS, stream, vetoes,
+        ABSOLUTE_FIELDS, BAROMETER_FIELDS, CHECKPOINT_FIELDS, FLIGHT_FIELDS, IMU_FIELDS, LASER_FIELDS,
+        MAGNETOMETER_FIELDS, PITOT_FIELDS, POWER_FIELDS, SEPARATION_FIELDS, SEQUENCER_FIELDS, Stream, VETOES_FIELDS,
+        stream, vetoes,
     };
     use super::{EVENT_FIELDS, GGA_FIELDS, GNSS_FIELDS, SERVO_FIELDS, SKY_FIELDS, companions};
     use board_config::{directory, entries};
@@ -314,6 +320,7 @@ mod tests {
             streams,
             [
                 ("imu_lsm6dso32", measured("imu_lsm6dso32.csv", &IMU_FIELDS)),
+                ("imu_bno055", measured("imu_bno055.csv", &ABSOLUTE_FIELDS)),
                 ("attitude", measured("attitude.csv", &control::attitude::FIELDS)),
                 ("baro_icp10111", measured("baro_icp10111.csv", &BAROMETER_FIELDS)),
                 ("baro_bmp280", measured("baro_bmp280.csv", &BAROMETER_FIELDS)),
@@ -425,8 +432,11 @@ mod tests {
 
     #[test]
     fn the_attitude_filter_is_known_by_its_activity_not_its_name() {
-        // the SEN0253's BNO055 publishes `attitude` too, through a driver the port does not record yet
-        assert_eq!(only(&sensor("attitude", "bno055", None)), None);
+        // the SEN0253's BNO055 publishes `attitude` too: an entry of that name records the BNO055's columns
+        assert_eq!(
+            only(&sensor("attitude", "bno055", None)),
+            Some(measured("attitude.csv", &ABSOLUTE_FIELDS))
+        );
         assert_eq!(
             only(&json!({"sensors": [{"name": "attitude", "activity": "attitudes"}]})),
             None
@@ -624,9 +634,7 @@ mod tests {
 
     #[test]
     fn a_part_the_port_does_not_record_has_no_stream() {
-        for driver in ["adxl375", "bno055"] {
-            assert_eq!(only(&sensor("part", driver, Some(json!(10)))), None, "{driver}");
-        }
+        assert_eq!(only(&sensor("part", "adxl375", Some(json!(10)))), None);
         assert_eq!(only(&json!({"sensors": [{"name": "no_implementation"}]})), None);
         let document = defaults();
         let adxl375 = entries(&document)

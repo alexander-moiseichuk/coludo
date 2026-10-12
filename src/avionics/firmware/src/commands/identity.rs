@@ -96,6 +96,10 @@ struct Health<'a> {
     /// cc_client.py:443-514).
     #[serde(skip_serializing_if = "Option::is_none")]
     calibration: Option<BTreeMap<&'static str, String>>,
+    /// The BNO055's live CALIB_STAT (sys, gyr, acc, mag), so CC's IMU column shows mag climbing through the figure-8;
+    /// absent with no BNO055 up or before its first read (plan B cc_client.py:494-499).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    imu_calibration: Option<[u8; 4]>,
     degraded: Vec<String>,
 }
 
@@ -191,6 +195,7 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         flight: flight_panel(context.topology, unsafe { sys::esp_timer_get_time() } as u64),
         calibration: Some(crate::owner::calibrations().into_iter().collect::<BTreeMap<_, _>>())
             .filter(|pending| !pending.is_empty()),
+        imu_calibration: crate::sensors::absolute_inspection().and_then(|state| state.calibration),
         degraded: degraded(context, flight),
     };
     super::ok_json(&info)

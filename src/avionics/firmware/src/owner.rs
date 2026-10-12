@@ -103,10 +103,7 @@ pub enum Request {
     /// Run the part `name`'s calibration (CC `calibrate <name>`).
     Calibrate { name: String },
     /// Put the calibration `blob` the executor persisted in force on the part `name` (D9 of the M9 plan).
-    ApplyCalibration {
-        name: String,
-        blob: [u8; drivers::bmm350::CALIBRATION_BYTES],
-    },
+    ApplyCalibration { name: String, blob: Vec<u8> },
 }
 
 /// A part's probe verdict: None when healthy, else why (plan B's `probe()`).
@@ -160,8 +157,9 @@ fn note_calibration(member: &Member) {
     };
 }
 
-/// Every part's pending calibration, by name, sorted: empty when nothing is pending. The magnetometer's is worded
-/// here, on the executor, from its run's atomics (crate::sensors::magnetometer_instruction).
+/// Every part's pending calibration, by name, sorted: empty when nothing is pending. The magnetometer's and the
+/// BNO055's are worded here, on the executor, from their runs' atomics (crate::sensors::magnetometer_instruction,
+/// absolute_instruction).
 pub fn calibrations() -> Vec<(&'static str, String)> {
     let mut calibrations: BTreeMap<&'static str, String> = CALIBRATIONS
         .lock()
@@ -170,6 +168,7 @@ pub fn calibrations() -> Vec<(&'static str, String)> {
         .map(|(name, text)| (*name, (*text).to_string()))
         .collect();
     calibrations.extend(crate::sensors::magnetometer_instruction());
+    calibrations.extend(crate::sensors::absolute_instruction());
     calibrations.into_iter().collect()
 }
 

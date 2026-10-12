@@ -176,6 +176,18 @@ enum Own {
         trim: i32,
         feedback: Option<i32>,
     },
+    /// The BNO055 (plan B bno055.py inspect, M18): its channels' latest, whether its fusion is stalled (the attitude
+    /// withheld: a channel going quiet looks like a missing sensor), the live CALIB_STAT (sys, gyr, acc, mag), the
+    /// convergence latch, and whether the latch came from a restored profile.
+    Absolute {
+        addr: Option<String>,
+        attitude_deg: Option<[f32; 3]>,
+        accel_g: Option<[f32; 3]>,
+        fusion_stalled: bool,
+        calibration: Option<[u8; 4]>,
+        calibrated: bool,
+        calibration_restored: bool,
+    },
     /// A laser ranger (plan B vl53l1x.py inspect): whether its data-ready line is wired, its channel's latest.
     Ranger { interrupt: bool, agl_m: Option<f32> },
     /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
@@ -255,6 +267,18 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 identical,
             }
         }
+        "bno055" => match crate::sensors::absolute_inspection() {
+            Some(state) => Own::Absolute {
+                addr: address(context, name),
+                attitude_deg: vector("attitude"),
+                accel_g: vector("accel"),
+                fusion_stalled: state.fusion_stalled,
+                calibration: state.calibration,
+                calibrated: state.calibrated,
+                calibration_restored: state.calibration_restored,
+            },
+            None => Own::None {},
+        },
         "icp10111" => Own::Barometer {
             altitude_m: scalar("altitude"),
             temperature_c: scalar("temperature"),

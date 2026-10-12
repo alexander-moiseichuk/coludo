@@ -232,6 +232,13 @@ pub fn verify(_message: &Message, context: &mut Context) -> Reply {
         mission.zone.is_some(),
         !mission.sites.is_empty(),
     );
+    // plan B's `imu_calibration`: a BNO055 that never converged reaches launch with a frozen attitude on healthy
+    // hardware, so it is a readiness item, not a hardware failure (the operator picks the airframe up)
+    if let Some((_, owed)) = crate::sensors::absolute_instruction()
+        && !crate::sensors::absolute_inspection().is_some_and(|state| state.calibrated)
+    {
+        readiness.insert("imu_calibration", format!("BNO055 not calibrated -- {owed}"));
+    }
     // plan B's `fins` check: a control surface with no servo holds its last angle while the others fly
     if let Some(unbound) = crate::flight::unbound_surfaces().filter(|unbound| !unbound.is_empty()) {
         readiness.insert(
