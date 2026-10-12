@@ -1257,9 +1257,12 @@ machine decides from every source; the video starts when the glider stands on th
   the past launches' data was not reliable beyond that. With today's two barometers a tie-breaking pitot changes no
   decision, so the machine carries none yet; the rule applies where speed is fused (M13's airspeed estimator). If new
   launches confirm clean pitot data, the pitot can become source #1 while no yaw is actively commanded.
-- Deferred: the INA226's over-current ALERT count (with the servos, M13; its column reads 0); per-barometer grounds
+- Deferred: the INA226's over-current ALERT count (with the servos, M13; done 2026-10-12: GPIO29 falling edges,
+  counted, its column and `inspect`'s `alerts`; on the taster at a 50 mA test limit one fin sweep counted 22 trips);
+  per-barometer grounds
   in the crumb (both rebase to plan B's one `pad_altitude`, so the BMP581 carries the inter-baro offset, 5.3 m on
-  TMS-7F, after a warm start); M10 contract cases.
+  TMS-7F, after a warm start); M10 contract cases (done 2026-10-12 with M11-M21's: `tools/cc_contract.py <board>
+  --milestone M21`, 0 violations on the taster and 7F).
 
 **Proof (2026-10-10, as measured on TMS-7F):**
 - 50.00 pitot, 10.00 INA226 and 10.11 laser rows/s (longest gaps 20, 109, 100 ms); the laser reads 0.03 m on the
@@ -1519,7 +1522,7 @@ before.
 
 **Settled from earlier milestones:** the airspeed seed (M8), the servo probe's closed-loop verdict (M10), `fins` in
 the readiness gate (M7), the complete `health.flight` (M11), the D term reading `rate` (carried from M6).
-**Still deferred:** the INA226's over-current ALERT count; a per-fin probe verdict on an INA3221 (one channel per
+**Still deferred:** a per-fin probe verdict on an INA3221 (one channel per
 servo; ordered); a cap on warm cycles and a BOOSTING crumb that already reads separated (M14); the fast warm boot
 (next: flight sensors and the control thread first, the camera and the Wi-Fi after them without blocking, operator
 2026-10-11).

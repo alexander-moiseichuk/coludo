@@ -200,6 +200,7 @@ impl Run {
             Part::Ina226(_) => Some(Run::Power(Box::new(Power::new(
                 name,
                 member.period_ms.unwrap_or(drivers::ina226::DEFAULT_PERIOD_MS),
+                member.interrupt,
                 topology,
                 entry,
             )))),
@@ -1185,9 +1186,12 @@ static POWER_KNOWN: AtomicBool = AtomicBool::new(false);
 /// What `inspect` shows of the power monitor (plan B ina226.py inspect): mV, mA, mW and the ALERT trips (0: the
 /// over-current ALERT is counted with the servos, M13); None before a reading.
 pub fn power_inspection() -> Option<([i32; 3], u32)> {
-    POWER_KNOWN
-        .load(Ordering::Relaxed)
-        .then(|| (POWER_STATE.each_ref().map(|value| value.load(Ordering::Relaxed)), 0))
+    POWER_KNOWN.load(Ordering::Relaxed).then(|| {
+        (
+            POWER_STATE.each_ref().map(|value| value.load(Ordering::Relaxed)),
+            crate::control::alert_edges(),
+        )
+    })
 }
 
 /// The INA226's outputs (M10, plan B ina226.run): `voltage` (mV), `current` (mA) and `power` (mW), read every
@@ -1201,6 +1205,12 @@ pub struct Power {
     entry: Option<&'static DeviceEntry<'static>>,
     /// When a read is due.
     due: Due,
+    /// The ALERT GPIO (`alert_pin`), when the config wires one.
+    alert: Option<u8>,
+    /// Its interrupt was armed (or tried): once, after the control thread installed the GPIO service.
+    armed: bool,
+    /// The trips logged so far: a new one logs once, as plan B's run did.
+    logged_alerts: u32,
     /// A read failed and none succeeded since: one log line per run.
     failing: bool,
     /// A row was refused and none written since: one log line per run.
@@ -1208,10 +1218,12 @@ pub struct Power {
 }
 
 impl Power {
-    /// The outputs of source `name`, read every `period_ms`, writing the health of `entry`.
+    /// The outputs of source `name`, read every `period_ms`, its ALERT on `alert` when wired, writing the health of
+    /// `entry`.
     fn new(
         name: &'static str,
         period_ms: u32,
+        alert: Option<u8>,
         topology: &'static Topology,
         entry: Option<&'static DeviceEntry<'static>>,
     ) -> Power {
@@ -1223,6 +1235,9 @@ impl Power {
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
             entry,
             due: Due::every(period_ms),
+            alert,
+            armed: false,
+            logged_alerts: 0,
             failing: false,
             overflowing: false,
         }
@@ -1230,6 +1245,19 @@ impl Power {
 
     /// One owner wake: when due, a reading published, or the failure noted.
     fn tick(&mut self, name: &str, monitor: &Ina226, port: &mut I2cPort, now_us: u64) {
+        // the over-current ALERT (plan B ina226.setup): counted only where the driver armed its limit
+        if let (Some(gpio), false, true) = (self.alert, self.armed, monitor.alert_ma() > 0)
+            && crate::control::running()
+        {
+            self.armed = true;
+            match crate::control::arm_alert_interrupt(gpio) {
+                Ok(()) => log::info!(
+                    "{name} :: ALERT GPIO{gpio} counted (over-current > {} mA)",
+                    monitor.alert_ma()
+                ),
+                Err(error) => log::warn!("{name} :: ALERT GPIO{gpio} not armed ({error}): poll only"),
+            }
+        }
         if !self.due.take(now_us) {
             return;
         }
@@ -1249,13 +1277,22 @@ impl Power {
                     published.store(value, Ordering::Relaxed);
                 }
                 POWER_KNOWN.store(true, Ordering::Relaxed);
+                // the trips' running total, a per-flight series (plan B's fourth column)
+                let alerts = crate::control::alert_edges();
                 let row = [
                     Cell::I32(values[0]),
                     Cell::I32(values[1]),
                     Cell::I32(values[2]),
-                    Cell::I32(0),
+                    Cell::I32(alerts as i32),
                 ];
                 record(name, &mut self.telemetry, &mut self.overflowing, now_us, &row);
+                if alerts != self.logged_alerts {
+                    log::warn!(
+                        "{name} :: OVER-CURRENT alerts: {alerts} (> {} mA) -- servo stall / short?",
+                        monitor.alert_ma()
+                    );
+                    self.logged_alerts = alerts;
+                }
             }
             Err(fault) => {
                 if let Some(entry) = self.entry {

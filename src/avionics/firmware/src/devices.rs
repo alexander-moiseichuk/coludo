@@ -53,7 +53,8 @@ pub struct Member {
     /// How its axes map onto the airframe's (`axes`, M9): what the BMI323's run applies; the identity for a part
     /// with no vectors, and for the BMM350, which maps its own after its calibration.
     pub axes: Axes,
-    /// Its data-ready GPIO, when the config wires one (`int_pin`): the BMI323's INT1, counted as evidence (M9).
+    /// Its interrupt line, when the config wires one: the BMI323's INT1 (`int_pin`), counted as evidence (M9); the
+    /// INA226's over-current ALERT (`alert_pin`), counted as trips.
     pub interrupt: Option<u8>,
     /// Its read period, ms (`period_ms`), when the config sets one: the SDP810's, the INA226's and the lasers' runs
     /// take their driver's default otherwise (M10).
@@ -1024,7 +1025,16 @@ fn set_up_i2c(
             run: None,
             // Part::build refused a malformed key, so the part up has a good one
             axes: sensors::imu_axes(entry).unwrap_or_default(),
-            interrupt: board_config::pin(document, entry, "int_pin"),
+            // the INA226's ALERT is its interrupt line (plan B `alert_pin`), every other part's INT1 `int_pin`
+            interrupt: board_config::pin(
+                document,
+                entry,
+                if entry.implementation == "ina226" {
+                    "alert_pin"
+                } else {
+                    "int_pin"
+                },
+            ),
             period_ms: entry
                 .fields
                 .get("period_ms")

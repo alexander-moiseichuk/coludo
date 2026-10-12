@@ -1762,7 +1762,7 @@ _INSPECT: tuple = (
     Case('inspect', 'inspect_sdp810', _on_device('inspect', 'sdp810'), (('ok', _PITOT),), (_names_itself,),
          milestone=10),
     Case('inspect', 'inspect_ina226', _on_device('inspect', 'ina226'), (('ok', _POWER),), (_names_itself,),
-         milestone=10, note='alerts reads 0 until the over-current ALERT count is ported (deferred with the servos)'),
+         milestone=10, note='alerts: the over-current ALERT trips since boot, 0 where no alert_pin is wired'),
     Case('inspect', 'inspect_laser', _on_any_device('inspect', _LASER_DRIVERS), (('ok', _RANGER),), (_names_itself,),
          milestone=10),
     Case('inspect', 'inspect_gnss', _on_any_device('inspect', _GNSS_DRIVERS), (('ok', _GNSS),),

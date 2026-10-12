@@ -1076,6 +1076,46 @@ pub fn arm_second_interrupt(gpio: u8) -> Result<(), sys::EspError> {
     arm_interrupt(gpio, second_edge)
 }
 
+/// The INA226's ALERT trips since boot (plan B ina226._on_alert): its open-drain line fell, the shunt current past
+/// `alert_ma`.
+static ALERT_EDGES: AtomicU32 = AtomicU32::new(0);
+
+/// The INA226's ALERT interrupt: count the trip. Integer only.
+unsafe extern "C" fn alert_edge(_: *mut core::ffi::c_void) {
+    ALERT_EDGES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Arms the INA226's ALERT on GPIO `gpio`: falling edges, the internal pull-up holding the open-drain, active-low line
+/// high (plan B `Pin(gpio, Pin.IN, Pin.PULL_UP)`, IRQ_FALLING), counting into [`alert_edges`]. Only once the control
+/// thread runs ([`running`]): it installed the GPIO interrupt service on core 1 before it ran.
+///
+/// Errors: the pin would not configure, or its handler would not attach.
+pub fn arm_alert_interrupt(gpio: u8) -> Result<(), sys::EspError> {
+    let config = sys::gpio_config_t {
+        pin_bit_mask: 1u64 << gpio,
+        mode: sys::gpio_mode_t_GPIO_MODE_INPUT,
+        pull_up_en: sys::gpio_pullup_t_GPIO_PULLUP_ENABLE,
+        pull_down_en: sys::gpio_pulldown_t_GPIO_PULLDOWN_DISABLE,
+        intr_type: sys::gpio_int_type_t_GPIO_INTR_NEGEDGE,
+        ..Default::default()
+    };
+    // SAFETY: plain GPIO configuration of the pin the board config gives the ALERT; the handler is a static function.
+    unsafe {
+        sys::esp!(sys::gpio_config(&config))?;
+        sys::esp!(sys::gpio_isr_handler_add(
+            i32::from(gpio),
+            Some(alert_edge),
+            core::ptr::null_mut()
+        ))?;
+    }
+    Ok(())
+}
+
+/// The INA226's ALERT trips since boot.
+pub fn alert_edges() -> u32 {
+    ALERT_EDGES.load(Ordering::Relaxed)
+}
+
 /// The second IMU's INT1 edges since the last take.
 pub fn take_second_edges() -> u32 {
     SECOND_EDGES.swap(0, Ordering::Relaxed)
