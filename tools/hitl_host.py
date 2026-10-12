@@ -216,6 +216,9 @@ class _Sim:
         self.body.wind_n = args.wind * math.cos(math.radians(args.wind_dir))
         self.body.gnss_drift_e = args.gnss_drift * math.sin(math.radians(args.gnss_drift_dir))
         self.body.gnss_drift_n = args.gnss_drift * math.cos(math.radians(args.gnss_drift_dir))
+        if getattr(args, 'boost_cda', None) is not None:
+            self.body.boost_cda = args.boost_cda  # a drag sweep: the airframe's boost CdA overridden
+        self.apogee = 0.0  # the highest the body got (publish), for the study's LANDED line
         self.args = args
         self.axis = {'x': 0, 'y': 1, 'z': 2}[args.boost_axis]
         self.faults = sim_model.Faults(args.faults)
@@ -324,6 +327,7 @@ class _Sim:
     def publish(self) -> None:
         """The noised sensors as one SENSORS frame (plan B hitl.py _publish), in the Rust databoard's units."""
         body, noise, t = self.body, self.args.noise, self.sim_time
+        self.apogee = max(self.apogee, body.alt)
         noisy = sim_model.noisy
         accel = [0.0, 0.0, 0.0]
         accel[self.axis] = noisy(body.accel_g, noise, -200.0, 200.0)
@@ -480,6 +484,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--wind-dir', type=float, default=0.0)
     parser.add_argument('--spike', action='store_true')
     parser.add_argument('--glider-g', type=int, default=285)
+    parser.add_argument('--boost-cda', type=float, help="override the airframe's boost CdA, m^2 (a drag sweep)")
     parser.add_argument('--airframe', default='tms7', choices=sorted(sim_model.AIRFRAMES),
                         help="the physics' airframe (sim_model.AIRFRAMES); the board's flight entry gets its "
                              'glide_ratio and stall_speed_1g')
@@ -512,6 +517,23 @@ def _arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def landing(position: tuple, zone: list) -> tuple:
+    """
+    Where the body came down against the landing zone, by the physics itself (no receiver noise): (metres from the
+    zone's centre, inside the zone's rectangle).
+
+    Args:
+        position - the body's (lat, lon) at DONE.
+        zone - the scenario's zone, [[lat, lon] top-left, [lat, lon] bottom-right].
+    """
+    (top, left), (bottom, right) = zone
+    centre_lat, centre_lon = (top + bottom) / 2.0, (left + right) / 2.0
+    north = (position[0] - centre_lat) * sim_model.commons.M_PER_DEG
+    east = (position[1] - centre_lon) * sim_model.commons.M_PER_DEG * math.cos(math.radians(centre_lat))
+    inside = bottom <= position[0] <= top and left <= position[1] <= right
+    return math.hypot(north, east), inside
+
+
 def _sitl(args: argparse.Namespace) -> int:
     """
     One scenario against the SITL (M14): the board config made HITL as a board's is, the mission the host seeds a
@@ -540,6 +562,10 @@ def _sitl(args: argparse.Namespace) -> int:
         print('SESSION sitl', args.motor, 'noise', args.noise, 'wind', args.wind)
         outcome = sim.lockstep(_SITL_PAD_S)
         print('CLOCK sim=%.2f frames=%d answers=%d' % (sim.sim_time, sim.seq, sim.answers))
+        # the scenario's score by the physics: the miss, the zone, the time from ignition to DONE
+        miss, inside = landing(sim.body.position(), scenario['zone'])
+        print('LANDED miss=%.1f inside=%s aloft=%.1f apogee=%.0f' % (miss, inside, sim.sim_time - _SITL_PAD_S,
+                                                                      sim.apogee))
         print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
             '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
         if args.record:

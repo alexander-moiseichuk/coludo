@@ -114,8 +114,10 @@ envelope + landing-zone numbers re-derive from the TMS-8 masses/geometry (`colud
 - **First number (the sim, an F15 vertical climb at 430 g, no wind):** apogee **266 m against TMS-7's 329 m**, top
   speed 65 m/s against 72 m/s: the open frame costs ~19 % of the height, and the better glide (L/D 8 vs 5.5) buys
   more than that back in time aloft.
-- **Open:** the full pre-flight report (F15 x {235, 285 g} x 10 scenarios x 3 runs, HITL and SITL with
-  `--airframe tms8`), with the boost drag swept, since it decides the apogee.
+- **The pre-flight study (2026-10-12, [doc/sims/TMS-8-preflight](sims/TMS-8-preflight/)):** 280 SITL flights.
+  **Fly TMS-8 at 285 g**: a 48.0 m median, 26/50 in the zone, TMS-7's best (235 g: 42.3 m, 35/50) at the full
+  build's mass. 235 g stays up longer but lands worse (orbit phase); 12 m/s wind (its trim speed) costs it 140 m. The
+  boost drag moves the apogee +-30 m, the landing only by lottery. Open: a measured TMS-8 polar, then a re-run.
 
 Supporting precision + tooling (continue alongside / from Phase 4):
 

@@ -43,6 +43,7 @@ import partition_ab  # noqa: E402
 import recorder_console  # noqa: E402
 import recorder_flight  # noqa: E402
 import recorder_wire  # noqa: E402
+import sitl_matrix  # noqa: E402
 import stack_compare  # noqa: E402
 
 _ZONE = ((25.514944, -80.392972), (25.514583, -80.391111))  # the HPRC strip (TL, BR)
@@ -2234,3 +2235,30 @@ def test_partition_ab_reads_a_run_and_its_backlog_over_the_flight_only():
 
 
 test_partition_ab_reads_a_run_and_its_backlog_over_the_flight_only()
+
+
+def test_sitl_matrix_scores_by_the_physics_and_summarises_per_combination():
+    """
+    The airframe study's pieces: hitl_host.landing measures the body against the zone (metres from its centre,
+    inside its rectangle), and sitl_matrix.summary takes medians per airframe, mass and boost CdA, counting the
+    flights in the zone and those that never reached DONE.
+    """
+    zone = [[25.514944, -80.392972], [25.514583, -80.391111]]
+    centre = ((zone[0][0] + zone[1][0]) / 2.0, (zone[0][1] + zone[1][1]) / 2.0)
+    miss, inside = hitl_host.landing(centre, zone)
+    assert miss < 0.01 and inside
+    miss, inside = hitl_host.landing((centre[0] + 30.0 / 111320.0, centre[1]), zone)  # 30 m north: past the 20 m half
+    assert 29.0 < miss < 31.0 and not inside, (miss, inside)
+    row = {'airframe': 'tms8', 'mass_g': 285, 'boost_cda': '-', 'scenario': 'wind00', 'run': 1, 'outcome': 'done',
+           'miss_m': 40.0, 'inside': True, 'aloft_s': 116.0, 'apogee_m': 231}
+    rows = [row, dict(row, miss_m=60.0, inside=False, run=2),
+            dict(row, outcome='timeout', miss_m=-1.0, inside=False, aloft_s=-1.0, apogee_m=-1, run=3),
+            dict(row, airframe='tms7', miss_m=90.0, inside=False)]
+    lines = {line['airframe']: line for line in sitl_matrix.summary(rows)}
+    assert lines['tms8']['flights'] == 3 and lines['tms8']['median_miss_m'] == 50.0, lines['tms8']
+    assert lines['tms8']['in_zone'] == 1 and lines['tms8']['not_done'] == 1, lines['tms8']
+    assert lines['tms7']['median_miss_m'] == 90.0 and lines['tms7']['in_zone'] == 0
+    assert len(sitl_matrix.SCENARIOS) == 10, 'the ten scenarios of the pre-flight report'
+
+
+test_sitl_matrix_scores_by_the_physics_and_summarises_per_combination()
