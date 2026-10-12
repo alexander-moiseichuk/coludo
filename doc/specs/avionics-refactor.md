@@ -188,15 +188,32 @@ Each stage keeps the behaviour. Its proof:
 | stage | what | risk |
 |---|---|---|
 | R0 | API docs (`27cc539`) | done |
-| R1 | the utilities: `uptime_us`, `threads::spawn`, `LogOnce` | low: mechanical, proven by the boot log |
+| R1 | the utilities: `uptime_us`, `threads::spawn`, `Rows`/`LogOnce` (`8939dab`) | done |
 | R2 | `crates/parts` with `Published<T>` and `Inspectable`, part by part (the BNO055 first), `parts::KNOWN`, the registry; `inspection::device` and the parts' statics removed | medium: every inspect answer must stay identical |
 | R3 | `ControlCore` in `crates/controller`; `control/` split by subsystem; the SITL on `ControlCore` | medium: the SITL matrix must stay seed for seed |
 | R4 | the `boot` phases; `devices` from tables; the remaining long functions | low to medium |
 | R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test | none |
+| R6 | the hardware's own types (operator, 2026-10-12): see below | medium: the numbers change |
+
+**R6, the 32-bit types.** The P4 is RV32 with a single-precision FPU: a u64 or i64 takes two registers, and its
+division is a library call. An f64 is all software. The tree has 480 lines with a u64, 235 with an i64 and 166
+with an f64 (no 64-bit atomic: RV32 has none). The stage moves them to i32/u32/f32:
+- timestamps: u32 with wrapping differences (`wrapping_sub` read as i32), in microseconds for the flight's short
+  spans (35 minutes either way) and in milliseconds for the long ages (the beacon's fix age, hours after the
+  landing; 49 days). IDF's i64 timer read stays, cut to u32 at the one read (`firmware::time`);
+- positions: i32 in 1e-7 degrees (1.1 cm), as the beacon's `launch_e7` already is. Distances and offsets are in
+  f32 metres, accumulated in metres and converted once (plan B's single-precision lesson: a 0.2 m step added to
+  latitude 48 in f32 is lost);
+- the control maths (`crates/control`, `crates/controller`, the firmware): f32;
+- a 64-bit type stays only at a boundary, with its reason in a comment: IDF's own APIs, byte counts on cards over
+  4 GB, and JSON numbers (serde_json's f64, converted where the config is read).
+
+R6 is the one stage that changes behaviour, as rounding: its proof is the HITL matrix against plan B's bands
+(`tools/hitl_matrix_compare.py`), not seed for seed. The SITL's golden runs are regenerated after it.
 
 **Crates this needs:** possibly `enum_dispatch` (R2, compile-time only), if it takes the generic part trait.
 Everything else is already in the workspace: `embedded-hal`, `serde`/`serde_json`, `crates/controller`,
 `crates/databoard` and `crates/recorder`.
 
-**Not in this plan:** behaviour changes. A finding the refactor turns up gets its own commit, as every finding did
-in the milestones.
+**Not in this plan:** behaviour changes, except R6's rounding. A finding the refactor turns up gets its own
+commit, as every finding did in the milestones.
