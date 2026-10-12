@@ -97,6 +97,8 @@ pub struct Settings {
     pub exposure_target: u8,
     /// On the pad, a new file at the first IDR this many seconds into a file; 0 keeps one file.
     pub segment_seconds: u16,
+    /// H.264 to a file; false runs the camera for the preview alone (`video preview`).
+    pub record: bool,
 }
 
 /// The flight setting, FHD@25 at 8 Mbit/s: what boot reserves the encoder for, and `video start`'s defaults
@@ -110,6 +112,7 @@ pub const FLIGHT: Settings = Settings {
     bayer: OV5647_BAYER,
     exposure_target: 48,
     segment_seconds: 300,
+    record: true,
 };
 
 /// Reserves the encoder for the flight setting at boot, while the internal heap is still whole (coludo_video.h,
@@ -152,6 +155,7 @@ fn configure(
         sensor_clock_hz: clock_hz,
         exposure_target: settings.exposure_target,
         segment_seconds: settings.segment_seconds,
+        record: settings.record as u8,
         // the pad's camera aim (M7b): a JPEG a second while it records in SETTING, `GET /camera/preview.jpg`
         preview: 1,
         flight_word,
@@ -188,6 +192,21 @@ fn start_recording(
     settings: &Settings,
     flight: &'static FlightWord,
 ) -> anyhow::Result<String> {
+    if !settings.record {
+        // the preview alone: no file, no directory, the card untouched
+        let config = configure(
+            settings,
+            camera.clock_hz,
+            boot_id,
+            i2c::port0()?,
+            std::ptr::null(),
+            flight.as_ptr(),
+        );
+        // SAFETY: the config outlives the call (no path: the recorder opens no file); the flight word is a static; the
+        // video thread is the only caller.
+        sys::esp!(unsafe { sys::coludo_video_start(&config) })?;
+        return Ok("preview".into());
+    }
     anyhow::ensure!(
         sd::layout() != Some(sd::Layout::VideosFailed),
         "the card's videos partition is not mounted: no video, so the recordings partition stays the ring_saver's"
@@ -582,6 +601,7 @@ fn failure(problem: &str) -> String {
 /// video thread through `orders` and wait for its answer; `video stats` reads the counters itself.
 fn register_commands(orders: SyncSender<Posted>) {
     let stop_orders = orders.clone();
+    let preview_orders = orders.clone();
     gcl::register(vec![
         Command {
             owner: "camera",
@@ -604,8 +624,29 @@ fn register_commands(orders: SyncSender<Posted>) {
                     bayer: arguments.integer("bayer") as i8,
                     exposure_target: arguments.integer("ae") as u8,
                     segment_seconds: arguments.integer("segment") as u16,
+                    record: true,
                 };
                 ask(&orders, Order::Start(settings))
+            }),
+        },
+        Command {
+            owner: "camera",
+            words: "video preview",
+            about: "the camera on for its aim alone, no recording: GET /camera/preview.jpg (the dashboard's camera \
+                    preview) once a second until `video stop`, or the rod trigger's flight recording replaces it",
+            gate: Gate::Setting,
+            reach: Reach::Everywhere,
+            parameters: &[],
+            bare_words: &[],
+            run: Box::new(move |_| {
+                ask(
+                    &preview_orders,
+                    Order::Start(Settings {
+                        record: false,
+                        segment_seconds: 0,
+                        ..FLIGHT
+                    }),
+                )
             }),
         },
         Command {

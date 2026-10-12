@@ -538,7 +538,7 @@ static void _encode_loop(void *argument)
             .raw_data = {.buffer = recorder->frame, .len = recorder->config.frame_bytes},
         };
         int64_t encode_start_microseconds = esp_timer_get_time();
-        if (!(buffer.flags & V4L2_BUF_FLAG_ERROR)) {
+        if (recorder->config.record && !(buffer.flags & V4L2_BUF_FLAG_ERROR)) {
             esp_h264_enc_in_frame_t in = {
                 .raw_data = {.buffer = _pipeline.capture_buffers[buffer.index], .len = buffer.bytesused},
                 .pts = (uint32_t)(uptime_microseconds / 1000),
@@ -569,7 +569,7 @@ static void _encode_loop(void *argument)
         portENTER_CRITICAL(&_stats_lock);
         _stats.frames_captured++;
         _stats.frames_missed += missed;
-        _stats.encode_errors += result != ESP_H264_ERR_OK;
+        _stats.encode_errors += recorder->config.record && result != ESP_H264_ERR_OK;
         _stats.encode_microseconds_last = encode_microseconds;
         _stats.encode_microseconds_max = MAX(_stats.encode_microseconds_max, encode_microseconds);
         _stats.encode_microseconds_total += encode_microseconds;
@@ -678,6 +678,9 @@ static void _write_loop(void *argument)
             tail += _CHUNK_BYTES;
             atomic_store(&recorder->ring_tail, tail);
             unsynced = true;
+        }
+        if (last && recorder->file < 0) {
+            break;  /* the preview alone: no file */
         }
         if (last) {
             uint32_t remaining = head - tail;
@@ -988,7 +991,8 @@ static void _release(_recorder_t *recorder)
 esp_err_t coludo_video_start(const coludo_video_config_t *config)
 {
     ESP_RETURN_ON_FALSE(_recorder == NULL, ESP_ERR_INVALID_STATE, TAG, "already started");
-    ESP_RETURN_ON_FALSE(config->i2c_bus != NULL && config->path != NULL && config->fps > 0 && config->gop > 0 &&
+    ESP_RETURN_ON_FALSE(config->i2c_bus != NULL && (config->path != NULL || !config->record) && config->fps > 0 &&
+                        config->gop > 0 &&
                         config->qp_min <= config->qp_max && config->qp_max <= 51 &&
                         config->ring_bytes >= 2 * _CHUNK_BYTES && config->frame_bytes > 0,
                         ESP_ERR_INVALID_ARG, TAG, "config");
@@ -1003,7 +1007,7 @@ esp_err_t coludo_video_start(const coludo_video_config_t *config)
     recorder->frame = heap_caps_calloc(1, config->frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_CACHE_ALIGNED | MALLOC_CAP_8BIT);
     recorder->finished = xSemaphoreCreateCounting(2, 0);
     recorder->started = xSemaphoreCreateBinary();
-    const char *slash = strrchr(config->path, '/');
+    const char *slash = config->path != NULL ? strrchr(config->path, '/') : NULL;
     size_t directory_bytes = slash != NULL ? (size_t)(slash - config->path) : 1;
     recorder->directory = heap_caps_malloc(directory_bytes + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     ESP_GOTO_ON_FALSE(recorder->ring != NULL && recorder->frame != NULL && recorder->finished != NULL &&
@@ -1015,8 +1019,8 @@ esp_err_t coludo_video_start(const coludo_video_config_t *config)
         strcpy(recorder->directory, ".");
     }
 
-    recorder->file = open(config->path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    ESP_GOTO_ON_FALSE(recorder->file >= 0, ESP_FAIL, fail, TAG, "open %s", config->path);
+    recorder->file = config->record ? open(config->path, O_WRONLY | O_CREAT | O_TRUNC, 0644) : -1;
+    ESP_GOTO_ON_FALSE(recorder->file >= 0 || !config->record, ESP_FAIL, fail, TAG, "open %s", config->path);
     ESP_GOTO_ON_FALSE(xTaskCreatePinnedToCore(_write_loop, "video_write", _TASK_STACK_BYTES, recorder,
                                               config->write_priority, &recorder->write_task, config->encode_core) == pdPASS,
                       ESP_ERR_NO_MEM, fail_file, TAG, "write task");
@@ -1049,7 +1053,9 @@ esp_err_t coludo_video_start(const coludo_video_config_t *config)
     return ESP_OK;
 
 fail_file:
-    close(recorder->file);
+    if (recorder->file >= 0) {
+        close(recorder->file);
+    }
 fail:
     _release(recorder);
     return ret;

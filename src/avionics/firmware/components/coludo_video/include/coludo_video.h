@@ -47,6 +47,8 @@ typedef struct {
     uint32_t sensor_clock_hz;         /*!< the module's oscillator (0 = 25 MHz); sets the frame-rate stretch */
     uint8_t exposure_target;          /*!< the sensor AEC's mean linear luma, 8-bit (0: left as the registers hold it) */
     uint16_t segment_seconds;         /*!< on the pad, a new file at the first IDR this long into a file (0: one file) */
+    uint8_t record;                   /*!< 1: H.264 to the file; 0: the preview alone (no file, path may be NULL, the
+                                           encoder idle), the camera's aim on the pad */
     uint8_t preview;                  /*!< 1: on the pad, a JPEG of the latest frame once a second (720x384, the 1080p
                                            mode's centre 1920x1024), for coludo_video_preview; 0: none */
     const uint32_t *flight_word;      /*!< the board's flight word, read atomically (crates/sequencer Flight::pack: the

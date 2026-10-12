@@ -983,7 +983,7 @@ for these parts.
 **Operator gains.** The pre-flight gate is real: verify, arm, and readiness from the dashboard. A dummy flight
 (drop or throw test) produces staged data and video.
 
-### M7b. Camera preview and segments (after M7, before the first field day)
+### M7b. Camera preview and segments (after M7, before the first field day; DONE 2026-10-11 on the taster and TMS-7F)
 
 Both rework the encode and write loops (`components/coludo_video/coludo_video.c:332-476`), so they are built and
 proven once. Neither is on the HITL path.
@@ -1043,8 +1043,12 @@ proven once. Neither is on the HITL path.
     4 ms), the capture buffer held meanwhile, so the pad's recording misses ~2 frames a second while it runs: ~23
     delivered fps, above the operator's 20, and none in flight (the preview stops at BOOSTING). If it must go: PPA
     non-blocking with the buffer held, and a fourth capture buffer (+3.1 MB PSRAM).
-  - **Open:** preview-only (the camera on with no recording, H.264 off): until then the operator previews with
-    `video start` (the rod trigger starts the flight's recording anyway).
+  - **Preview-only DONE (2026-10-11):** `video preview` runs the camera with no file and the encoder idle
+    (coludo_video `record` 0), the preview made as above; `video stop` ends it, and the rod trigger's flight
+    recording replaces it as it does any operator's recording. On the taster: 375 frames captured, none encoded or
+    written, 15 previews, through the hub.
+  - **M7b DONE but one proof:** the 10-minute pad recording at the default 300 s segments, left to the field day's
+    pad time (20 s segments proved the mechanism on the bench and through a HITL launch).
 
 ### M8. Warm start, checkpoint, supervisor watchdog (1-2 days; DONE 2026-10-08 on the taster and TMS-7F)
 
