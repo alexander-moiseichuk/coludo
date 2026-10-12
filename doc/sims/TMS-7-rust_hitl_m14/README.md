@@ -128,6 +128,11 @@ channel. The airspeed estimator integrates |a| - g, so the accel's change moves 
   law flies a frozen attitude (219-405 m off).
 - **The GNSS drop:** the two stacks agree within 13 m (F15 70-87 m Rust, 77-86 m plan B; E16 95-110 m and 94-107 m).
 
+- **On the board** (the taster, realtime, the firmware whose law reads the marks-frame rate): F15 noise10 lands
+  101.2 m from the centre, inside plan B's 20 seeds on the new frames (87.2-103.6 m). The attitude drop lands 92.4 m:
+  the board's filter carries the glide as the SITL's does (`HOST_FLAGS="--attitude-drop-s 3"
+  tools/hitl_collect_host.sh ...`).
+
 The reboot stays realtime-only: it needs a warm start, which the SITL does not have.
 
 ## 4. What it took

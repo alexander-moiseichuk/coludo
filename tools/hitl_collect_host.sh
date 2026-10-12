@@ -12,7 +12,8 @@
 #   e.g. hitl_collect_host.sh taster 192.168.102.152 F15 f15_clean 0.0 0.0 0.0 False /tmp/hitl_host/F15
 #        hitl_collect_host.sh taster 192.168.102.152 F15 f15_reboot 0.0 0.0 0.0 False /tmp/hitl_host/F15 285 0 True
 # CC goes through the running hub (src/control main.py) by <board_id>; the console only panics a reboot scenario.
-# Env: PORT (default /dev/ttyACM0), the board's console.
+# Env: PORT (default /dev/ttyACM0), the board's console; HOST_FLAGS, more hitl_host.py flags (e.g. the drops:
+#      HOST_FLAGS="--attitude-drop-s 3" or "--gnss-drop-s 5").
 # Prints one verdict line: OK <motor>/<scenario> session=<s> DONE, or FAIL <motor>/<scenario>: <why>.
 set -e
 PORT=${PORT:-/dev/ttyACM0}
@@ -24,6 +25,8 @@ d="$outdir/$scen"; mkdir -p "$d"; rm -rf "${d:?}"/*
 flags=()
 [ "$spike" = True ] && flags+=(--spike)
 [ "$reboot" = True ] && flags+=(--reboot)
+read -r -a extra <<< "${HOST_FLAGS:-}"
+flags+=("${extra[@]}")
 out=$(python3 -u "$ROOT/tools/hitl_host.py" --ip "$ip" --hub "$board" --serial "$PORT" --motor "$motor" \
       --noise "$noise" --wind "$wind" --wind-dir "$dir" --glider-g "$glider_g" --inject-hz "$inject_hz" \
       "${flags[@]}" 2>&1) || true
