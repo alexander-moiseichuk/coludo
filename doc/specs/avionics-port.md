@@ -2838,6 +2838,11 @@ be fatal or not.
 **Files:**
 - `src/control/contract/cases.py`: tiered cases. Each is (tier, request, expected status, argc, JSON key set
   and types, invariants), taken from the `cc-protocol.md` catalog and the wire asserts in `test_cc_client.py`.
+  A GCL reply's `name=value` figures are checked by a case's `named` spec ({name: regex}); only such a case admits
+  named params, a CC reply carries none. The GCL cases (`entry show`, `df`, `ls`, `ring`, `video stats`, `ota
+  status`) run only on a board whose `help` lists commands, which the preflight asks after its refusal checks
+  (plan B answers it badcmd, so they skip there). The cases cover M1-M21; `push-status` is owed by no milestone
+  (`ota` replaced it in M15).
 - `src/control/contract/transports.py`:
   - `fake`: the **real** plan B dispatcher on CPython over loopback, with the time/gc shims (including
     `time.time()` on the 2000 epoch as an int and the `machine.RTC` stub), a `mission.Mission`, a stub
