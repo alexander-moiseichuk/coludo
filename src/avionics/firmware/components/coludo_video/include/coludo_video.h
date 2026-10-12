@@ -47,6 +47,8 @@ typedef struct {
     uint32_t sensor_clock_hz;         /*!< the module's oscillator (0 = 25 MHz); sets the frame-rate stretch */
     uint8_t exposure_target;          /*!< the sensor AEC's mean linear luma, 8-bit (0: left as the registers hold it) */
     uint16_t segment_seconds;         /*!< on the pad, a new file at the first IDR this long into a file (0: one file) */
+    uint8_t preview;                  /*!< 1: on the pad, a JPEG of the latest frame once a second (720x384, the 1080p
+                                           mode's centre 1920x1024), for coludo_video_preview; 0: none */
     const uint32_t *flight_word;      /*!< the board's flight word, read atomically (crates/sequencer Flight::pack: the
                                            stage in bits 0-2, SETTING 1; launched bit 5): no cut once it leaves SETTING.
                                            Lives as long as the board; NULL: never cut */
@@ -76,6 +78,9 @@ typedef struct {
     uint16_t blue_gain_thousandths;   /*!< the white-balance trim's blue gain x 1000 */
     uint32_t balance_errors;          /*!< trims the ISP refused */
     uint32_t segments;                /*!< files the recording moved on to at a cut (0: still its first file) */
+    uint32_t preview_frames;          /*!< preview JPEGs made */
+    uint32_t preview_errors;          /*!< preview scales or encodes that failed (a failed setup counts once) */
+    uint32_t preview_microseconds_max;          /*!< longest preview (scale + JPEG), the capture buffer held */
 } coludo_video_stats_t;
 
 /**
@@ -96,6 +101,13 @@ esp_err_t coludo_video_start(const coludo_video_config_t *config);
  * Only the encoder fields of config are read. ESP_ERR_INVALID_STATE when the encoder is open already.
  */
 esp_err_t coludo_video_reserve(const coludo_video_config_t *config);
+
+/**
+ * Copies the latest preview JPEG (config.preview) into out: its size, 0 when there is none yet or it does not fit
+ * capacity. sequence (may be NULL) counts the previews made, uptime_microseconds (may be NULL) is its frame's. Any
+ * task; the copy is made under a lock the encode task takes only to publish the next one.
+ */
+size_t coludo_video_preview(uint8_t *out, size_t capacity, uint32_t *sequence, int64_t *uptime_microseconds);
 
 /** Makes the next encoded frame an IDR (non-blocking, any task). */
 esp_err_t coludo_video_force_idr(void);

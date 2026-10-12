@@ -424,7 +424,7 @@ fn log_card(card: recorder::Card, layout: firmware::sd::Layout) {
             " (videos {})",
             firmware::sd::videos_serial().map_or_else(|| "unknown".to_string(), firmware::sd::serial_name)
         ),
-        firmware::sd::Layout::OnePartition => " (videos/ a directory beside the sessions)".to_string(),
+        firmware::sd::Layout::OnePartition => " (videos in each session's directory)".to_string(),
         firmware::sd::Layout::VideosFailed => String::new(),
     };
     log::info!(

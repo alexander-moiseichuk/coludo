@@ -1031,6 +1031,20 @@ proven once. Neither is on the HITL path.
     10-minute pad run at the default 300 s is left to the field day's pad time.
 - Preview: the dashboard shows the taster's camera at 1 Hz, `bars` confirming the packing, byte order and colour
   range; a hand-shaken launch stops the preview.
+  - **Preview DONE while the camera records (2026-10-11, the taster and 7F).** Once a second on the pad (the flight
+    word in SETTING, never launched) the encode task scales the 1080p frame's centre 1920x1024 by 6/16 with PPA SRM
+    (YUV420 in, RGB565 out; its output must sit on 128-byte cache lines, address and size, so it is allocated
+    aligned, not by the JPEG driver) to 720x384 (the JPEG's 4:2:0 wants multiples of 16), then the hardware JPEG
+    (quality 60, 10-17 KB). Double buffers; `coludo_video_preview` copies the published one under a lock. The file
+    server's `GET /camera/preview.jpg`, the hub's `GET /api/preview/<board>` (fetched from the board's CC peer
+    address, port 8000), and the dashboard's `camera preview` button refreshing at 1 Hz. `bars`: white, yellow,
+    cyan, green, magenta, red, blue, black exactly (BT.601, full range). The engines take 1 KB of internal RAM.
+  - **Its cost:** the scale takes 72-81 ms (PPA reading the frame from PSRAM beside the H.264 encoder; the JPEG
+    4 ms), the capture buffer held meanwhile, so the pad's recording misses ~2 frames a second while it runs: ~23
+    delivered fps, above the operator's 20, and none in flight (the preview stops at BOOSTING). If it must go: PPA
+    non-blocking with the buffer held, and a fourth capture buffer (+3.1 MB PSRAM).
+  - **Open:** preview-only (the camera on with no recording, H.264 off): until then the operator previews with
+    `video start` (the rod trigger starts the flight's recording anyway).
 
 ### M8. Warm start, checkpoint, supervisor watchdog (1-2 days; DONE 2026-10-08 on the taster and TMS-7F)
 

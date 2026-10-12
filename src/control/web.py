@@ -52,6 +52,67 @@ async def _send_json(writer, status: int, payload) -> None:
     await _send(writer, status, 'application/json', json.dumps(payload))
 
 
+_BOARD_FILES_PORT: int = 8000  # the Rust board's file server (src/avionics/firmware/src/files.rs PORT)
+_PREVIEW_TIMEOUT_S: float = 3.0
+_PREVIEW_BYTES_MAX: int = 1 << 20
+
+
+async def _fetch(host: str, port: int, path: str) -> tuple:
+    """
+    One HTTP/1.0 GET straight to a board (no proxy: the host's http_proxy hijacks the panda net).
+
+    Returns:
+        (status, body bytes). Raises ValueError on a reply that is no HTTP, OSError when it will not connect.
+    """
+    reader, writer = await asyncio.open_connection(host, port)
+    try:
+        writer.write(('GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n' % (path, host)).encode())
+        await writer.drain()
+        reply = b''
+        # until the body is whole: the board's httpd answers HTTP/1.1 and may keep the connection open after it
+        while not _whole(reply) and len(reply) <= _PREVIEW_BYTES_MAX:
+            more = await reader.read(_PREVIEW_BYTES_MAX)
+            if not more:
+                break
+            reply += more
+    finally:
+        writer.close()
+    head, separator, body = reply.partition(b'\r\n\r\n')
+    status_line = head.split(b'\r\n', 1)[0].split()
+    if not separator or len(status_line) < 2 or not status_line[1].isdigit():
+        raise ValueError('no HTTP reply')
+    if b'transfer-encoding: chunked' in head.lower():
+        body = _unchunk(body)
+    return int(status_line[1]), body
+
+
+def _whole(reply: bytes) -> bool:
+    """Whether an HTTP reply read so far is complete: its chunked terminator, or its Content-Length of body."""
+    head, separator, body = reply.partition(b'\r\n\r\n')
+    if not separator:
+        return False
+    lower = head.lower()
+    if b'transfer-encoding: chunked' in lower:
+        return body.endswith(b'0\r\n\r\n')
+    for line in lower.split(b'\r\n'):
+        if line.startswith(b'content-length:'):
+            return len(body) >= int(line.split(b':', 1)[1].strip() or b'0')
+    return False
+
+
+def _unchunk(body: bytes) -> bytes:
+    """A chunked HTTP body's bytes (esp-idf-svc sends its replies chunked)."""
+    out = b''
+    while body:
+        size_text, _, rest = body.partition(b'\r\n')
+        size = int(size_text.split(b';')[0] or b'0', 16)
+        if size == 0:
+            break
+        out += rest[:size]
+        body = rest[size + 2:]
+    return out
+
+
 _MAX_PARAMS: int = 16  # a bounded splat into board.command(); a request is not a scripting surface
 _NAME: re.Pattern = re.compile(r'[a-z_][a-z0-9_]*')  # a named param's key, as the GCL declares them
 
@@ -134,6 +195,8 @@ class Web:
             # only ever describes live links: an operator cannot otherwise tell "never seen" from
             # "seen yesterday, not powered now", and only the second has an action (reboot it).
             return await _send_json(writer, 200, self.hub.absent())
+        if method == 'GET' and route.startswith('/api/preview/'):
+            return await self._api_preview(route[len('/api/preview/'):], writer)
         if method == 'GET' and route.startswith('/api/board/'):
             return await self._api_board(route[len('/api/board/'):], writer)
         if method == 'POST' and route == '/api/cmd':
@@ -149,6 +212,30 @@ class Web:
         if method == 'GET' and route == '/logs':
             return await self._logs(writer)
         await _send(writer, 404, 'text/plain', 'not found')
+
+    async def _api_preview(self, board_id: str, writer) -> None:
+        """
+        The board's camera preview (M7b): its file server's `/camera/preview.jpg`, fetched from the address the board's
+        CC link comes from and passed on, so the dashboard shows where the camera points without touching the
+        airframe. 404 before the board has one (the camera records on the pad), 502 when the board does not answer.
+
+        Args:
+            board_id - the board id from the URL.
+            writer - the response StreamWriter.
+        """
+        board = self.hub.boards.get(board_id)
+        if board is None or not board.online:
+            return await _send_json(writer, 404, {'error': 'no online board %r' % board_id})
+        host = board.peer.rsplit(':', 1)[0]
+        try:
+            status, body = await asyncio.wait_for(_fetch(host, _BOARD_FILES_PORT, '/camera/preview.jpg'),
+                                                  _PREVIEW_TIMEOUT_S)
+        except (OSError, asyncio.TimeoutError, ValueError) as error:
+            return await _send_json(writer, 502, {'error': 'the board did not answer: %s' % (error or 'timeout')})
+        if status != 200:
+            return await _send_json(writer, 404 if status == 404 else 502,
+                                    {'error': body.decode(errors='replace').strip() or 'HTTP %d' % status})
+        return await _send(writer, 200, 'image/jpeg', body)
 
     async def _api_board(self, board_id: str, writer) -> None:
         """

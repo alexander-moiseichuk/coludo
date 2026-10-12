@@ -75,6 +75,9 @@ altering one.</p>
   <button id="actassist" title="push the CC GNSS fix to the board launch config">sync GNSS</button>
 </p>
 <div id="actmsg" class="actmsg"></div>
+<p><button id="actpreview" title="the selected board's camera, once a second while it records on the pad (video start)">camera preview</button>
+  <span id="previewmsg" class="muted"></span></p>
+<p><img id="preview" alt="" style="display:none; max-width:100%; width:720px"></p>
 
 <h2>send command to <span class="sel" id="selB">—</span></h2>
 <p>
@@ -1022,6 +1025,41 @@ new EventSource('/logs').onmessage = (event) => {
   if (logPane.textContent.length > 200000) { logPane.textContent = logPane.textContent.slice(-150000); }
   logPane.scrollTop = logPane.scrollHeight;
 };
+
+// The camera preview (M7b): the selected board's /camera/preview.jpg through the hub, once a second while on. The
+// board makes one a second while its camera records on the pad; before that the hub answers 404 and the line says so.
+let previewTimer = null;
+document.getElementById('actpreview').addEventListener('click', () => {
+  const image = document.getElementById('preview');
+  const line = document.getElementById('previewmsg');
+  if (previewTimer) {
+    clearInterval(previewTimer);
+    previewTimer = null;
+    image.style.display = 'none';
+    line.textContent = '';
+    return;
+  }
+  const look = async () => {
+    if (!selected) { line.textContent = 'pick a board in the table'; return; }
+    try {
+      const reply = await fetch('/api/preview/' + encodeURIComponent(selected) + '?t=' + Date.now());
+      if (!reply.ok) {
+        const why = await reply.text();
+        line.textContent = selected + ': ' + (why.includes('error') ? JSON.parse(why).error : why);
+        return;
+      }
+      const old = image.src;
+      image.src = URL.createObjectURL(await reply.blob());
+      if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+      image.style.display = '';
+      line.textContent = selected + ' ' + new Date().toLocaleTimeString();
+    } catch (error) {
+      line.textContent = 'preview: ' + error;
+    }
+  };
+  look();
+  previewTimer = setInterval(look, 1000);
+});
 </script>
 </body>
 </html>

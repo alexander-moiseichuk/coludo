@@ -21,6 +21,8 @@
 //!   ring_saver would file (doc/specs/avionics-port.md "CC tees and the HTTP exits"). `boot=N` keeps only that
 //!   boot's blocks.
 //! * `GET /ring/image` streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
+//! * `GET /camera/preview.jpg` is the camera's latest preview (M7b): 720x384, made once a second while the camera
+//!   records on the pad (404 before the first), for the operator to check its aim.
 //! * `GET /beacon` is the recovery beacon's page as the access point serves it at DONE (crate::beacon): the bench sees
 //!   it before then.
 //!
@@ -69,6 +71,29 @@ pub fn serve(beacon: crate::beacon::Beacon) -> anyhow::Result<EspHttpServer<'sta
         // runs elsewhere); its Rust allocations go to PSRAM too (crate::allocator)
         task_caps: esp_idf_svc::sys::MALLOC_CAP_SPIRAM | esp_idf_svc::sys::MALLOC_CAP_8BIT,
         ..Default::default()
+    })?;
+    // the camera's aim on the pad (M7b): the latest preview JPEG, made once a second while the camera records in
+    // SETTING; 404 before the first
+    server.fn_handler::<anyhow::Error, _>("/camera/preview.jpg", Method::Get, |request| {
+        let Some((jpeg, uptime)) = firmware::video::preview() else {
+            request
+                .into_status_response(404)?
+                .write_all(b"no preview: the camera records none (video start, on the pad)\n")?;
+            return Ok(());
+        };
+        let uptime = uptime.to_string();
+        request
+            .into_response(
+                200,
+                None,
+                &[
+                    ("Content-Type", "image/jpeg"),
+                    ("Cache-Control", "no-store"),
+                    ("X-Coludo-Uptime-Us", &uptime),
+                ],
+            )?
+            .write_all(&jpeg)?;
+        Ok(())
     })?;
     // the recovery beacon's page as the AP will serve it at DONE (crate::beacon), for the bench before then
     server.fn_handler::<anyhow::Error, _>("/beacon", Method::Get, move |request| {

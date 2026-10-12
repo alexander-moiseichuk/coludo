@@ -152,8 +152,26 @@ fn configure(
         sensor_clock_hz: clock_hz,
         exposure_target: settings.exposure_target,
         segment_seconds: settings.segment_seconds,
+        // the pad's camera aim (M7b): a JPEG a second while it records in SETTING, `GET /camera/preview.jpg`
+        preview: 1,
         flight_word,
     }
+}
+
+/// The largest preview JPEG [`preview`] takes (720x384 at quality 60 is ~30-60 KB).
+const PREVIEW_BYTES: usize = 160 << 10;
+
+/// The latest preview JPEG and its frame's uptime in us (M7b), None before the first: one is made a second while the
+/// camera records on the pad.
+pub fn preview() -> Option<(Vec<u8>, i64)> {
+    let mut jpeg = vec![0u8; PREVIEW_BYTES];
+    let mut uptime = 0i64;
+    // SAFETY: a live buffer of PREVIEW_BYTES and a live i64; the copy is made under the recorder's preview lock.
+    let size = unsafe { sys::coludo_video_preview(jpeg.as_mut_ptr(), jpeg.len(), std::ptr::null_mut(), &mut uptime) };
+    (size > 0).then(|| {
+        jpeg.truncate(size);
+        (jpeg, uptime)
+    })
 }
 
 /// Start recording; returns the first file's path. Only the video thread calls it.
@@ -663,8 +681,11 @@ fn counters(state: &str) -> String {
             format!("{:.3}", counters.blue_gain_thousandths as f32 / 1000.0),
         ),
         ("balance_errors", counters.balance_errors.to_string()),
-        // the files it moved on to at the pad's cuts (M7b)
+        // the files it moved on to at the pad's cuts, and the pad's preview JPEGs (M7b)
         ("segments", counters.segments.to_string()),
+        ("preview", counters.preview_frames.to_string()),
+        ("preview_errors", counters.preview_errors.to_string()),
+        ("preview_us_max", counters.preview_microseconds_max.to_string()),
     ];
     let named: Vec<(&str, &str)> = values.iter().map(|(key, value)| (*key, value.as_str())).collect();
     cc_protocol::build("ok", &["video", state], &named)

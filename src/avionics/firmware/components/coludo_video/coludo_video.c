@@ -60,6 +60,8 @@
 #include "esp_video_ioctl.h"
 #include "esp_video_isp_ioctl.h"
 #include "esp_h264_enc_single_hw.h"
+#include "driver/ppa.h"
+#include "driver/jpeg_encode.h"
 #include "coludo_video.h"
 #include "coludo_ov5647.h"
 
@@ -101,6 +103,17 @@
 #define _FLIGHT_LAUNCHED_BIT            (1u << 5)
 /** A segment's file name: its start uptime in ms, up to 20 digits, ".h264" and the terminator, after the directory. */
 #define _SEGMENT_NAME_BYTES             32
+/* The preview (M7b): the 1080p frame's centre 1920x1024 scaled by 6/16 (PPA SRM takes steps of 1/16) to 720x384 RGB565,
+ * then the hardware JPEG (dimensions a multiple of 16 for 4:2:0; RGB565, since rev < 3 takes no YUV420 in) */
+#define _PREVIEW_SOURCE_WIDTH           1920
+#define _PREVIEW_SOURCE_HEIGHT          1080
+#define _PREVIEW_SOURCE_ROWS            1024
+#define _PREVIEW_WIDTH                  720
+#define _PREVIEW_HEIGHT                 384
+#define _PREVIEW_SCALE                  0.375f
+#define _PREVIEW_JPEG_BYTES             (160 * 1024)
+#define _PREVIEW_QUALITY                60
+#define _PREVIEW_TIMEOUT_MILLISECONDS   100
 
 static const char *TAG = "coludo_video";
 
@@ -153,6 +166,25 @@ typedef struct {
 } _recorder_t;
 
 static _recorder_t *_recorder;
+
+/** The preview's engines and buffers: set up by the first preview (the encode task), kept for the boot. */
+typedef struct {
+    bool tried;                                     /*!< the setup ran (once a boot) */
+    bool ready;                                     /*!< and succeeded */
+    ppa_client_handle_t ppa;
+    jpeg_encoder_handle_t jpeg;
+    uint8_t *rgb;                                   /*!< the scaled frame, RGB565 (PSRAM, DMA-aligned) */
+    size_t rgb_bytes;
+    uint8_t *jpegs[2];                              /*!< the published one and the next (PSRAM, DMA-aligned) */
+    size_t jpeg_capacity;
+    uint32_t sizes[2];
+    int64_t uptimes[2];
+    int published;                                  /*!< the JPEG readers copy, -1 before the first */
+    uint32_t sequence;
+    SemaphoreHandle_t lock;                         /*!< held to publish, and to copy the published one out */
+} _preview_t;
+
+static _preview_t _preview = {.published = -1};
 /** Counters live outside the recorder so coludo_video_stats() never touches freed memory. */
 static coludo_video_stats_t _stats;
 static portMUX_TYPE _stats_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -369,6 +401,95 @@ static void _trim_balance(const _chroma_t *chroma)
     portEXIT_CRITICAL(&_stats_lock);
 }
 
+/** The preview's engines and buffers, once a boot; false when they are not there (the failure counted once). */
+static bool _preview_setup(void)
+{
+    if (_preview.tried) {
+        return _preview.ready;
+    }
+    _preview.tried = true;
+    ppa_client_config_t ppa = {.oper_type = PPA_OPERATION_SRM, .max_pending_trans_num = 1};
+    jpeg_encode_engine_cfg_t jpeg = {.timeout_ms = _PREVIEW_TIMEOUT_MILLISECONDS};
+    jpeg_encode_memory_alloc_cfg_t output = {.buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER};
+    size_t allocated = 0;
+    size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    _preview.lock = xSemaphoreCreateMutex();
+    /* PPA's output must sit on PSRAM's L1 and L2 cache lines (128 bytes), address and size alike: the JPEG driver's
+     * input allocation aligns to less, and PPA refused it */
+    _preview.rgb_bytes = _PREVIEW_WIDTH * _PREVIEW_HEIGHT * 2;
+    _preview.rgb = heap_caps_aligned_calloc(128, 1, _preview.rgb_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    _preview.jpegs[0] = jpeg_alloc_encoder_mem(_PREVIEW_JPEG_BYTES, &output, &_preview.jpeg_capacity);
+    _preview.jpegs[1] = jpeg_alloc_encoder_mem(_PREVIEW_JPEG_BYTES, &output, &allocated);
+    _preview.ready = _preview.lock != NULL && _preview.rgb != NULL && _preview.jpegs[0] != NULL &&
+                     _preview.jpegs[1] != NULL && ppa_register_client(&ppa, &_preview.ppa) == ESP_OK &&
+                     jpeg_new_encoder_engine(&jpeg, &_preview.jpeg) == ESP_OK;
+    if (!_preview.ready) {
+        ESP_LOGE(TAG, "preview: its engines or buffers would not come up: no preview this boot");
+        portENTER_CRITICAL(&_stats_lock);
+        _stats.preview_errors++;
+        portEXIT_CRITICAL(&_stats_lock);
+    } else {
+        ESP_LOGI(TAG, "preview: %ux%u JPEG once a second (its engines took %d B of internal RAM: %u free, largest "
+                 "block %u)", _PREVIEW_WIDTH, _PREVIEW_HEIGHT,
+                 (int)(internal_before - heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    }
+    return _preview.ready;
+}
+
+/** One preview from a captured 1080p frame (YUV420, before it goes back to the receiver): scale, JPEG, publish. */
+static void _preview_frame(const uint8_t *frame, int64_t uptime_microseconds)
+{
+    if (!_preview_setup()) {
+        return;
+    }
+    int64_t start_microseconds = esp_timer_get_time();
+    ppa_srm_oper_config_t scale = {
+        .in = {.buffer = frame, .pic_w = _PREVIEW_SOURCE_WIDTH, .pic_h = _PREVIEW_SOURCE_HEIGHT,
+               .block_w = _PREVIEW_SOURCE_WIDTH, .block_h = _PREVIEW_SOURCE_ROWS, .block_offset_x = 0,
+               .block_offset_y = (_PREVIEW_SOURCE_HEIGHT - _PREVIEW_SOURCE_ROWS) / 2,
+               .srm_cm = PPA_SRM_COLOR_MODE_YUV420, .yuv_range = PPA_COLOR_RANGE_FULL,
+               .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601},
+        .out = {.buffer = _preview.rgb, .buffer_size = _preview.rgb_bytes, .pic_w = _PREVIEW_WIDTH,
+                .pic_h = _PREVIEW_HEIGHT, .srm_cm = PPA_SRM_COLOR_MODE_RGB565},
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+        .scale_x = _PREVIEW_SCALE,
+        .scale_y = _PREVIEW_SCALE,
+        .mode = PPA_TRANS_MODE_BLOCKING,
+    };
+    jpeg_encode_cfg_t encode = {
+        .height = _PREVIEW_HEIGHT,
+        .width = _PREVIEW_WIDTH,
+        .src_type = JPEG_ENCODE_IN_FORMAT_RGB565,
+        .sub_sample = JPEG_DOWN_SAMPLING_YUV420,
+        .image_quality = _PREVIEW_QUALITY,
+    };
+    int next = _preview.published == 0 ? 1 : 0;  /* never the one a reader may be copying */
+    uint32_t size = 0;
+    bool made = ppa_do_scale_rotate_mirror(_preview.ppa, &scale) == ESP_OK;
+    int64_t scaled_microseconds = esp_timer_get_time();
+    made = made && jpeg_encoder_process(_preview.jpeg, &encode, _preview.rgb, _preview.rgb_bytes,
+                                        _preview.jpegs[next], _preview.jpeg_capacity, &size) == ESP_OK;
+    if (_preview.sequence < 3) {
+        ESP_LOGI(TAG, "preview: scale %lld us, JPEG %lld us, %lu bytes", scaled_microseconds - start_microseconds,
+                 esp_timer_get_time() - scaled_microseconds, (unsigned long)size);
+    }
+    if (made) {
+        xSemaphoreTake(_preview.lock, portMAX_DELAY);
+        _preview.sizes[next] = size;
+        _preview.uptimes[next] = uptime_microseconds;
+        _preview.published = next;
+        _preview.sequence++;
+        xSemaphoreGive(_preview.lock);
+    }
+    uint32_t took_microseconds = (uint32_t)(esp_timer_get_time() - start_microseconds);
+    portENTER_CRITICAL(&_stats_lock);
+    _stats.preview_frames += made;
+    _stats.preview_errors += !made;
+    _stats.preview_microseconds_max = MAX(_stats.preview_microseconds_max, took_microseconds);
+    portEXIT_CRITICAL(&_stats_lock);
+}
+
 static esp_err_t _stream_on(const coludo_video_config_t *config);
 static void _stream_off(void);
 
@@ -381,6 +502,7 @@ static void _encode_loop(void *argument)
     int64_t previous_microseconds = 0;
     uint32_t frame = 0;
     uint32_t frames_since_balance = 0;
+    uint32_t frames_since_preview = 0;
 
     recorder->start_result = _stream_on(&recorder->config);
     xSemaphoreGive(recorder->started);
@@ -431,6 +553,13 @@ static void _encode_loop(void *argument)
         if (balance) {
             _measure_chroma(_pipeline.capture_buffers[buffer.index], &chroma);
             frames_since_balance = 0;
+        }
+        /* the preview, once a second on the pad, reads the frame by DMA before it goes back */
+        if (recorder->config.preview && ++frames_since_preview >= recorder->config.fps &&
+            !(buffer.flags & V4L2_BUF_FLAG_ERROR) && _pipeline.width == _PREVIEW_SOURCE_WIDTH &&
+            _pipeline.height == _PREVIEW_SOURCE_HEIGHT && _on_pad(recorder)) {
+            frames_since_preview = 0;
+            _preview_frame(_pipeline.capture_buffers[buffer.index], uptime_microseconds);
         }
         ioctl(_pipeline.capture, VIDIOC_QBUF, &buffer);  /* back to the receiver before the copy */
         if (balance) {
@@ -940,6 +1069,27 @@ esp_err_t coludo_video_reserve(const coludo_video_config_t *config)
              config->height, heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     return ESP_OK;
+}
+
+size_t coludo_video_preview(uint8_t *out, size_t capacity, uint32_t *sequence, int64_t *uptime_microseconds)
+{
+    if (_preview.lock == NULL) {
+        return 0;
+    }
+    size_t size = 0;
+    xSemaphoreTake(_preview.lock, portMAX_DELAY);
+    if (_preview.published >= 0 && _preview.sizes[_preview.published] <= capacity) {
+        size = _preview.sizes[_preview.published];
+        memcpy(out, _preview.jpegs[_preview.published], size);
+        if (sequence != NULL) {
+            *sequence = _preview.sequence;
+        }
+        if (uptime_microseconds != NULL) {
+            *uptime_microseconds = _preview.uptimes[_preview.published];
+        }
+    }
+    xSemaphoreGive(_preview.lock);
+    return size;
 }
 
 esp_err_t coludo_video_force_idr(void)

@@ -573,6 +573,45 @@ def test_api_cmd_carries_named_params_and_refuses_bad_ones():
         assert len(board.seen) == count, 'a refused request reached the board'
 
 
+def test_preview_fetch_reads_a_chunked_jpeg_and_a_refusal():
+    """
+    The hub's preview proxy fetches the board's /camera/preview.jpg itself (no proxy): esp-idf-svc answers chunked, so
+    the body is unchunked byte-exact; a 404 comes back with its text, and junk that is no HTTP is refused.
+    """
+    jpeg = bytes(range(256)) * 40
+
+    async def board(reader, writer):
+        request = await reader.read(4096)
+        if b'/camera/preview.jpg' in request and b'ghost' not in request:
+            chunks = b''.join(b'%x\r\n%s\r\n' % (len(part), part) for part in (jpeg[:4000], jpeg[4000:]))
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nTransfer-Encoding: chunked\r\n\r\n'
+                         + chunks + b'0\r\n\r\n')
+        elif b'ghost' in request:
+            writer.write(b'not http at all')
+        else:
+            writer.write(b'HTTP/1.1 404 Not Found\r\n\r\nno preview\n')
+        await writer.drain()
+        writer.close()
+
+    async def run():
+        server = await asyncio.start_server(board, '127.0.0.1', 0)
+        port = server.sockets[0].getsockname()[1]
+        status, body = await web._fetch('127.0.0.1', port, '/camera/preview.jpg')
+        assert status == 200 and body == jpeg, (status, len(body))
+        status, body = await web._fetch('127.0.0.1', port, '/other')
+        assert status == 404 and body == b'no preview\n', (status, body)
+        try:
+            await web._fetch('127.0.0.1', port, '/camera/preview.jpg?ghost')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('junk was read as an HTTP reply')
+        server.close()
+
+    asyncio.run(run())
+    assert web._unchunk(b'3\r\nabc\r\n0\r\n\r\n') == b'abc'
+
+
 def test_post_with_bad_json_is_answered():
     """A POST carrying non-JSON must get a response (not a hang) -- json.loads is guarded (§26.8/9)."""
     body = b'{not json'
@@ -793,6 +832,7 @@ test_bad_content_length_still_routes()
 test_handler_fault_answers_500()
 test_board_timeout_answers_json_504()
 test_api_cmd_carries_named_params_and_refuses_bad_ones()
+test_preview_fetch_reads_a_chunked_jpeg_and_a_refusal()
 test_post_with_bad_json_is_answered()
 print('ok: web -- routing + 404, IMU calibration column + calibrate action, not-ready row flag, '
       'per-device verdict lines for probe/verify/arm, '

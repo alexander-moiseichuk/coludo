@@ -4,4 +4,4 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES esp_driver_i2c
     PRIV_REQUIRES espressif__esp_video espressif__esp_cam_sensor espressif__esp_sccb_intf espressif__esp_h264
-                  esp_timer vfs)
+                  esp_timer vfs esp_driver_ppa esp_driver_jpeg)
