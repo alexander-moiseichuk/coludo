@@ -8,15 +8,17 @@
 //! sessions.csv                     GLOBAL_INDEX: every boot's session.csv rows (wrapped lines, no routing)
 //! <session>/recordings/            RECORDINGS: the ring_saver's files of the session
 //!   <session>_<stream>.csv  recorder.log  session.csv
+//! <session>/videos/                VIDEOS: the camera's files of the session
 //! <session>/<kind>/                any later kind, beside recordings/
-//! videos/<session>/                VIDEOS: the camera's files of the session (the second partition's mount point)
+//! videos/<session>/                a two-partition card's videos: the second partition's mount point
 //! _<label>/recordings/             an earlier boot's RESERVED label, escaped (see below)
 //! ```
 //!
-//! Session first: each session keeps its own directory, so FAT never holds many files in one directory and a
-//! damaged directory costs one session, not the collection. Videos are the one kind kept apart, under `videos/`:
-//! on a two-partition card that directory is the second partition's mount point (`/sdcard/videos`), so video and the
-//! ring_saver have a volume each; on a one-partition card it is a plain directory beside the sessions.
+//! Session first: each session keeps all its data in its own directory, so FAT never holds many files in one
+//! directory, a damaged directory costs one session, not the collection, and a session is pulled, listed and removed
+//! as one. One partition is the layout (the operator, 2026-10-11: the HITL A/B showed two partitions no clearly better
+//! on I/O or latency, and one is the more space-efficient, no fixed split). A two-partition card still records: its
+//! videos go to its second partition, mounted at `videos/` ([`videos_partition_directory`]).
 //!
 //! **A session may not take a name the card's root holds for something else** ([`RESERVED`], in any case: FAT folds
 //! case): `videos`, or its recordings would land in the videos directory, on the videos partition; and the M4
@@ -41,8 +43,8 @@ pub const GLOBAL_INDEX: &str = "sessions.csv";
 /// The ring_saver's kind: `<session>/recordings`, which holds the session's streams, recorder.log and session.csv.
 pub const RECORDINGS: &str = "recordings";
 
-/// The camera's kind, kept apart: `videos/<session>`. Also the name of the second partition's mount point under the
-/// card's root, so no session may take it ([`is_reserved`]).
+/// The camera's kind: `<session>/videos`. Also the name of a two-partition card's second partition's mount point under
+/// the card's root ([`videos_partition_directory`]), so no session may take it ([`is_reserved`]).
 pub const VIDEOS: &str = "videos";
 
 /// The names at the card's root that are no session's: [`VIDEOS`], the videos partition's mount point, and the M4
@@ -54,9 +56,9 @@ pub const RESERVED: [&str; 3] = [VIDEOS, "recordings", "video"];
 /// firmware names begins with.
 pub const RESERVED_ESCAPE: char = '_';
 
-/// The directory of `session`'s `kind`, relative to the card's root: `videos/<session>` for [`VIDEOS`],
-/// `<session>/<kind>` for [`RECORDINGS`] and any later kind. A reserved session ([`is_reserved`], an earlier boot's
-/// label) is `_<session>` in either: `_videos/recordings`.
+/// The directory of `session`'s `kind`, relative to the card's root: `<session>/<kind>`, [`RECORDINGS`], [`VIDEOS`]
+/// and any later kind alike. A reserved session ([`is_reserved`], an earlier boot's label) is `_<session>`:
+/// `_videos/recordings`.
 ///
 /// Args:
 /// * `session` - the session label (the boot id `%06u`, a `recorder.session` label, or the dated form).
@@ -87,6 +89,16 @@ pub fn file_path(path: &mut String, session: &str, kind: &str, name: &str) {
     path.push_str(name);
 }
 
+/// A two-partition card's directory for `session`'s videos, relative to the card's root: `videos/<session>`, on the
+/// second partition (mounted at `videos/`). The one place a session's data leaves its directory, since the card's
+/// partitions are its own; a one-partition card keeps them in [`directory`]`(session, VIDEOS)`.
+pub fn videos_partition_directory(session: &str) -> String {
+    let mut path = String::from(VIDEOS);
+    path.push('/');
+    push_session(&mut path, session);
+    path
+}
+
 /// Whether `label` may not name a session: it is one of [`RESERVED`] in any case. FAT folds case, so `Videos` would
 /// share the videos directory on a one-partition card, and on a two-partition card make a directory beside the mount
 /// point that the board's HTTP listing names twice.
@@ -96,15 +108,9 @@ pub fn is_reserved(label: &str) -> bool {
 
 /// Appends `session`'s `kind` directory to `path`.
 fn push_directory(path: &mut String, session: &str, kind: &str) {
-    if kind == VIDEOS {
-        path.push_str(VIDEOS);
-        path.push('/');
-        push_session(path, session);
-    } else {
-        push_session(path, session);
-        path.push('/');
-        path.push_str(kind);
-    }
+    push_session(path, session);
+    path.push('/');
+    path.push_str(kind);
 }
 
 /// Appends `session`'s directory name to `path`: the session, after [`RESERVED_ESCAPE`] when it is reserved.
@@ -117,12 +123,21 @@ fn push_session(path: &mut String, session: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{GLOBAL_INDEX, RECORDINGS, VIDEOS, directory, file_path, is_reserved};
+    use super::{GLOBAL_INDEX, RECORDINGS, VIDEOS, directory, file_path, is_reserved, videos_partition_directory};
 
     #[test]
     fn each_kind_has_its_directory_and_the_index_its_place_at_the_root() {
         assert_eq!(directory("000276", RECORDINGS), "000276/recordings");
-        assert_eq!(directory("000276", VIDEOS), "videos/000276");
+        assert_eq!(
+            directory("000276", VIDEOS),
+            "000276/videos",
+            "session first: beside its recordings"
+        );
+        assert_eq!(
+            videos_partition_directory("000276"),
+            "videos/000276",
+            "a two-partition card's"
+        );
         assert_eq!(
             directory("flightday", "photos"),
             "flightday/photos",
@@ -144,7 +159,7 @@ mod tests {
         file_path(&mut path, "000276", RECORDINGS, "recorder.log");
         assert_eq!(path, "000276/recordings/recorder.log");
         file_path(&mut path, "000276", VIDEOS, "5321.h264");
-        assert_eq!(path, "videos/000276/5321.h264");
+        assert_eq!(path, "000276/videos/5321.h264");
         // negative: a kind named like a file is still a directory, never a file at the session's root
         file_path(&mut path, "000276", "session.csv", "x");
         assert_eq!(path, "000276/session.csv/x");
@@ -186,7 +201,8 @@ mod tests {
         assert_eq!(directory("Videos", RECORDINGS), "_Videos/recordings", "its case kept");
         assert_eq!(directory("recordings", RECORDINGS), "_recordings/recordings");
         assert_eq!(directory("video", "photos"), "_video/photos");
-        assert_eq!(directory("videos", VIDEOS), "videos/_videos");
+        assert_eq!(directory("videos", VIDEOS), "_videos/videos");
+        assert_eq!(videos_partition_directory("videos"), "videos/_videos");
         let mut path = String::new();
         file_path(&mut path, "videos", RECORDINGS, "videos_health.csv");
         assert_eq!(path, "_videos/recordings/videos_health.csv");

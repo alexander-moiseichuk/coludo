@@ -299,13 +299,10 @@ fn remove(relative: &str, session: &str) -> Result<String, String> {
         let (path, live) = (relative.to_ascii_lowercase(), live.to_ascii_lowercase());
         path == live || live.starts_with(&format!("{path}/")) || path.starts_with(&format!("{live}/"))
     };
-    for kind in [layout::RECORDINGS, layout::VIDEOS] {
-        let live = layout::directory(session, kind);
-        let live = if kind == layout::VIDEOS {
-            live
-        } else {
-            live.split('/').next().unwrap_or("").to_string()
-        };
+    // the session's own directory (its recordings and, on one partition, its videos) and a two-partition card's videos
+    let session_directory = layout::directory(session, layout::RECORDINGS);
+    let session_directory = session_directory.split('/').next().unwrap_or("").to_string();
+    for live in [session_directory, layout::videos_partition_directory(session)] {
         if related(&live) {
             return Err(format!(
                 "{relative} holds or is in this session's {live}, which is being written"

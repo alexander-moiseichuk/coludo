@@ -1021,6 +1021,14 @@ proven once. Neither is on the HITL path.
 **Proof**
 - Segments: a pad recording of over 10 minutes splits at the first IDR past each 5 minutes, every file decodes
   (`video_sei.py`), and a launch detected mid-file keeps that file to DONE.
+  - **Segments DONE (2026-10-11, the taster).** `video start segment=<s>` (300 by default, the flight's too): the
+    encode task pads the ring to the next 64 KB boundary at the first IDR past the segment and puts the IDR there;
+    the writer opens the next file when its tail reaches it, after reading the flight word again (a `*const u32`
+    to `status::FLIGHT`, `FlightWord::as_ptr`). The directory is copied at start (the caller's path is read during
+    the call only). `video stats` counts `segments`. A 20 s bench run: five files, the closed ones whole chunks,
+    each opening on an IDR, frame numbers continuous across them, ffmpeg 0 errors. A HITL flight with 20 s segments
+    and a 50 s pad: cuts at 37 and 57 s, the launch at 71 s, the third file (124 MB) ran to DONE at 183 s. The
+    10-minute pad run at the default 300 s is left to the field day's pad time.
 - Preview: the dashboard shows the taster's camera at 1 Hz, `bars` confirming the packing, byte order and colour
   range; a hand-shaken launch stops the preview.
 
@@ -1918,9 +1926,10 @@ and HTTP reads), 40 on a one-partition card's only volume; `CONFIG_FATFS_FS_LOCK
 
 ### 3.10 SD and flash file layout
 
-**Session first, on two partitions (operator, 2026-10-06; built to close M4).** Each session keeps its own
-directory, on both partitions: FAT does not like many files in one directory, and a damaged directory then costs
-one session, not the whole collection.
+**Session first, on one partition (operator, 2026-10-06; one partition from 2026-10-11, the HITL A/B below).** Each
+session keeps all its data in its own directory: FAT does not like many files in one directory, a damaged directory
+then costs one session, not the whole collection, and a session is pulled, listed and removed as one. A
+two-partition card still works: its videos go to its second partition.
 
 ```
 Partition 1, the recordings (mounted at /sdcard):
@@ -1933,15 +1942,17 @@ Partition 1, the recordings (mounted at /sdcard):
       000276_health.csv  000276_sequencer.csv  000276_flight.csv  …  000276_<task>_events.csv
       recorder.log                   this session's unrouted lines (the status line carries 'session': '000276')
       session.csv                    this session's index rows
+    videos/<start uptime ms>.h264    raw Annex-B, SEI per frame; on the pad a new file every 300 s (M7b)
     <kind>/                          later kinds slot in beside recordings/
-Partition 2, the videos (mounted at /sdcard/videos):
+A two-partition card's partition 2 (mounted at /sdcard/videos):
 /sdcard/videos/
-  000276/<start uptime ms>.h264      raw Annex-B, SEI per frame
+  000276/<start uptime ms>.h264      its videos, in place of 000276/videos/
 ```
 
 - **The session object.** One place maps (session, kind) to a directory, so no consumer builds a path:
   - recordings go to `/sdcard/<session>/recordings`;
-  - videos go to `/sdcard/videos/<session>`;
+  - videos go to `/sdcard/<session>/videos` (a two-partition card's to `/sdcard/videos/<session>`,
+    `layout::videos_partition_directory`);
   - any later kind goes to `/sdcard/<session>/<kind>`.
   The ring_saver asks it per block, with the session from the block header, because it also files earlier boots'
   blocks. The camera asks it with this boot's session. It is `crates/recorder` `layout` (`directory`, `file_path`,
@@ -2115,6 +2126,26 @@ Partition 2, the videos (mounted at /sdcard/videos):
     all its data in one directory, `<session>/recordings/`, `<session>/videos/`, `<session>/<kind>/`, so a session
     is pulled, listed and removed as one. That moves videos from `videos/<session>/` into the session's directory
     (`layout::directory`), and two-partition cards stay readable by the tools.
+  - **Done (2026-10-11), 3 HITL flights per layout** (`tools/hitl_partition_ab.sh`, `tools/partition_ab.py`): F15,
+    285 g, video through the flight, each card cleared first, the boards taking turns; the taster with AB58 (one
+    partition), 7F with 267D (two), both `--no-power` (7F's servo rail is off; the fins commanded as ever). Mean
+    [worst run]:
+
+    | | one partition (taster) | two partitions (7F) |
+    |---|---|---|
+    | control lateness max | 49 us [60] | 46 us [55] |
+    | overruns, dropped frames, unsaved at DONE | 0, 0, 0 | 0, 0, 0 |
+    | SD write max | 225 ms [266] | 136 ms [165] |
+    | SD busy | 42 % | 41 % |
+    | saver backlog over the flight, mean / peak | 30 / 126 KB | 29 / 89 KB |
+    | missed frames | 2.1 % [3.3] | 4.7 % [9.2] |
+
+    What the flight needs is the same on both: the control tick, nothing dropped, the saver caught up at DONE. Two
+    partitions trims the worst write and the backlog's peak, which the video ring (2 MB) and the flash ring absorb;
+    its missed frames are 7F's encoder (45 ms a frame under HITL against the taster's 38), not the card. Board, card
+    and camera stay confounded with the layout (the taster's breadboard is not to be touched). By the rule: **one
+    partition**, videos in `<session>/videos/`. 267D is re-prepared with `sd_prepare.sh --partitions 1` when the
+    operator has it out; until then 7F records to its second partition, as before.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
   partition 1. A session is `GET /sd/<session>/recordings/`, its videos `GET /sd/videos/<session>/`.
 - **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and

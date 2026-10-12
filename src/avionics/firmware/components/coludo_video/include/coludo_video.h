@@ -40,11 +40,16 @@ typedef struct {
     uint8_t encode_core;              /*!< core of the capture+encode task */
     uint8_t encode_priority;          /*!< FreeRTOS priority of the capture+encode task */
     uint8_t write_priority;           /*!< FreeRTOS priority of the SD writer task (same core) */
-    const char *path;                 /*!< output file, e.g. "/sdcard/v0001.h264"; truncated on start */
+    const char *path;                 /*!< the first file, <directory>/<start uptime ms>.h264, truncated on start; its
+                                           directory is copied, for the segments beside it (read only during the call) */
     uint8_t test_pattern;             /*!< 1: the sensor's colour bars instead of the image (pipeline check) */
     int8_t bayer;                     /*!< Bayer order for the ISP (0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR), -1: the driver's */
     uint32_t sensor_clock_hz;         /*!< the module's oscillator (0 = 25 MHz); sets the frame-rate stretch */
     uint8_t exposure_target;          /*!< the sensor AEC's mean linear luma, 8-bit (0: left as the registers hold it) */
+    uint16_t segment_seconds;         /*!< on the pad, a new file at the first IDR this long into a file (0: one file) */
+    const uint32_t *flight_word;      /*!< the board's flight word, read atomically (crates/sequencer Flight::pack: the
+                                           stage in bits 0-2, SETTING 1; launched bit 5): no cut once it leaves SETTING.
+                                           Lives as long as the board; NULL: never cut */
 } coludo_video_config_t;
 
 /** Counters since the last start; all monotonic, kept after stop. */
@@ -70,6 +75,7 @@ typedef struct {
     uint16_t red_gain_thousandths;    /*!< the white-balance trim's red gain x 1000 (1000 = none) */
     uint16_t blue_gain_thousandths;   /*!< the white-balance trim's blue gain x 1000 */
     uint32_t balance_errors;          /*!< trims the ISP refused */
+    uint32_t segments;                /*!< files the recording moved on to at a cut (0: still its first file) */
 } coludo_video_stats_t;
 
 /**

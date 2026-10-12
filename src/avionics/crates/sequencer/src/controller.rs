@@ -296,6 +296,12 @@ impl FlightWord {
         }
     }
 
+    /// The word's address, for a C reader that loads it atomically (the video recorder's segment cuts, which stop once
+    /// the board leaves SETTING): [`Flight::pack`]'s bits. Valid as long as the word, a static on the board.
+    pub fn as_ptr(&self) -> *const u32 {
+        self.word.as_ptr()
+    }
+
     /// The flight now: one load, so its stage, hold, arming and launch are of one moment.
     pub fn load(&self) -> Flight {
         // only Flight::pack reaches the word (new, FlightWriter::commit), so it always unpacks

@@ -18,7 +18,7 @@
 #
 # The board serves /sd/<path>: a file, or a directory as one `<name>;<bytes>` line per entry. The card is laid out
 # session first (crates/recorder layout.rs): the session's recordings in /sd/<session>/recordings/, its video in
-# /sd/videos/<session>/ (the videos partition on a two-partition card, a plain directory on a one-partition one),
+# /sd/<session>/videos/ (one partition, the layout) or /sd/videos/<session>/ (a two-partition card's partition 2),
 # the global index /sd/sessions.csv. A card the M4 firmware wrote keeps them in /sd/recordings/<session>/ and
 # /sd/video/<session>/ (or /sd/videos/<session>/), read when the session is not in the layout's place. A session in
 # both places is refused: the boot that ran when an M4 card's board was reflashed has its bulk in the old place and
@@ -141,7 +141,7 @@ trap 'rm -rf "$staging"' EXIT
 # every directory the session may have files in, with its listing now: the recordings and the video, each in the
 # layout's place first, then in an M4 card's
 declare -A first
-for directory in "$session/recordings" "recordings/$session" "videos/$session" "video/$session"; do
+for directory in "$session/recordings" "recordings/$session" "$session/videos" "videos/$session" "video/$session"; do
     first[$directory]=$(listing "$directory")
 done
 recordings_directory=''
@@ -156,7 +156,8 @@ done
         "session, so pull both by hand"
 recordings=${first[$recordings_directory]}
 videos_directory=''
-for directory in "videos/$session" "video/$session"; do
+# session first (one partition, the layout from 2026-10-11), then a two-partition card's partition, then an M4 card's
+for directory in "$session/videos" "videos/$session" "video/$session"; do
     [ -z "${first[$directory]}" ] || { videos_directory=$directory; break; }
 done
 

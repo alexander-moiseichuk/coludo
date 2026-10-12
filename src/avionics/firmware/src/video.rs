@@ -2,11 +2,13 @@
 //!
 //! The flight camera (components/coludo_video): OV5647 -> ISP -> H.264 hardware encoder -> raw Annex-B on the
 //! microSD, every frame stamped with the boot id and its uptime in an SEI NAL. Files go to
-//! `/sdcard/videos/<session>/<start uptime ms>.h264`, the directory crates/recorder's layout names for the session's
-//! videos: on a two-partition card the videos partition (mounted there), on a one-partition card a plain directory
-//! beside the session directories. A card whose videos partition is not mounted (it would not mount, or the table
-//! is unsound) records no video at all, rather than fill the recordings partition the ring_saver needs
-//! (sd::Layout::VideosFailed).
+//! `/sdcard/<session>/videos/<start uptime ms>.h264` (a two-partition card's to `/sdcard/videos/<session>/`, its
+//! second partition), and on the pad a recording moves on to a new file every
+//! [`Settings::segment_seconds`] (300 s for the flight's), bounding what one damaged file can cost; the file running
+//! when the board leaves SETTING runs on to the end (M7b, coludo_video.c). The directories are crates/recorder's
+//! layout's (`directory`, `videos_partition_directory`). A two-partition card whose videos partition is not mounted
+//! (it would not mount, or the table is unsound) records no video at all, rather than fill the recordings partition
+//! the ring_saver needs (sd::Layout::VideosFailed).
 //!
 //! **One owner, the `video` thread** (core 0, low priority, PSRAM stack), started only when the board config declares
 //! a camera and the card mounts ([`start`]). It is the only caller of `coludo_video_start` and `coludo_video_stop`,
@@ -93,6 +95,8 @@ pub struct Settings {
     pub bayer: i8,
     /// The sensor AEC's target: mean luma of the linear image, 8-bit (the ISP's gamma curve brightens it after).
     pub exposure_target: u8,
+    /// On the pad, a new file at the first IDR this many seconds into a file; 0 keeps one file.
+    pub segment_seconds: u16,
 }
 
 /// The flight setting, FHD@25 at 8 Mbit/s: what boot reserves the encoder for, and `video start`'s defaults
@@ -105,13 +109,14 @@ pub const FLIGHT: Settings = Settings {
     test_pattern: false,
     bayer: OV5647_BAYER,
     exposure_target: 48,
+    segment_seconds: 300,
 };
 
 /// Reserves the encoder for the flight setting at boot, while the internal heap is still whole (coludo_video.h,
 /// coludo_video_reserve): call it on the main task (core 0, where the encode task runs) before the ring threads start.
 pub fn reserve() -> anyhow::Result<()> {
     // the oscillator is the camera half's (0, the stock one): the encoder half never reads it
-    let config = configure(&FLIGHT, 0, 0, std::ptr::null_mut(), std::ptr::null());
+    let config = configure(&FLIGHT, 0, 0, std::ptr::null_mut(), std::ptr::null(), std::ptr::null());
     // SAFETY: the config outlives the call; only its encoder fields are read.
     sys::esp!(unsafe { sys::coludo_video_reserve(&config) })?;
     Ok(())
@@ -124,6 +129,7 @@ fn configure(
     boot_id: u32,
     i2c_bus: sys::i2c_master_bus_handle_t,
     path: *const std::ffi::c_char,
+    flight_word: *const u32,
 ) -> sys::coludo_video_config_t {
     sys::coludo_video_config_t {
         i2c_bus,
@@ -145,27 +151,51 @@ fn configure(
         bayer: settings.bayer,
         sensor_clock_hz: clock_hz,
         exposure_target: settings.exposure_target,
+        segment_seconds: settings.segment_seconds,
+        flight_word,
     }
 }
 
-/// Start recording; returns the file's path. Only the video thread calls it.
+/// Start recording; returns the first file's path. Only the video thread calls it.
+///
+/// Args:
+/// * `flight` - the flight word the recorder's segment cuts follow (none once the board leaves SETTING).
 ///
 /// Errors: the card's videos partition is not mounted (no video then, see the module notes), the directory would not
 /// be made, or the recorder would not start.
-fn start_recording(session: &str, boot_id: u32, camera: Camera, settings: &Settings) -> anyhow::Result<String> {
+fn start_recording(
+    session: &str,
+    boot_id: u32,
+    camera: Camera,
+    settings: &Settings,
+    flight: &'static FlightWord,
+) -> anyhow::Result<String> {
     anyhow::ensure!(
         sd::layout() != Some(sd::Layout::VideosFailed),
         "the card's videos partition is not mounted: no video, so the recordings partition stays the ring_saver's"
     );
     // SAFETY: a plain read of the monotonic timer.
     let uptime = unsafe { sys::esp_timer_get_time() } / 1000;
-    let directory = format!("{}/{}", sd::MOUNT, layout::directory(session, layout::VIDEOS));
+    // session first (one partition, the layout); a two-partition card's videos go to its second partition
+    let relative = if sd::videos_mounted() {
+        layout::videos_partition_directory(session)
+    } else {
+        layout::directory(session, layout::VIDEOS)
+    };
+    let directory = format!("{}/{relative}", sd::MOUNT);
     std::fs::create_dir_all(&directory)?;
     let path = format!("{directory}/{uptime}.h264");
     let c_path = std::ffi::CString::new(path.clone())?;
-    let config = configure(settings, camera.clock_hz, boot_id, i2c::port0()?, c_path.as_ptr());
-    // SAFETY: the config and the path outlive the call (the recorder copies what it keeps); the video thread is the
-    // only caller, so no start or stop overlaps it.
+    let config = configure(
+        settings,
+        camera.clock_hz,
+        boot_id,
+        i2c::port0()?,
+        c_path.as_ptr(),
+        flight.as_ptr(),
+    );
+    // SAFETY: the config and the path outlive the call (the recorder copies what it keeps), the flight word is a static;
+    // the video thread is the only caller, so no start or stop overlaps it.
     sys::esp!(unsafe { sys::coludo_video_start(&config) })?;
     Ok(path)
 }
@@ -231,6 +261,12 @@ const START_PARAMETERS: &[Parameter] = &[
         kind: Kind::Integer { low: 16, high: 160 },
         default: Some("48"),
         about: "auto-exposure target, mean linear luma 0..255 (BT.709 gamma makes 48 a mid-grey ~107); stock 84 clips whites",
+    },
+    Parameter {
+        name: "segment",
+        kind: Kind::Integer { low: 0, high: 3600 },
+        default: Some("300"),
+        about: "on the pad, a new file at the first IDR this many seconds into a file; 0 keeps one file",
     },
 ];
 
@@ -409,7 +445,7 @@ impl VideoThread {
         if let Some((_, path)) = self.stop_running(false) {
             log::info!("video :: on the rod: the operator's recording {path} stopped for the flight's");
         }
-        match start_recording(&self.session, self.boot_id, self.camera, &FLIGHT) {
+        match start_recording(&self.session, self.boot_id, self.camera, &FLIGHT, self.flight) {
             Ok(path) => {
                 log::info!("video :: on the rod: the flight recording {path}");
                 self.recording = Some((Owner::Flight, path));
@@ -453,7 +489,7 @@ impl VideoThread {
         if let Some(refusal) = sequencer::video::start_refused(self.flight.load(), self.owner()) {
             return refused(refusal);
         }
-        match start_recording(&self.session, self.boot_id, self.camera, settings) {
+        match start_recording(&self.session, self.boot_id, self.camera, settings, self.flight) {
             Ok(path) => {
                 let answer = cc_protocol::build("ok", &["video", &path], &[]);
                 self.recording = Some((Owner::Operator, path));
@@ -532,7 +568,7 @@ fn register_commands(orders: SyncSender<Posted>) {
         Command {
             owner: "camera",
             words: "video start",
-            about: "record to /sdcard/videos/<session>/<start uptime ms>.h264, each frame stamped (tools/video_sei.py)",
+            about: "record to /sdcard/<session>/videos/<start uptime ms>.h264, each frame stamped (tools/video_sei.py)",
             gate: Gate::Setting,
             reach: Reach::Everywhere,
             parameters: START_PARAMETERS,
@@ -549,6 +585,7 @@ fn register_commands(orders: SyncSender<Posted>) {
                     test_pattern: arguments.word("bars"),
                     bayer: arguments.integer("bayer") as i8,
                     exposure_target: arguments.integer("ae") as u8,
+                    segment_seconds: arguments.integer("segment") as u16,
                 };
                 ask(&orders, Order::Start(settings))
             }),
@@ -626,6 +663,8 @@ fn counters(state: &str) -> String {
             format!("{:.3}", counters.blue_gain_thousandths as f32 / 1000.0),
         ),
         ("balance_errors", counters.balance_errors.to_string()),
+        // the files it moved on to at the pad's cuts (M7b)
+        ("segments", counters.segments.to_string()),
     ];
     let named: Vec<(&str, &str)> = values.iter().map(|(key, value)| (*key, value.as_str())).collect();
     cc_protocol::build("ok", &["video", state], &named)

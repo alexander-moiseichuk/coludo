@@ -35,8 +35,10 @@ for run in $(seq 1 "$runs"); do
       # shellcheck disable=SC2086 # HITL_FLAGS is a list of flags
       python3 -u "$ROOT/tools/hitl_host.py" --ip "$ip" --hub "$board" --serial "$serial" --motor F15 --glider-g 285 \
         --video --clean ${HITL_FLAGS:-} >"$d/host.log" 2>&1 || true
-      grep -q '^ARM REFUSED' "$d/host.log" || break
-      echo "  $board run $run: arm refused on attempt $attempt ($(grep -m1 '^ARM REFUSED' "$d/host.log" | cut -c1-120))"
+      # a refused arm, or a camera that would not open that boot (seen once on the taster): no run to compare
+      grep -qE '^(ARM REFUSED|VIDEO START err)' "$d/host.log" || break
+      echo "  $board run $run: attempt $attempt failed ($(grep -m1 -E '^(ARM REFUSED|VIDEO START err)' "$d/host.log" |
+        cut -c1-120))"
     done
     if ! grep -qE '^(DONE|TIMEOUT)' "$d/host.log"; then
       # a board that did not come back from the HITL reboot (its C6 link once failed at boot): reset it by its serial

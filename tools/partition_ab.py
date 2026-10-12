@@ -129,7 +129,12 @@ def main() -> int:
         with open(os.path.join(run, 'host.log')) as host, open(os.path.join(run, 'recorder.log'),
                                                                errors='replace') as recorder:
             board = os.path.basename(os.path.normpath(run)).rsplit('_', 1)[0]
-            rows.append(row(board, host.read(), recorder.read()))
+            entry = row(board, host.read(), recorder.read())
+        # a run with no video (the camera would not open that boot) carries no card load to compare: said, left out
+        if entry['captured'] == 0:
+            print('left out: %s (%s) recorded no video' % (run, entry['session']))
+            continue
+        rows.append(entry)
     with open(os.path.join(args.out, 'runs.csv'), 'w') as stream:
         stream.write(';'.join(_COLUMNS) + '\n')
         for entry in rows:

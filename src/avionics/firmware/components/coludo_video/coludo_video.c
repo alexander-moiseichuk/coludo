@@ -15,6 +15,14 @@
  * The CPU touches the YUV frame only through a cache write-back call; it copies the bitstream (~40 KB
  * per frame at 8 Mbit/s) once, into the ring.
  *
+ * Segments (M7b): on the pad a recording moves on to a new file every config->segment_seconds, bounding what one
+ * damaged file can cost; once the board leaves SETTING the file runs on to the end, so a switch never happens in the
+ * air. The cut is in band: at the first IDR at or past the segment's length, the encode task pads the ring with zeros
+ * up to the next chunk boundary and puts the IDR there, so the old file ends padded to a whole chunk (tools/video_sei.py
+ * strips the padding) and the new one begins chunk-aligned, its writes still whole aligned chunks. The writer moves on
+ * when its tail reaches that boundary, after reading the flight word again: a board that left SETTING meanwhile keeps
+ * the old file, the padding then zero bytes between two access units, which an Annex-B stream allows.
+ *
  * The pipeline is opened by the first recording and then kept: the encoder's reference buffer must be one contiguous
  * block of INTERNAL RAM, and after a recording (or ~40 s of Wi-Fi traffic) the internal heap no longer has one (the
  * taster's second start failed "No memory for reference frame" with 271 KB free, largest block 75 KB). A stop is
@@ -30,6 +38,7 @@
  * a BT.709 gamma curve. Exposure and white balance are the sensor's own (coludo_ov5647.c).
  */
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -86,6 +95,12 @@
  * settled at R 0.94 / B 0.91), so a scene that fools it cannot push the colours far. */
 #define _BALANCE_GAIN_MIN               0.7f
 #define _BALANCE_GAIN_MAX               1.4f
+/* The flight word (crates/sequencer Flight::pack): the stage id in bits 0-2, SETTING 1, and `launched` in bit 5 */
+#define _FLIGHT_STAGE_BITS              0x7u
+#define _FLIGHT_STAGE_SETTING           1u
+#define _FLIGHT_LAUNCHED_BIT            (1u << 5)
+/** A segment's file name: its start uptime in ms, up to 20 digits, ".h264" and the terminator, after the directory. */
+#define _SEGMENT_NAME_BYTES             32
 
 static const char *TAG = "coludo_video";
 
@@ -124,6 +139,11 @@ typedef struct {
     atomic_uint_least32_t ring_head;                /*!< bytes produced, modulo 2^32 */
     atomic_uint_least32_t ring_tail;                /*!< bytes consumed, modulo 2^32 */
     int file;
+    char *directory;                                /*!< the files' directory, copied from config.path (PSRAM) */
+    int64_t segment_started_microseconds;           /*!< the running file's first frame (encode task only) */
+    uint32_t cut_position;                          /*!< the ring position the next file starts at (chunk-aligned) */
+    uint32_t cut_name_milliseconds;                 /*!< the next file's name: its first frame's uptime */
+    atomic_bool cut_pending;                        /*!< a cut placed, the writer not yet past it (set after the two) */
     TaskHandle_t write_task;
     SemaphoreHandle_t finished;                     /*!< given once by each task when it exits */
     SemaphoreHandle_t started;                      /*!< given by the encode task once the pipeline is up (or failed) */
@@ -200,26 +220,50 @@ static void _ring_copy(_recorder_t *recorder, uint32_t position, const uint8_t *
     memcpy(recorder->ring, source + first, bytes - first);
 }
 
-/** Puts [AUD/SPS/PPS][SEI][slice] into the ring; drops the frame (and forces an IDR) if it does not fit. */
-static void _put_access_unit(_recorder_t *recorder, const esp_h264_enc_out_frame_t *out, uint32_t frame, int64_t uptime_microseconds)
+/** Whether the board is on the pad: the flight word in SETTING and never launched; false with no word. */
+static bool _on_pad(const _recorder_t *recorder)
+{
+    if (recorder->config.flight_word == NULL) {
+        return false;
+    }
+    uint32_t word = __atomic_load_n(recorder->config.flight_word, __ATOMIC_ACQUIRE);
+    return (word & _FLIGHT_STAGE_BITS) == _FLIGHT_STAGE_SETTING && (word & _FLIGHT_LAUNCHED_BIT) == 0;
+}
+
+/**
+ * Puts [AUD/SPS/PPS][SEI][slice] into the ring; drops the frame (and forces an IDR) if it does not fit. With `cut` (an
+ * IDR, see the top of this file), zeros first up to the next chunk boundary, and the access unit there: the next file's
+ * start, for the writer. Returns whether the cut was placed (a dropped frame places none: the next IDR tries again).
+ */
+static bool _put_access_unit(_recorder_t *recorder, const esp_h264_enc_out_frame_t *out, uint32_t frame,
+                             int64_t uptime_microseconds, bool cut)
 {
     uint8_t sei[_SEI_BYTES_MAX];
     size_t sei_bytes = _build_sei(sei, recorder->config.boot_id, frame, uptime_microseconds, _stats.frames_missed);
     uint32_t split = _first_slice_offset(out->raw_data.buffer, out->length);
-    uint32_t total = out->length + sei_bytes;
     uint32_t head = atomic_load(&recorder->ring_head);
+    uint32_t pad = cut ? (_CHUNK_BYTES - head % _CHUNK_BYTES) % _CHUNK_BYTES : 0;
+    uint32_t total = pad + out->length + sei_bytes;
     uint32_t used = head - atomic_load(&recorder->ring_tail);
     if (total > recorder->ring_bytes - used) {
         esp_h264_enc_force_idr(&_pipeline.encoder_parameters->base);
         portENTER_CRITICAL(&_stats_lock);
         _stats.frames_dropped++;
         portEXIT_CRITICAL(&_stats_lock);
-        return;
+        return false;
+    }
+    if (cut) {
+        /* the ring is whole chunks, so the padding up to a chunk boundary never wraps */
+        memset(recorder->ring + head % recorder->ring_bytes, 0, pad);
+        head += pad;
+        recorder->cut_position = head;
+        recorder->cut_name_milliseconds = (uint32_t)(uptime_microseconds / 1000);
+        atomic_store(&recorder->cut_pending, true);  /* before the head moves past it: the writer sees both */
     }
     _ring_copy(recorder, head, out->raw_data.buffer, split);
     _ring_copy(recorder, head + split, sei, sei_bytes);
     _ring_copy(recorder, head + split + sei_bytes, out->raw_data.buffer + split, out->length - split);
-    atomic_store(&recorder->ring_head, head + total);
+    atomic_store(&recorder->ring_head, head + total - pad);
     xTaskNotifyGive(recorder->write_task);
     portENTER_CRITICAL(&_stats_lock);
     _stats.frames_encoded++;
@@ -227,6 +271,7 @@ static void _put_access_unit(_recorder_t *recorder, const esp_h264_enc_out_frame
     _stats.bytes_encoded += total;
     _stats.ring_used_max = MAX(_stats.ring_used_max, used + total);
     portEXIT_CRITICAL(&_stats_lock);
+    return cut;
 }
 
 /** Grey-world evidence from one captured frame: sums over its mid-tone samples (U and V offset from 128). */
@@ -362,6 +407,9 @@ static void _encode_loop(void *argument)
             frame += missed + 1;
         }
         previous_microseconds = uptime_microseconds;
+        if (recorder->segment_started_microseconds == 0) {
+            recorder->segment_started_microseconds = uptime_microseconds;
+        }
 
         esp_h264_err_t result = ESP_H264_ERR_FAIL;
         esp_h264_enc_out_frame_t out = {
@@ -398,7 +446,14 @@ static void _encode_loop(void *argument)
         _stats.encode_microseconds_total += encode_microseconds;
         portEXIT_CRITICAL(&_stats_lock);
         if (result == ESP_H264_ERR_OK) {
-            _put_access_unit(recorder, &out, frame, uptime_microseconds);
+            /* the first IDR at or past the segment's length, on the pad, one cut at a time */
+            bool cut = out.frame_type == ESP_H264_FRAME_TYPE_IDR && recorder->config.segment_seconds > 0 &&
+                       uptime_microseconds - recorder->segment_started_microseconds >=
+                           (int64_t)recorder->config.segment_seconds * 1000000 &&
+                       !atomic_load(&recorder->cut_pending) && _on_pad(recorder);
+            if (_put_access_unit(recorder, &out, frame, uptime_microseconds, cut)) {
+                recorder->segment_started_microseconds = uptime_microseconds;
+            }
         }
         /* any encoder error already made the next frame an IDR (esp_h264 >= 1.3.8) */
     }
@@ -436,6 +491,42 @@ static void _sync(_recorder_t *recorder)
     portEXIT_CRITICAL(&_stats_lock);
 }
 
+/**
+ * The writer at a cut (see the top of this file): every byte before it is in the old file. On the pad still, the next
+ * file opens, then the old one is fsync'ed and closed; a board that left SETTING meanwhile, or a file that would not
+ * open, keeps the old file running (the open failure counted and logged).
+ */
+static void _cut(_recorder_t *recorder)
+{
+    atomic_store(&recorder->cut_pending, false);
+    if (!_on_pad(recorder)) {
+        ESP_LOGI(TAG, "segment: the board left the pad, the file runs on");
+        return;
+    }
+    size_t bytes = strlen(recorder->directory) + 1 + _SEGMENT_NAME_BYTES;
+    char *path = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    int file = -1;
+    if (path != NULL) {
+        snprintf(path, bytes, "%s/%lu.h264", recorder->directory, (unsigned long)recorder->cut_name_milliseconds);
+        file = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    }
+    if (file < 0) {
+        ESP_LOGE(TAG, "segment: %s would not open, the file runs on", path != NULL ? path : "(no memory for its name)");
+        portENTER_CRITICAL(&_stats_lock);
+        _stats.write_errors++;
+        portEXIT_CRITICAL(&_stats_lock);
+    } else {
+        _sync(recorder);
+        close(recorder->file);
+        recorder->file = file;
+        ESP_LOGI(TAG, "segment: %s", path);
+        portENTER_CRITICAL(&_stats_lock);
+        _stats.segments++;
+        portEXIT_CRITICAL(&_stats_lock);
+    }
+    heap_caps_free(path);
+}
+
 static void _write_loop(void *argument)
 {
     _recorder_t *recorder = argument;
@@ -448,6 +539,12 @@ static void _write_loop(void *argument)
         uint32_t tail = atomic_load(&recorder->ring_tail);
         uint32_t head = atomic_load(&recorder->ring_head);
         while (head - tail >= _CHUNK_BYTES) {
+            /* a cut sits on a chunk boundary and the tail moves whole chunks from 0, so it meets it exactly */
+            if (atomic_load(&recorder->cut_pending) && tail == recorder->cut_position) {
+                _cut(recorder);
+                synced_microseconds = esp_timer_get_time();
+                unsynced = false;
+            }
             _write_out(recorder, tail, _CHUNK_BYTES);
             tail += _CHUNK_BYTES;
             atomic_store(&recorder->ring_tail, tail);
@@ -755,6 +852,7 @@ static void _release(_recorder_t *recorder)
     }
     heap_caps_free(recorder->frame);
     heap_caps_free(recorder->ring);
+    heap_caps_free(recorder->directory);
     heap_caps_free(recorder);
 }
 
@@ -770,13 +868,23 @@ esp_err_t coludo_video_start(const coludo_video_config_t *config)
     _recorder_t *recorder = heap_caps_calloc(1, sizeof(_recorder_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     ESP_RETURN_ON_FALSE(recorder != NULL, ESP_ERR_NO_MEM, TAG, "recorder");
     recorder->config = *config;
+    recorder->config.path = NULL;  /* the caller's: read during this call only, its directory copied below */
     recorder->ring_bytes = (config->ring_bytes + _CHUNK_BYTES - 1) / _CHUNK_BYTES * _CHUNK_BYTES;
     recorder->ring = heap_caps_aligned_alloc(_CHUNK_BYTES, recorder->ring_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     recorder->frame = heap_caps_calloc(1, config->frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_CACHE_ALIGNED | MALLOC_CAP_8BIT);
     recorder->finished = xSemaphoreCreateCounting(2, 0);
     recorder->started = xSemaphoreCreateBinary();
+    const char *slash = strrchr(config->path, '/');
+    size_t directory_bytes = slash != NULL ? (size_t)(slash - config->path) : 1;
+    recorder->directory = heap_caps_malloc(directory_bytes + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     ESP_GOTO_ON_FALSE(recorder->ring != NULL && recorder->frame != NULL && recorder->finished != NULL &&
-                      recorder->started != NULL, ESP_ERR_NO_MEM, fail, TAG, "buffers");
+                      recorder->started != NULL && recorder->directory != NULL, ESP_ERR_NO_MEM, fail, TAG, "buffers");
+    if (slash != NULL) {
+        memcpy(recorder->directory, config->path, directory_bytes);
+        recorder->directory[directory_bytes] = '\0';
+    } else {
+        strcpy(recorder->directory, ".");
+    }
 
     recorder->file = open(config->path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     ESP_GOTO_ON_FALSE(recorder->file >= 0, ESP_FAIL, fail, TAG, "open %s", config->path);
