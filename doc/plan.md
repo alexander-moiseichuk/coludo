@@ -60,6 +60,20 @@ Required hardware and the phased development roadmap. Architecture lives in
   the TMS-7 flight envelope + airframe notes in `coludo.md`. Bench re-run + numbers refreshed.
 - **Phase 5 — field testing (next).** Staged ladder: maket walk-test → telemetry launch → powered
   launch, likely on the wider **TMS-8** airframe. See below.
+- **Phase 6 — the Rust avionics (`src/avionics`, branch `lmoiseichuk/phase6_rustification`).** The flight firmware
+  leaves MicroPython: plan B (`src/glider`, frozen at tag `micropython_plan_B_2`) ported to Rust on the same board,
+  milestone by milestone, against golden vectors and plan B's own code (the plan and every milestone's status:
+  [`specs/avionics-port.md`](specs/avionics-port.md)). As of 2026-10-12:
+  - **Done:** M1-M15 and M18-M21. The CC surface, config, the flash ring with its savers, buses and sensors (every
+    plan B part but the retired ADXL375), the stage machine, the warm start, the attitude filter, GNSS, DONE with
+    its beacon, HITL over the UDP sim-link, active control, and the HITL matrix against plan B (24 of 24 board
+    flights, 72 of 72 SITL). Also firmware OTA over the console, the separate C6 flight recorder with its own
+    beacon ([`flight_recorder.md`](flight_recorder.md)), and the entry file. Both boards (the taster, TMS-7F) run
+    it; `tools/cc_contract.py <board> --milestone M21` answers 0 violations.
+  - **Open:** M16 (the NEO-M8N's UBX, waits for the part); Q19's step 2 of the warm start (drop the age and
+    power-on refusals), which waits for the golden tag to move; the 7C proofs (a rail power cycle restoring the
+    BNO055 profile, a hand rotation on the BNO055 alone); the field-day checks
+    ([`field_checks.md`](field_checks.md): a real GNSS fix, the beacons' range, the batteries' time).
 - **Firmware / toolchain — the board runs `v1.29.0` OFFICIAL** (moved off `preview.414.g533a154c8a`
   on 2026-09-04; the full board suite is **57/57** on it, no delta). The repo `mpy-cross` is still
   `preview.417` and stays there deliberately: the contract between compiler and runtime is the **mpy
