@@ -117,6 +117,10 @@ def hitl_config(saved: dict, not_ported: set, args: argparse.Namespace) -> dict:
                 continue
             if entry.get('name') in _OFF:
                 entry['enabled'] = False
+            # a board whose servo rail is off (7F in its airframe, the operator 2026-10-11): the fins are still
+            # commanded and recorded (degrees, steps), but with no power reading arm's probe passes open-loop
+            if getattr(args, 'no_power', False) and entry.get('driver') == 'ina226':
+                entry['enabled'] = False
             kept.append(entry)
         if key in hitl:
             hitl[key] = kept
@@ -494,6 +498,10 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--keep-config', action='store_true', help='leave the HITL config installed')
     parser.add_argument('--clean', action='store_true', help='clear the card after the reboot: every session but '
                         'the run\'s own goes, for good (tools/board_clean.py)')
+    parser.add_argument('--video-segment', type=int, help='--video: its segment length in s (the board\'s 300 '
+                        'when not given); a short one on a --pad-dwell-s pad shows the cuts stop at the launch')
+    parser.add_argument('--no-power', action='store_true', help='disable the INA226: the fins are commanded and '
+                        'recorded as ever, arm\'s servo probe passes open-loop (a board whose servo rail is off)')
     parser.add_argument('--video', action='store_true', help='record video through the flight: `video start` '
                         'before the arm (the rod trigger never fires in HITL: no dwell, the sim\'s boost axis)')
     parser.add_argument('--sitl', help='fly the SITL binary at this path instead of a board: lockstep, no CC')
@@ -556,6 +564,18 @@ def main() -> int:
     board = _Board(transport)
     saved = board.ask('get-config saved')[1]
     launch = board.ask('get-config launch')[1]
+    # the board's own configs, on the host until the restore: a run that dies before it (a board that does not come
+    # back from the HITL reboot) leaves the HITL copy saved, and the next run takes the originals from here
+    backup = os.path.join(tempfile.gettempdir(), 'coludo_hitl_saved_%s.json' % (args.hub or args.ip))
+    if any(entry.get('activity') == 'hitl' for entry in saved.get('components', [])):
+        if not os.path.exists(backup):
+            raise SystemExit('the saved config is a HITL copy (a run never restored it) and %s is missing' % backup)
+        with open(backup) as stream:
+            saved, launch = (json.load(stream)[key] for key in ('board', 'launch'))
+        print('RESTORING the configs a run left unrestored, from %s' % backup)
+    else:
+        with open(backup, 'w') as stream:
+            json.dump({'board': saved, 'launch': launch}, stream)
     problems = board.ask('verify')[1].get('problems', {})
     not_ported = {name for name, line in problems.items() if 'not ported yet' in str(line)}
     status, answer = board.ask(cc.build('set-config', ['board', json.dumps(hitl_config(saved, not_ported, args))]))
@@ -578,7 +598,8 @@ def main() -> int:
             removed = board_clean.clean(board, whoami.get('session'))
             print('CLEANED %d %s' % (len(removed), board.raw('df')))
         if args.video:
-            print('VIDEO START %s' % board.raw('video start'))
+            segment = '' if args.video_segment is None else ' segment=%d' % args.video_segment
+            print('VIDEO START %s' % board.raw('video start' + segment))
         flyer = threading.Thread(target=sim.run, daemon=True)
         flyer.start()
         status, armed = board.ask('arm')
