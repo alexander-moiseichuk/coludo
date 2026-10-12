@@ -108,6 +108,16 @@ pub const UNIX_SECONDS_AT_2000: i64 = 946_684_800;
 /// it read about 0 m aloft and an ICP outage handed the landing check the ground.
 pub const REBASED_BAROS: [&str; 3] = ["icp10111", "bmp280", "bmp581"];
 
+/// The rebased barometers whose own pad ground a crumb carries ([`Identity::grounds_m`]): one per driver in
+/// [`REBASED_BAROS`].
+pub const GROUND_SLOTS: usize = REBASED_BAROS.len();
+
+/// A flight's warm starts after which the next recovers DISARMED (the port's own, with no plan B counterpart): the
+/// law and the fins stay off, the stage machine still walks the flight to DONE and its beacon. A crash that returns
+/// every boot (a fault in the law, the fins, or what they read) would otherwise reset the board over and over in the
+/// air; a cold boot mid-air instead would never reach DONE, so nothing would beacon.
+pub const WARM_CAP: u32 = 3;
+
 /// The latitude limit in degrees, either side of the equator: a crumb coordinate past it reads as absent. f64, as
 /// the JSON number it is checked against (the boundary decision D18 allows).
 const LATITUDE_LIMIT: f64 = 90.0;
@@ -159,12 +169,23 @@ pub struct Identity {
     /// dynamic pressure still holding the interior-static bias, and the fin governor caps off that airspeed.
     /// 0.0 is a real tare (a perfectly zeroed pitot), never "none": plan B once dropped it as falsy.
     pub pitot_zero_pa: Option<f32>,
+    /// Each rebased barometer's own ground in metres at BOOSTING entry (`grounds`, the port's own), in the config
+    /// order of [`REBASED_BAROS`] drivers; None for one that published none. A warm start puts each back, where plan
+    /// B gave every one the pad altitude: a backup barometer carries its offset from the primary (5.3 m on TMS-7F),
+    /// so its elevation read that much off after a warm start.
+    pub grounds_m: [Option<f32>; GROUND_SLOTS],
+    /// The flight's warm starts so far (`warm_starts`, the port's own): [`WARM_CAP`] decides the arming.
+    pub warm_starts: u32,
 }
 
 impl Identity {
-    /// Nothing frozen yet (plan B's empty `_static`): the next BOOSTING entry captures afresh.
+    /// Nothing frozen yet (plan B's empty `_static`): the next BOOSTING entry captures afresh. The warm-start count
+    /// is no frozen value: a flight that warm-started with nothing frozen still freezes at BOOSTING.
     pub fn is_empty(&self) -> bool {
-        *self == Identity::default()
+        Identity {
+            warm_starts: 0,
+            ..*self
+        } == Identity::default()
     }
 }
 
@@ -212,6 +233,12 @@ struct Written {
     /// `pitot_zero`, pascals.
     #[serde(skip_serializing_if = "Option::is_none")]
     pitot_zero: Option<f32>,
+    /// `grounds`, metres: the rebased barometers' own grounds, up to the last one known (the port's own).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    grounds: Option<Vec<Option<f32>>>,
+    /// `warm_starts`, the flight's warm starts so far (the port's own), written from the first.
+    #[serde(skip_serializing_if = "is_zero")]
+    warm_starts: u32,
     /// `stage`, the id.
     stage: Option<i32>,
     /// `armed`.
@@ -247,6 +274,10 @@ impl Crumb {
                 zone: zone(member("zone")),
                 pad_altitude_m: number(member("pad_altitude")),
                 pitot_zero_pa: number(member("pitot_zero")),
+                grounds_m: grounds(member("grounds")),
+                warm_starts: member("warm_starts")
+                    .as_u64()
+                    .map_or(0, |count| u32::try_from(count).unwrap_or(u32::MAX)),
             },
         })
     }
@@ -259,6 +290,12 @@ impl Crumb {
             zone: identity.zone.map(|[first, second]| [first.degrees(), second.degrees()]),
             pad_altitude: identity.pad_altitude_m,
             pitot_zero: identity.pitot_zero_pa,
+            grounds: identity
+                .grounds_m
+                .iter()
+                .rposition(Option::is_some)
+                .map(|last| identity.grounds_m[..=last].to_vec()),
+            warm_starts: identity.warm_starts,
             stage: self.stage,
             armed: self.armed,
             altitude: self.altitude_m,
@@ -269,6 +306,22 @@ impl Crumb {
         };
         serde_json::to_string(&written).expect("a crumb always serializes")
     }
+}
+
+/// Serde's skip test for a zero count.
+fn is_zero(count: &u32) -> bool {
+    *count == 0
+}
+
+/// The `grounds` list, each a number or null, up to [`GROUND_SLOTS`]; all absent for any other shape.
+fn grounds(value: &Value) -> [Option<f32>; GROUND_SLOTS] {
+    let mut grounds = [None; GROUND_SLOTS];
+    if let Some(list) = value.as_array() {
+        for (slot, item) in grounds.iter_mut().zip(list) {
+            *slot = number(item);
+        }
+    }
+    grounds
 }
 
 /// A JSON number as f32, absent for anything else (or for a number past f32's range).
@@ -577,13 +630,23 @@ pub fn should_restore(crumb: Option<&Crumb>, separated: bool, reset: ResetReason
     (true, Reason::Recover { stage, age_s })
 }
 
-/// The baros a warm start rebases, and the pad altitude it rebases them to.
+/// The baros a warm start rebases, and the grounds it rebases them to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rebase {
-    /// The pad altitude in metres, each baro's new ground (plan B `update({'ground': pad_altitude})`).
+    /// The pad altitude in metres, a baro's new ground when the crumb carries none of its own (plan B
+    /// `update({'ground': pad_altitude})`, for every baro).
     pub ground_m: f32,
     /// The config names of the sensors whose driver is in [`REBASED_BAROS`], in config order.
     pub baros: Vec<String>,
+    /// Their own grounds, by the same order ([`Identity::grounds_m`]).
+    pub grounds_m: [Option<f32>; GROUND_SLOTS],
+}
+
+impl Rebase {
+    /// The ground of the `index`-th baro of [`Rebase::baros`]: its own, else the pad altitude.
+    pub fn ground_of(&self, index: usize) -> f32 {
+        self.grounds_m.get(index).copied().flatten().unwrap_or(self.ground_m)
+    }
 }
 
 /// What a passed gate restores (plan B `_apply_restore`), as data. The firmware's `warm.rs` applies it before any
@@ -611,8 +674,11 @@ pub struct ApplyPlan {
     pub identity: Identity,
     /// The SAVED stage; the detectors re-evaluate from it.
     pub stage: Stage,
-    /// Re-arm: only an armed flight ever checkpoints, so this matches what was flying.
+    /// Re-arm: only an armed flight ever checkpoints, so this matches what was flying -- unless the flight has warm
+    /// started [`WARM_CAP`] times already ([`ApplyPlan::capped`]).
     pub armed: bool,
+    /// The crumb was armed, but past [`WARM_CAP`] warm starts this one recovers disarmed.
+    pub capped: bool,
 }
 
 impl ApplyPlan {
@@ -622,7 +688,12 @@ impl ApplyPlan {
     /// [`REBASED_BAROS`] are rebased.
     pub fn new<'a>(crumb: &Crumb, sensors: impl IntoIterator<Item = (&'a str, &'a str)>) -> Option<ApplyPlan> {
         let stage = flight_stage(crumb.stage?)?;
-        let identity = crumb.identity;
+        // this warm start counts, in the identity the next crumbs carry
+        let identity = Identity {
+            warm_starts: crumb.identity.warm_starts.saturating_add(1),
+            ..crumb.identity
+        };
+        let capped = crumb.armed && crumb.identity.warm_starts >= WARM_CAP;
         Some(ApplyPlan {
             mission: identity.launch.zip(identity.zone),
             rebase: identity.pad_altitude_m.map(|ground_m| Rebase {
@@ -632,12 +703,14 @@ impl ApplyPlan {
                     .filter(|(_name, driver)| REBASED_BAROS.contains(driver))
                     .map(|(name, _driver)| name.to_owned())
                     .collect(),
+                grounds_m: identity.grounds_m,
             }),
             pitot_zero_pa: identity.pitot_zero_pa,
             airspeed_ms: crumb.airspeed_ms,
             identity,
             stage,
-            armed: crumb.armed,
+            armed: crumb.armed && !capped,
+            capped,
         })
     }
 
@@ -749,6 +822,9 @@ pub struct Freeze {
     pub fresh_altitude_m: Option<f32>,
     /// The pitot's tare in pascals, None without a pitot.
     pub pitot_zero_pa: Option<f32>,
+    /// Each rebased barometer's own ground in metres, in the config order of [`REBASED_BAROS`] drivers; None for
+    /// one with no fresh altitude and elevation.
+    pub grounds_m: [Option<f32>; GROUND_SLOTS],
 }
 
 /// The live values a checkpoint records (plan B `_checkpoint`); each absent when its source is stale.
@@ -874,6 +950,7 @@ impl Checkpoint {
         }
         identity.pad_altitude_m = self.pad_m.or(inputs.fresh_altitude_m);
         identity.pitot_zero_pa = inputs.pitot_zero_pa;
+        identity.grounds_m = inputs.grounds_m;
         self.identity = identity;
     }
 
@@ -990,6 +1067,11 @@ impl Keeper {
     /// The NVS tallies since boot.
     pub fn counters(&self) -> Counters {
         self.counters
+    }
+
+    /// The recovery identity the crumbs carry now ([`Checkpoint::identity`]).
+    pub fn identity(&self) -> &Identity {
+        self.checkpoint.identity()
     }
 
     /// Carry a warm start's restored identity forward ([`Checkpoint::seed`]) and mark its crumb live, so the edge out

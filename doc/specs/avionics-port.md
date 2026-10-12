@@ -1263,7 +1263,9 @@ machine decides from every source; the video starts when the glider stands on th
   counted, its column and `inspect`'s `alerts`; on the taster at a 50 mA test limit one fin sweep counted 22 trips);
   per-barometer grounds
   in the crumb (both rebase to plan B's one `pad_altitude`, so the BMP581 carries the inter-baro offset, 5.3 m on
-  TMS-7F, after a warm start); M10 contract cases (done 2026-10-12 with M11-M21's: `tools/cc_contract.py <board>
+  TMS-7F, after a warm start; done 2026-10-12: the crumb's `grounds`, each barometer's altitude less its elevation
+  at BOOSTING entry, and a warm start rebases each to its own -- on the taster the ICP-10111, BMP581 and BMP280
+  grounds were -2.81, -12.90 and -21.10 m, which plan B put all at the pad's -2.77); M10 contract cases (done 2026-10-12 with M11-M21's: `tools/cc_contract.py <board>
   --milestone M21`, 0 violations on the taster and 7F).
 
 **Proof (2026-10-10, as measured on TMS-7F):**
@@ -1525,7 +1527,12 @@ before.
 **Settled from earlier milestones:** the airspeed seed (M8), the servo probe's closed-loop verdict (M10), `fins` in
 the readiness gate (M7), the complete `health.flight` (M11), the D term reading `rate` (carried from M6).
 **Still deferred:** a per-fin probe verdict on an INA3221 (one channel per
-servo; ordered); a cap on warm cycles and a BOOSTING crumb that already reads separated (M14); the fast warm boot
+servo; ordered). Done 2026-10-12: the cap on warm cycles (the crumb's `warm_starts`; past `WARM_CAP` 3 the next warm
+start recovers DISARMED -- the law and the fins off, the stage machine walking the flight to DONE and its beacon --
+where a cold boot mid-air would never reach DONE). Left as it is: a BOOSTING crumb whose latch already reads separated
+recovers into BOOSTING and the apogee detector moves it on; recovering straight into GLIDING would bypass the thrust
+gate (a contact that reads open under thrust would start the glide mid-boost). Q19's step 2 waits for the golden tag
+(`micropython_plan_B_2` no longer matches src/glider's sim_model.py, so no fixture regenerates); the fast warm boot
 (next: flight sensors and the control thread first, the camera and the Wi-Fi after them without blocking, operator
 2026-10-11).
 

@@ -230,6 +230,27 @@ pub fn restore(
     seed
 }
 
+/// Each of `baros`' own ground at `now_us`, by their order: its altitude less its elevation, from its own channels
+/// (a barometer pushes both from one conversion, so the difference is the ground it flew with). None for one with
+/// neither fresh; slots past [`warmstart::GROUND_SLOTS`] are dropped.
+fn own_grounds(
+    topology: &'static Topology,
+    baros: &[&'static str],
+    now_us: u64,
+) -> [Option<f32>; warmstart::GROUND_SLOTS] {
+    let fresh = |quantity: &str, name: &str| {
+        let parameter = topology.scalar(quantity)?;
+        parameter.channel(name)?.recent(parameter.window_us(), now_us)
+    };
+    let mut grounds = [None; warmstart::GROUND_SLOTS];
+    for (slot, name) in grounds.iter_mut().zip(baros) {
+        *slot = fresh("altitude", name)
+            .zip(fresh("elevation", name))
+            .map(|(altitude, elevation)| altitude - elevation);
+    }
+    grounds
+}
+
 /// The board config's sensors as (name, driver), in config order, enabled or not: plan B's restore walks
 /// `cfg['sensors']` for the barometers to rebase, and rebases those that came up.
 fn sensors(document: &Value) -> Vec<(&str, &str)> {
@@ -250,14 +271,14 @@ fn apply(plan: &ApplyPlan, mission: &mut Mission, members: &mut [Vec<Member>; 2]
         mission.update(&update);
     }
     if let Some(rebase) = &plan.rebase {
-        let ground = json!({"ground": rebase.ground_m});
         let now_us = uptime_us();
-        let rebased = members
-            .iter_mut()
-            .flatten()
-            .filter(|member| rebase.baros.iter().any(|name| name == member.name));
-        for member in rebased {
-            match member.part.update(None, &ground, now_us) {
+        for member in members.iter_mut().flatten() {
+            let Some(index) = rebase.baros.iter().position(|name| name == member.name) else {
+                continue;
+            };
+            // its own ground from the crumb, else the pad altitude (plan B's one ground for every barometer)
+            let ground_m = rebase.ground_of(index);
+            match member.part.update(None, &json!({"ground": ground_m}), now_us) {
                 Ok(changed) if changed.is_empty() => log::info!(
                     "warmstart :: {} not rebased to the pad: its driver publishes no elevation yet",
                     member.name
@@ -265,9 +286,13 @@ fn apply(plan: &ApplyPlan, mission: &mut Mission, members: &mut [Vec<Member>; 2]
                 // the ground it took, every digit: its setup's own re-zero lands within the baro's noise of the pad,
                 // so only this line tells the rebase happened
                 Ok(_) => log::info!(
-                    "warmstart :: {} rebased to the pad: ground {} m",
+                    "warmstart :: {} rebased to the pad: ground {ground_m} m{}",
                     member.name,
-                    rebase.ground_m
+                    if rebase.grounds_m.get(index).copied().flatten().is_some() {
+                        " (its own)"
+                    } else {
+                        ""
+                    }
                 ),
                 Err(refusal) => log::warn!("warmstart :: {} refused the pad as its ground: {refusal}", member.name),
             }
@@ -297,7 +322,17 @@ fn apply(plan: &ApplyPlan, mission: &mut Mission, members: &mut [Vec<Member>; 2]
     }
     WARM_STARTED.store(true, Ordering::Relaxed);
     let armed = if plan.armed { ", armed" } else { "" };
-    log::info!("warmstart :: WARM START -> {stage}{armed}");
+    log::info!(
+        "warmstart :: WARM START -> {stage}{armed} (warm start {} of this flight)",
+        plan.identity.warm_starts
+    );
+    if plan.capped {
+        log::warn!(
+            "warmstart :: past {} warm starts this flight: recovered DISARMED -- the law and the fins stay off, the \
+             stage machine walks the flight to DONE",
+            warmstart::WARM_CAP
+        );
+    }
 }
 
 /// Whether this boot is a stall restart's own warm start, warm after a software reset: the supervisor then restarts
@@ -356,6 +391,13 @@ static RETRIES: AtomicU32 = AtomicU32::new(0);
 /// The longest pass that tried an NVS action, from the flight word's load to the action's answer, µs.
 static SAVE_MAX_US: AtomicU32 = AtomicU32::new(0);
 
+/// The rebased barometers' names in config order, the [`Identity::grounds_m`] slots' (set when the keeper opens).
+static BAROS: OnceLock<Vec<&'static str>> = OnceLock::new();
+
+/// The recovery identity the crumbs carry now, as the supervisor's keeper last published it: what a reset would
+/// recover to. Core 0 only (the supervisor writes it, the executor reads it for `inspect`).
+static IDENTITY: Mutex<Option<Identity>> = Mutex::new(None);
+
 /// The checkpoint as the supervisor runs it (plan B's Checkpoint task): the keeper over this board's NVS, the
 /// quantities it reads, and its stream.
 pub struct Keeping {
@@ -371,6 +413,9 @@ pub struct Keeping {
     elevation: Option<&'static Parameter<f32>>,
     /// The quantities, for the live GNSS fix the freeze pins when no launch point is set.
     topology: &'static Topology,
+    /// The rebased barometers' names, in the config order of crates/warmstart `REBASED_BAROS` drivers: whose own
+    /// grounds the freeze keeps.
+    baros: Vec<&'static str>,
     /// checkpoint.csv, with a recorder.
     telemetry: Option<Telemetry<'static>>,
     /// An NVS refusal was logged and no action has committed since: one line per run of refusals.
@@ -382,13 +427,15 @@ pub struct Keeping {
 impl Keeping {
     /// The checkpoint of `member`: its NVS handle opened on `partition`, its quantities found in `topology`, its pad
     /// latch under `pad_ceiling_m` metres of elevation (half the stage machine's `launch_alt_m`; None without a stage
-    /// machine, which latches as plan B), and seeded with a warm start's restored identity, when this boot is one.
+    /// machine, which latches as plan B), seeded with a warm start's restored identity when this boot is one, and
+    /// freezing the own grounds of the barometers `document` rebases.
     ///
     /// Errors: the `coludo` namespace would not open (the entry is crashed with it: no crumb could be kept).
     pub fn open(
         member: CheckpointMember,
         partition: &EspDefaultNvsPartition,
         topology: &'static Topology,
+        document: &'static Value,
         pad_ceiling_m: Option<f32>,
         seed: Option<Identity>,
     ) -> Result<Keeping, String> {
@@ -405,6 +452,15 @@ impl Keeping {
             altitude: topology.scalar("altitude"),
             elevation: topology.scalar("elevation"),
             topology,
+            baros: BAROS
+                .get_or_init(|| {
+                    sensors(document)
+                        .into_iter()
+                        .filter(|(_name, driver)| warmstart::REBASED_BAROS.contains(driver))
+                        .map(|(name, _driver)| name)
+                        .collect()
+                })
+                .clone(),
             telemetry: crate::recorder::get()
                 .zip(crate::recorder::device_stream(member.name))
                 .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
@@ -450,6 +506,7 @@ impl Keeping {
             ticks_ms: now_us / 1000,
         };
         let topology = self.topology;
+        let baros = &self.baros;
         let freeze = || {
             let (zone, set) = *MISSION.lock().unwrap_or_else(PoisonError::into_inner);
             // plan B warmstart.py:359: a fix that arrived after the arm pins here, the last ground moment; the
@@ -467,6 +524,7 @@ impl Keeping {
                 // the pad's calibration, frozen with the rest of the recovery identity (plan B warmstart.py:373-384):
                 // a pitot that runs gives its zero offset, 0.0 Pa a valid tare
                 pitot_zero_pa: crate::sensors::pitot_inspection().map(|(_, _, zero_pa, _, _)| zero_pa),
+                grounds_m: own_grounds(topology, baros, now_us),
             }
         };
         let stamp_s = || clock::epoch() - warmstart::UNIX_SECONDS_AT_2000;
@@ -507,6 +565,11 @@ impl Keeping {
         SAVES.store(counters.saves, Ordering::Relaxed);
         FAILURES.store(counters.failures, Ordering::Relaxed);
         RETRIES.store(counters.retries, Ordering::Relaxed);
+        let identity = *self.keeper.identity();
+        let mut published = IDENTITY.lock().unwrap_or_else(PoisonError::into_inner);
+        if *published != Some(identity) {
+            *published = Some(identity);
+        }
     }
 
     /// One checkpoint's row at `now_us` (plan B warmstart.py `_checkpoint`): the stage's id, the altitude, the speed
@@ -561,6 +624,22 @@ pub struct Inspection {
     retries: u32,
     /// The longest pass that tried an NVS action, µs.
     save_max_us: u32,
+    /// The recovery identity the crumbs carry now (the port's own): null until the keeper ran, its fields null until
+    /// a BOOSTING entry froze them.
+    identity: Option<IdentityView>,
+}
+
+/// The recovery identity as `inspect checkpoint` shows it: what a reset in flight would recover to.
+#[derive(Serialize)]
+pub struct IdentityView {
+    /// The pad altitude, m: every barometer's ground when the crumb carries none of its own.
+    pad_altitude_m: Option<f32>,
+    /// Each rebased barometer's own ground, m, by name.
+    grounds_m: serde_json::Map<String, Value>,
+    /// The pitot's tare, Pa.
+    pitot_zero_pa: Option<f32>,
+    /// The flight's warm starts so far.
+    warm_starts: u32,
 }
 
 /// The checkpoint's [`Inspection`], its crumb read now from `partition` (on the executor, beside the supervisor's
@@ -583,6 +662,21 @@ pub fn inspect(partition: &EspDefaultNvsPartition) -> Inspection {
         failures: FAILURES.load(Ordering::Relaxed),
         retries: RETRIES.load(Ordering::Relaxed),
         save_max_us: SAVE_MAX_US.load(Ordering::Relaxed),
+        identity: IDENTITY
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .map(|identity| IdentityView {
+                pad_altitude_m: identity.pad_altitude_m,
+                grounds_m: BAROS
+                    .get()
+                    .into_iter()
+                    .flatten()
+                    .zip(identity.grounds_m)
+                    .map(|(name, ground)| ((*name).to_string(), ground.map_or(Value::Null, Value::from)))
+                    .collect(),
+                pitot_zero_pa: identity.pitot_zero_pa,
+                warm_starts: identity.warm_starts,
+            }),
     }
 }
 

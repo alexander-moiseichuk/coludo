@@ -310,7 +310,7 @@ fn main() -> anyhow::Result<()> {
     // the checkpoint keeps no crumb without its NVS namespace: its entry is crashed then, so `arm` refuses. A warm
     // start's identity seeds it, so the restored flight's crumbs carry the pad and the launch it launched with
     let keeping = checkpoint.and_then(|member| {
-        warm::Keeping::open(member, &partition, topology, pad_ceiling_m, seed)
+        warm::Keeping::open(member, &partition, topology, &loaded.document, pad_ceiling_m, seed)
             .inspect_err(|error| {
                 log::error!("{} :: {error}", member.name);
                 devices::crash(table, [Some(member.name)], error);

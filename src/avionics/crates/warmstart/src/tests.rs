@@ -5,9 +5,9 @@
 //! comparison itself is tests/golden.rs.
 
 use super::{
-    ApplyPlan, BLOB_MAX, CRUMB_KEY, Checkpoint, Counters, Crumb, Freeze, Identity, Keeper, Live, MAX_AGE_S, NO_STAGE,
-    Nvs, NvsError, Pass, Reason, ResetReason, Restore, STAGE_KEY, Step, Write, clear, load, restore, save,
-    should_restore,
+    ApplyPlan, BLOB_MAX, CRUMB_KEY, Checkpoint, Counters, Crumb, Freeze, GROUND_SLOTS, Identity, Keeper, Live,
+    MAX_AGE_S, NO_STAGE, Nvs, NvsError, Pass, Reason, ResetReason, Restore, STAGE_KEY, Step, WARM_CAP, Write, clear,
+    load, restore, save, should_restore,
 };
 use control::navigation::Position;
 use sequencer::{Flight, FlightWord, Request, Stage, Transition};
@@ -112,6 +112,8 @@ fn glide() -> Crumb {
             zone: Some([at(25.514, -80.393), at(25.514, -80.391)]),
             pad_altitude_m: Some(100.0),
             pitot_zero_pa: Some(-1.75),
+            grounds_m: [None; GROUND_SLOTS],
+            warm_starts: 0,
         },
     }
 }
@@ -166,6 +168,8 @@ fn the_largest_crumb_fits_the_read_buffer() {
             zone: Some([extreme, extreme]),
             pad_altitude_m: Some(-f32::MIN_POSITIVE),
             pitot_zero_pa: Some(-f32::MIN_POSITIVE),
+            grounds_m: [Some(-f32::MIN_POSITIVE); GROUND_SLOTS],
+            warm_starts: u32::MAX,
         },
     };
     let length = crumb.to_json().len();
@@ -417,7 +421,14 @@ fn the_apply_plan_restores_what_the_crumb_carries() {
     assert_eq!(rebase.baros, ["baro_icp10111", "baro_bmp581", "baro_bmp280"]);
     assert_eq!(plan.pitot_zero_pa, Some(-1.75));
     assert_eq!(plan.airspeed_ms, Some(16.5));
-    assert_eq!(plan.identity, glide().identity);
+    assert_eq!(
+        plan.identity,
+        Identity {
+            warm_starts: 1,
+            ..glide().identity
+        },
+        "the crumb's identity, this warm start counted"
+    );
     assert_eq!((plan.stage, plan.armed), (Stage::Gliding, true));
     let update = plan.mission_update().unwrap();
     assert_eq!(
@@ -437,7 +448,8 @@ fn the_apply_plan_leaves_alone_what_the_crumb_lacks() {
     assert_eq!(plan.mission, None);
     assert_eq!(plan.rebase, None);
     assert_eq!((plan.pitot_zero_pa, plan.airspeed_ms), (None, None));
-    assert!(plan.identity.is_empty());
+    assert!(plan.identity.is_empty(), "counted, but nothing frozen");
+    assert_eq!(plan.identity.warm_starts, 1);
     assert!(!plan.armed, "a disarmed crumb does not re-arm");
     assert_eq!(plan.mission_update(), None);
     // a launch without a zone (or a zone without a launch) is no mission update
@@ -612,6 +624,7 @@ fn pad() -> Freeze {
         launch_point: Some(at(25.5, -80.4)),
         fresh_altitude_m: Some(120.0),
         pitot_zero_pa: Some(-1.75),
+        grounds_m: [Some(120.0), Some(125.3), None],
     }
 }
 
@@ -740,6 +753,7 @@ fn a_freeze_without_a_fix_or_a_zone_keeps_what_it_can() {
         zone: None,
         fresh_altitude_m: None,
         pitot_zero_pa: None,
+        grounds_m: [None; GROUND_SLOTS],
         ..pad()
     };
     assert!(no_zone.step(Stage::Boosting, 0, None, bare).froze);
@@ -1396,4 +1410,96 @@ fn a_stale_elevation_latches_a_pad_only_without_a_ceiling() {
     assert_eq!(pad_after_a_stale_elevation(Some(5.0)), pad().fresh_altitude_m);
     // without one the elevation is never asked, and the fresh altitude latches as plan B's did
     assert_eq!(pad_after_a_stale_elevation(None), Some(PAD_M));
+}
+
+#[test]
+fn each_barometer_s_own_ground_and_the_warm_count_round_trip_and_stay_out_of_a_plan_b_crumb() {
+    // a plan B crumb (no ground of its own, no warm start) writes exactly plan B's keys
+    let plain = glide().to_json();
+    assert!(!plain.contains("grounds") && !plain.contains("warm_starts"), "{plain}");
+    let mut crumb = glide();
+    crumb.identity.grounds_m = [Some(120.0), None, Some(125.3)];
+    crumb.identity.warm_starts = 2;
+    let text = crumb.to_json();
+    assert!(
+        text.contains(r#""grounds":[120.0,null,125.3]"#) && text.contains(r#""warm_starts":2"#),
+        "{text}"
+    );
+    assert_eq!(
+        Crumb::from_json(&serde_json::from_str(&text).unwrap()),
+        Some(crumb.clone())
+    );
+    // the list stops at the last known ground
+    crumb.identity.grounds_m = [Some(120.0), None, None];
+    assert!(crumb.to_json().contains(r#""grounds":[120.0]"#), "{}", crumb.to_json());
+    // NEGATIVE: a list of the wrong shape or past the slots reads what it can, a non-number as absent
+    let odd = serde_json::json!({"stage": 3, "stamp": 1, "grounds": [1.5, "x", 2.5, 9.0], "warm_starts": -1});
+    let read = Crumb::from_json(&odd).unwrap();
+    assert_eq!(read.identity.grounds_m, [Some(1.5), None, Some(2.5)]);
+    assert_eq!(read.identity.warm_starts, 0, "a negative count reads as none");
+    let scalar = serde_json::json!({"stage": 3, "stamp": 1, "grounds": 7.0});
+    assert_eq!(
+        Crumb::from_json(&scalar).unwrap().identity.grounds_m,
+        [None; GROUND_SLOTS]
+    );
+}
+
+#[test]
+fn a_warm_start_rebases_each_barometer_to_its_own_ground_else_the_pad() {
+    let mut crumb = glide();
+    crumb.identity.grounds_m = [Some(100.2), Some(105.5), None];
+    let sensors = [
+        ("baro_icp10111", "icp10111"),
+        ("imu", "lsm6dso32"),
+        ("baro_bmp581", "bmp581"),
+        ("baro_bmp280", "bmp280"),
+    ];
+    let plan = ApplyPlan::new(&crumb, sensors).unwrap();
+    let rebase = plan.rebase.unwrap();
+    assert_eq!(rebase.baros, ["baro_icp10111", "baro_bmp581", "baro_bmp280"]);
+    assert_eq!(
+        (0..3).map(|index| rebase.ground_of(index)).collect::<Vec<_>>(),
+        [100.2, 105.5, 100.0],
+        "its own ground; the pad altitude for the one with none"
+    );
+    // a plan B crumb: every barometer to the pad, as plan B rebased them
+    let plan_b = ApplyPlan::new(&glide(), sensors).unwrap().rebase.unwrap();
+    assert!((0..3).all(|index| plan_b.ground_of(index) == 100.0));
+}
+
+#[test]
+fn the_freeze_keeps_each_barometer_s_ground() {
+    let mut schedule = Checkpoint::new(1.0, 0);
+    schedule.step(Stage::Setting, 0, Some(120.0), pad);
+    assert!(schedule.step(Stage::Boosting, 1, Some(150.0), pad).froze);
+    let crumb = schedule.crumb(Stage::Boosting, Live::default(), 1000);
+    assert_eq!(crumb.identity.grounds_m, [Some(120.0), Some(125.3), None]);
+}
+
+#[test]
+fn past_the_cap_a_warm_start_recovers_disarmed_and_counts_on() {
+    for (warm_starts, armed) in [
+        (0, true),
+        (WARM_CAP - 1, true),
+        (WARM_CAP, false),
+        (WARM_CAP + 5, false),
+    ] {
+        let mut crumb = glide();
+        crumb.identity.warm_starts = warm_starts;
+        let plan = ApplyPlan::new(&crumb, SENSORS).unwrap();
+        assert_eq!(plan.armed, armed, "{warm_starts} warm starts before");
+        assert_eq!(plan.capped, !armed, "{warm_starts}");
+        assert_eq!(plan.identity.warm_starts, warm_starts + 1, "this one counts");
+        assert_eq!(plan.stage, Stage::Gliding, "the stage machine still walks it to DONE");
+    }
+    // NEGATIVE: a disarmed crumb is never capped (nothing to take away)
+    let mut disarmed = glide();
+    disarmed.armed = false;
+    disarmed.identity.warm_starts = WARM_CAP + 1;
+    let plan = ApplyPlan::new(&disarmed, SENSORS).unwrap();
+    assert!(!plan.armed && !plan.capped);
+    // the count saturates
+    let mut many = glide();
+    many.identity.warm_starts = u32::MAX;
+    assert_eq!(ApplyPlan::new(&many, SENSORS).unwrap().identity.warm_starts, u32::MAX);
 }
