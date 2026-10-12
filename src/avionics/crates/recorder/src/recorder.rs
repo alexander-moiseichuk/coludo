@@ -256,6 +256,9 @@ pub struct Recorder {
     /// `saver_position`: where the ring_saver goes on, everything before it on the SD and fsynced, for the eraser
     /// and the figures.
     pub(crate) saver_position: PublishedPosition,
+    /// `relay_position`: how far the uart_saver has sent (M19, [`crate::Relay`]), every line before it out of its
+    /// UART; never stored while no relay runs.
+    pub(crate) relay_position: PublishedPosition,
     /// Whether the stage is in flight (BOOSTING..DONE): the blocks the writer opens carry the flight flag.
     flight: AtomicBool,
     /// Whether a [`crate::Writer`] has taken this Recorder, and whether it still runs (`writer_state`).
@@ -298,6 +301,7 @@ impl Recorder {
             published: PublishedStats::default(),
             writer_position: PublishedPosition::new(),
             saver_position: PublishedPosition::new(),
+            relay_position: PublishedPosition::new(),
             flight: AtomicBool::new(flight),
             writer: AtomicU32::new(writer_state::NONE),
         }
@@ -501,6 +505,18 @@ impl Recorder {
     /// Any thread at any priority may call it: it never waits for the saver, even one it preempted mid-store.
     pub fn saver_position(&self) -> Option<Position> {
         self.saver_position.load()
+    }
+
+    /// `relay_position`: how far the uart_saver has sent (M19, [`crate::Relay`]); None while no relay runs.
+    pub fn relay_position(&self) -> Option<Position> {
+        self.relay_position.load()
+    }
+
+    /// What the eraser may take as done: the saver's position, held back to the relay's while a relay runs behind
+    /// it, so a block is erased only once it is on the card AND out of the UART. None while no saver runs.
+    pub fn erase_horizon(&self) -> Option<Position> {
+        let saver = self.saver_position()?;
+        Some(self.relay_position().map_or(saver, |relay| saver.min(relay)))
     }
 
     /// This boot's id as its block headers carry it: 0 when nothing counted the boot.

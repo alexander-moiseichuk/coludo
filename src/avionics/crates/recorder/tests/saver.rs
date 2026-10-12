@@ -34,7 +34,7 @@ use flash_ring::header::Session;
 use flash_ring::{BLOCK_BYTES, BlockTable, Flash, Geometry, Hints, MemoryError, MemoryFlash, Position, scan};
 use recorder::layout::GLOBAL_INDEX;
 use recorder::{
-    BATCH_BLOCKS, BATCH_FILES, BATCH_MS, Cell, Decoder, LineRing, Recorder, Registry, SaveError, Saver, TICK_US,
+    BATCH_BLOCKS, BATCH_FILES, BATCH_MS, Cell, Decoder, Recorder, Registry, Relay, SaveError, Saver, TICK_US,
     Telemetry, Writer,
 };
 
@@ -1004,59 +1004,71 @@ fn the_backlog_counts_against_the_saver_and_the_write_rate_makes_it_ring_unsaved
     );
 }
 
-#[test]
-fn the_uart_queue_gets_every_line_the_saver_stages_with_its_session_once_and_in_order() {
-    // M19: the saver hands each line it stages to the uart_saver's queue, as `GET /ring` streams it, a log line and a
-    // session.csv line routed under their session (the receiver files them where the saver does)
-    let run = |capacity: usize| {
-        let geometry = Geometry::new(128).unwrap();
-        let flash = MemoryFlash::new(geometry.bytes());
-        let scanned = bring_up(&flash, geometry);
-        let (parts, streams) = flight_recorder(BOOT_ID);
-        let queue: &'static LineRing = Box::leak(Box::new(LineRing::new(capacity)));
-        let mut board = Board::new(&flash, &scanned, &parts, BOOT_ID, None, None);
-        board.erasing = false;
-        board.mount_with_uart(Card::new(), None, queue);
-        let mut flight = Flight::new(parts.recorder, streams, PLAN);
-        for tick in 0..900 {
-            flight.fly(&mut board, tick);
-        }
-        quiet(parts.recorder);
-        board.settle(300);
-        // the decoder's own wire lines of the whole ring, in order
-        let image = flash.image();
-        let all = blocks(&image, geometry);
-        let mut decoder = Decoder::new();
-        let mut expected: Vec<Vec<u8>> = Vec::new();
-        for (index, block) in all.iter().enumerate() {
-            let boot_goes_on = all[index + 1..]
-                .iter()
-                .any(|later| later.header.boot_id == block.header.boot_id);
-            decoder
-                .block(slot_bytes(&image, block.slot), boot_goes_on, |line| {
-                    let named = match line.routing {
-                        Some("session.csv") => Some("session.csv"),
-                        Some(_) => None,
-                        None => Some("recorder.log"),
-                    };
-                    expected.push(match named {
-                        Some(name) => [format!("@{}_{name}@", line.session).as_bytes(), line.body()].concat(),
-                        None => line.wire.to_vec(),
-                    })
+/// The decoder's own wire lines of the whole ring, in order, as the uart_saver sends them: a log line routed
+/// `<session>_recorder.log`, a session.csv line `<session>_session.csv`, every other line as it is.
+fn relayed(flash: &MemoryFlash, geometry: Geometry) -> Vec<Vec<u8>> {
+    let image = flash.image();
+    let all = blocks(&image, geometry);
+    let mut decoder = Decoder::new();
+    let mut lines: Vec<Vec<u8>> = Vec::new();
+    for (index, block) in all.iter().enumerate() {
+        let boot_goes_on = all[index + 1..]
+            .iter()
+            .any(|later| later.header.boot_id == block.header.boot_id);
+        decoder
+            .block(slot_bytes(&image, block.slot), boot_goes_on, |line| {
+                let named = match line.routing {
+                    Some("session.csv") => Some("session.csv"),
+                    Some(_) => None,
+                    None => Some("recorder.log"),
+                };
+                lines.push(match named {
+                    Some(name) => [format!("@{}_{name}@", line.session).as_bytes(), line.body()].concat(),
+                    None => line.wire.to_vec(),
                 })
-                .unwrap();
-        }
-        let mut got = Vec::new();
-        let mut line = Vec::new();
-        while queue.pop(&mut line) {
-            got.push(line.clone());
-        }
-        (expected, got, queue.dropped())
-    };
-    let (expected, got, dropped) = run(4 << 20);
-    assert_eq!(dropped, 0);
+            })
+            .unwrap();
+    }
+    lines
+}
+
+/// Steps `relay` until it has read everything, each part's lines collected and the part then marked sent.
+fn drain_relay(relay: &mut Relay<'static, '_, &MemoryFlash>) -> Vec<Vec<u8>> {
+    let mut got = Vec::new();
+    while let Some(position) = relay.step(|line| got.push(line.to_vec())).unwrap() {
+        relay.sent(position);
+    }
+    got
+}
+
+#[test]
+fn the_relay_sends_every_line_once_in_order_with_its_session_and_with_no_card() {
+    // M19: the uart_saver walks the ring itself, so a board with no card mounted sends everything too
+    let geometry = Geometry::new(128).unwrap();
+    let flash = MemoryFlash::new(geometry.bytes());
+    let scanned = bring_up(&flash, geometry);
+    let (parts, streams) = flight_recorder(BOOT_ID);
+    let mut board = Board::new(&flash, &scanned, &parts, BOOT_ID, None, None);
+    board.erasing = false;
+    let mut flight = Flight::new(parts.recorder, streams, PLAN);
+    for tick in 0..900 {
+        flight.fly(&mut board, tick);
+    }
+    quiet(parts.recorder);
+    board.settle(300);
+    assert!(board.saver.is_none(), "no card: no saver");
+    let expected = relayed(&flash, geometry);
+    let start = board.table().saver_start(None);
+    let mut relay = Relay::new(parts.recorder, &flash, board.table(), start, u32::MAX);
+    let got = drain_relay(&mut relay);
     assert_eq!(got.len(), expected.len(), "every line once");
     assert!(got == expected, "in the ring's order, byte for byte");
+    assert_eq!(relay.skipped(), 0);
+    assert_eq!(
+        parts.recorder.relay_position(),
+        Some(relay.cursor()),
+        "published as sent"
+    );
     assert!(
         got.iter().any(|line| line.starts_with(b"@000123_imu_lsm6dso32.csv@")),
         "a stream line keeps its routing for the receiver"
@@ -1078,9 +1090,53 @@ fn the_uart_queue_gets_every_line_the_saver_stages_with_its_session_once_and_in_
             .any(|line| line.starts_with(b"@session.csv@") || line.starts_with(b"{")),
         "no line leaves without its session"
     );
-    // NEGATIVE: a queue nobody drains keeps the newest lines only, each dropped one counted
-    let (expected, got, dropped) = run(4096);
-    assert!(dropped > 0 && !got.is_empty());
-    assert_eq!(got.len() + dropped as usize, expected.len());
-    assert!(expected.ends_with(&got), "the newest, in order");
+    // a relay started again from where it had got (a reset after the hint) sends nothing twice
+    let mut again = Relay::new(parts.recorder, &flash, board.table(), relay.cursor(), u32::MAX);
+    assert!(drain_relay(&mut again).is_empty());
+    // NEGATIVE: a relay far behind keeps only the newest blocks (recency first), the ones it passed counted
+    let mut late = Relay::new(parts.recorder, &flash, board.table(), start, 2);
+    let newest = drain_relay(&mut late);
+    assert!(late.skipped() > 0 && !newest.is_empty() && newest.len() < expected.len());
+    assert_eq!(newest.last(), expected.last(), "the newest line is sent");
+    assert!(
+        newest.iter().all(|line| expected.contains(line)),
+        "nothing that is not in the ring"
+    );
+}
+
+#[test]
+fn the_eraser_keeps_what_the_relay_has_not_sent() {
+    // M19: a block is erased as saved only once it is on the card AND out of the UART
+    let geometry = Geometry::new(128).unwrap();
+    let flash = MemoryFlash::new(geometry.bytes());
+    let scanned = bring_up(&flash, geometry);
+    let (parts, streams) = flight_recorder(BOOT_ID);
+    let mut board = Board::new(&flash, &scanned, &parts, BOOT_ID, None, None);
+    board.mount(Card::new(), None);
+    let start = board.table().saver_start(None);
+    let relay = Relay::new(parts.recorder, &flash, board.table(), start, u32::MAX);
+    let mut flight = Flight::new(parts.recorder, streams, PLAN);
+    for tick in 0..900 {
+        flight.fly(&mut board, tick);
+    }
+    quiet(parts.recorder);
+    board.settle(300);
+    let saver = parts.recorder.saver_position().expect("the saver ran");
+    assert!(saver > start, "the card has the flight");
+    assert_eq!(parts.recorder.erase_horizon(), Some(start), "held back to the relay");
+    assert!(
+        board.erased.iter().all(|&(block, _)| block < start.block_sequence),
+        "nothing the relay has not sent was erased as saved: {:?}",
+        board.erased
+    );
+    // once the UART has sent it all, the saved blocks go
+    relay.sent(parts.recorder.writer_position().expect("the writer ran"));
+    assert_eq!(
+        parts.recorder.erase_horizon(),
+        Some(saver),
+        "the saver's own position again"
+    );
+    let erased = board.erased.len();
+    board.settle(300);
+    assert!(board.erased.len() > erased, "erased once sent");
 }

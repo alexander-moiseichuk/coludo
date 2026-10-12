@@ -10,7 +10,7 @@
 //! (this crate depends on it), nor on `std::fs`. So flash_ring gives the table query the walk needs
 //! ([`BlockTable::next_block`]) and keeps the ring's own rules; the walk, the decode and the batches live here.
 //!
-//! Two parts, so that a later uart_saver (M19) can share the decode without touching the SD path:
+//! Two parts, so that the uart_saver (M19, [`crate::Relay`]) shares the decode without touching the SD path:
 //! * [`Walk`]: a cursor over the ring and the decoder. [`Walk::peek`] reads the next unread part of the ring, one
 //!   4 KiB read of one block (of the writer's open block only up to the writer's published position, never past
 //!   it), and [`Walk::decode`] turns it into wire lines. With no card mounted, a walk of its own, with its own
@@ -87,7 +87,6 @@ use recorder_wire::{SESSION_INDEX, is_label};
 use crate::decoder::{BlockSummary, DecodedLine, Decoder};
 use crate::fs::Fs;
 use crate::layout;
-use crate::line_ring::LineRing;
 use crate::record::LOG_FILE;
 use crate::recorder::Recorder;
 
@@ -175,6 +174,13 @@ impl<'r, 't, F: Flash> Walk<'r, 't, F> {
     /// The next byte to decode.
     pub fn cursor(&self) -> Position {
         self.cursor
+    }
+
+    /// Moves the cursor to `to` (the relay's jump past a backlog, [`crate::Relay`]): what lies between is never
+    /// decoded. A block that is gone there is passed over by the next peek.
+    pub(crate) fn jump(&mut self, to: Position) {
+        self.cursor = to;
+        self.part = None;
     }
 
     /// Reads the next unread part of the ring: the block the cursor stands in, from its offset 0 up to the block's
@@ -511,10 +517,6 @@ pub struct Saver<'r, 't, F: Flash, S: Fs> {
     path: String,
     /// A file's end as it is looked at, [`TAIL_BYTES`].
     tail: Vec<u8>,
-    /// The uart_saver's queue (M19): every staged line's wire bytes, routing included, before any goes to the card.
-    uart: Option<&'r LineRing>,
-    /// A line for the uart_saver's queue whose routing [`tee`] named the session of.
-    teed: Vec<u8>,
 }
 
 impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
@@ -549,17 +551,7 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
             files: BTreeMap::new(),
             path: String::new(),
             tail: vec![0; TAIL_BYTES],
-            uart: None,
-            teed: Vec::new(),
         }
-    }
-
-    /// The saver handing every line it stages to `queue` too (M19's uart_saver): each line once, as `GET /ring`
-    /// streams it (a log line's and a session.csv line's routing naming their session, [`tee`]), before any of it goes
-    /// to the card, so an SD stall never holds the UART back.
-    pub fn with_uart(mut self, queue: &'r LineRing) -> Saver<'r, 't, F, S> {
-        self.uart = Some(queue);
-        self
     }
 
     /// One step: collects what the walk reads into the batch, and puts the batch on the card once it is due (see
@@ -608,20 +600,8 @@ impl<'r, 't, F: Flash, S: Fs> Saver<'r, 't, F, S> {
         if self.boot.replace(boot) != Some(boot) {
             self.files.retain(|path, _| path == layout::GLOBAL_INDEX);
         }
-        let Saver {
-            walk,
-            staged,
-            path,
-            uart,
-            teed,
-            ..
-        } = self;
-        walk.decode(|line| {
-            if let Some(queue) = uart {
-                queue.push(tee(teed, &line));
-            }
-            stage_line(staged, path, line)
-        });
+        let Saver { walk, staged, path, .. } = self;
+        walk.decode(|line| stage_line(staged, path, line));
         staged.boot = Some(boot);
         staged.last_block = Some(header.block_sequence);
         staged.end = walk.cursor();
@@ -724,14 +704,15 @@ fn put<S: Fs>(
     Ok(())
 }
 
-/// `line` as the uart_saver sends it, built in `teed` when it differs from the wire line: a routed line as it is; a
-/// log line routed `<session>_recorder.log` and a session.csv line `<session>_session.csv`, their bodies unchanged.
+/// `line` as the uart_saver sends it ([`crate::Relay`]), built in `teed` when it differs from the wire line: a routed
+/// line as it is; a log line routed `<session>_recorder.log` and a session.csv line `<session>_session.csv`, their
+/// bodies unchanged.
 ///
 /// Neither names its session on the wire, and a receiver that took it from the last routed line filed a new boot's
 /// session.csv rows and first log lines (they come before its first routed line) under the boot before (the C6
 /// receiver, 2026-10-11). The body keeps its checks, made under the line's own routing (none, `session.csv`): the
 /// receiver files exactly the bytes this saver files, and verifies them under that routing.
-fn tee<'l>(teed: &'l mut Vec<u8>, line: &DecodedLine<'l>) -> &'l [u8] {
+pub(crate) fn tee<'l>(teed: &'l mut Vec<u8>, line: &DecodedLine<'l>) -> &'l [u8] {
     let name = match line.routing {
         Some(SESSION_INDEX) => SESSION_INDEX,
         Some(_) => return line.wire,

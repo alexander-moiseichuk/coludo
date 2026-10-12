@@ -39,8 +39,8 @@
 //! volume serial with the card the previous boot's record names. The same card: the saver starts at the hint, and
 //! the eraser takes every block behind it as saved. Another card, or one whose serial would not read: the saver
 //! starts at the oldest block in flash, so the new card gets everything still there, and nothing counts as saved.
-//! No card: no saver (M19's uart_saver may later walk with a cursor of its own), and the blocks behind the hint
-//! count as saved, since they are on the card it was saved to. The bring-up writes the new saver start as the hint
+//! No card: no saver (the uart_saver walks with a cursor of its own all the same, M19), and the blocks behind the
+//! hint count as saved, since they are on the card it was saved to. The bring-up writes the new saver start as the hint
 //! BEFORE the record that names the new card, so a cut between the two never leaves an old card's position beside
 //! a record naming the new card: the worst a cut there does is re-save into duplicates (spec "Duplicates").
 //!
@@ -79,8 +79,8 @@ use flash_ring::{
     BLOCK_BYTES, BacklogTrend, BlockTable, Eraser, Erasure, Figures, Flash, Geometry, Hints, Position, Ring,
 };
 use recorder::{
-    BATCH_BLOCKS, Buffers, Identity, LineRing, MERGE_HORIZON_US, Recorder, Registry, SaveError, Saved, Saver, Settings,
-    StdFs, StreamId, TICK_US, Writer, layout,
+    BATCH_BLOCKS, BEHIND_BLOCKS, Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, Relay, SaveError, Saved,
+    Saver, Settings, StdFs, StreamId, TICK_US, Writer, layout,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -199,6 +199,9 @@ const WRITER_KEY: &str = "writer";
 
 /// The key of the saver position hint (the ring_saver writes it after every batch it commits; the bring-up once).
 const SAVER_KEY: &str = "saver";
+
+/// The key of the uart_saver's position hint (M19): how far its UART has sent, about once a second.
+const RELAY_KEY: &str = "uart";
 
 /// `recorder.telemetry_ms` when the config sets none: plan B's code fallback (recorder.py `_DEFAULT_TELEMETRY_MS`,
 /// 50 Hz); the shipped config sets 0, every row.
@@ -562,11 +565,19 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
         saver_start,
         same_card,
     });
-    // the store goes to the eraser, which keeps the writer position hint from here on, and the saver opens its own
-    // for its hint: this thread never touches the NVS again
+    // the uart_saver's start (M19): where its UART had got, else this boot's first block (only what is new)
+    let relay_start = store
+        .as_ref()
+        .and_then(|store| store.position(RELAY_KEY))
+        .map_or(first, |hint| table.saver_start(Some(hint)));
+    // the store goes to the eraser, which keeps the writer position hint from here on, and the saver and the
+    // uart_saver open their own for their hints: this thread never touches the NVS again
     start_eraser(partition, table, recorder, store, saved);
     if let Some(start) = saver_start {
-        start_saver(partition, table, recorder, settings, start);
+        start_saver(partition, table, recorder, settings.clone(), start);
+    }
+    if let Some(&port) = UART_PORT.get() {
+        start_relay(partition, table, recorder, settings, relay_start, port);
     }
     let ring = match Ring::new(
         partition,
@@ -680,10 +691,10 @@ fn erase(mut eraser: Eraser<'static, Partition>, recorder: &'static Recorder, st
         .attach(Producer::Eraser as usize)
         .inspect_err(|error| log::warn!("ring :: the eraser shares the misc ring: {error:?}"))
         .ok();
-    let mut hint = Hint::default();
+    let mut hint = Hint::new(WRITER_KEY);
     loop {
         let started_us = uptime_us();
-        let erased = match eraser.erase_step(recorder.saver_position(), uptime_ms()) {
+        let erased = match eraser.erase_step(recorder.erase_horizon(), uptime_ms()) {
             Ok(Erasure::Idle) => false,
             Ok(Erasure::Lost(loss)) => {
                 LOST_MS.store(uptime_ms(), Ordering::Relaxed);
@@ -806,11 +817,6 @@ fn start_saver(
         // the saver's buffers are allocated here, on its own thread, after the encoder's reservation (start)
         // the card's root: the saver files each session where crates/recorder's layout says, under <session>/recordings
         let saver = Saver::new(recorder, partition, table, StdFs::new(sd::MOUNT), start);
-        // every line it stages to the uart_saver too (M19), when the recorder's link to its receiver runs
-        let saver = match UART_QUEUE.get() {
-            Some(queue) => saver.with_uart(queue),
-            None => saver,
-        };
         save(saver, store)
     };
     if let Err(error) = spawn(c"ring_saver", SAVER_STACK, Stack::Internal, SAVER_PRIORITY, body) {
@@ -818,49 +824,46 @@ fn start_saver(
     }
 }
 
-/// The uart_saver's queue (M19): the ring_saver pushes each line it stages, the uart_saver sends them; recency first
-/// (crates/recorder LineRing). Set before the recorder starts, when the config gives the recorder its UART.
-static UART_QUEUE: OnceLock<LineRing> = OnceLock::new();
-
-/// The uart_saver's UART port, once its driver is installed ([`drain_uart`] waits on it).
+/// The uart_saver's UART port, once its driver is installed ([`start_uart`]): the ring's bring-up starts the
+/// uart_saver on it ([`start_relay`]).
 static UART_PORT: OnceLock<sys::uart_port_t> = OnceLock::new();
-
-/// How often [`drain_uart`] looks at the queue.
-const DRAIN_POLL: Duration = Duration::from_millis(10);
-
-/// The uart_saver's queue, bytes (PSRAM): ~10 s of the flight's ~26 KB/s of text, so a receiver that stalls a few
-/// seconds loses nothing.
-const UART_QUEUE_BYTES: usize = 256 << 10;
-
-/// The most the uart_saver hands the driver at once, bytes.
-const UART_BATCH_BYTES: usize = 4096;
 
 /// The receive buffer IDF installs for the transmit-only UART, bytes: more than its 128-byte FIFO, else refused.
 const UART_RX_BYTES: usize = 256;
 
-/// The uart_saver's rest while its queue is empty.
+/// The uart_saver's rest while nothing is unread.
 const UART_IDLE: Duration = Duration::from_millis(20);
 
-/// The uart_saver's priority: below the ring_saver's, which feeds it (§4.2).
+/// The uart_saver's rest after a failed flash read.
+const UART_RETRY: Duration = Duration::from_millis(100);
+
+/// The longest the uart_saver waits for its UART to shift a part's last byte out, before it counts it sent.
+const UART_TX_WAIT: Duration = Duration::from_millis(500);
+
+/// The uart_saver's priority: below the ring_saver's (§4.2).
 const UART_PRIORITY: u8 = 2;
 
-/// The uart_saver's stack (PSRAM, its batch with it): a batch's copy and the driver's write.
+/// The uart_saver's stack (PSRAM, a part's text with it): a decode and the driver's write. Flash reads from a PSRAM
+/// stack are fine (SPI1 flash calls never turn the cache off, §4.7); the walk's block buffer is internal, made on the
+/// bring-up thread ([`start_relay`]), so the flash fills it directly.
 ///
-/// Its internal RAM cost the board its Wi-Fi: on internal RAM, with the driver's 8 KB transmit ring, the taster
-/// associated but its DHCP request never left (no lease from the uart_saver's first flash on, a lease at once without
-/// it; the DMA-capable low-water 17 -> 9 KB, 2026-10-11). Neither is in internal RAM now: the stack and the batch in
-/// PSRAM, and no transmit ring (the write fills the FIFO from this thread).
-const UART_STACK: usize = 4 << 10;
+/// Its internal RAM cost the board its Wi-Fi once: on internal RAM, with the driver's 8 KB transmit ring, the taster
+/// associated but its DHCP request never left (the DMA-capable low-water 17 -> 9 KB, 2026-10-11). Neither is in
+/// internal RAM: the stack and the text in PSRAM, and no transmit ring (the write fills the FIFO from this thread).
+const UART_STACK: usize = 6 << 10;
 
-/// The uart_saver (M19, doc/specs/avionics-port.md M19): the recorder's wire lines out of `uart`'s TX on GPIO `tx` at
-/// `baud`, to a receiver that keeps them when the board and its card are lost (a Luckfox's recorderd, the C6 box of
-/// M20): the bytes plan B sent. Its thread (core 0, below the ring_saver) takes what the saver queued, in order, and
-/// never holds the saver: a stalled link costs the oldest lines, counted. Lines reach it from the saver, so a board
-/// with no card sends none yet (the no-card walk is M19's next step).
+/// The uart_saver's figures for the `ring` report: lines and KiB sent, the blocks it jumped to keep up.
+static RELAY_LINES: AtomicU32 = AtomicU32::new(0);
+static RELAY_KILOBYTES: AtomicU32 = AtomicU32::new(0);
+static RELAY_SKIPPED: AtomicU32 = AtomicU32::new(0);
+
+/// Installs the uart_saver's UART (M19, doc/specs/avionics-port.md M19): `uart`'s TX on GPIO `tx` at `baud`, to a
+/// receiver that keeps the recorder's lines when the board and its card are lost (the C6 flight recorder of M20,
+/// src/avionics/recorder; a Luckfox's recorderd): plan B's wire lines, each naming its session. The uart_saver itself
+/// starts with the ring's bring-up ([`start_relay`]), which it needs.
 ///
-/// Errors: the driver would not install, or the thread would not spawn.
+/// Errors: the driver would not install.
 pub fn start_uart<U: esp_idf_svc::hal::uart::Uart + 'static>(_uart: U, tx: u8, baud: u32) -> anyhow::Result<()> {
-    let queue = UART_QUEUE.get_or_init(|| LineRing::new(UART_QUEUE_BYTES));
     // IDF's own driver, installed here: esp-idf-hal's transmit-only driver installs no receive buffer, which IDF
     // refuses ("uart rx buffer length error"), so it never starts. The peripheral is taken, so nothing else drives it.
     let port = U::port();
@@ -890,50 +893,97 @@ pub fn start_uart<U: esp_idf_svc::hal::uart::Uart + 'static>(_uart: U, tx: u8, b
         ))?;
     }
     let _ = UART_PORT.set(port);
-    spawn(c"uart_saver", UART_STACK, Stack::Psram, UART_PRIORITY, move || {
-        let mut line = Vec::new();
-        let mut batch = Vec::with_capacity(UART_BATCH_BYTES + 1024);
-        loop {
-            batch.clear();
-            while batch.len() < UART_BATCH_BYTES && queue.pop(&mut line) {
-                batch.extend_from_slice(&line);
-            }
-            if batch.is_empty() {
-                std::thread::sleep(UART_IDLE);
-                continue;
-            }
-            let mut sent = 0;
-            while sent < batch.len() {
-                // SAFETY: the installed driver's write: with no transmit ring it fills the FIFO, waiting for room
-                let count = unsafe { sys::uart_write_bytes(port, batch[sent..].as_ptr().cast(), batch.len() - sent) };
-                if count <= 0 {
-                    break; // a refused write loses this batch; the next goes on
-                }
-                sent += count as usize;
-            }
-        }
-    })?;
-    log::info!("ring :: uart_saver on GPIO{tx} at {baud} baud");
+    log::info!("ring :: uart_saver's UART on GPIO{tx} at {baud} baud");
     Ok(())
 }
 
-/// Waits, at most `limit`, until the uart_saver has sent everything queued and its UART has shifted the last byte
-/// out: a deliberate reset first lets the receiver have what the ring_saver committed. The saver tees a part as it
-/// stages it, the card has it a commit later, and the next boot sends again only what the card lacks; so a part
-/// committed but still in the queue at a reset never reached the receiver (the taster's `reboot`: ~1.5 s missing on
-/// the C6's card, 2026-10-11). No uart_saver, nothing to wait for. A crash keeps that window, until the uart_saver
-/// walks the ring with a cursor of its own (M19's next step).
-pub fn drain_uart(limit: Duration) {
-    let (Some(queue), Some(&port)) = (UART_QUEUE.get(), UART_PORT.get()) else {
-        return;
+/// Starts the uart_saver (core 0, below the ring_saver, a PSRAM stack): a [`Relay`] walking the ring from `start`
+/// with a cursor of its own, card or no card, each part's lines written to `port`; once they have left the UART the
+/// part counts sent ([`Relay::sent`]), which the eraser waits for and the `uart` hint keeps across a reset, so a
+/// reset resends from there (the receiver drops what it has) and never skips. More than [`BEHIND_BLOCKS`] behind the
+/// writer, it jumps forward (recency first). The relay is made here, on the bring-up's internal stack, so its block
+/// buffer is internal RAM.
+fn start_relay(
+    partition: Partition,
+    table: &'static BlockTable,
+    recorder: &'static Recorder,
+    settings: EspCustomNvsPartition,
+    start: Position,
+    port: sys::uart_port_t,
+) {
+    let relay = Relay::new(recorder, partition, table, start, BEHIND_BLOCKS);
+    let body = move || {
+        let store = RecorderStore::open(settings)
+            .inspect_err(|error| log::warn!("ring :: the uart_saver keeps no position: {error}"))
+            .ok();
+        relay_loop(relay, store, recorder, port)
     };
-    let started = Instant::now();
-    while queue.queued() > 0 && started.elapsed() < limit {
-        std::thread::sleep(DRAIN_POLL);
+    match spawn(c"uart_saver", UART_STACK, Stack::Psram, UART_PRIORITY, body) {
+        Ok(()) => log::info!(
+            "ring :: uart_saver from block {}/{}",
+            start.block_sequence,
+            start.offset
+        ),
+        Err(error) => log::error!("ring :: the uart_saver would not start, nothing leaves on its UART: {error}"),
     }
-    let left = limit.saturating_sub(started.elapsed());
-    // SAFETY: a plain wait on the installed driver's transmitter.
-    let _ = unsafe { sys::uart_wait_tx_done(port, TickType::from(left).ticks()) };
+}
+
+/// The uart_saver thread: a part read, its lines written out, waited out of the UART, counted sent; forever.
+fn relay_loop(
+    mut relay: Relay<'static, 'static, Partition>,
+    store: Option<RecorderStore>,
+    recorder: &'static Recorder,
+    port: sys::uart_port_t,
+) {
+    let mut text = Vec::new();
+    let mut hint = Hint::new(RELAY_KEY);
+    let mut failing = false;
+    let wait = TickType::from(UART_TX_WAIT).ticks();
+    let mut bytes: u64 = 0;
+    loop {
+        text.clear();
+        let mut lines = 0u32;
+        match relay.step(|line| {
+            text.extend_from_slice(line);
+            lines += 1;
+        }) {
+            Ok(Some(position)) => {
+                failing = false;
+                write_all(port, &text);
+                // SAFETY: a plain wait on the installed driver's transmitter.
+                let _ = unsafe { sys::uart_wait_tx_done(port, wait) };
+                relay.sent(position);
+                bytes += text.len() as u64;
+                RELAY_LINES.fetch_add(lines, Ordering::Relaxed);
+                RELAY_KILOBYTES.store((bytes >> 10) as u32, Ordering::Relaxed);
+                RELAY_SKIPPED.store(relay.skipped(), Ordering::Relaxed);
+            }
+            Ok(None) => std::thread::sleep(UART_IDLE),
+            Err(error) => {
+                if !failing {
+                    log::warn!("ring :: the uart_saver's flash read failed, tried again: {error:?}");
+                    failing = true;
+                }
+                std::thread::sleep(UART_RETRY);
+            }
+        }
+        if let Some(store) = &store {
+            hint.publish(store, recorder.relay_position(), uptime_us());
+        }
+    }
+}
+
+/// `bytes` out of `port`, all of them: the driver has no transmit ring, so each call fills the FIFO and waits on it.
+fn write_all(port: sys::uart_port_t, bytes: &[u8]) {
+    let mut sent = 0;
+    while sent < bytes.len() {
+        // SAFETY: the installed driver's write: with no transmit ring it fills the FIFO, waiting for room
+        let count = unsafe { sys::uart_write_bytes(port, bytes[sent..].as_ptr().cast(), bytes.len() - sent) };
+        if count <= 0 {
+            return; // a refused write: the part counts sent, the receiver lacks it
+        }
+        sent += count as usize;
+    }
 }
 
 /// The ring_saver thread: [`Saver::step`] again and again, forever (spec "The ring_saver"). The saver collects what
@@ -1021,9 +1071,11 @@ fn count_batch(saved: &Saved, bytes: &mut u64) {
     SAVER.kilobytes.store((*bytes >> 10) as u32, Ordering::Relaxed);
 }
 
-/// The writer position hint's bookkeeping: what was written to the NVS last, and when it was last looked at.
-#[derive(Default)]
+/// A position hint's bookkeeping (the writer's, the uart_saver's): its key, what was written to the NVS last, and when
+/// it was last looked at.
 struct Hint {
+    /// Its key ([`WRITER_KEY`], [`RELAY_KEY`]).
+    key: &'static str,
     /// The position last written; None before the first.
     written: Option<Position>,
     /// The uptime of the last look, in µs.
@@ -1033,6 +1085,16 @@ struct Hint {
 }
 
 impl Hint {
+    /// A hint under `key`, written never yet.
+    fn new(key: &'static str) -> Hint {
+        Hint {
+            key,
+            written: None,
+            looked_us: 0,
+            failing: false,
+        }
+    }
+
     /// Writes `position` to the NVS when a second has passed since the last look and it moved (spec "Positions":
     /// about once a second). Runs on the ring_eraser: what reaches the writer is only the flash lock of the NVS's
     /// own flash calls (a page erase ≤ 16 ms, inside the writer's power-cut bound), never the NVS lock.
@@ -1044,13 +1106,16 @@ impl Hint {
         let Some(position) = position.filter(|&position| Some(position) != self.written) else {
             return;
         };
-        match store.publish(WRITER_KEY, position) {
+        match store.publish(self.key, position) {
             Ok(()) => {
                 self.written = Some(position);
                 self.failing = false;
             }
             Err(error) if !self.failing => {
-                log::warn!("ring :: the writer position was not written to the cfg NVS: {error}");
+                log::warn!(
+                    "ring :: the {} position was not written to the cfg NVS: {error}",
+                    self.key
+                );
                 self.failing = true;
             }
             Err(_) => {}
@@ -1450,24 +1515,10 @@ fn ring_report(recorder: &'static Recorder) -> String {
         ("unsaved_s", seconds(report.unsaved_s)),
         ("chunks", report.chunks.to_string()),
         ("flash_errors", report.flash_errors.to_string()),
-        (
-            "uart_pushed",
-            UART_QUEUE
-                .get()
-                .map_or_else(|| "None".to_string(), |queue| queue.pushed().to_string()),
-        ),
-        (
-            "uart_dropped",
-            UART_QUEUE
-                .get()
-                .map_or_else(|| "None".to_string(), |queue| queue.dropped().to_string()),
-        ),
-        (
-            "uart_queued",
-            UART_QUEUE
-                .get()
-                .map_or_else(|| "None".to_string(), |queue| queue.queued().to_string()),
-        ),
+        ("uart", position(recorder.relay_position().map(pair))),
+        ("uart_lines", RELAY_LINES.load(Ordering::Relaxed).to_string()),
+        ("uart_kb", RELAY_KILOBYTES.load(Ordering::Relaxed).to_string()),
+        ("uart_skipped", RELAY_SKIPPED.load(Ordering::Relaxed).to_string()),
         ("tlm_count", stats.telemetry.count.to_string()),
         ("tlm_max", stats.telemetry.max.to_string()),
         ("tlm_dropped", stats.telemetry.dropped.to_string()),
