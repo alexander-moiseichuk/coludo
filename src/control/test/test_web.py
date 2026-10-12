@@ -503,7 +503,7 @@ def test_board_timeout_answers_json_504():
     that does answer still comes back 200 with its reply.
     """
     class _Reply:
-        command, args = 'ok', ['{}']
+        command, args, named = 'ok', ['{}'], {}
 
     class _Board:
         id, online = 'taster', True
@@ -511,7 +511,7 @@ def test_board_timeout_answers_json_504():
         def __init__(self, fault):
             self._fault = fault
 
-        async def command(self, command, *params):
+        async def command(self, command, *params, named=None):
             if self._fault:
                 raise TimeoutError()
             return _Reply()
@@ -529,6 +529,48 @@ def test_board_timeout_answers_json_504():
     # and the page's cmd() survives a body that is NOT json (a hub fault, a proxy page) instead of throwing
     page = _request(b'GET / HTTP/1.1\r\n\r\n')
     assert b'await res.text()' in page.split(b'async function cmd(', 1)[1].split(b'\n}\n', 1)[0]
+
+
+def test_api_cmd_carries_named_params_and_refuses_bad_ones():
+    """
+    /api/cmd passes a request's `named` map to the board as its `key=value` params (the GCL commands': `ls path=/`,
+    `rm path=... confirm`); a map that is not one of simple names to scalars is a 400, never a line.
+    """
+    class _Hub:
+        boards = {}
+
+    class _Reply:
+        command, args, named = 'ok', ['ls'], {}
+
+    class _Board:
+        id, online = 'taster', True
+        seen = []
+
+        async def command(self, command, *params, named=None):
+            self.seen.append((command, params, named))
+            return _Reply()
+
+    def post(request):
+        body = json.dumps(request).encode()
+        server = web.Web(_Hub(), log=lambda *a: None)
+        server.hub.boards['taster'] = board
+        writer = _Writer()
+        asyncio.run(server._handle(_Reader(b'POST /api/cmd HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s'
+                                           % (len(body), body)), writer))
+        return writer.sent
+
+    board = _Board()
+    sent = post({'board': 'taster', 'command': 'rm', 'params': ['confirm'], 'named': {'path': '000374'}})
+    assert sent.startswith(b'HTTP/1.1 200'), sent[:80]
+    assert board.seen[-1] == ('rm', ('confirm',), {'path': '000374'}), board.seen
+    post({'board': 'taster', 'command': 'ping'})
+    assert board.seen[-1] == ('ping', (), None), board.seen  # no named map: none sent
+    # negatives: not an object, a key that is no simple name, a value that is no scalar, too many
+    for named in (['path'], {'pa th': 'x'}, {'Path=': 'x'}, {'path': {'x': 1}}, {'k%d' % i: 1 for i in range(17)}):
+        count = len(board.seen)
+        sent = post({'board': 'taster', 'command': 'ls', 'named': named})
+        assert sent.startswith(b'HTTP/1.1 400'), (named, sent[:80])
+        assert len(board.seen) == count, 'a refused request reached the board'
 
 
 def test_post_with_bad_json_is_answered():
@@ -750,7 +792,9 @@ test_malformed_request_line_does_not_hang()
 test_bad_content_length_still_routes()
 test_handler_fault_answers_500()
 test_board_timeout_answers_json_504()
+test_api_cmd_carries_named_params_and_refuses_bad_ones()
 test_post_with_bad_json_is_answered()
 print('ok: web -- routing + 404, IMU calibration column + calibrate action, not-ready row flag, '
       'per-device verdict lines for probe/verify/arm, '
-      'malformed request line, bad Content-Length, handler fault -> 500, bad JSON POST answered')
+      'malformed request line, bad Content-Length, handler fault -> 500, named params carried and '
+      'refused, bad JSON POST answered')

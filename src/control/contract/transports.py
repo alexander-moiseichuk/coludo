@@ -48,7 +48,7 @@ _PLAN_B: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plan_b.
 _STDERR_LINES: int = 5  # of a dead fake board's stderr, quoted in the error
 _CHILD_EXIT_S: float = 10.0  # a fake board exits at once on EOF; past this it is killed
 
-_HTTP_TIMEOUT_S: float = 40.0  # past the hub's own 30 s for the fin-sweeping commands, so the hub answers first
+_HTTP_TIMEOUT_S: float = 130.0  # past the hub's own longest (board._SLOW_TIMEOUT_S: rm), so the hub answers first
 """
 A rebooting board resets 200 ms after its `ok`. The hub needs a moment more to see the link go, and the console
 to scroll the ROM banner past, before a request can only reach the new boot.
@@ -210,32 +210,39 @@ class Fake:
 
 def hub_request(line: str) -> tuple:
     """
-    The /api/cmd command and params that make the hub send exactly `line`.
+    The /api/cmd command, params and named params that make the hub send exactly `line`.
 
-    The hub runs Board.command(command, *params), which rebuilds the line with cc.build(): bare tokens stay,
-    anything else is base64-encoded afresh. A request survives that only when decoding its tokens and building
-    them again gives the same line.
+    The hub runs Board.command(command, *params, named=named), which rebuilds the line with cc.build(): bare tokens
+    stay, anything else is base64-encoded afresh, the named params (`key=value`, split as cc.parse splits them) after
+    the positional ones. A request survives that only when decoding its tokens and building them again gives the
+    same line.
 
     Args:
         line - the board-facing request line.
 
     Returns:
-        (command, [param, ...]) with every param decoded.
+        (command, [param, ...], {key: value}) with every value decoded.
 
     Raises:
         Unreachable - the hub would send a different line (an empty or blank line, a token that does not decode,
-            a token it encodes differently, or extra whitespace).
+            a token it encodes differently, a named param before a positional one, or extra whitespace).
     """
     tokens = line.split()
     if not tokens:
         raise Unreachable('the hub sends no empty line')
+    params, named = [], {}
     try:
-        params = [cc.decode(token) for token in tokens[1:]]
+        for token in tokens[1:]:
+            equals = -1 if token.startswith('base64:') else token.find('=')
+            if equals > 0:
+                named[token[:equals]] = cc.decode(token[equals + 1:])
+            else:
+                params.append(cc.decode(token))
     except Exception as error:
         raise Unreachable('the hub re-encodes params: a token that does not decode (%r) cannot pass' % error) from None
-    if cc.build(tokens[0], params) != line:
+    if cc.build(tokens[0], params, named or None) != line:
         raise Unreachable('the hub would rebuild this line differently')
-    return tokens[0], params
+    return tokens[0], params, named
 
 
 def hub_reply(body: dict) -> str:
@@ -321,8 +328,8 @@ class Hub:
             Unreachable - the hub cannot send this line verbatim (hub_request).
             NoAnswer - the hub reports the board offline or timed out, or does not answer itself.
         """
-        command, params = hub_request(line)
-        body = json.dumps({'board': self._board_id, 'command': command, 'params': params}).encode()
+        command, params, named = hub_request(line)
+        body = json.dumps({'board': self._board_id, 'command': command, 'params': params, 'named': named}).encode()
         request = urllib.request.Request(self._url + '/api/cmd', data=body,
                                          headers={'Content-Type': 'application/json'})
         try:

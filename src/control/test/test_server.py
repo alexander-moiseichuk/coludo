@@ -290,7 +290,7 @@ async def _web():
                                       json.dumps({'board': 'glider9', 'command': 'set-config',
                                                   'params': ['board', json.dumps(config)]}))
         assert status == 200 and json.loads(payload) == {'board': 'glider9', 'status': 'ok',
-                                                         'args': [json.dumps({'config_id': 'newcfg'})]}
+                                                         'args': [json.dumps({'config_id': 'newcfg'})], 'named': {}}
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
                                       json.dumps({'board': 'glider9', 'command': 'reboot'}))
         assert status == 200 and json.loads(payload)['status'] == 'ok'

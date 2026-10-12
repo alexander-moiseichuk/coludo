@@ -9,7 +9,8 @@ encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
   GET  /             -> the one-page dashboard (static/index.html)
   GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
   GET  /api/absent   -> known-but-disconnected gliders from the roster, each with a reboot hint
-  POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON {board, status, args, named}
+  POST /api/cmd      -> {board, command, params[, named]} -> run it on the board, reply as JSON {board, status,
+                        args, named}
   POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
   GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
 """
@@ -17,6 +18,7 @@ encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
 import asyncio
 import json
 import os
+import re
 
 _REASON = {200: 'OK', 400: 'Bad Request', 404: 'Not Found', 500: 'Internal Server Error', 502: 'Bad Gateway',
            504: 'Gateway Timeout'}
@@ -51,6 +53,7 @@ async def _send_json(writer, status: int, payload) -> None:
 
 
 _MAX_PARAMS: int = 16  # a bounded splat into board.command(); a request is not a scripting surface
+_NAME: re.Pattern = re.compile(r'[a-z_][a-z0-9_]*')  # a named param's key, as the GCL declares them
 
 
 class Web:
@@ -188,10 +191,18 @@ class Web:
                                     {'error': 'params must be a list of at most %d' % _MAX_PARAMS})
         if any(not isinstance(item, (str, int, float, bool)) for item in params):
             return await _send_json(writer, 400, {'error': 'params must be scalars'})
+        # the GCL commands' `key=value` params (`ls path=/`, `rm path=... confirm`): a bounded map of scalars too
+        named = request.get('named', {})
+        if not isinstance(named, dict) or len(named) > _MAX_PARAMS:
+            return await _send_json(writer, 400,
+                                    {'error': 'named must be an object of at most %d' % _MAX_PARAMS})
+        if any(not isinstance(key, str) or not _NAME.fullmatch(key)
+               or not isinstance(value, (str, int, float, bool)) for key, value in named.items()):
+            return await _send_json(writer, 400, {'error': 'named must map simple names to scalars'})
         board = self.hub.boards.get(board_id)
         if board is None or not board.online:
             return await _send_json(writer, 404, {'error': 'no online board %r' % board_id})
-        resp = await board.command(command, *params)
+        resp = await board.command(command, *params, named=named or None)
         if resp is None:
             return await _send_json(writer, 502, {'board': board.id, 'error': 'offline'})
         # the named params too: the Rust board's figures (`control`, `heap`, `ring`, ...) are all named

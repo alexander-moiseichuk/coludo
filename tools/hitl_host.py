@@ -53,6 +53,7 @@ import time
 _ROOT: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, 'src', 'glider'))
 sys.path.insert(0, os.path.join(_ROOT, 'src', 'control'))
+import board_clean  # noqa: E402
 import cc_protocol as cc  # noqa: E402
 import config_hitl  # noqa: E402
 import sim_model  # noqa: E402
@@ -491,6 +492,10 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--faults', default='', help="sim_model.Faults: 'gnss@30,pitot@45'")
     parser.add_argument('--reboot', action='store_true', help='a real panic 1-6 s into the glide (the console)')
     parser.add_argument('--keep-config', action='store_true', help='leave the HITL config installed')
+    parser.add_argument('--clean', action='store_true', help='clear the card after the reboot: every session but '
+                        'the run\'s own goes, for good (tools/board_clean.py)')
+    parser.add_argument('--video', action='store_true', help='record video through the flight: `video start` '
+                        'before the arm (the rod trigger never fires in HITL: no dwell, the sim\'s boost axis)')
     parser.add_argument('--sitl', help='fly the SITL binary at this path instead of a board: lockstep, no CC')
     parser.add_argument('--config', help='--sitl: the board config JSON it runs (a board\'s saved config)')
     parser.add_argument('--sitl-port', type=int, default=SIM_PORT + 10, help='--sitl: its UDP port on localhost')
@@ -569,6 +574,11 @@ def main() -> int:
             print('GATE FAILED: no answer on udp %s:%d in %.0f s' % (args.ip, SIM_PORT, _GATE_S))
             return 1
         print('SESSION', whoami.get('session'), args.motor, 'noise', args.noise, 'wind', args.wind)
+        if args.clean:
+            removed = board_clean.clean(board, whoami.get('session'))
+            print('CLEANED %d %s' % (len(removed), board.raw('df')))
+        if args.video:
+            print('VIDEO START %s' % board.raw('video start'))
         flyer = threading.Thread(target=sim.run, daemon=True)
         flyer.start()
         status, armed = board.ask('arm')
@@ -636,11 +646,13 @@ def main() -> int:
         print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
             '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
         # the control tick's figures over the flight (its counters live until the restore's reboot below): rate,
-        # overruns, the largest lateness and work -- how fast the board reacts
-        try:
-            print('CONTROL %s' % board.raw('control'))
-        except (transports.NoAnswer, OSError) as error:
-            print('CONTROL none (%s)' % error)
+        # overruns, the largest lateness and work -- how fast the board reacts; and the card's: the video writer's,
+        # the ring_saver's and the free space (the partition A/B, avionics-port.md "SD and flash file layout")
+        for label, line in (('CONTROL', 'control'), ('VIDEO', 'video stats'), ('RING', 'ring'), ('DF', 'df')):
+            try:
+                print('%s %s' % (label, board.raw(line)))
+            except (transports.NoAnswer, OSError) as error:
+                print('%s none (%s)' % (label, error))
         print('RUN_END')
     finally:
         if not args.keep_config:

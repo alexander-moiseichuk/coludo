@@ -25,6 +25,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.
 sys.path.insert(0, os.path.join(_ROOT, 'tools'))
 import airspeed_calibrate  # noqa: E402
 import assemble_capture  # noqa: E402
+import board_clean  # noqa: E402
 import cc  # noqa: E402
 import flight_campaign  # noqa: E402
 import flight_kpi  # noqa: E402
@@ -2165,3 +2166,21 @@ def test_recorder_console_reads_its_replies_past_the_log():
 
 
 test_recorder_console_reads_its_replies_past_the_log()
+
+
+def test_board_clean_keeps_the_running_session_videos_and_the_index():
+    """
+    The cleanup before a test run removes every session but the running one, and never `videos/` (the videos
+    partition's mount point) nor the global index; under `videos/` it removes the other sessions' videos only.
+    """
+    root = [['000374/', None], ['sessions.csv', 79468], ['videos/', None], ['COLUDO/', None], ['000693/', None],
+            ['Videos/', None], ['flight-a/', None]]
+    assert board_clean.doomed(root, '000693') == ['000374', 'COLUDO', 'flight-a'], board_clean.doomed(root, '000693')
+    videos = [['000408/', None], ['000693/', None]]
+    assert board_clean.doomed(videos, '000693', 'videos') == ['videos/000408']
+    # negative: an empty card and a card holding only the running session leave nothing to remove
+    assert board_clean.doomed([], '000693') == []
+    assert board_clean.doomed([['000693/', None], ['sessions.csv', 1], ['videos/', None]], '000693') == []
+
+
+test_board_clean_keeps_the_running_session_videos_and_the_index()

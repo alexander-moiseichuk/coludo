@@ -21,7 +21,11 @@ board while the hub has already declared the link dead -- and then refuses `disa
 """
 _SLOW_TIMEOUT_S: dict = {'arm': 30.0, 'verify': 30.0, 'probe': 30.0, 'calibrate': 30.0,
                          # the Rust board's diagnostics (Glider Command Language) run for their `seconds=` window
-                         'load': 30.0, 'pace': 30.0, 'sdtest': 30.0}
+                         'load': 30.0, 'pace': 30.0, 'sdtest': 30.0,
+                         # the card's: `rm` frees every cluster chain of a session, ~14 files the ring_saver wrote
+                         # interleaved, so a FAT sector write every few clusters (a 128 MB session took >10 s);
+                         # `df`'s first count reads the whole FAT
+                         'rm': 120.0, 'df': 30.0}
 
 
 def timeout_for(line: str) -> float:
@@ -195,14 +199,15 @@ class Board:
                 'config': self.cache['config'], 'inspect': self.cache['inspect'],
                 'stats': self.cache['stats'], 'health': self.cache['health']}
 
-    async def command(self, command: str, *args, timeout: float = None,
+    async def command(self, command: str, *args, named: dict = None, timeout: float = None,
                       quiet: bool = False) -> cc._Msg:
         """
-        Build `command args...` and exchange it.
+        Build `command args... key=value...` and exchange it.
 
         Args:
             command - the command verb.
             args - the command arguments (base64-encoded by cc.build as needed).
+            named - the `key=value` params, after the positional ones (a GCL command's), or None.
             timeout - seconds to wait for the reply; None picks _SLOW_TIMEOUT_S for the active
                 self-tests and EXCHANGE_TIMEOUT_S for everything else, so neither the console nor the
                 web path can undercut them.
@@ -213,7 +218,7 @@ class Board:
         """
         if timeout is None:
             timeout = timeout_for(command)
-        resp = await self.exchange(cc.build(command, list(args)), timeout, quiet=quiet)
+        resp = await self.exchange(cc.build(command, list(args), named), timeout, quiet=quiet)
         if command == 'health' and resp is not None and resp.command == 'ok':
             self.health_seen = time.monotonic()
         return resp

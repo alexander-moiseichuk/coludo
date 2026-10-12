@@ -1187,12 +1187,21 @@ def test_diff_masks_only_what_cannot_matter() -> None:
 
 
 def test_hub_request_carries_the_line_verbatim() -> None:
-    """/api/cmd rebuilds the line from {command, params}: only a line that survives that goes through the hub."""
-    assert transports.hub_request('ping') == ('ping', [])
-    assert transports.hub_request('PING') == ('PING', [])
+    """
+    /api/cmd rebuilds the line from {command, params, named}: only a line that survives that goes through the hub,
+    the GCL commands' `key=value` params included.
+    """
+    assert transports.hub_request('ping') == ('ping', [], {})
+    assert transports.hub_request('PING') == ('PING', [], {})
     launch = cc.build('set-config', ['launch', '{"launch_id": "x"}'])
-    assert transports.hub_request(launch) == ('set-config', ['launch', '{"launch_id": "x"}'])
-    for line in ('', '   ', 'inspect base64:QQ', 'inspect base64:/w==', 'inspect  mission'):
+    assert transports.hub_request(launch) == ('set-config', ['launch', '{"launch_id": "x"}'], {})
+    assert transports.hub_request('ls path=/') == ('ls', [], {'path': '/'})
+    rm = cc.build('rm', ['confirm'], {'path': '000374'})
+    assert transports.hub_request(rm) == ('rm', ['confirm'], {'path': '000374'}), rm
+    spaced = cc.build('video', ['start'], {'note': 'a b'})  # a named value that needs base64 survives
+    assert transports.hub_request(spaced) == ('video', ['start'], {'note': 'a b'})
+    for line in ('', '   ', 'inspect base64:QQ', 'inspect base64:/w==', 'inspect  mission',
+                 'rm path=000374 confirm'):  # a positional word after a named param: rebuilt in another order
         try:
             transports.hub_request(line)
         except transports.Unreachable:
