@@ -38,8 +38,8 @@ pub fn ring_gate(scanned: bool, eraser_running: bool, erased_ahead: u32, reserve
 mod tests {
     use super::ring_gate;
 
-    /// The board's reserve: 1 % of its 6144 blocks (flash_ring `Geometry::BOARD`).
-    const BOARD_RESERVE: u32 = 61;
+    /// The board's reserve: 1 % of its 5120 blocks (flash_ring `Geometry::BOARD`).
+    const BOARD_RESERVE: u32 = 51;
 
     #[test]
     fn a_scanned_ring_with_its_eraser_and_its_reserve_passes() {
@@ -49,14 +49,14 @@ mod tests {
             "exactly the reserve"
         );
         assert_eq!(ring_gate(true, true, BOARD_RESERVE + 1, BOARD_RESERVE), None);
-        assert_eq!(ring_gate(true, true, 6144, BOARD_RESERVE), None, "a fresh ring");
+        assert_eq!(ring_gate(true, true, 5120, BOARD_RESERVE), None, "a fresh ring");
         assert_eq!(ring_gate(true, true, 1, 1), None, "a small ring's one-block reserve");
     }
 
     #[test]
     fn a_ring_never_scanned_is_refused_first() {
         assert_eq!(
-            ring_gate(false, true, 6144, BOARD_RESERVE).as_deref(),
+            ring_gate(false, true, 5120, BOARD_RESERVE).as_deref(),
             Some("recorder rings: the bring-up scan has not run")
         );
         assert_eq!(
@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn a_ring_without_its_eraser_is_refused_even_with_its_reserve() {
         assert_eq!(
-            ring_gate(true, false, 6144, BOARD_RESERVE).as_deref(),
+            ring_gate(true, false, 5120, BOARD_RESERVE).as_deref(),
             Some("recorder rings: the eraser is not running")
         );
         assert_eq!(
@@ -83,7 +83,7 @@ mod tests {
     fn a_ring_below_its_reserve_is_refused_with_both_counts() {
         assert_eq!(
             ring_gate(true, true, BOARD_RESERVE - 1, BOARD_RESERVE).as_deref(),
-            Some("recorder rings: 60 blocks erased ahead of the writer, below the 61-block reserve")
+            Some("recorder rings: 50 blocks erased ahead of the writer, below the 51-block reserve")
         );
         assert_eq!(
             ring_gate(true, true, 0, 1).as_deref(),

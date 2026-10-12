@@ -28,7 +28,7 @@
 # path, because the image carries them. No password is ever printed, logged or kept, and nothing is written into
 # the repo (no bytecode either).
 #
-# The write: the offset and size are partitions.csv's cfg row (0x620000, 0x100000 today). The board's own partition
+# The write: the offset and size are partitions.csv's cfg row (0x820000, 0x100000 today). The board's own partition
 # table is read first and must hold that same cfg partition: a board still on MicroPython has none, and its
 # filesystem (plan B's files) fills the flash past its app. Then only that range is written, with the esptool
 # firmware/flash.sh uses: the app, the shared nvs and the other partitions are never touched. Writing REPLACES

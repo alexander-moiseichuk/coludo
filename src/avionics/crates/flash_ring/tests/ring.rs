@@ -1,6 +1,6 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The ring's behaviour over an in-memory flash: append and read back, block rollover, the board's 6144-slot wrap,
+//! The ring's behaviour over an in-memory flash: append and read back, block rollover, the board's 5120-slot wrap,
 //! reboots, would-block, the eraser's normal rule and its delay, newest wins with a dead saver, the reserve and its
 //! margin, foreign and other-version blocks, the flight flag and a reboot in flight, failed programs, a sector that
 //! never erases and a slot that never reads, the hints and their reach, a trusted saver hint, the end of the
@@ -149,15 +149,15 @@ fn a_chunk_that_does_not_fit_opens_the_next_block_header_first() {
 }
 
 #[test]
-fn wraps_the_6144_slots_of_the_board_behind_a_saver_that_keeps_up() {
+fn wraps_the_5120_slots_of_the_board_behind_a_saver_that_keeps_up() {
     let geometry = Geometry::BOARD;
     let flash = erased(geometry);
     let scanned = bring_up(&flash, geometry, Hints::default());
-    assert_eq!(scanned.table.figures(None).erased_ahead, 6144);
+    assert_eq!(scanned.table.figures(None).erased_ahead, 5120);
     let mut ring = writer(&flash, &scanned, 9);
     let mut eraser = eraser(&flash, &scanned.table);
     let (mut index, mut now_ms, mut saved) = (0u32, 0u32, 0u32);
-    while ring.position().block_sequence < 6144 + 64 {
+    while ring.position().block_sequence < 5120 + 64 {
         let mut chunk = format!("9:{index}:").into_bytes();
         chunk.resize(1990, b'r'); // two chunks a block
         ring.append(&chunk, 1)
@@ -174,10 +174,10 @@ fn wraps_the_6144_slots_of_the_board_behind_a_saver_that_keeps_up() {
     let newest = ring.position().block_sequence;
     assert_eq!(
         slot_of(&scanned.table, newest),
-        newest % 6144,
-        "block k in slot k mod 6144"
+        newest % 5120,
+        "block k in slot k mod 5120"
     );
-    assert!(saved > 6144, "every slot was erased behind the saver at least once");
+    assert!(saved > 5120, "every slot was erased behind the saver at least once");
     assert_eq!(scanned.table.figures(None).lost, 0);
     drop((ring, eraser));
 
@@ -198,7 +198,7 @@ fn wraps_the_6144_slots_of_the_board_behind_a_saver_that_keeps_up() {
     assert_eq!(ring.append(b"10:0:after the reboot", 1), Ok(at(newest + 1, 56)));
     assert_eq!(
         slot_of(&rescanned.table, newest + 1),
-        (newest + 1) % 6144,
+        (newest + 1) % 5120,
         "the slot after the newest"
     );
 }

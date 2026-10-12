@@ -1774,9 +1774,9 @@ so the newest tool reads a ring that a revert left in two layouts.
 
 ### 3.5 Ring geometry and block life cycle
 
-- **Partition:** `log`, found by label: 0x800000–0x2000000, 24 MiB (§3.10). It is accessed only through
+- **Partition:** `log`, found by label: 0xC00000–0x2000000, 20 MiB (§3.10; 24 MiB at 0x800000 until 2026-10-12). It is accessed only through
   `esp_partition_read`/`write_raw`/`erase_range`, and never mmap while writes run.
-- **Blocks:** 6144 × 4 KiB, one erase sector each.
+- **Blocks:** 5120 × 4 KiB, one erase sector each (6144 until 2026-10-12).
 - **Sequence:** a global `block_sequence: u32` increases on every block open, across boots, and blocks are read
   in its order. The writer takes the next erased slot after its current one, so the ring runs as a FIFO while
   the saver keeps up. After a newest-wins erase out of order (§3.7), slot order and sequence order can differ;
@@ -2199,17 +2199,24 @@ after its sessions are pulled, for the two-partition layout.
 | `nvs` | nvs | 0x9000 | 0x6000 | unchanged, shared with MicroPython: boot count, calibrations, crumb |
 | `phy_init` | phy | 0xF000 | 0x1000 | |
 | `otadata` | ota | 0x10000 | 0x2000 | which app slot boots |
-| `ota_0` | app | 0x20000 | 0x300000 | 3 MB app slot (the image is 1.6 MB today) |
-| `ota_1` | app | 0x320000 | 0x300000 | 3 MB app slot, for OTA (M15) |
-| `cfg` | nvs | 0x620000 | 0x100000 | 1 MB: blobs `board` and `launch`, the `creds` namespace, the session-start record, the ring positions |
-| `panic` | data | 0x720000 | 0x20000 | 128 KB: the panic log, 16 records of 8 KB (§4.8; added 2026-10-07) |
-| `log` | data | 0x800000 | 0x1800000 | unchanged: the 24 MiB ring |
+| `ota_0` | app | 0x20000 | 0x400000 | 4 MB app slot (the image was 3.0 MB on 2026-10-12) |
+| `ota_1` | app | 0x420000 | 0x400000 | 4 MB app slot, for OTA (M15) |
+| `cfg` | nvs | 0x820000 | 0x100000 | 1 MB: blobs `board` and `launch`, the `creds` namespace, the session-start record, the ring positions |
+| `panic` | data | 0x920000 | 0x20000 | 128 KB: the panic log, 16 records of 8 KB (§4.8; added 2026-10-07) |
+| `log` | data | 0xC00000 | 0x1400000 | the 20 MiB ring (5120 blocks) |
 
-- `flash.sh` writes the app to `ota_0` and erases `otadata`, so the bootloader boots `ota_0`. OTA itself comes
-  later, over CC (M15).
-- `tools/provision.sh` reads the `cfg` row from `partitions.csv`, so it follows the move. A board flashed with the
-  old table (the taster) is re-provisioned once.
-- 0x740000–0x800000 stays free.
+- **2026-10-12 (operator): the app slots grow from 3 to 4 MB, the ring shrinks from 24 to 20 MiB.** The image had
+  reached 3.0 MB of its 3 MB slot. The firmware's ring (`flash_ring::Geometry::BOARD`) is 5120 blocks, and a `log`
+  partition of any other size parks the recorder with a message to flash the matching table (another layout's
+  blocks would read as the ring's). Migrated on the taster and 7F: each board's saved and launch configs backed up
+  over CC, the new `cfg`, `panic` and `log` ranges erased (the board held in download mode, so no boot met stale
+  data), the table and `ota_0` by `flash.sh`, `cfg` by `provision.sh` (both configs and the Wi-Fi passwords); each
+  came back with its own config id, a 5120-block ring, and OTA into the 4 MB `ota_1`. Lost on purpose: the panic
+  log, and the ring's contents (already on the cards).
+- `flash.sh` writes the app to `ota_0` and erases `otadata`, so the bootloader boots `ota_0`; OTA over the console or
+  Wi-Fi (M15).
+- `tools/provision.sh` reads the `cfg` row from `partitions.csv`, so it follows a move.
+- 0x940000–0xC00000 stays free (2.75 MB).
 
 ### 3.11 Row, log and index text (byte rules)
 
@@ -2254,7 +2261,7 @@ The saver prints records by these rules, and so does the `cc` executor for the t
   point.
 - **`GET /ring[?boot=N]`** streams every valid block decoded to wire lines (`[@<routing>@]{OPEN};…;<CLOSE>`,
   the saver's text with its routing) in `block_sequence` order: a byte-exact wire capture.
-- **`GET /ring/image`** streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
+- **`GET /ring/image`** streams the raw 20 MiB partition, as `esptool read_flash 0xC00000 0x1400000` reads it.
 - `tools/ring_split.py` turns either into session directories. This is the recovery path when the card failed
   in flight. `--blocks` lists an image's blocks instead, one line each and nothing written: the sequence, boot,
   session and flight flag, the span of the records' uptimes, the rows per file, and the torn and damaged chunks. It
@@ -2266,7 +2273,7 @@ The saver prints records by these rules, and so does the `cc` executor for the t
 |---|---|
 | rows | ~375 rows/s. On the SD as text ≈ 26 KB/s (~68 B a line, unchanged). In flash as binary records ≈ 14.6 KB/s: about 2.4× denser than the 35 KB/s of routed text |
 | chunk and block overhead | ≈ 1.2 KB/s at a 10 ms tick (an 8 B chunk header and its padding per chunk, a 56 B header per block): ≈ 16 KB/s in flash in all |
-| ring holds | 24 MiB / 16 KB/s ≈ 26 min with no SD progress (≈ 9 min if the IMUs go to 1 kHz) |
+| ring holds | 20 MiB / 16 KB/s ≈ 22 min with no SD progress (≈ 7 min if the IMUs go to 1 kHz) |
 | flash busy | program ≈ 4 %; erase ≈ 6 % to keep pace (16 KB/s ÷ 4 KiB ≈ 4 blocks/s × ~15 ms); saver reads < 1 % |
 | core 0 | video 13 % + writer ≈ 4 % (program only) + eraser ≤ 6 % + saver ≈ 2 % (decode, format, SD writes) + link/health ≈ 1 % |
 | after DONE | a trickle (GNSS at 1 Hz, the beacon's sources, health); the saver drains the backlog at SD speed |
@@ -3057,7 +3064,7 @@ The operator's decisions on the earlier questions, one line each:
   BOOSTING..LANDING means a warm start; no crumb and speed 0 means SETTING (§4.6).
 - **Q4. `config_id` before vs after layout:** keep plan B's split, which is plan B behaviour: `set-config`
   returns the pre-layout id, `whoami` announces the post-layout one, and the boot log line names both (M5).
-- **Q5. Partitions and OTA:** `otadata` plus `ota_0` and `ota_1` of 3 MB each now, a 1 MB `cfg` at 0x620000,
+- **Q5. Partitions and OTA:** `otadata` plus `ota_0` and `ota_1` of 4 MB each (3 MB until 2026-10-12), a 1 MB `cfg` at 0x820000,
   `nvs` and `log` unchanged (§3.10). OTA itself comes later, over CC (M15). The 128 KB `panic` partition at 0x720000
   followed on 2026-10-07 (§4.8).
 - **Q6. Watchdog timeout:** keep 5000 ms in board files (Python `validate` rejects < 4000) until Rust measures

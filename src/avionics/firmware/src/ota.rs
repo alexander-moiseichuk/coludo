@@ -45,8 +45,8 @@ use crate::status::FLIGHT;
 /// What one read of the POST takes: a flash page's worth.
 const CHUNK: usize = 4096;
 
-/// What a slot can hold (partitions.csv: two app slots of 3 MB).
-const SLOT_BYTES: usize = 0x30_0000;
+/// What a slot can hold (partitions.csv: two app slots of 4 MB).
+const SLOT_BYTES: usize = 0x40_0000;
 
 /// One image received and checked, not yet committed.
 struct Received {

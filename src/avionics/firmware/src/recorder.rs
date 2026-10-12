@@ -6,7 +6,7 @@
 //! what the saver has passed.
 //!
 //! ```text
-//! producers (any core) --binary records--> PSRAM rings --> ring_writer (core 0, prio 7) --> `log` partition, 24 MiB
+//! producers (any core) --binary records--> PSRAM rings --> ring_writer (core 0, prio 7) --> `log` partition, 20 MiB
 //!   supervisor, executor, eraser,          + misc ring          |  one chunk per ~10 ms tick    |          ^
 //!   everyone else (log bridge, IDF)                             +--> CC tees (`log`, `tlm`)     |          | 4 KiB erases
 //!                                                                                               v          |
@@ -20,7 +20,7 @@
 //!    PSRAM, whoever makes it.
 //! 2. [`start`], on main once the SD card's state is known and the camera's encoder has its internal RAM: spawns the
 //!    ring_writer. Its bring-up routine (spec "The scan, the positions and the session-start record") reads the ring
-//!    positions and the previous boot's session-start record from the `cfg` NVS, scans the 6144 block headers,
+//!    positions and the previous boot's session-start record from the `cfg` NVS, scans the 5120 block headers,
 //!    writes this boot's record, spawns the ring_eraser and, with a card mounted, the ring_saver, and only then
 //!    starts programming; boot goes on meanwhile, and the producers queue.
 //!
@@ -139,11 +139,11 @@ const ERASER_PRIORITY: u8 = 3;
 const ERASER_STACK: usize = 6 << 10;
 
 /// How long the eraser rests when nothing is due: the reserve (61 blocks) lasts ~15 s at the flight rate, so a
-/// tenth of a second costs nothing, and its scan of the 6144-slot table stays well under 1 % of core 0.
+/// tenth of a second costs nothing, and its scan of the 5120-slot table stays well under 1 % of core 0.
 const ERASER_IDLE: Duration = Duration::from_millis(100);
 
 /// The least the eraser rests after an erase: one tick. It rests as long as the erase took, at least this, so
-/// back-to-back erases (a first boot formatting an unformatted ring: 6144 x ~15 ms) hold core 0 at most half the time
+/// back-to-back erases (a first boot formatting an unformatted ring: 5120 x ~15 ms) hold core 0 at most half the time
 /// and main, the link and the idle task (which the task watchdog watches) go on; that still frees ~30 blocks a
 /// second, where the flight rate takes ~4.
 const ERASER_PAUSE: Duration = Duration::from_millis(1);
@@ -494,6 +494,17 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
         log::error!("ring :: no `log` partition in the partition table: nothing reaches flash this boot");
         park();
     };
+    // a table this firmware was not built for (the ring was 24 MiB at 0x800000 until 2026-10-12): scanned with the
+    // wrong geometry, another layout's blocks would read as this ring's, so nothing is written
+    if partition.size() != Geometry::BOARD.bytes() {
+        log::error!(
+            "ring :: the `log` partition is {} bytes, this firmware's ring {}: flash the matching partition table \
+             (firmware/flash.sh) -- nothing reaches flash this boot",
+            partition.size(),
+            Geometry::BOARD.bytes()
+        );
+        park();
+    }
     let started_us = uptime_us();
     let Some(scan) = (1..=SCAN_ATTEMPTS).find_map(|attempt| {
         flash_ring::scan(&partition, Geometry::BOARD, hints)
@@ -1182,7 +1193,7 @@ fn pair(position: Position) -> [u32; 2] {
     [position.block_sequence, position.offset]
 }
 
-/// A data partition found by its label, as a [`Flash`]: the `log` partition (partitions.csv: 24 MiB at 0x800000), the
+/// A data partition found by its label, as a [`Flash`]: the `log` partition (partitions.csv: 20 MiB at 0xc00000), the
 /// ring's, and the `panic` partition, the panic log's. Each ring task holds its own copy; esp_flash serialises the
 /// calls, NVS's on the same chip among them.
 #[derive(Clone, Copy)]

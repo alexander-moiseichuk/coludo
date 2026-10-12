@@ -20,7 +20,7 @@
 //!   `[@<routing>@]{OPEN};<payload>;<CLOSE>\n`, in block_sequence order: a byte-exact wire capture, the lines the
 //!   ring_saver would file (doc/specs/avionics-port.md "CC tees and the HTTP exits"). `boot=N` keeps only that
 //!   boot's blocks.
-//! * `GET /ring/image` streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
+//! * `GET /ring/image` streams the raw 20 MiB partition, as `esptool read_flash 0xc00000 0x1400000` reads it.
 //! * `POST /ota?sha256=<hex>` writes a firmware image into the next app slot (M15, crate::ota): the one write this
 //!   server takes, on the pad and disarmed only.
 //! * `GET /camera/preview.jpg` is the camera's latest preview (M7b): 720x384, made once a second while the camera

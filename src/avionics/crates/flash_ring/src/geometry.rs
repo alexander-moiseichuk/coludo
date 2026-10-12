@@ -18,8 +18,9 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    /// The board's `log` partition: 6144 blocks of 4 KiB, 24 MiB at 0x800000.
-    pub const BOARD: Geometry = Geometry { blocks: 6144 };
+    /// The board's `log` partition: 5120 blocks of 4 KiB, 20 MiB at 0xc00000 (24 MiB until 2026-10-12, when the app
+    /// slots grew to 4 MB).
+    pub const BOARD: Geometry = Geometry { blocks: 5120 };
 
     /// A geometry of `blocks` slots. Returns None below two blocks (the writer fills one while the eraser frees
     /// another), or past 4 GiB, which a u32 offset cannot address.
@@ -62,10 +63,10 @@ mod tests {
 
     #[test]
     fn the_board_is_24_mebibytes_of_4_kibibyte_blocks() {
-        assert_eq!(Geometry::BOARD.bytes(), 24 << 20);
-        assert_eq!(Geometry::new(6144), Some(Geometry::BOARD));
+        assert_eq!(Geometry::BOARD.bytes(), 20 << 20);
+        assert_eq!(Geometry::new(5120), Some(Geometry::BOARD));
         assert_eq!(Geometry::BOARD.slot_offset(2), 8192);
-        assert_eq!(Geometry::BOARD.reserve_blocks(), 61, "about 1 %, as the spec counts it");
+        assert_eq!(Geometry::BOARD.reserve_blocks(), 51, "about 1 %, as the spec counts it");
     }
 
     #[test]

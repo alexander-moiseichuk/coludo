@@ -1,6 +1,6 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The flash ring (doc/specs/avionics-port.md, "Storage design"): the 24 MiB `log` partition as 6144 blocks of one
+//! The flash ring (doc/specs/avionics-port.md, "Storage design"): the 20 MiB `log` partition as 5120 blocks of one
 //! 4 KiB erase sector each. Power can drop at any moment, so getting every record into flash fast is the critical
 //! path, and the SD copy comes second. Three firmware tasks share the partition, each in one role:
 //! * the ring_writer ([`Ring`]) appends chunks of binary records, verbatim, into its open block, and opens the next

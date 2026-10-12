@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The block table (doc/specs/avionics-port.md, "Bring-up: the scan, the positions and the session-start
-//! record"): what each of the ring's slots holds, shared by the three ring tasks through atomics. It has 6144
+//! record"): what each of the ring's slots holds, shared by the three ring tasks through atomics. It has 5120
 //! entries on the board (48 KiB in PSRAM): a state word and a block sequence per slot, each an AtomicU32.
 //!
 //! Who changes a slot is fixed by its state, so the tasks never race on one:
@@ -245,7 +245,7 @@ impl BlockTable {
         self.bad.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// The budget figures, walking every slot (6144 pairs of loads on the board, tens of microseconds). `saver` is
+    /// The budget figures, walking every slot (5120 pairs of loads on the board, tens of microseconds). `saver` is
     /// the saver's published position: the blocks before its block are saved. None (no card, or no saver yet)
     /// counts every closed block unsaved.
     pub fn figures(&self, saver: Option<Position>) -> Figures {

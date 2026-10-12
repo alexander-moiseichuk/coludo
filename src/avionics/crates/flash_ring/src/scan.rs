@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The bring-up scan (doc/specs/avionics-port.md, "Bring-up: the scan, the positions and the session-start
-//! record"). It reads the 56-byte header at each of the 6144 block starts (about 0.15 s, estimated) and classifies
+//! record"). It reads the 56-byte header at each of the 5120 block starts (about 0.15 s, estimated) and classifies
 //! each slot into the [`BlockTable`] the three ring tasks share. It runs in the ring_writer thread before the first
 //! append, so the rest of boot goes on and the producers queue in PSRAM meanwhile.
 //!
