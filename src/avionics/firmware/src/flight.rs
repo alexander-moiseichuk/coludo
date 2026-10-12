@@ -17,7 +17,7 @@ use control::guidance::{Heading, Landing};
 use control::navigation::Position;
 use controller::FlightQuantities;
 use mission::Mission;
-use recorder::{Cell, Telemetry};
+use recorder::{Cell, Rows};
 use sequencer::{Flight as FlightWord, Stage};
 use serde_json::Value;
 
@@ -177,14 +177,10 @@ pub struct FlightLoop {
     fins: Vec<Option<usize>>,
     /// What it reads.
     quantities: FlightQuantities<'static>,
-    /// flight.csv, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
-    /// A refused row was logged since the last accepted one.
-    overflowing: bool,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// The next flight.csv sample, µs.
     next_sample_us: u64,
-    /// The entry's name.
-    name: &'static str,
 }
 
 impl FlightLoop {
@@ -221,12 +217,8 @@ impl FlightLoop {
             law,
             fins: bound,
             quantities: FlightQuantities::new(topology),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(member.name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
-            overflowing: false,
+            rows: crate::recorder::rows(member.name),
             next_sample_us: 0,
-            name: member.name,
         }
     }
 
@@ -285,7 +277,7 @@ impl FlightLoop {
             Cell::I32(wind.direction() as i32),
             Cell::I32(i32::from(guidance.reckoning())),
         ];
-        crate::sensors::record(self.name, &mut self.telemetry, &mut self.overflowing, now_us, &row);
+        self.rows.push(now_us, &row);
         VITALS.airspeed.store(law.airspeed().to_bits(), Ordering::Relaxed);
         VITALS.cap.store(law.cap(), Ordering::Relaxed);
         VITALS.active.store(law.active(), Ordering::Relaxed);

@@ -7,4 +7,6 @@ pub mod buses;
 pub mod gcl;
 pub mod sd;
 pub mod thermal;
+pub mod threads;
+pub mod time;
 pub mod video;

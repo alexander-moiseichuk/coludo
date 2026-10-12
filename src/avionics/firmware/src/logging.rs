@@ -37,6 +37,7 @@ use std::time::{Duration, Instant};
 
 use esp_idf_svc::log::{EspIdfLogFilter, EspIdfLogger};
 use esp_idf_svc::sys;
+use firmware::threads::{self, Spec, Stack};
 
 /// The longest log text kept for recorder.log, descriptor and message together, bytes: the recorder's own message
 /// limit (1 KiB). The console prints the whole line regardless.
@@ -155,25 +156,20 @@ fn print(queue: usize) {
 /// Makes the printer's queue and spawns the printer on core 0.
 fn start_printer() -> anyhow::Result<()> {
     use esp_idf_svc::hal::cpu::Core;
-    use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
     // SAFETY: a plain queue allocation, in PSRAM.
     let queue = unsafe { sys::xQueueCreateWithCaps(QUEUED_LINES, QUEUED_LINE_BYTES as u32, sys::MALLOC_CAP_SPIRAM) };
     anyhow::ensure!(!queue.is_null(), "no memory for the console queue");
-    ThreadSpawnConfiguration {
-        name: Some(c"log_print"),
-        stack_size: PRINTER_STACK,
-        priority: 3,
-        pin_to_core: Some(Core::Core0),
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
-    }
-    .set()?;
     let address = queue as usize;
-    let spawned = std::thread::Builder::new()
-        .stack_size(PRINTER_STACK)
-        .spawn(move || print(address));
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+    threads::spawn(
+        Spec {
+            name: c"log_print",
+            stack_size: PRINTER_STACK,
+            stack: Stack::Psram,
+            priority: 3,
+            core: Core::Core0,
+        },
+        move || print(address),
+    )?;
     QUEUE.store(queue, Ordering::Release);
     Ok(())
 }

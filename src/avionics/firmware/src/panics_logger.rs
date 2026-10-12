@@ -17,7 +17,6 @@ use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::sys;
 use firmware::allocator::InternalBuffer;
 use firmware::gcl::{self, Command, Gate, Reach};
@@ -26,6 +25,8 @@ use panics::{PanicLog, PanicLogError, Tags};
 
 use crate::board;
 use crate::recorder::Partition;
+use firmware::threads::{self, Spec, Stack};
+use firmware::time::uptime_us;
 
 /// The partition's label.
 const LABEL: &std::ffi::CStr = c"panic";
@@ -128,8 +129,7 @@ fn log() -> MutexGuard<'static, Option<PanicLog<Bounced>>> {
 
 /// The uptime in ms.
 fn uptime_ms() -> u32 {
-    // SAFETY: a plain read of the monotonic timer.
-    (unsafe { sys::esp_timer_get_time() } / 1000) as u32
+    (uptime_us() / 1000) as u32
 }
 
 /// A C string field of the capture, as text.
@@ -309,20 +309,16 @@ fn install_hook() {
 /// Errors: the thread would not spawn.
 pub fn start_oops() -> anyhow::Result<()> {
     let (queue, oopses) = sync_channel(OOPS_QUEUE);
-    ThreadSpawnConfiguration {
-        name: Some(c"panic_log"),
-        stack_size: STACK_SIZE,
-        priority: 2,
-        pin_to_core: Some(Core::Core0),
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(move || write_oopses(oopses));
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+    threads::spawn(
+        Spec {
+            name: c"panic_log",
+            stack_size: STACK_SIZE,
+            stack: Stack::Psram,
+            priority: 2,
+            core: Core::Core0,
+        },
+        move || write_oopses(oopses),
+    )?;
     let _ = QUEUE.set(queue);
     Ok(())
 }

@@ -17,7 +17,6 @@ use std::io::{BufRead, Write};
 
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::gpio::{AnyIOPin, InputPin, OutputPin};
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::hal::uart::{Uart, UartDriver};
 use esp_idf_svc::io::vfs::BlockingStdIo;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -25,6 +24,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use firmware::gcl::{self, Command, Gate, Kind, Origin, Parameter, Reach};
 
 use crate::commands::Executor;
+use firmware::threads::{self, Spec, Stack};
 
 /// The console thread's stack: it reads a line and prints a reply, nothing deeper.
 const STACK_SIZE: usize = 8192;
@@ -89,47 +89,45 @@ impl Console {
     /// Serve the console on its own thread (core 0, priority 5, beside the CC executor it feeds), forever.
     pub fn serve(self, executor: Executor) -> anyhow::Result<()> {
         let standard_io = self.0;
-        ThreadSpawnConfiguration {
-            name: Some(c"console"),
-            stack_size: STACK_SIZE,
-            priority: 5,
-            // core 0 with the rest of the link: pthread's default leaves it unpinned, free to run on core 1, the flight
-            // core
-            pin_to_core: Some(Core::Core0),
-            // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
-            // esp_mmu_map/unmap, the one runtime path that turns the cache off
-            stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-            ..Default::default()
-        }
-        .set()?;
-        let spawned = std::thread::Builder::new().stack_size(STACK_SIZE).spawn(move || {
-            let _standard_io = standard_io; // stdin blocks only while this lives
-            let mut line = String::new();
-            loop {
-                line.clear();
-                if std::io::stdin().lock().read_line(&mut line).is_err() {
-                    continue;
-                }
-                if let Some(reply) = executor.ask(line.trim(), Origin::Console) {
-                    println!("{reply}");
-                    let _ = std::io::stdout().flush();
-                }
-                // `console baud`: the new rate once its answer has left at the old one
-                let rate = PENDING_BAUD.swap(0, Ordering::AcqRel);
-                if rate != 0 {
-                    // SAFETY: UART0's driver is installed (install); waits for the transmit FIFO, then sets the rate.
-                    // the receive interrupt at 32 bytes in the 128-byte FIFO, not near its top: ~0.5 ms of slack at
-                    // 2 Mbaud for an interrupt that comes late (a flash write's), where the default left microseconds
-                    unsafe {
-                        esp_idf_svc::sys::uart_wait_tx_done(0, 100);
-                        esp_idf_svc::sys::uart_set_baudrate(0, rate);
-                        esp_idf_svc::sys::uart_set_rx_full_threshold(0, 32);
+        // core 0 with the rest of the link: pthread's default leaves it unpinned, free to run on core 1, the flight
+        // core
+        // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
+        // esp_mmu_map/unmap, the one runtime path that turns the cache off
+        threads::spawn(
+            Spec {
+                name: c"console",
+                stack_size: STACK_SIZE,
+                stack: Stack::Psram,
+                priority: 5,
+                core: Core::Core0,
+            },
+            move || {
+                let _standard_io = standard_io; // stdin blocks only while this lives
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    if std::io::stdin().lock().read_line(&mut line).is_err() {
+                        continue;
+                    }
+                    if let Some(reply) = executor.ask(line.trim(), Origin::Console) {
+                        println!("{reply}");
+                        let _ = std::io::stdout().flush();
+                    }
+                    // `console baud`: the new rate once its answer has left at the old one
+                    let rate = PENDING_BAUD.swap(0, Ordering::AcqRel);
+                    if rate != 0 {
+                        // SAFETY: UART0's driver is installed (install); waits for the transmit FIFO, then sets the rate.
+                        // the receive interrupt at 32 bytes in the 128-byte FIFO, not near its top: ~0.5 ms of slack at
+                        // 2 Mbaud for an interrupt that comes late (a flash write's), where the default left microseconds
+                        unsafe {
+                            esp_idf_svc::sys::uart_wait_tx_done(0, 100);
+                            esp_idf_svc::sys::uart_set_baudrate(0, rate);
+                            esp_idf_svc::sys::uart_set_rx_full_threshold(0, 32);
+                        }
                     }
                 }
-            }
-        });
-        ThreadSpawnConfiguration::default().set()?;
-        spawned?;
+            },
+        )?;
         Ok(())
     }
 }

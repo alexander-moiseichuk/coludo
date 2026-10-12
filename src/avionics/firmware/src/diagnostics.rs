@@ -20,6 +20,7 @@ use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
 use firmware::gcl::{Command, Gate, Kind, Parameter, Reach};
+use firmware::time::uptime_us;
 
 /// One task's run time at a moment.
 struct Sample {
@@ -231,10 +232,10 @@ pub fn heap_tasks() -> String {
 /// Per-core load over `seconds` and the busiest tasks, as one CC line.
 pub fn load(seconds: u64) -> String {
     let (before, _) = snapshot();
-    let start = unsafe { sys::esp_timer_get_time() };
+    let start = uptime_us();
     std::thread::sleep(Duration::from_secs(seconds));
     let (after, _) = snapshot();
-    let elapsed = (unsafe { sys::esp_timer_get_time() } - start) as u64;
+    let elapsed = uptime_us() - start;
     let mut deltas: Vec<(String, i32, u64)> = after
         .iter()
         .map(|task| {
@@ -377,7 +378,7 @@ pub fn pace(seconds: u64, source: Source) -> String {
             let mut tick = 0i64;
             while lateness.len() < ticks {
                 let pending = sys::ulTaskGenericNotifyTake(0, 1, u32::MAX) as i64;
-                let now = sys::esp_timer_get_time();
+                let now = uptime_us() as i64;
                 for _ in 0..pending {
                     if tick == 0 {
                         first = now;

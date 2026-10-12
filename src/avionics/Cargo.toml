@@ -38,6 +38,8 @@ sim_link = { path = "crates/sim_link" }
 beacon = { path = "crates/beacon" }
 # the device traits the drivers are written over (I2c, SpiDevice, DelayNs); esp-idf-hal implements the same 1.0
 embedded-hal = "1"
+# the logging facade every crate logs through; the firmware installs the logger
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a JSON number parses to the exact f64 Python's json reads (config_id hashes the repr)
 serde_json = { version = "1", features = ["float_roundtrip"] }

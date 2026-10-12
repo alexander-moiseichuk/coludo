@@ -69,7 +69,6 @@ use std::time::{Duration, Instant};
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::delay::TickType;
 use esp_idf_svc::hal::task;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::nvs::{EspCustomNvsPartition, EspNvs, NvsCustom};
 use esp_idf_svc::sys;
 use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
@@ -79,13 +78,15 @@ use flash_ring::{
     BLOCK_BYTES, BacklogTrend, BlockTable, Eraser, Erasure, Figures, Flash, Geometry, Hints, Position, Ring,
 };
 use recorder::{
-    BATCH_BLOCKS, BEHIND_BLOCKS, Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, Relay, SaveError, Saved,
-    Saver, Settings, StdFs, StreamId, TICK_US, Writer, layout,
+    BATCH_BLOCKS, BEHIND_BLOCKS, Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, Relay, Rows, SaveError,
+    Saved, Saver, Settings, StdFs, StreamId, TICK_US, Telemetry, Writer, layout,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{board, clock, config, supervisor};
+use firmware::threads::{self, Spec, Stack};
+use firmware::time::uptime_us;
 
 /// The producer rings a thread attaches to, by the index `Recorder::attach` takes (spec "Producer side": one ring per
 /// producing thread). The flight threads (control, i2c0, i2c1, gnss) join as they are ported. Every other thread
@@ -300,6 +301,19 @@ pub fn device_stream(name: &str) -> Option<StreamId> {
         .iter()
         .find(|(device, _)| device == name)
         .map(|(_, stream)| *stream)
+}
+
+/// The producer side of the device stream `stream`: None without a recorder, or when the registry has no such stream.
+pub fn telemetry(stream: &str) -> Option<Telemetry<'static>> {
+    get()
+        .zip(device_stream(stream))
+        .and_then(|(recorder, id)| Telemetry::new(recorder, id))
+}
+
+/// The device `name`'s stream as its run records it: its rows, a refused one logged once a run as `<name> ::
+/// telemetry <overflow>` (recorder::Rows); recording nothing without a recorder or such a stream.
+pub fn rows(name: &'static str) -> Rows<'static> {
+    Rows::new(name, "telemetry", telemetry(name))
 }
 
 /// The flash ring; None until the writer's bring-up scan has run (or when it found no `log` partition).
@@ -1277,12 +1291,6 @@ fn psram(bytes: usize) -> anyhow::Result<&'static mut [u8]> {
     Ok(unsafe { core::slice::from_raw_parts_mut(pointer.cast(), bytes) })
 }
 
-/// The uptime in µs (esp_timer, unwrapped): every record's stamp.
-fn uptime_us() -> u64 {
-    // SAFETY: a plain read of the monotonic system timer, never negative.
-    unsafe { sys::esp_timer_get_time() as u64 }
-}
-
 /// The uptime in wrapping milliseconds, the eraser's unit.
 fn uptime_ms() -> u32 {
     (uptime_us() / 1000) as u32
@@ -1298,17 +1306,8 @@ fn wake() {
     }
 }
 
-/// Where a recorder thread's stack lives (spec §4.7, the internal RAM budget).
-#[derive(Clone, Copy)]
-enum Stack {
-    /// Internal RAM: a thread that calls the flash driver, which turns the cache (so PSRAM) off.
-    Internal,
-    /// PSRAM, and so its Rust allocations too (crate::allocator): a thread that never touches the flash.
-    Psram,
-}
-
-/// Spawns `body` as a thread on core 0 with this name, stack and priority: none of the ring's work runs on core 1,
-/// the flight core.
+/// Spawns `body` as a ring thread with this name, stack and priority, on core 0: none of the ring's work runs on core
+/// 1, the flight core.
 fn spawn(
     name: &'static CStr,
     stack_size: usize,
@@ -1316,21 +1315,16 @@ fn spawn(
     priority: u8,
     body: impl FnOnce() + Send + 'static,
 ) -> anyhow::Result<()> {
-    ThreadSpawnConfiguration {
-        name: Some(name),
-        stack_size,
-        priority,
-        pin_to_core: Some(Core::Core0),
-        stack_alloc_caps: match stack {
-            Stack::Internal => ThreadSpawnConfiguration::default().stack_alloc_caps,
-            Stack::Psram => MallocCap::Spiram | MallocCap::Cap8bit,
+    threads::spawn(
+        Spec {
+            name,
+            stack_size,
+            stack,
+            priority,
+            core: Core::Core0,
         },
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new().stack_size(stack_size).spawn(body);
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+        body,
+    )?;
     Ok(())
 }
 

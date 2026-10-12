@@ -38,7 +38,7 @@ use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::gpio::{AnyOutputPin, GpioError, Output, PinDriver};
 use esp_idf_svc::sys::EspError;
 use firmware::buses::i2c::I2cPort;
-use recorder::{Cell, Telemetry};
+use recorder::{Cell, Rows};
 use serde_json::Value;
 
 use crate::devices::Topology;
@@ -313,8 +313,8 @@ pub struct Barometer {
     change: Option<Writer<'static, f32>>,
     /// The climb rate's samples: the least-squares slope of the altitude over the last half second.
     climb: Change,
-    /// Its stream, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// Its table entry, whose `healthy` the run writes (plan B's `Task._healthy`).
     entry: Option<&'static DeviceEntry<'static>>,
     /// A read failed and none succeeded since: one log line per run (plan B's `note`).
@@ -323,8 +323,6 @@ pub struct Barometer {
     stale: bool,
     /// The BMP581's reads in a row that were neither judged nor published (torn pairs, implausible values).
     unjudged_run: u32,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
 }
 
 impl Barometer {
@@ -338,14 +336,11 @@ impl Barometer {
             elevation: writer("elevation"),
             change: writer("change"),
             climb: Change::default(),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            rows: crate::recorder::rows(name),
             entry,
             failing: false,
             stale: false,
             unjudged_run: 0,
-            overflowing: false,
         }
     }
 
@@ -377,7 +372,7 @@ impl Barometer {
     /// Publishes a reading (plan B icp10111.py:346-362): altitude, temperature, pressure, then the elevation above
     /// the ground, then the climb rate once its window holds enough (M9), and the row -- one for every conversion,
     /// never decimated (measured -> reported, the operator).
-    fn publish(&mut self, name: &str, elevation: Option<f32>, reading: Conversion, now_us: u64) {
+    fn publish(&mut self, elevation: Option<f32>, reading: Conversion, now_us: u64) {
         self.failing = false;
         self.stale = false;
         self.set_healthy(true);
@@ -393,9 +388,9 @@ impl Barometer {
                 writer.push(value, now_us);
             }
         }
-        let Some(telemetry) = &mut self.telemetry else {
+        if !self.rows.recording() {
             return;
-        };
+        }
         let row = [
             Cell::F32(reading.altitude),
             Cell::F32(reading.temperature),
@@ -403,15 +398,7 @@ impl Barometer {
             elevation.map_or(Cell::None, Cell::F32),
             change.map_or(Cell::None, Cell::F32),
         ];
-        match telemetry.push(now_us, &row) {
-            Ok(()) => self.overflowing = false,
-            Err(overflow) => {
-                if !self.overflowing {
-                    log::warn!("{name} :: telemetry {overflow}");
-                    self.overflowing = true;
-                }
-            }
-        }
+        self.rows.push(now_us, &row);
     }
 }
 
@@ -461,8 +448,8 @@ pub struct Inertial {
     accel: Option<Writer<'static, [f32; 3]>>,
     /// The `rate` writer (deg/s).
     rate: Option<Writer<'static, [f32; 3]>>,
-    /// Its stream, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// Its table entry, whose `healthy` the run writes.
     entry: Option<&'static DeviceEntry<'static>>,
     /// How its axes map onto the airframe's.
@@ -475,8 +462,6 @@ pub struct Inertial {
     stale_run: u32,
     /// A read failed and none succeeded since: one log line per run.
     failing: bool,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
 }
 
 impl Inertial {
@@ -493,16 +478,13 @@ impl Inertial {
         Inertial {
             accel: writer("accel"),
             rate: writer("rate"),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            rows: crate::recorder::rows(name),
             entry,
             axes,
             interrupt,
             armed: false,
             stale_run: 0,
             failing: false,
-            overflowing: false,
         }
     }
 
@@ -586,9 +568,9 @@ impl Inertial {
         if let (true, Some(writer)) = (fresh.rate, &mut self.rate) {
             writer.push(self.axes.apply(sample.rate_degrees_per_second()), now_us);
         }
-        let Some(telemetry) = &mut self.telemetry else {
+        if !self.rows.recording() {
             return;
-        };
+        }
         let [gx, gy, gz] = self.axes.apply(sample.rate_centidegrees_per_second());
         let row = [
             Cell::F32(accel[0]),
@@ -599,15 +581,7 @@ impl Inertial {
             Cell::I32(gz),
             Cell::I32(runs as i32),
         ];
-        match telemetry.push(now_us, &row) {
-            Ok(()) => self.overflowing = false,
-            Err(overflow) => {
-                if !self.overflowing {
-                    log::warn!("{name} :: telemetry {overflow}");
-                    self.overflowing = true;
-                }
-            }
-        }
+        self.rows.push(now_us, &row);
     }
 }
 
@@ -673,8 +647,8 @@ fn note_magnetometer(magnetometer: &Bmm350) {
 pub struct Magnetometer {
     /// The `mag` writer (counts: raw, or centred and normalised once calibrated).
     mag: Option<Writer<'static, [f32; 3]>>,
-    /// Its stream, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// Its table entry, whose `healthy` the run writes.
     entry: Option<&'static DeviceEntry<'static>>,
     /// When the next read is due, microseconds.
@@ -683,8 +657,6 @@ pub struct Magnetometer {
     failing: bool,
     /// The part read stale and nothing fresh since: one log line.
     stale: bool,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
 }
 
 impl Magnetometer {
@@ -697,14 +669,11 @@ impl Magnetometer {
         let _ = MAGNETOMETER.set(name);
         Magnetometer {
             mag: topology.vector("mag").and_then(|parameter| parameter.writer(name)),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            rows: crate::recorder::rows(name),
             entry,
             next_due_us: 0,
             failing: false,
             stale: false,
-            overflowing: false,
         }
     }
 
@@ -750,18 +719,7 @@ impl Magnetometer {
         if let Some(writer) = &mut self.mag {
             writer.push([x as f32, y as f32, z as f32], now_us);
         }
-        let Some(telemetry) = &mut self.telemetry else {
-            return;
-        };
-        match telemetry.push(now_us, &[Cell::I32(x), Cell::I32(y), Cell::I32(z)]) {
-            Ok(()) => self.overflowing = false,
-            Err(overflow) => {
-                if !self.overflowing {
-                    log::warn!("{name} :: telemetry {overflow}");
-                    self.overflowing = true;
-                }
-            }
-        }
+        self.rows.push(now_us, &[Cell::I32(x), Cell::I32(y), Cell::I32(z)]);
     }
 }
 
@@ -846,8 +804,8 @@ pub struct Absolute {
     accel: Option<Writer<'static, [f32; 3]>>,
     /// How the part's axes map onto the airframe's (`axes`): the accelerometer's; the Euler is the chip's own.
     axes: Axes,
-    /// Its stream, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// Its table entry, whose `healthy` the run writes.
     entry: Option<&'static DeviceEntry<'static>>,
     /// When the next block read is due.
@@ -856,8 +814,6 @@ pub struct Absolute {
     calibration_due: Due,
     /// A read failed and none succeeded since: one log line per run.
     failing: bool,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
 }
 
 impl Absolute {
@@ -875,14 +831,11 @@ impl Absolute {
             attitude: writer("attitude"),
             accel: writer("accel"),
             axes,
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            rows: crate::recorder::rows(name),
             entry,
             due: Due::every(period_ms),
             calibration_due: Due::every(drivers::bno055::CALIBRATION_PERIOD_MS),
             failing: false,
-            overflowing: false,
         }
     }
 
@@ -932,10 +885,7 @@ impl Absolute {
         // plan B's row: heading in degrees, roll and pitch in centidegrees (raw x 100 / 16, floored), accel in g
         let [_, roll, pitch] = sample.euler_raw.map(i32::from);
         let [ax, ay, az] = accel;
-        record(
-            name,
-            &mut self.telemetry,
-            &mut self.overflowing,
+        self.rows.push(
             now_us,
             &[
                 Cell::F32(sample.euler[0]),
@@ -985,28 +935,6 @@ impl Due {
         }
         self.next_us = (self.next_us + self.period_us).max(now_us + self.period_us / 2);
         true
-    }
-}
-
-/// A row pushed to a run's stream, the refusal logged once per run of refusals.
-pub(crate) fn record(
-    name: &str,
-    telemetry: &mut Option<Telemetry<'static>>,
-    overflowing: &mut bool,
-    now_us: u64,
-    row: &[Cell],
-) {
-    let Some(telemetry) = telemetry else {
-        return;
-    };
-    match telemetry.push(now_us, row) {
-        Ok(()) => *overflowing = false,
-        Err(overflow) => {
-            if !*overflowing {
-                log::warn!("{name} :: telemetry {overflow}");
-                *overflowing = true;
-            }
-        }
     }
 }
 
@@ -1095,16 +1023,14 @@ pub struct Pitot {
     pressure: Option<Writer<'static, f32>>,
     /// The `airspeed` writer.
     airspeed: Option<Writer<'static, f32>>,
-    /// Its stream, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// Its table entry, whose `healthy` the run writes.
     entry: Option<&'static DeviceEntry<'static>>,
     /// When a read is due.
     due: Due,
     /// A read failed and none succeeded since: one log line per run.
     failing: bool,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
 }
 
 impl Pitot {
@@ -1119,18 +1045,15 @@ impl Pitot {
         Pitot {
             pressure: writer("dynamic_pressure"),
             airspeed: writer("airspeed"),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            rows: crate::recorder::rows(name),
             entry,
             due: Due::every(period_ms),
             failing: false,
-            overflowing: false,
         }
     }
 
     /// One owner wake: when due, a frame read and published, or the failure noted (and the restart's outcome).
-    fn tick(&mut self, name: &str, pitot: &mut Sdp810, port: &mut I2cPort, delay: &mut Delay, now_us: u64) {
+    fn tick(&mut self, pitot: &mut Sdp810, port: &mut I2cPort, delay: &mut Delay, now_us: u64) {
         if !self.due.take(now_us) {
             return;
         }
@@ -1149,13 +1072,7 @@ impl Pitot {
                     }
                 }
                 note_pitot(pitot);
-                record(
-                    name,
-                    &mut self.telemetry,
-                    &mut self.overflowing,
-                    now_us,
-                    &sample.row.map(Cell::I32),
-                );
+                self.rows.push(now_us, &sample.row.map(Cell::I32));
             }
             Err(failure) => {
                 if let Some(entry) = self.entry {
@@ -1199,8 +1116,8 @@ pub fn power_inspection() -> Option<([i32; 3], u32)> {
 pub struct Power {
     /// The `voltage`, `current` and `power` writers.
     writers: [Option<Writer<'static, f32>>; 3],
-    /// Its stream, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// Its table entry, whose `healthy` the run writes.
     entry: Option<&'static DeviceEntry<'static>>,
     /// When a read is due.
@@ -1213,8 +1130,6 @@ pub struct Power {
     logged_alerts: u32,
     /// A read failed and none succeeded since: one log line per run.
     failing: bool,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
 }
 
 impl Power {
@@ -1230,16 +1145,13 @@ impl Power {
         let writer = |quantity: &str| topology.scalar(quantity).and_then(|parameter| parameter.writer(name));
         Power {
             writers: [writer("voltage"), writer("current"), writer("power")],
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            rows: crate::recorder::rows(name),
             entry,
             due: Due::every(period_ms),
             alert,
             armed: false,
             logged_alerts: 0,
             failing: false,
-            overflowing: false,
         }
     }
 
@@ -1285,7 +1197,7 @@ impl Power {
                     Cell::I32(values[2]),
                     Cell::I32(alerts as i32),
                 ];
-                record(name, &mut self.telemetry, &mut self.overflowing, now_us, &row);
+                self.rows.push(now_us, &row);
                 if alerts != self.logged_alerts {
                     log::warn!(
                         "{name} :: OVER-CURRENT alerts: {alerts} (> {} mA) -- servo stall / short?",
@@ -1312,16 +1224,14 @@ impl Power {
 pub struct Ranger {
     /// The `agl` writer.
     agl: Option<Writer<'static, f32>>,
-    /// Its stream, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// Its table entry, whose `healthy` the run writes.
     entry: Option<&'static DeviceEntry<'static>>,
     /// When a poll is due.
     due: Due,
     /// A read failed and none succeeded since: one log line per run.
     failing: bool,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
 }
 
 impl Ranger {
@@ -1334,13 +1244,10 @@ impl Ranger {
     ) -> Ranger {
         Ranger {
             agl: topology.scalar("agl").and_then(|parameter| parameter.writer(name)),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            rows: crate::recorder::rows(name),
             entry,
             due: Due::every(period_ms),
             failing: false,
-            overflowing: false,
         }
     }
 
@@ -1362,13 +1269,7 @@ impl Ranger {
                     writer.push(agl, now_us);
                 }
                 // irq_runs: the lasers are polled (no data-ready wire on v1.x), plan B's 0
-                record(
-                    name,
-                    &mut self.telemetry,
-                    &mut self.overflowing,
-                    now_us,
-                    &[Cell::F32(agl), Cell::I32(0)],
-                );
+                self.rows.push(now_us, &[Cell::F32(agl), Cell::I32(0)]);
             }
             Err(fault) => {
                 if let Some(entry) = self.entry {
@@ -1751,7 +1652,7 @@ impl Part {
             (Part::Icp10111(barometer), Run::Barometer(outputs)) => match barometer.poll(port, now_us) {
                 Poll::Waiting | Poll::Issued | Poll::GeneralCall => None,
                 Poll::Reading(reading) => {
-                    outputs.publish(name, barometer.elevation(&reading), Conversion::from(&reading), now_us);
+                    outputs.publish(barometer.elevation(&reading), Conversion::from(&reading), now_us);
                     None
                 }
                 Poll::Failed { fault, .. } => {
@@ -1772,7 +1673,7 @@ impl Part {
                 let unjudged = match barometer.read_fresh(port, now_us) {
                     Ok(bmp280::Outcome::Fresh(reading)) => {
                         let elevation = barometer.elevation(&reading);
-                        outputs.publish(name, Some(elevation), Conversion::from(&reading), now_us);
+                        outputs.publish(Some(elevation), Conversion::from(&reading), now_us);
                         false
                     }
                     Ok(bmp280::Outcome::Unchanged) => false,
@@ -1804,7 +1705,7 @@ impl Part {
                 let unjudged = match barometer.read_fresh(port, now_us) {
                     Ok(bmp581::Outcome::Fresh(reading)) => {
                         let elevation = barometer.elevation(&reading);
-                        outputs.publish(name, Some(elevation), Conversion::from(&reading), now_us);
+                        outputs.publish(Some(elevation), Conversion::from(&reading), now_us);
                         false
                     }
                     Ok(bmp581::Outcome::Unchanged) => false,
@@ -1841,7 +1742,7 @@ impl Part {
                 None
             }
             (Part::Sdp810(pitot), Run::Pitot(outputs)) => {
-                outputs.tick(name, pitot, port, delay, now_us);
+                outputs.tick(pitot, port, delay, now_us);
                 None
             }
             (Part::Ina226(monitor), Run::Power(outputs)) => {

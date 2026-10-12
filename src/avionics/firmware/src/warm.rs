@@ -39,7 +39,7 @@ use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys;
 use mission::{Mission, Position};
-use recorder::{Cell, Telemetry};
+use recorder::{Cell, LogOnce, Rows};
 use sequencer::{FlightWriter, Stage};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -49,6 +49,7 @@ use crate::clock;
 use crate::devices::{CheckpointMember, Member, Topology};
 use crate::logging::CONSOLE_ONLY;
 use crate::status::{FLIGHT, WARM_STARTED};
+use firmware::time::uptime_us;
 
 /// The warm start's NVS namespace as crates/warmstart reads and writes it ([`Nvs`]): raw IDF calls, so each failure
 /// is the `esp_err_t` [`NvsError`] carries (a key never written is ESP_ERR_NVS_NOT_FOUND, a blob longer than the
@@ -416,12 +417,10 @@ pub struct Keeping {
     /// The rebased barometers' names, in the config order of crates/warmstart `REBASED_BAROS` drivers: whose own
     /// grounds the freeze keeps.
     baros: Vec<&'static str>,
-    /// checkpoint.csv, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
-    /// An NVS refusal was logged and no action has committed since: one line per run of refusals.
-    refusing: bool,
-    /// A row was refused and none written since: one line per run.
-    overflowing: bool,
+    /// checkpoint.csv: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
+    /// An NVS refusal's log latch: one line per run of refusals, until an action commits.
+    refusing: LogOnce,
 }
 
 impl Keeping {
@@ -461,11 +460,8 @@ impl Keeping {
                         .collect()
                 })
                 .clone(),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(member.name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
-            refusing: false,
-            overflowing: false,
+            rows: Rows::new(member.name, "record", crate::recorder::telemetry(member.name)),
+            refusing: LogOnce::default(),
         })
     }
 
@@ -537,15 +533,16 @@ impl Keeping {
         }
         self.publish();
         match (pass.failed, self.keeper.owed()) {
-            (Some(NvsError(code)), Some(owed)) if !self.refusing => {
-                log::warn!(
-                    "{} :: NVS refused the {} ({code:#x}): tried again every poll",
-                    self.name,
-                    action(owed)
-                );
-                self.refusing = true;
+            (Some(NvsError(code)), Some(owed)) => {
+                if self.refusing.first() {
+                    log::warn!(
+                        "{} :: NVS refused the {} ({code:#x}): tried again every poll",
+                        self.name,
+                        action(owed)
+                    );
+                }
             }
-            (None, _) if pass.wrote.is_some() => self.refusing = false,
+            (None, _) if pass.wrote.is_some() => self.refusing.clear(),
             _ => {}
         }
         if let Some(stage) = pass.row {
@@ -576,23 +573,14 @@ impl Keeping {
     /// (none) and the flight law's airspeed, the uptime in ms; then its log line. A refused row is logged once a run: the
     /// crumb went first either way.
     fn record(&mut self, now_us: u64, stage: Stage, altitude_m: Option<f32>) {
-        if let Some(telemetry) = &mut self.telemetry {
-            let row = [
-                Cell::I32(i32::from(stage as u8)),
-                altitude_m.map_or(Cell::None, Cell::F32),
-                Cell::None, // speed
-                crate::flight::airspeed().map_or(Cell::None, Cell::F32),
-                Cell::I64((now_us / 1000) as i64),
-            ];
-            match telemetry.push(now_us, &row) {
-                Ok(()) => self.overflowing = false,
-                Err(overflow) if !self.overflowing => {
-                    log::warn!("{} :: record {overflow}", self.name);
-                    self.overflowing = true;
-                }
-                Err(_) => {}
-            }
-        }
+        let row = [
+            Cell::I32(i32::from(stage as u8)),
+            altitude_m.map_or(Cell::None, Cell::F32),
+            Cell::None, // speed
+            crate::flight::airspeed().map_or(Cell::None, Cell::F32),
+            Cell::I64((now_us / 1000) as i64),
+        ];
+        self.rows.push(now_us, &row);
         let altitude = altitude_m.map_or_else(|| "None".to_string(), |altitude| altitude.to_string());
         log::info!("{} :: checkpoint {} alt={altitude}", self.name, stage.name());
     }
@@ -678,10 +666,4 @@ pub fn inspect(partition: &EspDefaultNvsPartition) -> Inspection {
                 warm_starts: identity.warm_starts,
             }),
     }
-}
-
-/// The uptime in µs (esp_timer, unwrapped).
-fn uptime_us() -> u64 {
-    // SAFETY: a plain read of the monotonic system timer, never negative.
-    unsafe { sys::esp_timer_get_time() as u64 }
 }

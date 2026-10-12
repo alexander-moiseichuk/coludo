@@ -22,6 +22,7 @@ use super::{Code, Context, Fault, Reply};
 use crate::clock;
 use crate::recorder::NAME as RECORDER;
 use crate::status::FLIGHT;
+use firmware::time::uptime_us;
 
 /// The inspectable objects every board has, sorted (plan B `Inspector.names()`).
 const OBJECTS: [&str; 3] = ["controller", "databoard", "mission"];
@@ -229,8 +230,7 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
     let entry = context.devices.find(name).filter(|entry| entry.active())?;
     let ok = matches!(entry.status(), controller::Status::Up);
     let topology = context.topology;
-    // SAFETY: a plain read of the monotonic timer.
-    let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() } as u64;
+    let now_us = uptime_us();
     let scalar = |quantity: &str| {
         let parameter = topology.scalar(quantity)?;
         parameter.channel(name)?.recent(parameter.window_us(), now_us)
@@ -446,8 +446,7 @@ pub fn inspect(message: &Message, context: &mut Context) -> Reply {
         }
         "mission" => super::ok_json(&context.mission.inspect(None, &clock::text(), clock::epoch())),
         "databoard" => {
-            // SAFETY: a plain read of the monotonic timer.
-            let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() } as u64;
+            let now_us = uptime_us();
             super::ok_json(&context.topology.inspect(now_us))
         }
         RECORDER => super::ok_json(&crate::recorder::inspect_report().ok_or_else(|| no_object(RECORDER))?),

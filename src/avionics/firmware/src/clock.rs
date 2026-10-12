@@ -8,6 +8,7 @@
 //! only (src/control/server.py `_sync_clock`). A board left at 1970 would never be synced.
 
 use esp_idf_svc::sys;
+use firmware::time::uptime_us;
 
 /// 2000-01-01T00:00:00Z in Unix seconds: a clock before it was never set (src/glider mission `_EPOCH_OFFSET`).
 pub const UNSET_BEFORE: i64 = 946_684_800;
@@ -15,8 +16,7 @@ pub const UNSET_BEFORE: i64 = 946_684_800;
 /// Start the clock at 2000-01-01 plus the uptime when nothing set it since power-on.
 pub fn start() {
     if epoch() < UNSET_BEFORE {
-        // SAFETY: a plain read of the monotonic system timer.
-        let uptime_seconds = unsafe { sys::esp_timer_get_time() } / 1_000_000;
+        let uptime_seconds = (uptime_us() / 1_000_000) as i64;
         set(UNSET_BEFORE + uptime_seconds);
     }
 }

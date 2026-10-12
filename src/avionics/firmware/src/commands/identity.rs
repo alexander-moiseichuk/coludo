@@ -15,6 +15,7 @@ use super::{Context, Reply};
 use crate::board;
 use crate::clock;
 use crate::status::FLIGHT;
+use firmware::time::uptime_us;
 
 /// The `iam` payload. Replies are typed structs, not `json!` values: a Value widens every f32 to f64 (a 33.3 °C
 /// reading prints as 33.29999923706055); a struct field serialises as f32.
@@ -173,11 +174,10 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         layout: &context.layout,
         position: fix.map(|fix| fix.degrees()),
         // plan B cc_client: the laser's AGL when fresh (a stale range-limited value is no AGL)
-        agl: context.topology.scalar("agl").and_then(|agl| {
-            // SAFETY: a plain read of the monotonic timer.
-            agl.read(unsafe { sys::esp_timer_get_time() } as u64)
-                .map(|reading| reading.value)
-        }),
+        agl: context
+            .topology
+            .scalar("agl")
+            .and_then(|agl| agl.read(uptime_us()).map(|reading| reading.value)),
         clock: clock::text(),
         epoch: clock::epoch(),
         // decimal degrees on the wire: f64 at this JSON boundary only (f32 prints 25.514379 as 25.51438)
@@ -191,8 +191,7 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
             .into_iter()
             .map(|(name, ok)| Task { name, ok })
             .collect(),
-        // SAFETY: a plain read of the monotonic timer.
-        flight: flight_panel(context.topology, unsafe { sys::esp_timer_get_time() } as u64),
+        flight: flight_panel(context.topology, uptime_us()),
         calibration: Some(crate::owner::calibrations().into_iter().collect::<BTreeMap<_, _>>())
             .filter(|pending| !pending.is_empty()),
         imu_calibration: crate::sensors::absolute_inspection().and_then(|state| state.calibration),
@@ -215,8 +214,7 @@ fn disagreements(context: &Context) -> Vec<String> {
         .find(|entry| entry.implementation == "sequencer")
         .and_then(|entry| sequencer::Settings::from_config(&serde_json::Value::Object(entry.fields.clone())).ok())
         .unwrap_or_default();
-    // SAFETY: a plain read of the monotonic timer.
-    let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+    let now_us = uptime_us();
     let mut lines = Vec::new();
     if let Some(accel) = context.topology.vector("accel") {
         let at_rest: Vec<(&str, [f32; 3])> = accel
@@ -286,8 +284,7 @@ fn degraded(context: &Context, flight: Flight) -> Vec<String> {
     degraded.extend(crate::recorder::degraded().into_iter().map(String::from));
     // the attitude flags, in plan B's place (cc_client `_degraded`): flying on a backup's attitude, and blind
     if let Some(attitude) = context.topology.vector("attitude") {
-        // SAFETY: a plain read of the monotonic timer.
-        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let now_us = uptime_us();
         let winner = attitude.read(now_us).map(|reading| reading.source);
         if control::attitude::on_backup(&context.config.document, "attitude", winner) {
             degraded.push("attitude-backup".into());

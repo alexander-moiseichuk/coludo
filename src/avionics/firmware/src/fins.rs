@@ -20,10 +20,11 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 use drivers::sg90::{Command, PERIOD_US, PROBE_SAMPLE_MS, PROBE_SAMPLES, PROBE_SETTLE_MS, ProbeVerdict, Servo};
 use esp_idf_svc::sys;
-use recorder::{Cell, Telemetry};
+use recorder::{Cell, Rows};
 use serde_json::Value;
 
 use crate::devices::ServoMember;
+use firmware::time::uptime_us;
 
 /// The servos' PWM frame rate, Hz: plan B's `PWM(freq=50)`.
 const FREQUENCY_HZ: u32 = 50;
@@ -60,10 +61,8 @@ struct Fin {
     half_range: i32,
     /// Its LEDC channel.
     channel: sys::ledc_channel_t,
-    /// `<name>.csv`, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
-    /// A refused row was logged since the last accepted one.
-    overflowing: bool,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// Its pulse is off (DONE, [`Fins::rest`]): the next command drives it again even when unchanged.
     resting: bool,
 }
@@ -194,10 +193,7 @@ pub fn open(members: Vec<ServoMember>, probe_limit: Option<i32>) -> anyhow::Resu
             start_degrees: member.start_degrees,
             half_range: member.half_range,
             channel,
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(member.name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
-            overflowing: false,
+            rows: crate::recorder::rows(member.name),
             resting: false,
         });
     }
@@ -293,9 +289,8 @@ impl Fins {
             state[2].store(fin.servo.trim(), Ordering::Relaxed);
         }
         let row = command.row(done).map(Cell::I32);
-        // SAFETY: a plain read of the monotonic timer.
-        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
-        crate::sensors::record(fin.name, &mut fin.telemetry, &mut fin.overflowing, now_us, &row);
+        let now_us = uptime_us();
+        fin.rows.push(now_us, &row);
     }
 
     /// The flight loop's command for fin `index` (plan B `set_angle`): compare-and-set, nothing written when the

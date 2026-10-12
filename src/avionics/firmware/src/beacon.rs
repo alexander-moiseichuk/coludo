@@ -29,12 +29,14 @@ use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::http::server::{Configuration as HttpConfiguration, EspHttpServer};
 use esp_idf_svc::sys;
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
-use recorder::Telemetry;
+use recorder::Rows;
 use sequencer::Stage;
 use sequencer::video::{Duty, Trigger};
 
 use crate::devices::Topology;
 use crate::status::FLIGHT;
+use firmware::threads::{self, Spec, Stack};
+use firmware::time::uptime_us;
 
 /// This board's beacon channel (operator, 2026-10-06).
 const CHANNEL: u8 = 3;
@@ -158,8 +160,7 @@ impl Beacon {
 
     /// The page's figures, read now from the databoard, the mission and the recorder.
     fn snapshot(&self) -> Snapshot {
-        // SAFETY: a plain read of the monotonic timer.
-        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let now_us = uptime_us();
         let age = |pushed: Option<u64>| pushed.map_or(0, |at| now_us.saturating_sub(at) / 1_000_000);
         // the last good fix, whatever its age: the newest any source pushed
         let fix = self.topology.position("position").and_then(|parameter| {
@@ -218,64 +219,51 @@ impl Beacon {
 ///
 /// Errors: the thread would not spawn.
 pub fn spawn_feed(beacon: Beacon) -> anyhow::Result<()> {
-    let Some(mut telemetry) = crate::recorder::get()
-        .zip(crate::recorder::device_stream(STREAM))
-        .and_then(|(recorder, stream)| Telemetry::new(recorder, stream))
-    else {
+    // telemetry raises (the error policy): the recorder counts the refused row, the first of a run logged
+    let mut rows = Rows::new("beacon", "beacon.csv row:", crate::recorder::telemetry(STREAM));
+    if !rows.recording() {
         log::warn!("beacon :: no recorder stream: the remote beacon gets no report");
         return Ok(());
-    };
-    let accel = beacon.topology.vector("accel");
-    ThreadSpawnConfiguration {
-        name: Some(c"beacon_feed"),
-        stack_size: FEED_STACK,
-        priority: 2,
-        pin_to_core: Some(Core::Core0),
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
     }
-    .set()?;
-    let spawned = std::thread::Builder::new().stack_size(FEED_STACK).spawn(move || {
-        let mut trigger = Trigger::new(accel.is_some());
-        let mut on = false;
-        let mut reported: Option<Instant> = None;
-        let mut overflowing = false;
-        loop {
-            // SAFETY: a plain read of the monotonic timer.
-            let now_us = unsafe { sys::esp_timer_get_time() } as u64;
-            let flight = FLIGHT.load();
-            if !on && !crate::sim_link::running() {
-                let reading = accel
-                    .and_then(|parameter| parameter.read(now_us))
-                    .map(|reading| reading.value);
-                let on_the_rod = trigger.look(flight, reading, None) == Some(Duty::StartFlight);
-                if on_the_rod || flight.launched || flight.stage != Stage::Setting {
-                    on = true;
-                    reported = None;
-                    log::info!(
-                        "beacon :: the remote beacon on until power-off ({})",
-                        flight.stage.name()
-                    );
-                }
-            }
-            if reported.is_none_or(|at| at.elapsed() >= REPORT_EVERY) {
-                reported = Some(Instant::now());
-                let report = beacon.report(on);
-                let heights = report.height_texts();
-                // telemetry raises (the error policy): the recorder counts the refused row, the first of a run logged
-                match telemetry.push(now_us, &report.cells(&heights)) {
-                    Ok(()) => overflowing = false,
-                    Err(overflow) if !overflowing => {
-                        log::warn!("beacon :: beacon.csv row: {overflow}");
-                        overflowing = true;
+    let accel = beacon.topology.vector("accel");
+    threads::spawn(
+        Spec {
+            name: c"beacon_feed",
+            stack_size: FEED_STACK,
+            stack: Stack::Psram,
+            priority: 2,
+            core: Core::Core0,
+        },
+        move || {
+            let mut trigger = Trigger::new(accel.is_some());
+            let mut on = false;
+            let mut reported: Option<Instant> = None;
+            loop {
+                let now_us = uptime_us();
+                let flight = FLIGHT.load();
+                if !on && !crate::sim_link::running() {
+                    let reading = accel
+                        .and_then(|parameter| parameter.read(now_us))
+                        .map(|reading| reading.value);
+                    let on_the_rod = trigger.look(flight, reading, None) == Some(Duty::StartFlight);
+                    if on_the_rod || flight.launched || flight.stage != Stage::Setting {
+                        on = true;
+                        reported = None;
+                        log::info!(
+                            "beacon :: the remote beacon on until power-off ({})",
+                            flight.stage.name()
+                        );
                     }
-                    Err(_) => {}
                 }
+                if reported.is_none_or(|at| at.elapsed() >= REPORT_EVERY) {
+                    reported = Some(Instant::now());
+                    let report = beacon.report(on);
+                    let heights = report.height_texts();
+                    rows.push(now_us, &report.cells(&heights));
+                }
+                std::thread::sleep(LOOK_EVERY);
             }
-            std::thread::sleep(LOOK_EVERY);
-        }
-    });
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+        },
+    )?;
     Ok(())
 }

@@ -64,11 +64,10 @@ use drivers::debounce::StampPair;
 use drivers::lsm6dso32::{Lsm6dso32, OverSpi, STALE_LIMIT};
 use drivers::separation::{Kind, Thrust, ThrustGate};
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
 use firmware::buses::spi::{SpiBus, SpiHandle};
 use firmware::gcl::{self, Command, Gate, Reach};
-use recorder::{Cell, Telemetry};
+use recorder::{Cell, Rows, Telemetry};
 use sequencer::{
     ChangeRefused, Commit, Decider, FlightFlag, FlightWriter, RequestSlot, Stage, StageMachine, Transition, VetoEdge,
 };
@@ -77,6 +76,8 @@ use crate::devices::{AttitudeMember, SeparationMember, SequencerMember, SpiMembe
 use crate::logging::CONSOLE_ONLY;
 use crate::recorder::Producer;
 use crate::status::FLIGHT;
+use firmware::threads::{self, Spec, Stack};
+use firmware::time::uptime_us;
 
 /// The control thread's priority: above the bus owners (18, 17), below esp_hosted's (§4.2).
 const PRIORITY: u8 = 20;
@@ -330,9 +331,7 @@ impl Switch {
             part: member.part,
             gate: ThrustGate::new(launch),
             accel,
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(member.name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            telemetry: crate::recorder::telemetry(member.name),
         }
     }
 
@@ -346,8 +345,7 @@ impl Switch {
         // the level first, then the clock: the level decides the episode this tick concludes
         // SAFETY: a plain read of the input bring-up configured.
         let high = unsafe { sys::gpio_get_level(i32::from(self.gpio)) } != 0;
-        // SAFETY: a plain read of the monotonic timer.
-        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let now_us = uptime_us();
         let read_us = now_us as u32;
         match &mut self.polled {
             Some(previous) => {
@@ -409,8 +407,7 @@ impl Switch {
 
 /// A separation-pin edge, recorded into [`SEPARATION`] at esp_timer's us. Integer only, wait-free.
 unsafe extern "C" fn separation_edge(_: *mut core::ffi::c_void) {
-    // SAFETY: a plain read of the monotonic timer, ISR-safe.
-    SEPARATION.record(unsafe { sys::esp_timer_get_time() } as u32);
+    SEPARATION.record(uptime_us() as u32);
 }
 
 /// Arms a both-edge interrupt on the separation pin (already an input with its pull-down) that records into
@@ -451,12 +448,10 @@ struct Imu {
     accel: Option<Writer<'static, [f32; 3]>>,
     /// The `rate` channel's writer.
     rate: Option<Writer<'static, [f32; 3]>>,
-    /// Its telemetry stream, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
+    /// Its stream: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
     /// A read failed and has not succeeded since: one log line per run of failures (plan B's `note`).
     failing: bool,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
     /// Its sampling period, microseconds (`period_ms`, plan B's 10).
     period_us: u64,
     /// When the next read is due, microseconds.
@@ -476,21 +471,17 @@ impl Imu {
                 .vector(quantity)
                 .and_then(|parameter| parameter.writer(member.name))
         };
-        let telemetry = crate::recorder::get()
-            .zip(crate::recorder::device_stream(member.name))
-            .and_then(|(recorder, stream)| Telemetry::new(recorder, stream));
         Imu {
             name: member.name,
             accel: writer("accel"),
             rate: writer("rate"),
-            telemetry,
+            rows: crate::recorder::rows(member.name),
             chip_select: member.handle.chip_select(),
             handle: Some(member.handle),
             part: member.part,
             entry: table.find(member.name),
             stale_run: 0,
             failing: false,
-            overflowing: false,
             period_us: u64::from(member.period_ms) * 1000,
             next_due_us: 0,
             axes: member.axes,
@@ -661,9 +652,9 @@ impl Imu {
             writer.push(self.axes.apply(sample.rate_degrees_per_second()), now_us);
         }
         // measured -> reported (the operator, M9): a row for every fresh sample, never decimated
-        let Some(telemetry) = &mut self.telemetry else {
+        if !self.rows.recording() {
             return;
-        };
+        }
         let [gx, gy, gz] = self.axes.apply(sample.rate_centidegrees_per_second());
         let row = [
             Cell::F32(accel[0]),
@@ -674,15 +665,7 @@ impl Imu {
             Cell::I32(gz),
             Cell::I32(runs as i32),
         ];
-        match telemetry.push(now_us, &row) {
-            Ok(()) => self.overflowing = false,
-            Err(overflow) => {
-                if !self.overflowing {
-                    log::warn!("{} :: telemetry {overflow}", self.name);
-                    self.overflowing = true;
-                }
-            }
-        }
+        self.rows.push(now_us, &row);
     }
 }
 
@@ -750,14 +733,10 @@ struct Sequencer {
     /// Which slot each source holds, bound once at the thread's start from the databoard's sources in rank order (M9),
     /// and the quantities each reads from (crates/controller, the SITL's too).
     sources: StageSources<'static>,
-    /// `vetoes.csv`, the veto episodes' begin and end rows, with a recorder (M9).
-    vetoes: Option<Telemetry<'static>>,
-    /// A veto row was refused and logged: once.
-    veto_refusal_logged: bool,
-    /// `<name>.csv`, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
-    /// A row was refused and logged: once, never again (plan B's `note`, which this task never re-arms).
-    refusal_logged: bool,
+    /// `vetoes.csv`, the veto episodes' begin and end rows (M9): a refused row logged once, never again.
+    vetoes: Rows<'static>,
+    /// `<name>.csv`: a refused row logged once, never again (plan B's `note`, which this task never re-arms).
+    rows: Rows<'static>,
     /// Its step period, microseconds (`period_ms`).
     period_us: u64,
     /// When the next step is due, microseconds.
@@ -787,19 +766,17 @@ impl Sequencer {
             log::warn!("{} :: {ignored}", member.name);
         }
         let _ = BINDING.set((text, binding.ignored().iter().map(ToString::to_string).collect()));
-        let open = |stream: Option<recorder::StreamId>| {
-            crate::recorder::get()
-                .zip(stream)
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream))
-        };
         Sequencer {
             name: member.name,
             machine: Box::new(StageMachine::new(member.settings)),
             sources,
-            vetoes: open(crate::recorder::device_stream(crate::recorder::VETOES)),
-            veto_refusal_logged: false,
-            telemetry: open(crate::recorder::device_stream(member.name)),
-            refusal_logged: false,
+            vetoes: Rows::new(
+                member.name,
+                "vetoes",
+                crate::recorder::telemetry(crate::recorder::VETOES),
+            )
+            .logged_once(),
+            rows: Rows::new(member.name, "record", crate::recorder::telemetry(member.name)).logged_once(),
             period_us: u64::from(member.settings.period_ms) * 1000,
             next_due_us: 0,
         }
@@ -817,8 +794,7 @@ impl Sequencer {
         // the next step a period on, or a period from now when the steps fell behind
         self.next_due_us = (self.next_due_us + self.period_us).max((now_us + self.period_us).saturating_sub(slack_us));
         // after the IMU's push and the separation's commit: the databoard refuses a stamp from the future
-        // SAFETY: a plain read of the monotonic timer.
-        let read_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let read_us = uptime_us();
         // each bound source's own channel, fresh in its quantity's shared window (M9: the multi-source machine)
         let readings = self.sources.readings(read_us);
         let flight = writer.flight();
@@ -842,9 +818,9 @@ impl Sequencer {
     /// 1). A refused row is logged once.
     fn veto(&mut self, now_us: u64, edge: VetoEdge) {
         VETO_EDGES.fetch_add(1, Ordering::Relaxed);
-        let Some(telemetry) = &mut self.vetoes else {
+        if !self.vetoes.recording() {
             return;
-        };
+        }
         let veto = edge.veto();
         let row = [
             Cell::Text(veto.detector.name()),
@@ -855,12 +831,7 @@ impl Sequencer {
             Cell::I32(i32::from(veto.live)),
             Cell::F32(veto.value),
         ];
-        if let Err(overflow) = telemetry.push(now_us, &row)
-            && !self.veto_refusal_logged
-        {
-            log::warn!("{} :: vetoes {overflow}", self.name);
-            self.veto_refusal_logged = true;
-        }
+        self.vetoes.push(now_us, &row);
     }
 
     /// The machine's own `transition` at `now_us`: the commit, the controller's console line, the recorded line and
@@ -884,15 +855,7 @@ impl Sequencer {
     /// One `<name>.csv` row at `now_us`: `stage` and `reason`. A refused row is logged once and never stops the
     /// machine: the stage has moved either way (plan B `_record`).
     fn record(&mut self, now_us: u64, stage: Stage, reason: &str) {
-        let Some(telemetry) = &mut self.telemetry else {
-            return;
-        };
-        if let Err(overflow) = telemetry.push(now_us, &[Cell::Text(stage.name()), Cell::Text(reason)])
-            && !self.refusal_logged
-        {
-            log::warn!("{} :: record {overflow}", self.name);
-            self.refusal_logged = true;
-        }
+        self.rows.push(now_us, &[Cell::Text(stage.name()), Cell::Text(reason)]);
     }
 }
 
@@ -922,10 +885,8 @@ struct Filter {
     rank: i32,
     /// The `attitude` writer.
     writer: Option<Writer<'static, [f32; 3]>>,
-    /// attitude.csv, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
-    /// A row was refused and none written since: one log line per run.
-    overflowing: bool,
+    /// attitude.csv: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
 }
 
 impl Filter {
@@ -940,8 +901,7 @@ impl Filter {
             return None;
         };
         let _ = ATTITUDE_NAME.set((member.name, topology.vector("rate")));
-        // SAFETY: a plain read of the monotonic timer.
-        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let now_us = uptime_us();
         log::info!(
             "{} :: every {} ms at rank {}, reading rate, accel and mag",
             member.name,
@@ -960,10 +920,7 @@ impl Filter {
             pace: Pace::new(member.settings.period_ms, tick_us),
             rank: member.settings.rank,
             writer: attitude.writer(member.name),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::device_stream(member.name))
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
-            overflowing: false,
+            rows: crate::recorder::rows(member.name),
         })
     }
 
@@ -975,8 +932,7 @@ impl Filter {
             return;
         }
         // after this tick's IMU push: the databoard refuses a stamp from the future
-        // SAFETY: a plain read of the monotonic timer.
-        let read_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let read_us = uptime_us();
         let readings = assemble(&self.quantities, self.rank, read_us);
         let step = self.attitude.tick(read_us, &readings);
         if let Some(line) = step.log {
@@ -994,18 +950,7 @@ impl Filter {
         if let Some(writer) = &mut self.writer {
             writer.push(orientation.to_sample(), read_us);
         }
-        let Some(telemetry) = &mut self.telemetry else {
-            return;
-        };
-        match telemetry.push(read_us, &row.map(Cell::I32)) {
-            Ok(()) => self.overflowing = false,
-            Err(overflow) => {
-                if !self.overflowing {
-                    log::warn!("{} :: telemetry {overflow}", self.name);
-                    self.overflowing = true;
-                }
-            }
-        }
+        self.rows.push(read_us, &row.map(Cell::I32));
     }
 }
 
@@ -1029,8 +974,7 @@ pub fn probe_attitude(only: Option<&str>) -> Option<(&'static str, Option<String
         return None;
     }
     log::info!("{name} :: probe: gyro rate ...");
-    // SAFETY: a plain read of the monotonic timer.
-    let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+    let now_us = uptime_us();
     let fresh = rate.is_some_and(|rate| rate.read(now_us).is_some());
     let verdict = Attitude::probe(fresh).err().map(str::to_string);
     match &verdict {
@@ -1237,43 +1181,35 @@ pub fn start(
         sequencer.as_ref().map(|member| member.name),
         attitude.as_ref().map(|member| member.name),
     ];
-    let spawned = ThreadSpawnConfiguration {
-        name: Some(c"control"),
-        stack_size: STACK_SIZE,
-        priority: PRIORITY,
-        pin_to_core: Some(Core::Core1),
-        ..Default::default()
-    }
-    .set()
-    .map_err(anyhow::Error::from)
-    .and_then(|()| {
-        std::thread::Builder::new()
-            .stack_size(STACK_SIZE)
-            .spawn(move || {
-                run(
-                    schedule_hz,
-                    spi_bus,
-                    spi,
-                    separation,
-                    sequencer,
-                    attitude,
-                    fins,
-                    centre,
-                    flight,
-                    topology,
-                    table,
-                    writer,
-                )
-            })
-            .map_err(anyhow::Error::from)
-    });
-    // the default back for the threads spawned after this one
-    let reset = ThreadSpawnConfiguration::default().set();
+    let spawned = threads::spawn(
+        Spec {
+            name: c"control",
+            stack_size: STACK_SIZE,
+            stack: Stack::Internal,
+            priority: PRIORITY,
+            core: Core::Core1,
+        },
+        move || {
+            run(
+                schedule_hz,
+                spi_bus,
+                spi,
+                separation,
+                sequencer,
+                attitude,
+                fins,
+                centre,
+                flight,
+                topology,
+                table,
+                writer,
+            )
+        },
+    );
     if spawned.is_err() {
         crate::devices::crash(table, driven, NOT_STARTED);
     }
     spawned?;
-    reset?;
     Ok(())
 }
 
@@ -1397,8 +1333,7 @@ fn run(
     loop {
         // SAFETY: this task's own notification value, index 0, cleared on take.
         let pending = unsafe { sys::ulTaskGenericNotifyTake(0, 1, u32::MAX) };
-        // SAFETY: a plain read of the monotonic timer.
-        let now_us = unsafe { sys::esp_timer_get_time() };
+        let now_us = uptime_us() as i64;
         if pending == 0 {
             continue;
         }
@@ -1449,8 +1384,7 @@ fn run(
             follow_flight(&commit);
         }
         if let Some(fins) = fins.as_mut().filter(|fins| fins.centring()) {
-            // SAFETY: a plain read of the monotonic timer.
-            let centring_us = unsafe { sys::esp_timer_get_time() } as u64;
+            let centring_us = uptime_us();
             fins.step_centring(centring_us, writer.flight().stage == Stage::Setting);
         }
         serve(
@@ -1464,8 +1398,7 @@ fn run(
         if let (Some(fins), Some((sweep, _))) = (fins.as_mut(), sweeping.as_mut()) {
             let flight = writer.flight();
             let may_move = flight.stage == Stage::Setting && !flight.armed && !flight.launched;
-            // SAFETY: a plain read of the monotonic timer.
-            let sweep_us = unsafe { sys::esp_timer_get_time() } as u64;
+            let sweep_us = uptime_us();
             let power = power
                 .and_then(|parameter| parameter.read(sweep_us))
                 .map(|reading| reading.value);
@@ -1476,8 +1409,7 @@ fn run(
             }
         }
         // the consumers' view of the IMU channels, where the stage machine reads them
-        // SAFETY: a plain read of the monotonic timer.
-        let read_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let read_us = uptime_us();
         for watch in &watches {
             watch.look(read_us);
         }
@@ -1491,12 +1423,10 @@ fn run(
             machine.tick(now_us as u64, period_us as u64 / 2, &mut writer);
         }
         if let Some(flight_loop) = &mut flight_loop {
-            // SAFETY: a plain read of the monotonic timer.
-            let flight_us = unsafe { sys::esp_timer_get_time() } as u64;
+            let flight_us = uptime_us();
             flight_loop.tick(flight_us, writer.flight(), fins.as_mut());
         }
-        // SAFETY: a plain read of the monotonic timer.
-        let work = (unsafe { sys::esp_timer_get_time() } - now_us).clamp(0, i64::from(u32::MAX)) as u32;
+        let work = (uptime_us() as i64 - now_us).clamp(0, i64::from(u32::MAX)) as u32;
         WORK_LAST_US.store(work, Ordering::Relaxed);
         WORK_MAX_US.fetch_max(work, Ordering::Relaxed);
     }
@@ -1586,8 +1516,7 @@ fn serve(
                 let answer = match (refusal, imu.as_deref_mut()) {
                     (Some(refusal), _) => Err(refusal),
                     (None, Some(imu)) => {
-                        // SAFETY: a plain read of the monotonic timer.
-                        imu.mute(unsafe { sys::esp_timer_get_time() } as u64, duration_ms);
+                        imu.mute(uptime_us(), duration_ms);
                         Ok(true)
                     }
                     (None, None) => Ok(false),

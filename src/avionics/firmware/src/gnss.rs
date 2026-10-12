@@ -26,16 +26,16 @@ use databoard::{Parameter, Writer};
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::delay::TickType;
 use esp_idf_svc::hal::gpio::AnyIOPin;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::hal::uart::{Uart, UartConfig, UartDriver};
 use esp_idf_svc::hal::units::Hertz;
-use esp_idf_svc::sys;
 use gnss::{Antenna, Gnss, SkySwitch, Update};
 use recorder::{Cell, Telemetry};
 use sequencer::Stage;
 
 use crate::devices::{GnssCalibMember, GnssMember, Topology};
 use crate::status::FLIGHT;
+use firmware::threads::{self, Spec, Stack};
+use firmware::time::uptime_us;
 
 /// The module on the UART, as the entry's driver names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,20 +90,16 @@ pub fn start(member: GnssMember, uart: impl Uart + 'static, topology: &'static T
         Option::<AnyIOPin>::None,
         &config,
     )?;
-    ThreadSpawnConfiguration {
-        name: Some(c"gnss"),
-        stack_size: STACK_SIZE,
-        priority: PRIORITY,
-        pin_to_core: Some(Core::Core0),
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(move || run(member, driver, topology));
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+    threads::spawn(
+        Spec {
+            name: c"gnss",
+            stack_size: STACK_SIZE,
+            stack: Stack::Psram,
+            priority: PRIORITY,
+            core: Core::Core0,
+        },
+        move || run(member, driver, topology),
+    )?;
     Ok(())
 }
 
@@ -147,11 +143,7 @@ fn run(member: GnssMember, driver: UartDriver<'static>, topology: &'static Topol
         speed: scalar("speed"),
         course: scalar("course"),
     };
-    let stream = |key: String| {
-        crate::recorder::get()
-            .zip(crate::recorder::device_stream(&key))
-            .and_then(|(recorder, stream)| Telemetry::new(recorder, stream))
-    };
+    let stream = |key: String| crate::recorder::telemetry(&key);
     let mut streams = Streams {
         fix: stream(name.to_string()),
         gga: stream(format!("{name}_gga")),
@@ -306,12 +298,6 @@ fn push(stream: &mut Option<Telemetry<'static>>, row: &[Cell]) {
 fn note(name: &str, events: &mut Option<Telemetry<'static>>, text: &str) {
     log::warn!("{name} :: {text}");
     push(events, &[Cell::Text(text)]);
-}
-
-/// The uptime in microseconds.
-fn uptime_us() -> u64 {
-    // SAFETY: a plain read of the monotonic timer.
-    unsafe { sys::esp_timer_get_time() as u64 }
 }
 
 /// The fused `position` now (plan B `data['position'].value()`): the live fix `health` shows and the mission's launch

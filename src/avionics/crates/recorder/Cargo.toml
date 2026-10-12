@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 flash_ring.workspace = true
+log.workspace = true  # the refused rows' log line (Rows)
 recorder_wire.workspace = true
 
 [dev-dependencies]

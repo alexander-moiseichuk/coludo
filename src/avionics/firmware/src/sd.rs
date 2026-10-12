@@ -19,6 +19,7 @@ use esp_idf_svc::sys;
 use recorder::layout;
 
 use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach, Word};
+use crate::time::uptime_us;
 
 /// The last measured free space in MB of the recordings volume, the one the ring_saver writes (u32::MAX = unknown):
 /// health's `sd_free_mb`. Not both volumes together: a full recordings partition stops the recordings while the
@@ -202,7 +203,7 @@ pub struct WriteTest {
 /// None writes flat out.
 pub fn write_test(megabytes: usize, kilobytes_per_second: Option<u32>) -> anyhow::Result<WriteTest> {
     const CHUNK: usize = 128 << 10;
-    let micros = || unsafe { sys::esp_timer_get_time() };
+    let micros = || uptime_us() as i64;
     std::fs::create_dir_all(format!("{MOUNT}/COLUDO"))?;
     let path = format!("{MOUNT}/COLUDO/sdtest.bin");
     // SAFETY: an aligned PSRAM allocation, checked, freed before returning.

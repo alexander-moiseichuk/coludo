@@ -13,6 +13,7 @@ use mission::field::{Field, SitePick};
 use super::Context;
 use crate::devices::FieldMember;
 use crate::status::FLIGHT;
+use firmware::time::uptime_us;
 
 /// The field agent once its entry came up.
 pub struct Agent {
@@ -59,8 +60,7 @@ pub fn tick(context: &mut Context) {
 
 /// One pass of `agent` over `context`'s mission.
 fn pass(agent: &mut Agent, context: &mut Context) {
-    // SAFETY: a plain read of the monotonic timer.
-    let now_us = unsafe { esp_idf_svc::sys::esp_timer_get_time() } as u64;
+    let now_us = uptime_us();
     let flight = FLIGHT.load();
     let fix = crate::gnss::position(context.topology);
     // a fresh reading only: a dead accelerometer must never look still

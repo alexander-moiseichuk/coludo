@@ -35,12 +35,12 @@ use std::time::{Duration, Instant};
 
 use cc_protocol::Message;
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use firmware::gcl::Origin;
 use mission::Mission;
 
 use crate::board::Board;
 use crate::status::FLIGHT;
+use firmware::threads::{self, Spec, Stack};
 
 /// What the handlers share: the board, the settings store, and the state the executor owns.
 pub struct Context {
@@ -318,23 +318,19 @@ impl Executor {
     /// Spawn the executor thread (core 0, priority 5, beside the link and the console) owning `context`.
     pub fn start(context: Context) -> anyhow::Result<Self> {
         let (queue, requests) = sync_channel(QUEUE_DEPTH);
-        ThreadSpawnConfiguration {
-            name: Some(c"cc"),
-            stack_size: STACK_SIZE,
-            priority: 5,
-            pin_to_core: Some(Core::Core0),
-            // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
-            // esp_mmu_map/unmap, the one runtime path that turns the cache off (no partition mmap; M15's OTA runs
-            // elsewhere)
-            stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-            ..Default::default()
-        }
-        .set()?;
-        let spawned = std::thread::Builder::new()
-            .stack_size(STACK_SIZE)
-            .spawn(move || serve(requests, context));
-        ThreadSpawnConfiguration::default().set()?;
-        spawned?;
+        // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
+        // esp_mmu_map/unmap, the one runtime path that turns the cache off (no partition mmap; M15's OTA runs
+        // elsewhere)
+        threads::spawn(
+            Spec {
+                name: c"cc",
+                stack_size: STACK_SIZE,
+                stack: Stack::Psram,
+                priority: 5,
+                core: Core::Core0,
+            },
+            move || serve(requests, context),
+        )?;
         Ok(Self { queue })
     }
 

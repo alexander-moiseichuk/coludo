@@ -20,12 +20,12 @@ use std::time::Duration;
 use ::sim_link::{Fins, Refusal, Sensors};
 use controller::HitlWriters;
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
-use esp_idf_svc::sys;
-use recorder::{Cell, Telemetry};
+use recorder::{Cell, Rows};
 
 use crate::devices::{HitlMember, Topology};
 use crate::status::FLIGHT;
+use firmware::threads::{self, Spec, Stack};
+use firmware::time::uptime_us;
 
 /// The thread's stack (PSRAM): the socket calls, one decode and the rows.
 const STACK_SIZE: usize = 8 << 10;
@@ -89,39 +89,34 @@ pub fn running() -> bool {
 pub fn start(member: HitlMember, topology: &'static Topology) -> anyhow::Result<()> {
     // before the spawn: the link reads it from its first tick
     let _ = RUNNING.set((member.name, member.port));
-    ThreadSpawnConfiguration {
-        name: Some(c"sim_link"),
-        stack_size: STACK_SIZE,
-        priority: PRIORITY,
-        pin_to_core: Some(Core::Core0),
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(move || run(member, topology));
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+    threads::spawn(
+        Spec {
+            name: c"sim_link",
+            stack_size: STACK_SIZE,
+            stack: Stack::Psram,
+            priority: PRIORITY,
+            core: Core::Core0,
+        },
+        move || run(member, topology),
+    )?;
     Ok(())
 }
 
-/// The simulated sensors' streams, each when its entry has one registered.
+/// The simulated sensors' streams, each recording when its entry has one registered, a refused row logged once a run
+/// under the hitl entry's name (recorder::Rows).
 struct Streams {
     /// imu_lsm6dso32.csv: accel g, rate centideg/s, irq_runs.
-    imu: Option<Telemetry<'static>>,
+    imu: Rows<'static>,
     /// baro_icp10111.csv: altitude, temperature, pressure, elevation, change.
-    barometer: Option<Telemetry<'static>>,
+    barometer: Rows<'static>,
     /// gnss.csv: the fix.
-    gnss: Option<Telemetry<'static>>,
+    gnss: Rows<'static>,
     /// laser_agl.csv: agl, irq_runs.
-    laser: Option<Telemetry<'static>>,
+    laser: Rows<'static>,
     /// airspeed_sdp810.csv: Pa x 100, cm/s, C x 100.
-    pitot: Option<Telemetry<'static>>,
+    pitot: Rows<'static>,
     /// mag_bmm350.csv: counts.
-    magnetometer: Option<Telemetry<'static>>,
-    /// A refused row was logged since the last accepted one.
-    overflowing: bool,
+    magnetometer: Rows<'static>,
 }
 
 /// The thread: bind, then frames forever.
@@ -130,11 +125,7 @@ fn run(member: HitlMember, topology: &'static Topology) {
     let source = name;
     // the hitl source's writers and the climb its altitude derives (crates/controller, the SITL's too)
     let mut writers = HitlWriters::new(topology, source);
-    let stream = |entry: &str| {
-        crate::recorder::get()
-            .zip(crate::recorder::device_stream(entry))
-            .and_then(|(recorder, stream)| Telemetry::new(recorder, stream))
-    };
+    let stream = |entry: &str| Rows::new(name, "telemetry", crate::recorder::telemetry(entry));
     let mut streams = Streams {
         imu: stream(IMU),
         barometer: stream(BAROMETER),
@@ -142,7 +133,6 @@ fn run(member: HitlMember, topology: &'static Topology) {
         laser: stream(LASER),
         pitot: stream(PITOT),
         magnetometer: stream(MAGNETOMETER),
-        overflowing: false,
     };
     let socket = bind(name, member.port);
     BOUND.store(true, Ordering::Relaxed);
@@ -167,7 +157,7 @@ fn run(member: HitlMember, topology: &'static Topology) {
         }
         last_seq = Some(sensors.seq);
         let change = writers.publish(&sensors, now_us);
-        record(name, &sensors, change, now_us, &mut streams);
+        record(&sensors, change, now_us, &mut streams);
         APPLIED.fetch_add(1, Ordering::Relaxed);
         LAST[0].store(sensors.seq, Ordering::Relaxed);
         LAST[1].store(sensors.sim_time_ms, Ordering::Relaxed);
@@ -211,7 +201,7 @@ fn bind(name: &str, port: u16) -> UdpSocket {
 }
 
 /// A row per simulated sensor the frame carries, in its driver's shape (plan B hitl.py:286-321).
-fn record(name: &str, sensors: &Sensors, change: Option<f32>, now_us: u64, streams: &mut Streams) {
+fn record(sensors: &Sensors, change: Option<f32>, now_us: u64, streams: &mut Streams) {
     let Streams {
         imu,
         barometer,
@@ -219,7 +209,6 @@ fn record(name: &str, sensors: &Sensors, change: Option<f32>, now_us: u64, strea
         laser,
         pitot,
         magnetometer,
-        overflowing,
     } = streams;
     if let (Some([ax, ay, az]), Some(rate)) = (sensors.accel, sensors.rate) {
         let [gx, gy, gz] = rate.map(|degrees| (degrees * 100.0).round() as i32);
@@ -232,7 +221,7 @@ fn record(name: &str, sensors: &Sensors, change: Option<f32>, now_us: u64, strea
             Cell::I32(gz),
             Cell::I32(1), // irq_runs: one sample handed over per publish (plan B's 1)
         ];
-        crate::sensors::record(name, imu, overflowing, now_us, &row);
+        imu.push(now_us, &row);
     }
     if let (Some(altitude), Some(elevation)) = (sensors.altitude, sensors.elevation) {
         let row = [
@@ -242,7 +231,7 @@ fn record(name: &str, sensors: &Sensors, change: Option<f32>, now_us: u64, strea
             Cell::F32(elevation),
             change.map_or(Cell::None, Cell::F32),
         ];
-        crate::sensors::record(name, barometer, overflowing, now_us, &row);
+        barometer.push(now_us, &row);
     }
     if let (Some([latitude, longitude]), Some(speed), Some(course)) = (sensors.position, sensors.speed, sensors.course)
     {
@@ -252,10 +241,10 @@ fn record(name: &str, sensors: &Sensors, change: Option<f32>, now_us: u64, strea
             Cell::F32(speed * KNOTS_PER_METRE_PER_SECOND),
             Cell::F32(course),
         ];
-        crate::sensors::record(name, gnss, overflowing, now_us, &row);
+        gnss.push(now_us, &row);
     }
     if let Some(agl) = sensors.agl {
-        crate::sensors::record(name, laser, overflowing, now_us, &[Cell::F32(agl), Cell::I32(0)]);
+        laser.push(now_us, &[Cell::F32(agl), Cell::I32(0)]);
     }
     if let (Some(pressure), Some(airspeed)) = (sensors.dynamic_pressure, sensors.airspeed) {
         let row = [
@@ -263,11 +252,11 @@ fn record(name: &str, sensors: &Sensors, change: Option<f32>, now_us: u64, strea
             Cell::I32((airspeed * 100.0) as i32),
             Cell::I32(SIMULATED_PITOT_TEMPERATURE),
         ];
-        crate::sensors::record(name, pitot, overflowing, now_us, &row);
+        pitot.push(now_us, &row);
     }
     if let Some(mag) = sensors.mag {
         let row = mag.map(|counts| Cell::I32(counts.round() as i32));
-        crate::sensors::record(name, magnetometer, overflowing, now_us, &row);
+        magnetometer.push(now_us, &row);
     }
 }
 
@@ -293,12 +282,6 @@ fn refusal_index(refusal: Refusal) -> usize {
         Refusal::Crc => 4,
         Refusal::NotFinite => 5,
     }
-}
-
-/// The uptime in microseconds.
-fn uptime_us() -> u64 {
-    // SAFETY: a plain read of the monotonic timer.
-    unsafe { sys::esp_timer_get_time() as u64 }
 }
 
 /// What `inspect hitl` shows (the port's own; plan B's hitl inspected its body, now the host's).

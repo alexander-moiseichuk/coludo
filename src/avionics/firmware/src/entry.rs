@@ -17,7 +17,6 @@
 use std::time::Duration;
 
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use firmware::gcl::Origin;
 use firmware::sd;
 
@@ -26,6 +25,7 @@ use std::io::Write as _;
 use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
 
 use crate::commands::Executor;
+use firmware::threads::{self, Spec, Stack};
 
 /// The file's name at the card's root.
 pub const NAME: &str = "entry.gcl";
@@ -91,29 +91,27 @@ pub fn start(executor: Executor) -> anyhow::Result<()> {
         "entry :: {path}: {} lines to run; verify and arm refuse while it is on the card",
         lines.len()
     );
-    ThreadSpawnConfiguration {
-        name: Some(c"entry"),
-        stack_size: STACK_SIZE,
-        priority: PRIORITY,
-        pin_to_core: Some(Core::Core0),
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new().stack_size(STACK_SIZE).spawn(move || {
-        // the console and the hub get their turn first: the bring-up's own lines are still settling
-        std::thread::sleep(Duration::from_secs(1));
-        for (number, line) in lines.iter().enumerate() {
-            log::info!("entry :: {} > {line}", number + 1);
-            let answer = executor
-                .ask(line, Origin::Entry)
-                .unwrap_or_else(|| "(no answer)".into());
-            log::info!("entry :: {} < {answer}", number + 1);
-        }
-        log::info!("entry :: done");
-    });
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+    threads::spawn(
+        Spec {
+            name: c"entry",
+            stack_size: STACK_SIZE,
+            stack: Stack::Psram,
+            priority: PRIORITY,
+            core: Core::Core0,
+        },
+        move || {
+            // the console and the hub get their turn first: the bring-up's own lines are still settling
+            std::thread::sleep(Duration::from_secs(1));
+            for (number, line) in lines.iter().enumerate() {
+                log::info!("entry :: {} > {line}", number + 1);
+                let answer = executor
+                    .ask(line, Origin::Entry)
+                    .unwrap_or_else(|| "(no answer)".into());
+                log::info!("entry :: {} < {answer}", number + 1);
+            }
+            log::info!("entry :: done");
+        },
+    )?;
     Ok(())
 }
 

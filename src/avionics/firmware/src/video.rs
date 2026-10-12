@@ -24,7 +24,6 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SendError, SyncSender, sync_ch
 use std::time::{Duration, Instant};
 
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::sys;
 use recorder::layout;
 use sequencer::video::{Duty, Owner, Refusal, Trigger};
@@ -33,6 +32,8 @@ use sequencer::{FlightWord, Stage};
 use crate::buses::i2c;
 use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach, Word};
 use crate::sd;
+use crate::threads::{self, Spec, Stack};
+use crate::time::uptime_us;
 
 /// The OV5647's Bayer order as the ISP must be told it: BGGR. esp_cam_sensor's tables run the readout mirrored
 /// but declare GBRG, which swapped green and magenta; BGGR (what Linux's ov5647 driver declares for the same
@@ -211,8 +212,7 @@ fn start_recording(
         sd::layout() != Some(sd::Layout::VideosFailed),
         "the card's videos partition is not mounted: no video, so the recordings partition stays the ring_saver's"
     );
-    // SAFETY: a plain read of the monotonic timer.
-    let uptime = unsafe { sys::esp_timer_get_time() } / 1000;
+    let uptime = uptime_us() as i64 / 1000;
     // session first (one partition, the layout); a two-partition card's videos go to its second partition
     let relative = if sd::videos_mounted() {
         layout::videos_partition_directory(session)
@@ -387,22 +387,18 @@ pub fn start(
         recording: None,
         trigger: Trigger::new(accel.is_some()),
     };
-    ThreadSpawnConfiguration {
-        name: Some(c"video"),
-        stack_size: STACK_SIZE,
-        priority: PRIORITY,
-        pin_to_core: Some(Core::Core0),
-        // stack in PSRAM (avionics-port.md "Internal RAM budget"): a slow core-0 thread that never calls
-        // esp_mmu_map/unmap, the one runtime path that turns the cache off
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(move || owner.run(posted));
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+    // stack in PSRAM (avionics-port.md "Internal RAM budget"): a slow core-0 thread that never calls
+    // esp_mmu_map/unmap, the one runtime path that turns the cache off
+    threads::spawn(
+        Spec {
+            name: c"video",
+            stack_size: STACK_SIZE,
+            stack: Stack::Psram,
+            priority: PRIORITY,
+            core: Core::Core0,
+        },
+        move || owner.run(posted),
+    )?;
     register_commands(orders);
     Ok(())
 }
@@ -452,8 +448,7 @@ impl VideoThread {
     /// One look at the flight word and the fused accel, and the duty they ask for (crates/sequencer `video::Trigger`).
     fn look(&mut self) {
         let now = self.flight.load();
-        // SAFETY: a plain read of the monotonic timer.
-        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let now_us = uptime_us();
         let accel = self
             .accel
             .and_then(|parameter| parameter.read(now_us))
@@ -685,7 +680,7 @@ fn counters(state: &str) -> String {
     let counters = stats();
     let average = counters.encode_microseconds_total / counters.frames_encoded.max(1) as u64;
     let end = match counters.stopped_microseconds {
-        0 => unsafe { sys::esp_timer_get_time() }, // SAFETY: reads the monotonic timer
+        0 => uptime_us() as i64,
         stopped => stopped,
     };
     let elapsed = match counters.started_microseconds {

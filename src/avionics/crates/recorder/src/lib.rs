@@ -46,6 +46,7 @@ mod record;
 mod recorder;
 mod registry;
 mod relay;
+mod rows;
 mod saver;
 mod tee;
 mod telemetry;
@@ -58,6 +59,7 @@ pub use recorder::{AttachError, Attachment, Buffers, Clock, Identity, Inspection
 pub use recorder_wire::Cell;
 pub use registry::{Registry, RegistryError, Stream, StreamId};
 pub use relay::{BEHIND_BLOCKS, Relay};
+pub use rows::{LogOnce, Rows};
 pub use saver::{Ahead, BATCH_BLOCKS, BATCH_FILES, BATCH_MS, SaveError, Saved, Saver, TAIL_BYTES, WRITE_BYTES, Walk};
 pub use tee::TeeBatch;
 pub use telemetry::Telemetry;

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys;
 use firmware::thermal::Thermometer;
+use firmware::time::uptime_us;
 
 /// The firmware's name on the wire: the hub shows it as the board's version.
 pub const FIRMWARE_VERSION: &str = concat!("avionics-", env!("CARGO_PKG_VERSION"));
@@ -97,8 +98,7 @@ fn next_boot(store: &EspNvs<NvsDefault>) -> Option<i32> {
 
 /// Milliseconds since boot.
 pub fn uptime_ms() -> i64 {
-    // SAFETY: a plain read of the monotonic system timer.
-    unsafe { sys::esp_timer_get_time() / 1000 }
+    (uptime_us() / 1000) as i64
 }
 
 /// Free heap bytes with the given capabilities (internal RAM, PSRAM).

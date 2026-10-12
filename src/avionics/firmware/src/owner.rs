@@ -23,7 +23,6 @@ use controller::Table;
 use embedded_hal::i2c::I2c;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::delay::Delay;
-use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
 use firmware::buses::i2c::{I2cError, I2cPort, PortFigures};
 use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
@@ -32,6 +31,8 @@ use sequencer::ChangeRefused;
 
 use crate::devices::{Member, Topology};
 use crate::sensors::{Calibrated, Event, Run};
+use firmware::threads::{self, Spec, Stack};
+use firmware::time::uptime_us;
 
 /// The owners' priorities, by port: the bus owners sit below the control thread (§4.2).
 const PRIORITIES: [u8; 2] = [18, 17];
@@ -198,19 +199,16 @@ pub fn spawn(id: u8, sda: u8, scl: u8, clock_hz: u32) -> anyhow::Result<(Parked,
     let (lend, loaned) = sync_channel::<anyhow::Result<I2cPort>>(1);
     let (resume, resumed) = sync_channel::<(I2cPort, Vec<Member>)>(1);
     let (mailbox, requests) = sync_channel::<Envelope>(MAILBOX_DEPTH);
-    ThreadSpawnConfiguration {
-        name: Some(NAMES[index]),
-        stack_size: STACK_SIZE,
-        priority: PRIORITIES[index],
-        pin_to_core: Some(Core::Core1),
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(move || own(id, sda, scl, clock_hz, lend, resumed, requests));
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
+    threads::spawn(
+        Spec {
+            name: NAMES[index],
+            stack_size: STACK_SIZE,
+            stack: Stack::Internal,
+            priority: PRIORITIES[index],
+            core: Core::Core1,
+        },
+        move || own(id, sda, scl, clock_hz, lend, resumed, requests),
+    )?;
     let port = loaned
         .recv()
         .map_err(|_| anyhow::anyhow!("i2c:{id} :: the owner ended before lending its port"))??;
@@ -297,8 +295,7 @@ fn own(
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
-        // SAFETY: a plain read of the monotonic timer.
-        let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+        let now_us = uptime_us();
         // DONE (M11b): the IMU, the magnetometer and the pitot stop, the beacon's sources run once a second
         let done = crate::status::FLIGHT.load().stage == sequencer::Stage::Done;
         if done {
@@ -401,8 +398,7 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
             length,
             times,
         } => {
-            // SAFETY: plain reads of the monotonic timer.
-            let start_us = unsafe { sys::esp_timer_get_time() };
+            let start_us = uptime_us();
             let reads = (0..times)
                 .map(|_| {
                     let mut bytes = vec![0u8; usize::from(length)];
@@ -411,7 +407,7 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
                 .collect();
             Answer::Read {
                 reads,
-                elapsed_us: (unsafe { sys::esp_timer_get_time() } - start_us) as u64,
+                elapsed_us: uptime_us() - start_us,
             }
         }
         Request::Scan => Answer::Scan(port.scan()),
@@ -434,8 +430,7 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
         }
         Request::Update { name, properties } => {
             Answer::Updated(members.iter_mut().find(|member| member.name == name).map(|member| {
-                // SAFETY: a plain read of the monotonic timer.
-                let now_us = unsafe { sys::esp_timer_get_time() } as u64;
+                let now_us = uptime_us();
                 let changed = member.part.update(member.run.as_ref(), &properties, now_us);
                 note_calibration(member);
                 changed

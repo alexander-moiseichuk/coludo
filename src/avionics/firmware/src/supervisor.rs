@@ -42,9 +42,8 @@ use std::time::Duration;
 
 use controller::{Stall, Table};
 use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::sys;
-use recorder::{Cell, Telemetry};
+use recorder::{Cell, Rows, Telemetry};
 use sequencer::{Flight, Stage};
 use serde::Serialize;
 
@@ -54,6 +53,8 @@ use crate::gnss::Calibration;
 use crate::recorder::Producer;
 use crate::status::FLIGHT;
 use crate::warm::Keeping;
+use firmware::threads::{self, Spec, Stack};
+use firmware::time::uptime_us;
 
 /// The health stream's file: `<session>_health.csv` on the SD.
 pub const HEALTH_FILE: &str = "health.csv";
@@ -144,32 +145,23 @@ pub fn start(
     if let Some(member) = &watchdog {
         let _ = SETTINGS.set(member.settings);
     }
-    let spawned = ThreadSpawnConfiguration {
-        name: Some(c"supervisor"),
-        stack_size: STACK_SIZE,
-        priority: PRIORITY,
-        pin_to_core: Some(Core::Core0),
-        // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
-        // esp_mmu_map/unmap, the one runtime path that turns the cache off (NVS writes do not, the flash running
-        // with the cache on under XIP from PSRAM)
-        stack_alloc_caps: MallocCap::Spiram | MallocCap::Cap8bit,
-        ..Default::default()
-    }
-    .set()
-    .map_err(anyhow::Error::from)
-    .and_then(|()| {
-        std::thread::Builder::new()
-            .stack_size(STACK_SIZE)
-            .spawn(move || run(board, table, keeping, watchdog, calibration, tick_ms))
-            .map_err(anyhow::Error::from)
-    });
-    // the default back for the threads spawned after this one
-    let reset = ThreadSpawnConfiguration::default().set();
+    // stack in PSRAM (avionics-port.md §4.7, internal RAM budget): a slow core-0 thread that never calls
+    // esp_mmu_map/unmap, the one runtime path that turns the cache off (NVS writes do not, the flash running with the
+    // cache on under XIP from PSRAM)
+    let spawned = threads::spawn(
+        Spec {
+            name: c"supervisor",
+            stack_size: STACK_SIZE,
+            stack: Stack::Psram,
+            priority: PRIORITY,
+            core: Core::Core0,
+        },
+        move || run(board, table, keeping, watchdog, calibration, tick_ms),
+    );
     if spawned.is_err() {
         crate::devices::crash(table, supervised, NOT_STARTED);
     }
     spawned?;
-    reset?;
     Ok(())
 }
 
@@ -468,10 +460,8 @@ struct Health {
     board: Arc<Board>,
     /// The CPU load since the last row.
     load: Load,
-    /// health.csv, with a recorder.
-    telemetry: Option<Telemetry<'static>>,
-    /// A row was refused and none written since: one line per run of refusals.
-    overflowing: bool,
+    /// health.csv: a refused row logged once a run (recorder::Rows).
+    rows: Rows<'static>,
 }
 
 impl Health {
@@ -480,18 +470,21 @@ impl Health {
         Health {
             board,
             load: Load::new(),
-            telemetry: crate::recorder::get()
-                .zip(crate::recorder::health_stream())
-                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
-            overflowing: false,
+            rows: Rows::new(
+                "supervisor",
+                "health.csv row:",
+                crate::recorder::get()
+                    .zip(crate::recorder::health_stream())
+                    .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+            ),
         }
     }
 
     /// One row at `now_us`, with a recorder.
     fn row(&mut self, now_us: u64) {
-        let Some(telemetry) = &mut self.telemetry else {
+        if !self.rows.recording() {
             return;
-        };
+        }
         let row = [
             self.board.celsius().map_or(Cell::None, Cell::F32),
             Cell::I64(board::heap_free(sys::MALLOC_CAP_8BIT) as i64),
@@ -504,14 +497,7 @@ impl Health {
         ];
         // telemetry raises (the error policy): the recorder counts the row in tlm.dropped, and the first of a run of
         // refusals is logged
-        match telemetry.push(now_us, &row) {
-            Ok(()) => self.overflowing = false,
-            Err(overflow) if !self.overflowing => {
-                log::warn!("supervisor :: health.csv row: {overflow}");
-                self.overflowing = true;
-            }
-            Err(_) => {}
-        }
+        self.rows.push(now_us, &row);
     }
 }
 
@@ -562,10 +548,4 @@ fn idle_times() -> [u64; 2] {
         }
         status.ulRunTimeCounter
     })
-}
-
-/// The uptime in µs (esp_timer, unwrapped): the row's stamp.
-fn uptime_us() -> u64 {
-    // SAFETY: a plain read of the monotonic system timer, never negative.
-    unsafe { sys::esp_timer_get_time() as u64 }
 }
