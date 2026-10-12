@@ -1949,6 +1949,9 @@ def test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains():
     assert saved['components'][0]['enabled'] is False, 'the saved config itself is untouched'
     assert hitl['components'][1]['enabled'] is False and hitl['sensors'] == []
     assert hitl['components'][-1]['activity'] == 'hitl' and hitl['components'][-1]['liftoff_g'] > 285
+    assert (flight['glide_ratio'], flight['stall_speed_1g']) == (5.5, 9.0), 'TMS-7 by default'
+    eight = hitl_host.hitl_config(saved, set(), argparse.Namespace(**dict(vars(args), airframe='tms8')))
+    assert (eight['components'][0]['glide_ratio'], eight['components'][0]['stall_speed_1g']) == (8.0, 9.0)
     for components in ([], [saved['components'][0], dict(saved['components'][0], name='flight_2')]):
         try:
             hitl_host.hitl_config({'components': components}, set(), args)

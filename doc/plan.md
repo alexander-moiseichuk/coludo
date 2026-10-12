@@ -99,6 +99,23 @@ flight on real hardware (extends the flight-test-plan):
 span) for more wing area / stability than the TMS-7 modelled here. When it is printed, the sim's flight
 envelope + landing-zone numbers re-derive from the TMS-8 masses/geometry (`coludo.md`, `doc/sims/`).
 
+**TMS-8, as the operator set it out (2026-10-11):**
+- **No folding wings.** They were hard to build, stressed the frame and changed the mass between stages; the tips
+  and the tail are fixed and ride the boost open.
+- **A flat triangle frame** pushed by today's booster (still separating at apogee): a body up to 20 cm wide (wider
+  toward the tips at the rear) and ~5 cm deep from the frame's bottom to its top, room for the motor, the
+  electronics and the obturation ring of the 43 mm booster. It carries most of the drag. Not a tailless B-2: a
+  **tail** plus **left and right tip surfaces** of today's size.
+- **The same servos as TMS-7:** left and right surfaces and a yaw servo, MG90S.
+- **Planning figures for the sim:** L/D 8 at a 12 m/s trim (`sim_model.AIRFRAMES['tms8']`), F15 at 235 and 285 g.
+  Everything else is assumed the same as TMS-7 (the operator): the stall (9 m/s), the booster, the servos, the
+  boost dynamics. The boost drag is an estimate, Cd ~0.5 on ~100 cm^2 plus the surfaces = 0.0065 m^2,
+  about 6.4x TMS-7's folded stack.
+- **First number (the sim, an F15 vertical climb at 430 g, no wind):** apogee **164 m against TMS-7's 329 m**, top
+  speed 47 m/s against 72 m/s. The flat body halves the height; the better glide has to buy the time back.
+- **Open:** the full pre-flight report (F15 x {235, 285 g} x 10 scenarios x 3 runs, HITL and SITL with
+  `--airframe tms8`), with the boost drag swept, since it decides the apogee.
+
 Supporting precision + tooling (continue alongside / from Phase 4):
 
 - **Nail the landing strip** — bank-to-turn lands ~85 m from the 40 m-wide strip centre (good sensors).

@@ -105,6 +105,10 @@ def hitl_config(saved: dict, not_ported: set, args: argparse.Namespace) -> dict:
         raise ValueError('%d flight entries in the config: HITL flies exactly one' % len(flights))
     flights[0]['enabled'] = True
     flights[0]['gains'] = _plan_b_gains()
+    # the law plans with the airframe the physics flies: its reach (glide_ratio) and the endgame's stall floor
+    frame = sim_model.AIRFRAMES[getattr(args, 'airframe', 'tms7')]
+    flights[0]['glide_ratio'] = frame['air_quality']
+    flights[0]['stall_speed_1g'] = frame['stall_ms']
     for key in ('sensors', 'components'):
         kept = []
         for entry in hitl.get(key, []):
@@ -201,7 +205,8 @@ class _Sim:
         liftoff_g = config_hitl._BOOSTER_G.get(args.motor, 193) + args.glider_g
         self.thrust, self.burn_s = sim_model.MOTORS.get(args.motor, sim_model.MOTORS['F15'])
         self.body = sim_model.Body(liftoff_g / 1000.0, tuple(scenario['launch']), scenario['elevation_m'],
-                                   scenario['heading_deg'], glide_mass=args.glider_g / 1000.0)
+                                   scenario['heading_deg'], glide_mass=args.glider_g / 1000.0,
+                                   airframe=args.airframe)
         self.body.wind_e = args.wind * math.sin(math.radians(args.wind_dir))
         self.body.wind_n = args.wind * math.cos(math.radians(args.wind_dir))
         self.body.gnss_drift_e = args.gnss_drift * math.sin(math.radians(args.gnss_drift_dir))
@@ -470,6 +475,9 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--wind-dir', type=float, default=0.0)
     parser.add_argument('--spike', action='store_true')
     parser.add_argument('--glider-g', type=int, default=285)
+    parser.add_argument('--airframe', default='tms7', choices=sorted(sim_model.AIRFRAMES),
+                        help="the physics' airframe (sim_model.AIRFRAMES); the board's flight entry gets its "
+                             'glide_ratio and stall_speed_1g')
     parser.add_argument('--sim-hz', type=int, default=50)
     parser.add_argument('--inject-hz', type=int, default=0, help='the publish rate; 0 = sim_hz')
     parser.add_argument('--boost-axis', default='z', choices=('x', 'y', 'z'))
