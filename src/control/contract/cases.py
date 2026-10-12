@@ -16,6 +16,9 @@ A case is one request line and what may come back:
     count is part of the answer. NO_REPLY (no alternatives) is the answer to an empty line: nothing at all.
     A type is one of str, int, float, number (int or float), bool, null, list, object, any -- or several
     joined by '|'.
+  * `named` -- the `name=value` figures a GCL reply carries (doc/specs/cc-protocol.md "The Glider Command Language"),
+    {name: regular expression} a value must match whole (a name ending in '?' is optional; names the case does not
+    give are allowed). Only a case that gives `named` accepts a reply with named params: a CC reply carries none.
   * `invariants` -- checks on the values beyond their types (a stage that exists, pass == no problems, the
     launch config restored to the byte). Each returns the problem, or None.
   * `not_yet` -- a documented answer from a board that has not grown the feature: reported as NOT YET, never
@@ -96,6 +99,8 @@ _ACCEL_DISAGREE_DEGREES: float = 10.0  # health's sources-disagree for two accel
 _DISAGREEMENT: re.Pattern = re.compile(r'sources-disagree: (accel|elevation) (\S+)/(\S+) (\d+\.\d) (deg|m)')
 _DISAGREEMENT_UNIT: dict = {'accel': 'deg', 'elevation': 'm'}
 _BOUND: re.Pattern = re.compile(r'\[([^\]]*)\]')  # a slot's sources in `inspect sequencer`'s binding text
+# an ignored source in `inspect sequencer`: its bring-up line, the source's name first
+_IGNORED: re.Pattern = re.compile(r"([A-Za-z0-9_]+) ignored: the stage machine's [a-z]+ slots are full \(\d+\)")
 """
 `calibrate <BMM350>` on a board lying still: no field change seen (the span under the part's minimum), too few
 octants of a level turn covered, or -- fewer samples than the calibration needs -- the outstanding instruction.
@@ -174,6 +179,7 @@ class Case:
     reboots: bool = False  # a passing answer reboots the board: prove a new boot answers
     milestone: int = 1  # the port-plan milestone that owes it: M1 (CC parity) owes everything plan B answers
     note: str = ''  # where plan B, the spec and the Rust plan disagree
+    named: dict | None = None  # a GCL reply's figures, {name: regex}; None: no named params allowed
 
 
 @dataclasses.dataclass(frozen=True)
@@ -197,6 +203,7 @@ class _Reply:
     request: str
     status: str
     values: list  # per argument: the decoded JSON for a dict/ListOf spec, else the text
+    named: dict = dataclasses.field(default_factory=dict)  # a GCL reply's name=value figures, as text
 
     @property
     def payload(self) -> object:
@@ -286,6 +293,28 @@ def _match(alternative: tuple, arguments: list) -> tuple:
     return None, values
 
 
+def _named(spec: dict, named: dict) -> str | None:
+    """
+    Check a GCL reply's name=value figures against a case's `named` spec.
+
+    Args:
+        spec - {name: regular expression}; a name ending in '?' is optional.
+        named - the reply's figures, as text.
+
+    Returns:
+        The problem, or None: every required name present, every value given its spec matching whole.
+    """
+    for key, pattern in spec.items():
+        name = key.rstrip('?')
+        if name not in named:
+            if key.endswith('?'):
+                continue
+            return 'no %s= figure' % name
+        if re.fullmatch(pattern, named[name]) is None:
+            return '%s=%r does not match %r' % (name, _cut(named[name]), pattern)
+    return None
+
+
 def _shape(spec: object, value: object, position: int) -> str | None:
     """
     Check one decoded JSON argument against its dict or ListOf spec.
@@ -348,7 +377,7 @@ def _describe(alternative: tuple) -> str:
 """The envelope: the rules every reply keeps, whatever the request."""
 
 
-def _envelope(request: str, lines: list) -> str | None:
+def _envelope(request: str, lines: list, named: bool = False) -> str | None:
     """
     Check the reply lines of one request against the framing rules.
 
@@ -372,7 +401,7 @@ def _envelope(request: str, lines: list) -> str | None:
         return 'unparsable reply %r (%r)' % (_cut(lines[0]), error)
     if message.command not in _STATUSES:
         return 'status %r is none of %s' % (message.command, '/'.join(_STATUSES))
-    if message.named:
+    if message.named and not named:
         return 'a reply carries key=value params %s' % sorted(message.named)
     if message.command == 'err':
         if len(message.args) != 2:
@@ -727,6 +756,63 @@ def _triples(*keys: str) -> typing.Callable:
     return check
 
 
+def _calib_stat(value: object) -> bool:
+    """Whether a value is the BNO055's CALIB_STAT as plan B lists it: [sys, gyr, acc, mag], each 0..3."""
+    return isinstance(value, list) and len(value) == 4 and all(
+        _is_type(field, 'int') and 0 <= field <= 3 for field in value)
+
+
+def _bno055_state(reply: _Reply, context: dict) -> str | None:
+    """
+    The BNO055's calibration adds up (plan B bno055.inspect): the live CALIB_STAT null before its first read, else four
+    levels 0..3; a profile restored from NVS sets the convergence latch.
+    """
+    part = reply.payload
+    if part['calibration'] is not None and not _calib_stat(part['calibration']):
+        return 'calibration is %r, expected null or [sys, gyr, acc, mag] in 0..3' % (part['calibration'],)
+    if part['calibration_restored'] and not part['calibrated']:
+        return 'calibration_restored without calibrated: a restored profile sets the latch'
+    return None
+
+
+def _imu_calibration(reply: _Reply, context: dict) -> str | None:
+    """health's `imu_calibration`, when the board carries it: the BNO055's CALIB_STAT, four levels 0..3."""
+    value = reply.payload.get('imu_calibration')
+    if value is not None and not _calib_stat(value):
+        return 'imu_calibration is %r, expected [sys, gyr, acc, mag] in 0..3' % (value,)
+    return None
+
+
+def _figure_eight_or_saved(reply: _Reply, context: dict) -> str | None:
+    """
+    `calibrate <bno055>`: null once the learned profile is saved, else what is still owed, the figure-8 (plan B
+    bno055.calibrate).
+    """
+    for name, answer in reply.payload.items():
+        if answer is not None and not answer.startswith('move the airframe'):
+            return '%s answered %r: neither saved (null) nor the figure-8 owed' % (name, answer)
+    return None
+
+
+def _gnss_figures(reply: _Reply, context: dict) -> str | None:
+    """The GNSS snapshot adds up: a fix has a position, the C/N0 lists the four best, no more used than in view."""
+    gnss = reply.payload
+    if gnss['fix'] and gnss['position'] is None:
+        return 'a fix with no position'
+    if len(gnss['cn0']) != 4:
+        return 'cn0 is %r, expected the four best' % (gnss['cn0'],)
+    if gnss['in_view'] and gnss['used'] > gnss['in_view']:
+        return 'used %d satellites with %d in view' % (gnss['used'], gnss['in_view'])
+    return None
+
+
+def _distinct_slots(reply: _Reply, context: dict) -> str | None:
+    """`ota status`: the next slot is not the running one (an OTA never writes the image it runs)."""
+    if reply.named['next'] == reply.named['running']:
+        return 'next=%s is the running slot' % reply.named['next']
+    return None
+
+
 def _bmi323_evidence(reply: _Reply, context: dict) -> str | None:
     """
     The BMI323's evidence adds up: `interrupt_silent` is null exactly when no INT1 line is declared (`interrupt`
@@ -829,14 +915,21 @@ def _nothing_written(reply: _Reply, context: dict) -> str | None:
 
 
 def _sequencer_binding(reply: _Reply, context: dict) -> str | None:
-    """inspect sequencer: its binding (`sources`) and its ignored sources name parts the board lists; edges from 0."""
+    """
+    inspect sequencer: its binding (`sources`) and its ignored sources name parts the board lists; edges from 0. An
+    ignored source is its bring-up line, `<source> ignored: the stage machine's <quantity> slots are full (<n>)`
+    (crates/sequencer `Ignored`).
+    """
     snapshot = reply.payload
     ignored = snapshot['ignored']
-    if not all(isinstance(name, str) for name in ignored):
+    if not all(isinstance(item, str) for item in ignored):
         return 'ignored holds a non-text item: %s' % ignored
+    malformed = [item for item in ignored if _IGNORED.fullmatch(item) is None]
+    if malformed:
+        return 'ignored %r is not `<source> ignored: the stage machine\'s <quantity> slots are full (<n>)`' % malformed
     bound = [name.strip() for group in _BOUND.findall(snapshot['sources']) for name in group.split(',')
              if name.strip()]
-    unknown = sorted(set(bound + ignored) - set(context['objects']))
+    unknown = sorted(set(bound + [_IGNORED.fullmatch(item).group(1) for item in ignored]) - set(context['objects']))
     if unknown:
         return 'the sequencer names %s, which the board does not list' % unknown
     return None if snapshot['veto_edges'] >= 0 else 'veto_edges %d is negative' % snapshot['veto_edges']
@@ -916,10 +1009,13 @@ def _refused_back_to_its_clock(reply: _Reply, context: dict) -> str | None:
 """Not-yet answers: legitimate for a board that has not grown the feature."""
 
 
-_PUSH_NOT_PORTED: _NotYet = _NotYet('err', 'badcmd', 'push-* is not ported: the Rust board answers badcmd until '
-                                                     'the firmware OTA is redesigned')
+_PUSH_NOT_PORTED: _NotYet = _NotYet('err', 'badcmd', 'push-* is not ported: the Rust board\'s firmware OTA is '
+                                                     '`ota` (M15)')
+# A case no milestone owes: plan B's answer, which the port replaced by decision (doc/specs/avionics-port.md §6)
+_NEVER: int = 1_000_000
 _SAVED_NOT_KNOWN: _NotYet = _NotYet('err', 'badargs', 'a firmware older than `get-config saved`')
 _NOT_IN_PLAN_B: _NotYet = _NotYet('err', 'badcmd', 'a Rust-only bus diagnostic (M9): plan B has no such command')
+_GCL_ONLY: _NotYet = _NotYet('err', 'badcmd', 'a GCL command this build does not register')
 
 """Request builders: lines that depend on an earlier answer, and the markers that make a round trip restore."""
 
@@ -1148,6 +1244,49 @@ def _probe_devices(context: dict) -> list:
             continue
     if not names:
         raise Blocked('none of %s came up (plan B on CPython sets none up)' % ', '.join(_M6_DRIVERS))
+    return [cc.build('probe', [name]) for name in names]
+
+
+def _gcl(line: str) -> typing.Callable:
+    """
+    A request: a GCL line (doc/specs/cc-protocol.md "The Glider Command Language"), sent only to a board that speaks
+    GCL -- its `help` lists commands (the preflight's `gcl`). Plan B answers `help` badcmd and has none of them.
+    """
+
+    def request(context: dict) -> str:
+        """The line, on a GCL board."""
+        if not context.get('gcl'):
+            raise Blocked('a GCL command: this board speaks no GCL (plan B answers help badcmd)')
+        return line
+
+    return request
+
+
+def _on_any_device(command: str, drivers: tuple) -> typing.Callable:
+    """A request: `<command> <the first device that came up with one of these drivers>`."""
+
+    def request(context: dict) -> str:
+        """The line, once one of the devices is known."""
+        for driver in drivers:
+            try:
+                return cc.build(command, [_device(context, driver)])
+            except Blocked:
+                continue
+        raise Blocked('none of %s came up (plan B on CPython sets none up)' % ', '.join(drivers))
+
+    return request
+
+
+def _probe_sen0253(context: dict) -> list:
+    """`probe <device>` for each SEN0253 part (M18: the v0.1 boards' BNO055 and BMP280) that came up."""
+    names = []
+    for driver in _M18_DRIVERS:
+        try:
+            names.append(_device(context, driver))
+        except Blocked:
+            continue
+    if not names:
+        raise Blocked('none of %s came up (plan B on CPython sets none up)' % ', '.join(_M18_DRIVERS))
     return [cc.build('probe', [name]) for name in names]
 
 
@@ -1390,6 +1529,45 @@ _SEQUENCER: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'sources': '
                     'veto_edges': 'int'}
 _QUANTITY: dict = {'value': 'any', 'source': 'str|null', 'age_ms': 'int|null', 'offsets': 'object'}  # databoard's
 _M9_DRIVERS: tuple = ('bmi323', 'bmp581', 'bmm350')
+"""
+The M10-M18 parts' snapshots: plan B's drivers' keys (sdp810.py, ina226.py, vl53l1x.py, gnss.py, gnss_calib.py,
+sg90.py, bno055.py, bmp280.py `inspect`), a stale or never-read channel null. The port's own: the GNSS's `lines`, the
+backup barometers' `change` and guard counters (as the BMP581's), the BNO055's `addr`.
+"""
+_PITOT: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'dynamic_pressure_pa': 'number|null',
+                'airspeed_ms': 'number|null', 'temperature_c': 'number|null', 'scale': 'int|null',
+                'zero_offset_pa': 'number|null', 'tared': 'bool|null', 'air_density': 'number|null'}
+_POWER: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'voltage_mv': 'int|null', 'current_ma': 'int|null',
+                'power_mw': 'int|null', 'alerts': 'int'}
+_RANGER: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'interrupt': 'bool', 'agl_m': 'number|null'}
+_GNSS: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'fix': 'bool', 'satellites': 'int', 'hdop': 'number',
+               'fix_quality': 'int', 'position': 'list|null', 'altitude_m': 'number|null',
+               'elevation_m': 'number|null', 'speed_ms': 'number|null', 'in_view': 'int', 'used': 'int', 'mode': 'int',
+               'cn0': 'list', 'cn0_mean': 'number', 'antenna': 'str', 'lines?': 'int'}
+_GNSS_CALIB: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'drift_e': 'number', 'drift_n': 'number',
+                     'samples': 'int', 'frozen': 'bool'}
+_SERVO: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'angle': 'int', 'pulse_us': 'int', 'trim': 'int',
+                'feedback': 'int|null'}
+_ABSOLUTE: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'addr': 'str', 'attitude_deg': 'list|null',
+                   'accel_g': 'list|null', 'fusion_stalled': 'bool', 'calibration': 'list|null', 'calibrated': 'bool',
+                   'calibration_restored': 'bool'}
+_GNSS_DRIVERS: tuple = ('neo6mv2', 'atgm336h')
+_LASER_DRIVERS: tuple = ('vl53l4cx', 'vl53l1x')
+_SERVO_DRIVERS: tuple = ('sg90', 'mg90s')
+_M18_DRIVERS: tuple = ('bno055', 'bmp280')
+"""
+The Rust board's own read-only GCL commands (doc/specs/cc-protocol.md "The Glider Command Language"): their figures
+as `name=value`, each value a pattern: a count, a ring cursor `<block>/<offset>`, a volume's `<free>/<total>` MB.
+"""
+_COUNT: str = r'\d+'
+_CURSOR: str = r'\d+/\d+'
+_DF: dict = {'layout': r'[a-z_]+', 'recordings?': _CURSOR, 'videos?': _CURSOR, 'bounced': _COUNT}
+_RING: dict = {'erased': _COUNT, 'saved': _COUNT, 'unsaved': _COUNT, 'lost': _COUNT, 'bad': _COUNT, 'reserve': _COUNT,
+               'writer': _CURSOR, 'saver': _CURSOR, 'flash_errors': _COUNT, 'saver_card_errors?': _COUNT}
+_OTA_STATUS: dict = {'running': r'ota_[01]', 'boot': r'ota_[01]', 'next': r'ota_[01]', 'build': r'[0-9a-f]+',
+                     'transfer': r'\S+', 'received': r'\S+'}
+_VIDEO_STATS: dict = {'captured': _COUNT, 'missed': _COUNT, 'encoded': _COUNT, 'dropped': _COUNT,
+                      'write_errors': _COUNT, 'segments': _COUNT, 'preview': _COUNT}
 # The bus diagnostics an armed board refuses (M9): the line, the part it needs up, its answer bare while disarmed
 _BUS_DIAGNOSTICS: tuple = (
     ('i2c read', _i2c_part, 'i2c read needs port= (the I2C port)'),
@@ -1581,6 +1759,26 @@ _INSPECT: tuple = (
          (_changed_ground,), allow=('active',), milestone=9),
     Case('inspect', 'bmp581_ground_restored', _bmp581_settled, (('ok', _BMP581),),
          (_ground_reads(lambda context: context['bmp581_ground']),), allow=('active',), milestone=9),
+    Case('inspect', 'inspect_sdp810', _on_device('inspect', 'sdp810'), (('ok', _PITOT),), (_names_itself,),
+         milestone=10),
+    Case('inspect', 'inspect_ina226', _on_device('inspect', 'ina226'), (('ok', _POWER),), (_names_itself,),
+         milestone=10, note='alerts reads 0 until the over-current ALERT count is ported (deferred with the servos)'),
+    Case('inspect', 'inspect_laser', _on_any_device('inspect', _LASER_DRIVERS), (('ok', _RANGER),), (_names_itself,),
+         milestone=10),
+    Case('inspect', 'inspect_gnss', _on_any_device('inspect', _GNSS_DRIVERS), (('ok', _GNSS),),
+         (_names_itself, _gnss_figures), milestone=11, note='`lines` is the port\'s own: the NMEA lines read'),
+    Case('inspect', 'inspect_gnss_calib', _on_object('inspect', 'gnss_calib'), (('ok', _GNSS_CALIB),),
+         (_names_itself,), milestone=11),
+    Case('inspect', 'inspect_servo', _on_any_device('inspect', _SERVO_DRIVERS), (('ok', _SERVO),), (_names_itself,),
+         milestone=13, note='the COMMANDED angle and pulse: an SG90 is open-loop, so feedback is null'),
+    Case('inspect', 'inspect_bno055', _on_device('inspect', 'bno055'), (('ok', _ABSOLUTE),),
+         (_names_itself, _configured_address, _triples('attitude_deg', 'accel_g'), _bno055_state), milestone=18,
+         note='addr is the port\'s own; the rest are plan B\'s keys'),
+    Case('inspect', 'inspect_bmp280', _on_device('inspect', 'bmp280'), (('ok', _BMP581),),
+         (_names_itself, _configured_address, _bmp581_guard), milestone=18,
+         note='plan B\'s four quantities and addr, then the port\'s change and its own guard counters (the BMP581\'s)'),
+    Case('inspect', 'health_imu_calibration', 'health', (('ok', _HEALTH),), (_imu_calibration,), milestone=18,
+         note='present while a BNO055 runs and has read its CALIB_STAT (CC\'s IMU column)'),
 )
 
 _CONTROL: tuple = (
@@ -1684,13 +1882,36 @@ _DIAGNOSTICS: tuple = (
          (_still_board_refusal,), allow=('active',), milestone=9,
          note='a board lying still: the answer is the refusal, and nothing is persisted. Turned through a full level '
               'circle since boot, the board would calibrate and persist it -- run it on a board at rest'),
+    Case('diagnostics', 'probe_sen0253', _probe_sen0253, (('ok', _ANY_OBJECT), ('ok', _ANY_OBJECT, _ANY_OBJECT)),
+         (_probe_maps, _names_its_target, _succeeded), allow=('active',), milestone=18),
+    Case('diagnostics', 'calibrate_bmp280', _on_device('calibrate', 'bmp280'), (('ok', _ANY_OBJECT),), (_succeeded,),
+         allow=('active',), milestone=18, note='re-captures its ground from guarded reads, as the BMP581'),
+    Case('diagnostics', 'calibrate_bno055', _on_device('calibrate', 'bno055'), (('ok', _ANY_OBJECT),),
+         (_figure_eight_or_saved,), allow=('active',), milestone=18,
+         note='saves the learned profile to NVS once the figure-8 converged (the fusion pauses ~50 ms); before that '
+              'it answers the figure-8 owed, as plan B'),
+    Case('diagnostics', 'entry_show', _gcl('entry show'), (('ok', {'lines': 'list'}),), (),
+         (_UNSUPPORTED, _GCL_ONLY), milestone=21,
+         note='the entry file (M21): `verify` and `arm` refuse while it holds a line'),
+    Case('diagnostics', 'df', _gcl('df'), (('ok', 'df'),), (), (_UNSUPPORTED, _GCL_ONLY), milestone=21, named=_DF,
+         note='the card per volume; `bounced` counts the transfers whose memory the SDMMC DMA cannot reach'),
+    Case('diagnostics', 'ls', _gcl('ls'), (('ok', {'entries': 'list', 'path?': 'str'}),), (),
+         (_UNSUPPORTED, _GCL_ONLY), milestone=21,
+         note='the card\'s root: [name, bytes] per file, [name/, null] per directory'),
+    Case('diagnostics', 'ring', _gcl('ring'), (('ok', 'ring'),), (), (_UNSUPPORTED, _GCL_ONLY), milestone=4,
+         named=_RING, note='the flash ring and its savers (M3, M4, M19)'),
+    Case('diagnostics', 'video_stats', _gcl('video stats'), (('ok', 'video', TEXT),), (),
+         (_UNSUPPORTED, _GCL_ONLY), milestone=7, named=_VIDEO_STATS,
+         note='running or idle, then the counters since the last start'),
 )
 
 _OTA: tuple = (
     Case('ota', 'push_status', 'push-status', (('ok', _PUSH_STATUS),), (), (_UNSUPPORTED, _PUSH_NOT_PORTED),
-         milestone=15,
+         milestone=_NEVER,
          note='the spec lists {uploading, received, size, chunks, orphans}; with no upload open plan B answers '
               '{uploading: null, orphans}'),
+    Case('ota', 'ota_status', _gcl('ota status'), (('ok', 'ota'),), (_distinct_slots,), (_UNSUPPORTED, _GCL_ONLY),
+         milestone=15, named=_OTA_STATUS, note='the Rust board\'s firmware OTA (M15): its slots and any transfer'),
 )
 
 _SYSTEM: tuple = (
@@ -1707,7 +1928,7 @@ CASES: tuple = _CORE + _STREAM + _CONFIG + _INSPECT + _CONTROL + _DIAGNOSTICS + 
 
 def _preflight(transport: transports.Transport, board_id: str | None, allowed: tuple) -> dict:
     """
-    Read whoami and health once, before any case: the context every case shares, and the safety refusal.
+    Read whoami, health and help once, before any case: the context every case shares, and the safety refusal.
 
     A failing read leaves its keys out (the cases that need them are then blocked) -- the whoami and health
     cases themselves report the failure. That is enough for a read-only run, but not for one a flag lets change
@@ -1720,7 +1941,7 @@ def _preflight(transport: transports.Transport, board_id: str | None, allowed: t
 
     Returns:
         The context: board_id and tees, and from the board id/stage/config_source/boot_id/epoch (whoami),
-        armed (health).
+        armed (health), gcl (help lists commands: a Rust board).
 
     Raises:
         Refused - the board is outside setting/done or armed; or a flag is given and its stage or arm state
@@ -1753,7 +1974,19 @@ def _preflight(transport: transports.Transport, board_id: str | None, allowed: t
     if allowed and unknown:
         raise Refused('unknown: %s -- whoami/health unreadable; with --allow-* the runner sends nothing to a board '
                       'it has not seen on the ground and disarmed' % ', '.join(unknown))
+    context['gcl'] = _speaks_gcl(transport)
     return context
+
+
+def _speaks_gcl(transport: transports.Transport) -> bool:
+    """Whether the board speaks GCL: its `help` lists commands (a Rust board; plan B answers badcmd)."""
+    try:
+        lines = transport.exchange('help')
+        message = cc.parse(lines[0]) if len(lines) == 1 else None
+        payload = json.loads(message.args[-1]) if message is not None and message.args else None
+    except (transports.NoAnswer, transports.Unreachable, OSError, ValueError, IndexError):
+        return False
+    return message.command == 'ok' and isinstance(payload, dict) and isinstance(payload.get('commands'), list)
 
 
 def run(transport: transports.Transport, tiers: tuple, allowed: tuple, board_id: str | None,
@@ -1912,7 +2145,7 @@ def _judge(case: Case, name: str, request: str, transport: transports.Transport,
     except (transports.NoAnswer, OSError) as error:  # OSError: the port or socket itself failed (a USB unplug)
         return result(FAIL, 'no answer: %s' % error)
     answered = time.monotonic()
-    problem = _envelope(request, lines)
+    problem = _envelope(request, lines, case.named is not None)
     if problem is not None:
         return result(FAIL, problem)
     if not lines:
@@ -1924,8 +2157,10 @@ def _judge(case: Case, name: str, request: str, transport: transports.Transport,
             continue
         free = tuple(position for position, spec in enumerate(alternative[1:]) if spec is TEXT)
         problem, values = _match(alternative, message.args)
+        if problem is None and case.named is not None:
+            problem = _named(case.named, message.named)
         if problem is None:
-            reply = _Reply(request, message.command, values)
+            reply = _Reply(request, message.command, values, dict(message.named))
             problem = next(filter(None, (_invariant(check, reply, context) for check in case.invariants)), None)
             if problem is None:
                 if case.remember is not None:

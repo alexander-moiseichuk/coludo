@@ -58,7 +58,12 @@ _M9_ON_PLAN_B: set = {'health_names_its_disagreements', 'stats_databoard', 'insp
 # the M9 cases it cannot: no SEN0697 part, attitude filter or sequencer, and no part on a bus for the (Rust-only) bus
 # diagnostics
 _M9_BOARD_ONLY: set = {case.name for case in cases.CASES if case.milestone == 9} - _M9_ON_PLAN_B
-_BOARD_ONLY: set = _M6_BOARD_ONLY | _M9_BOARD_ONLY
+# the M10-M21 cases: every part's (none set up), and the GCL commands, which plan B has none of (it answers help
+# badcmd); health's imu_calibration runs (absent there)
+_M10_ON_PLAN_B: set = {'health_imu_calibration'}
+_GCL_BOARD_ONLY: set = {'entry_show', 'df', 'ls', 'ring', 'video_stats', 'ota_status'}
+_M10_BOARD_ONLY: set = {case.name for case in cases.CASES if 10 <= case.milestone <= 21} - _M10_ON_PLAN_B
+_BOARD_ONLY: set = _M6_BOARD_ONLY | _M9_BOARD_ONLY | _M10_BOARD_ONLY | _GCL_BOARD_ONLY
 _M6_FITTED: tuple = ('baro_icp10111', 'bluetooth', 'imu_lsm6dso32', 'separation')  # the M6 parts and the BLE stub
 _M9_FITTED: tuple = ('attitude', 'baro_bmp581', 'databoard', 'imu_bmi323', 'mag_bmm350', 'sequencer')
 _BMP581_ALTITUDE: float = 22.1234  # the fitted BMP581's altitude, m AMSL
@@ -752,6 +757,125 @@ def test_the_m7_gate_is_held_to_plan_b() -> None:
     assert json.loads(cc.parse(_PLAN_B.exchange('health')[0]).args[0])['armed'] is False
 
 
+_M10_FITTED: tuple = ('airspeed_sdp810', 'power_ina226', 'laser_agl', 'gnss', 'gnss_calib', 'servo_eleron_left',
+                      'imu_bno055', 'baro_bmp280')
+
+
+def _m10_answers() -> dict:
+    """
+    The healthy answers of the M10-M21 parts and the Rust board's GCL reads, by request line: the pitot, the power
+    monitor, the laser, the GNSS and its pad drift, a servo, the SEN0253's BNO055 and BMP280 (inspect, probe,
+    calibrate), and help (a GCL board), df, ls, ring, video stats, ota status and entry show.
+    """
+    barometer = {'name': 'baro_bmp280', 'ok': True, 'healthy': True, 'addr': '0x76', 'altitude_m': -30.4,
+                 'temperature_c': 27.9, 'pressure_pa': 101691.2, 'elevation_m': 0.15, 'change_m_s': 0.09, 'torn': 47,
+                 'implausible': 0}
+    return {
+        'inspect airspeed_sdp810': _ok({'name': 'airspeed_sdp810', 'ok': True, 'healthy': True,
+                                        'dynamic_pressure_pa': 0.4, 'airspeed_ms': 0.8, 'temperature_c': 27.5,
+                                        'scale': 60, 'zero_offset_pa': -1.25, 'tared': True, 'air_density': 1.17}),
+        'inspect power_ina226': _ok({'name': 'power_ina226', 'ok': True, 'healthy': True, 'voltage_mv': 5012,
+                                     'current_ma': 412, 'power_mw': 2065, 'alerts': 0}),
+        'inspect laser_agl': _ok({'name': 'laser_agl', 'ok': True, 'healthy': True, 'interrupt': False,
+                                  'agl_m': 0.52}),
+        'inspect gnss': _ok({'name': 'gnss', 'ok': True, 'healthy': True, 'fix': True, 'satellites': 9, 'hdop': 1.1,
+                             'fix_quality': 1, 'position': [48.1, 11.5], 'altitude_m': 520.0, 'elevation_m': 1.0,
+                             'speed_ms': 0.1, 'in_view': 12, 'used': 9, 'mode': 3, 'cn0': [41, 39, 38, 36],
+                             'cn0_mean': 38.5, 'antenna': 'ok', 'lines': 9216}),
+        'inspect gnss_calib': _ok({'name': 'gnss_calib', 'ok': True, 'healthy': True, 'drift_e': 0.02,
+                                   'drift_n': -0.01, 'samples': 120, 'frozen': False}),
+        'inspect servo_eleron_left': _ok({'name': 'servo_eleron_left', 'ok': True, 'healthy': True, 'angle': 90,
+                                          'pulse_us': 1500, 'trim': 0, 'feedback': None}),
+        'inspect imu_bno055': _ok({'name': 'imu_bno055', 'ok': True, 'healthy': True, 'addr': '0x28',
+                                   'attitude_deg': [0.0, -2.3125, -7.75], 'accel_g': [-0.04, -0.13, 0.94],
+                                   'fusion_stalled': False, 'calibration': [0, 3, 3, 3], 'calibrated': True,
+                                   'calibration_restored': True}),
+        'inspect baro_bmp280': _ok(barometer),
+        'probe imu_bno055': _ok({'imu_bno055': None}),
+        'probe baro_bmp280': _ok({'baro_bmp280': None}),
+        'calibrate imu_bno055': _ok({'imu_bno055': None}),
+        'calibrate baro_bmp280': _ok({'baro_bmp280': None}),
+        'help': _ok({'cc': ['whoami'], 'commands': [], 'grammar': ''}),
+        'entry show': _ok({'lines': []}),
+        'df': ['ok df layout=one_partition recordings=13767/14900 bounced=10'],
+        'ls': _ok({'entries': [['000794/', None], ['sessions.csv', 110562]]}),
+        'ring': ['ok ring erased=664 saved=0 unsaved=13 lost=8 bad=0 reserve=51 writer=66992/1712 saver=66979/3752 '
+                 'flash_errors=0 saver_card_errors=0'],
+        'video stats': ['ok video idle captured=0 missed=0 encoded=0 dropped=0 write_errors=0 segments=0 preview=0'],
+        'ota status': ['ok ota running=ota_0 boot=ota_0 next=ota_1 build=30a03b1135850e7a transfer=none '
+                       'received=none'],
+    }
+
+
+def test_the_m10_to_m21_parts_and_gcl_reads_hold_their_shapes() -> None:
+    """
+    The M10-M21 cases pass on the Rust board's healthy answers -- the pitot, power monitor, laser, GNSS, pad drift,
+    servo, the SEN0253 (inspect, probe, calibrate), health's imu_calibration, and the GCL reads with their name=value
+    figures -- and each broken answer fails exactly its own case. A named figure on a CC reply breaks the envelope.
+    """
+    tiers, allowed = ('config', 'inspect', 'diagnostics', 'ota'), ('active',)
+    names = {'inspect_sdp810', 'inspect_ina226', 'inspect_laser', 'inspect_gnss', 'inspect_gnss_calib',
+             'inspect_servo', 'inspect_bno055', 'inspect_bmp280', 'health_imu_calibration', 'probe_sen0253',
+             'calibrate_bmp280', 'calibrate_bno055', 'entry_show', 'df', 'ls', 'ring', 'video_stats', 'ota_status'}
+
+    def run(answers: dict) -> dict:
+        """The named cases' results on a board answering `answers`."""
+        board = _Fitted(answers, _M10_FITTED)
+        return {result.name.split('[')[0]: result for result in cases.run(board, tiers, allowed, None, milestone=21)
+                if result.name.split('[')[0] in names}
+
+    healthy = run(_m10_answers())
+    assert {name: result.outcome for name, result in healthy.items()} == dict.fromkeys(names, cases.PASS), \
+        [(name, result.reason) for name, result in healthy.items() if result.outcome != cases.PASS]
+
+    def edited(request: str, edit: typing.Callable) -> dict:
+        """The healthy answers with one JSON payload edited."""
+        answers = _m10_answers()
+        payload = json.loads(cc.parse(answers[request][0]).args[-1])
+        edit(payload)
+        answers[request] = _ok(payload)
+        return answers
+
+    def replaced(request: str, lines: list) -> dict:
+        """The healthy answers with one reply's lines replaced."""
+        answers = _m10_answers()
+        answers[request] = lines
+        return answers
+
+    def health_with(calibration: object) -> dict:
+        """The healthy answers, health carrying this imu_calibration on plan B's own health."""
+        answers = _m10_answers()
+        answers['health'] = _payload_edit(lambda payload: payload.update(imu_calibration=calibration))
+        return answers
+
+    for answers, failing, words in (
+            (edited('inspect imu_bno055', lambda payload: payload.update(calibration=[0, 3, 3, 4])), 'inspect_bno055',
+             'in 0..3'),
+            (edited('inspect imu_bno055', lambda payload: payload.update(calibrated=False)), 'inspect_bno055',
+             'restored profile sets the latch'),
+            (health_with([1, 2, 3]), 'health_imu_calibration', 'in 0..3'),
+            (replaced('calibrate imu_bno055', _ok({'imu_bno055': 'profile read failed: no ack'})), 'calibrate_bno055',
+             'neither saved'),
+            (edited('inspect gnss', lambda payload: payload.update(position=None)), 'inspect_gnss', 'no position'),
+            (edited('inspect gnss', lambda payload: payload.update(used=13)), 'inspect_gnss', 'in view'),
+            (replaced('df', ['ok df layout=one_partition recordings=13767/14900']), 'df', 'no bounced='),
+            (replaced('df', ['ok df layout=one_partition recordings=lots bounced=0']), 'df', 'recordings='),
+            (replaced('ota status', ['ok ota running=ota_1 boot=ota_1 next=ota_1 build=30a0 transfer=none '
+                                     'received=none']), 'ota_status', 'running slot'),
+            (replaced('inspect imu_bno055', ['ok {"name":"imu_bno055"} extra=1']), 'inspect_bno055',
+             'key=value params'),
+            (replaced('entry show', ['err badcmd entry']), 'entry_show', 'owed from M21'),
+    ):
+        results = run(answers)
+        failed = {name for name, result in results.items() if result.outcome == cases.FAIL}
+        assert failed == {failing}, (failing, [(name, result.reason) for name, result in results.items()
+                                               if result.outcome != cases.PASS])
+        assert words in results[failing].reason, results[failing].reason
+    assert cases._named(cases._DF, {'layout': 'two_partitions', 'recordings': '1/2', 'videos': '3/4',
+                                    'bounced': '0'}) is None
+    assert 'no bounced=' in cases._named(cases._DF, {'layout': 'one_partition'})
+
+
 def test_the_m9_parts_are_held_to_their_shapes() -> None:
     """
     The M9 cases pass on the Rust board's healthy answers -- the SEN0697 parts, the attitude filter, the sequencer and
@@ -823,8 +947,11 @@ def test_the_m9_parts_are_held_to_their_shapes() -> None:
              {'stats_databoard'}, 'not sorted'),
             (broken(cc.build('update', ['databoard', json.dumps({'altitude': 0})]), {'changed': ['altitude']}),
              {'update_databoard_read_only'}, 'the databoard took'),
-            (edited('inspect sequencer', lambda payload: payload.update(ignored=['imu_ghost'])),
+            (edited('inspect sequencer', lambda payload: payload.update(
+                ignored=["imu_ghost ignored: the stage machine's accel slots are full (4)"])),
              {'inspect_sequencer'}, "names ['imu_ghost'], which the board does not list"),
+            (edited('inspect sequencer', lambda payload: payload.update(ignored=['baro_icp10111'])),
+             {'inspect_sequencer'}, "is not `<source> ignored"),
             (broken('health', _payload_edit(lambda payload: payload['degraded'].append(
                 'sources-disagree: accel imu_lsm6dso32/imu_bmi323 5.0 deg'))),
              {'health_names_its_disagreements'}, 'within 10 degrees agree'),
@@ -928,7 +1055,12 @@ def test_not_yet_is_reported_not_failed() -> None:
     assert _PROBE_LAUNCH not in unsupported.sent
     assert cc_contract.violations(list(results.values())) == 0
     push = cases.run(_Tampered('push-status', lambda lines: ['err badcmd push-status']), ('ota',), (), None)
-    assert [result.outcome for result in push] == [cases.NOT_YET]
+    assert [result.outcome for result in push if result.name == 'push_status'] == [cases.NOT_YET]
+    assert [result.outcome for result in push if result.name == 'ota_status'] == [cases.SKIP], 'plan B has no GCL'
+    owed = cases.run(_Tampered('push-status', lambda lines: ['err badcmd push-status']), ('ota',), (), None,
+                     milestone=21)
+    assert [result.outcome for result in owed if result.name == 'push_status'] == [cases.NOT_YET], \
+        'replaced by `ota` (M15): no milestone owes it'
     objects = cases.run(_Tampered('objects', lambda lines: ['err badcmd objects']), ('inspect',), (), None)
     assert _failed(objects) == {'objects'}
 
@@ -1497,6 +1629,7 @@ test_invariants_beyond_the_core_are_checked()
 test_the_m6_parts_are_held_to_plan_b_shapes()
 test_the_m7_gate_is_held_to_plan_b()
 test_the_m9_parts_are_held_to_their_shapes()
+test_the_m10_to_m21_parts_and_gcl_reads_hold_their_shapes()
 test_the_hold_needs_a_disarmed_board()
 test_not_yet_is_reported_not_failed()
 test_a_milestone_makes_its_cases_mandatory()
@@ -1517,7 +1650,8 @@ _PLAN_B.close()
 print('ok: cc contract -- plan B passes every case of every tier in its own process (board-only cases skip), '
       'round trips restore, nothing active without its flag, violations caught (status, keys, types, empty line, '
       'two replies, codes, every invariant), the M6 parts, the M7 gate (held arm, readiness keys, bluetooth), the '
-      'M9 parts (SEN0697, attitude, sequencer, databoard, BMP581 ground, armed bus diagnostics), the '
+      'M9 parts (SEN0697, attitude, sequencer, databoard, BMP581 ground, armed bus diagnostics), the M10-M21 '
+      'parts and the GCL reads (named figures, the help gate), the '
       'hold needs a disarmed board, preflight refusal, iam id, '
       'config_source gating, the reboot proof, the tee, milestones, aborted runs undo, --diff masking + known '
       'differences, hub line fidelity + HTTP errors + the hub tier, console log/ROM filter + no-reset open, '
