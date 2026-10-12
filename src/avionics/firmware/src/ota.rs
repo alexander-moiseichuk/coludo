@@ -11,9 +11,8 @@
 //!   starves the CC link while 3 MB cross into flash (the hub dropped the board for a few seconds).
 //!
 //! Either way only in SETTING and disarmed, one at a time: the image (esptool elf2image's app.bin, as firmware/flash.sh
-//! makes it) goes into the next slot (erased only as far as it reaches), its SHA-256 is checked against the sender's,
-//! and the image verified (esp_ota_end): the bootloader never re-hashes the app (CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS),
-//! so this is its one check. `ota status` names the running, the boot and the next slot, the running build (the first
+//! makes it) goes into the next slot, its SHA-256 is checked against the sender's and its header and app description
+//! read back: the bootloader never re-hashes the app (CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS), so these are its checks. `ota status` names the running, the boot and the next slot, the running build (the first
 //! 8 bytes of its ELF's SHA-256, as esptool stamps it) and what was received; `ota commit confirm` (SETTING, disarmed)
 //! makes the received slot the one otadata boots, and the next `reboot` runs it.
 //!
@@ -21,21 +20,19 @@
 //! `arm` refuses while the running slot is not the selected one ([`problem`]), so a committed build never waits for
 //! a reset in flight.
 //!
-//! **Off PSRAM stacks:** the OTA calls map flash (otadata, the image's verify), which turns the cache off, and a task
-//! whose stack is in PSRAM must not do that (`ota status` on the executor, and an upload on httpd, asserted in
-//! spi_flash_disable_interrupts_caches_and_other_cpu). So the slots are read once at boot on the main task and kept,
-//! and every esp_ota call runs on one writer thread with an internal stack, alive for a transfer only ([`Writer`]),
-//! or on a short-lived one for the commit ([`on_internal_stack`]).
+//! **No flash mapping:** the image goes in by SPI1 erases and writes (esp_partition, as the ring writer writes the
+//! telemetry ring), checked by our own SHA-256 and the image's header and app description (plain reads), and the slot
+//! is selected by writing otadata the way IDF's esp_rewrite_ota_data does (an alternating sector, the sequence number,
+//! its CRC). esp_ota_end and esp_ota_set_boot_partition verify the image by mapping it, which turns the cache off and
+//! parks the flight core: from a PSRAM stack it asserted, and from an internal one the chip's watchdog reset the board
+//! in the verify, in both directions. The firmware maps flash nowhere at runtime.
 
 use std::ffi::CStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use esp_idf_svc::hal::cpu::Core;
-use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::http::server::{EspHttpConnection, Request};
 use esp_idf_svc::io::Write;
 use esp_idf_svc::sys;
@@ -51,10 +48,7 @@ const CHUNK: usize = 4096;
 /// What a slot can hold (partitions.csv: two app slots of 3 MB).
 const SLOT_BYTES: usize = 0x30_0000;
 
-/// The stack of the threads that map flash: an image's verify (SHA-256 over it) and otadata's sectors.
-const INTERNAL_STACK: usize = 8 << 10;
-
-/// One image received and verified, not yet committed.
+/// One image received and checked, not yet committed.
 struct Received {
     /// The slot it is in.
     slot: *const sys::esp_partition_t,
@@ -98,119 +92,151 @@ fn build(description: &sys::esp_app_desc_t) -> String {
         .collect()
 }
 
-/// Spawns `job` on a thread whose stack is internal RAM (see the module notes).
-///
-/// Errors: the thread would not spawn (no internal RAM for its stack).
-fn spawn_internal<T: Send + 'static>(
-    job: impl FnOnce() -> T + Send + 'static,
-) -> anyhow::Result<std::thread::JoinHandle<T>> {
-    ThreadSpawnConfiguration {
-        name: Some(c"ota"),
-        stack_size: INTERNAL_STACK,
-        priority: 3,
-        pin_to_core: Some(Core::Core0),
-        stack_alloc_caps: MallocCap::Internal | MallocCap::Cap8bit,
-        ..Default::default()
+/// The erase unit ahead of the writes: a block, erased just before the first write into it.
+const ERASE_BLOCK: usize = 0x1_0000;
+
+/// One otadata sector (IDF's layout: two of them, the newer one wins).
+const OTADATA_SECTOR: usize = 0x1000;
+
+/// An esp_image's first byte.
+const IMAGE_MAGIC: u8 = 0xE9;
+
+/// Where the app description sits in an image: past the image header (24 bytes) and the first segment's (8).
+const APP_DESC_OFFSET: usize = 32;
+
+/// The app slot of OTA index `index` (ota_0, ota_1).
+fn slot_of(index: u32) -> *const sys::esp_partition_t {
+    // SAFETY: a plain lookup in the partition table.
+    unsafe {
+        sys::esp_partition_find_first(
+            sys::esp_partition_type_t_ESP_PARTITION_TYPE_APP,
+            sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_APP_OTA_MIN + index,
+            std::ptr::null(),
+        )
     }
-    .set()?;
-    let spawned = std::thread::Builder::new().stack_size(INTERNAL_STACK).spawn(job);
-    ThreadSpawnConfiguration::default().set()?;
-    Ok(spawned?)
 }
 
-/// Runs `job` on a thread whose stack is internal RAM, and waits for it.
-fn on_internal_stack<T: Send + 'static>(job: impl FnOnce() -> T + Send + 'static) -> anyhow::Result<T> {
-    spawn_internal(job)?
-        .join()
-        .map_err(|_| anyhow::anyhow!("the internal-stack thread panicked"))
+/// A slot's OTA index (ota_1: 1).
+fn index_of(slot: *const sys::esp_partition_t) -> u32 {
+    // SAFETY: a partition-table entry, valid for the board's life.
+    unsafe { (*slot).subtype - sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_APP_OTA_MIN }
 }
 
-/// What the writer thread is asked.
-enum Job {
-    /// Write these bytes next.
-    Write(Vec<u8>, SyncSender<Result<(), String>>),
-    /// Close and verify the image; its build.
-    End(SyncSender<Result<String, String>>),
+/// The otadata partition.
+fn otadata() -> Result<*const sys::esp_partition_t, String> {
+    // SAFETY: a plain lookup in the partition table.
+    let partition = unsafe {
+        sys::esp_partition_find_first(
+            sys::esp_partition_type_t_ESP_PARTITION_TYPE_DATA,
+            sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_DATA_OTA,
+            std::ptr::null(),
+        )
+    };
+    (!partition.is_null())
+        .then_some(partition)
+        .ok_or("no otadata partition".into())
 }
 
-/// The writer thread: every esp_ota call of a transfer, on an internal stack.
-struct Writer;
+/// An otadata entry's CRC, as the bootloader checks it: over its sequence number alone.
+fn entry_crc(entry: &sys::esp_ota_select_entry_t) -> u32 {
+    // SAFETY: four live bytes.
+    unsafe { sys::esp_rom_crc32_le(u32::MAX, (&entry.ota_seq as *const u32).cast(), 4) }
+}
 
-impl Writer {
-    /// Opens the next slot for `length` bytes on a new writer thread: the slot and the thread's mailbox.
-    fn open(length: usize) -> Result<(usize, SyncSender<Job>), String> {
-        let (jobs, inbox) = sync_channel::<Job>(1);
-        let (opened, opening) = sync_channel::<Result<usize, String>>(1);
-        spawn_internal(move || Writer::run(length, &opened, &inbox))
-            .map_err(|error| format!("no writer thread: {error}"))?;
-        let slot = opening
-            .recv()
-            .map_err(|_| "the writer thread ended before the slot opened".to_string())??;
-        Ok((slot, jobs))
+/// The two otadata entries, each Some when valid (a sequence number set, its CRC right).
+fn entries() -> Result<[Option<sys::esp_ota_select_entry_t>; 2], String> {
+    let partition = otadata()?;
+    let mut found = [None, None];
+    for (sector, slot) in found.iter_mut().enumerate() {
+        let mut entry = sys::esp_ota_select_entry_t::default();
+        // SAFETY: the otadata partition and a live entry to fill (an SPI1 read, no mapping).
+        sys::esp!(unsafe {
+            sys::esp_partition_read(
+                partition,
+                sector * OTADATA_SECTOR,
+                (&mut entry as *mut sys::esp_ota_select_entry_t).cast(),
+                std::mem::size_of::<sys::esp_ota_select_entry_t>(),
+            )
+        })
+        .map_err(|error| format!("otadata read: {error}"))?;
+        if entry.ota_seq != u32::MAX && entry.crc == entry_crc(&entry) {
+            *slot = Some(entry);
+        }
     }
+    Ok(found)
+}
 
-    /// The thread: begin, then each job until the end, or an abort (the mailbox dropped).
-    fn run(length: usize, opened: &SyncSender<Result<usize, String>>, inbox: &Receiver<Job>) {
-        // SAFETY: the next app slot from the partition table (NULL: after the running one).
-        let slot = unsafe { sys::esp_ota_get_next_update_partition(std::ptr::null()) };
-        if slot.is_null() {
-            let _ = opened.send(Err("no slot to write".into()));
-            return;
-        }
-        let mut handle: sys::esp_ota_handle_t = 0;
-        // SAFETY: a valid slot; esp_ota_begin erases `length` bytes of it (the image's reach, not the whole slot).
-        if let Err(error) = sys::esp!(unsafe { sys::esp_ota_begin(slot, length, &mut handle) }) {
-            let _ = opened.send(Err(format!("begin on {}: {error}", label(slot))));
-            return;
-        }
-        let _ = opened.send(Ok(slot as usize));
-        loop {
-            match inbox.recv() {
-                Ok(Job::Write(bytes, reply)) => {
-                    // SAFETY: an open OTA handle and live bytes.
-                    let written = sys::esp!(unsafe { sys::esp_ota_write(handle, bytes.as_ptr().cast(), bytes.len()) })
-                        .map_err(|error| format!("write: {error}"));
-                    let _ = reply.send(written);
-                }
-                Ok(Job::End(reply)) => {
-                    // SAFETY: an open OTA handle; esp_ota_end verifies the image it holds.
-                    let ended = sys::esp!(unsafe { sys::esp_ota_end(handle) })
-                        .map_err(|error| format!("the image in {} did not verify: {error}", label(slot)))
-                        .and_then(|()| {
-                            let mut description = sys::esp_app_desc_t::default();
-                            // SAFETY: a verified app slot and a live description to fill.
-                            sys::esp!(unsafe { sys::esp_ota_get_partition_description(slot, &mut description) })
-                                .map(|()| build(&description))
-                                .map_err(|error| format!("no app description in {}: {error}", label(slot)))
-                        });
-                    let _ = reply.send(ended);
-                    return;
-                }
-                Err(_) => {
-                    // SAFETY: an open OTA handle, abandoned; the slot stays unselected.
-                    unsafe { sys::esp_ota_abort(handle) };
-                    return;
-                }
+/// The slot otadata boots: the newest valid entry's, ota_0 when there is none (erased otadata, as flash.sh leaves it).
+fn boot_slot() -> *const sys::esp_partition_t {
+    let newest = entries()
+        .ok()
+        .and_then(|found| found.into_iter().flatten().map(|entry| entry.ota_seq).max());
+    slot_of(newest.map_or(0, |sequence| (sequence - 1) % 2))
+}
+
+/// Makes `slot` the one otadata boots, as IDF's esp_rewrite_ota_data does: the next sequence number that names it,
+/// into the sector that does not hold the newest entry (erased first). No rollback: the state stays undefined.
+fn select(slot: *const sys::esp_partition_t) -> Result<(), String> {
+    let partition = otadata()?;
+    let found = entries()?;
+    let index = index_of(slot);
+    let newest = found
+        .iter()
+        .enumerate()
+        .filter_map(|(sector, entry)| entry.map(|entry| (entry.ota_seq, sector)))
+        .max();
+    let (sequence, sector) = match newest {
+        Some((current, sector)) => {
+            let base = (index + 1) % 2;
+            let mut step = 0;
+            while current > base + step * 2 {
+                step += 1;
             }
+            (base + step * 2, 1 - sector)
         }
-    }
+        None => (index + 1, 0),
+    };
+    let mut entry = sys::esp_ota_select_entry_t {
+        ota_seq: sequence,
+        seq_label: [0xFF; 20],
+        ota_state: sys::esp_ota_img_states_t_ESP_OTA_IMG_UNDEFINED,
+        crc: 0,
+    };
+    entry.crc = entry_crc(&entry);
+    // SAFETY: the otadata partition, one of its two sectors; SPI1 erase and write, no mapping.
+    sys::esp!(unsafe { sys::esp_partition_erase_range(partition, sector * OTADATA_SECTOR, OTADATA_SECTOR) })
+        .map_err(|error| format!("otadata erase: {error}"))?;
+    // SAFETY: as above; a live entry.
+    sys::esp!(unsafe {
+        sys::esp_partition_write(
+            partition,
+            sector * OTADATA_SECTOR,
+            (&entry as *const sys::esp_ota_select_entry_t).cast(),
+            std::mem::size_of::<sys::esp_ota_select_entry_t>(),
+        )
+    })
+    .map_err(|error| format!("otadata write: {error}"))?;
+    Ok(())
 }
 
 /// A transfer running: what it was promised and what it got so far.
 struct Upload {
-    /// The writer thread's mailbox (dropping it aborts the transfer).
-    jobs: SyncSender<Job>,
     /// The slot it writes.
-    slot: usize,
+    slot: *const sys::esp_partition_t,
     /// The size promised.
     length: usize,
     /// The bytes written so far.
     written: usize,
+    /// How far the slot is erased.
+    erased: usize,
     /// The SHA-256 promised, hex.
     expected: String,
     /// Over the bytes written so far.
     hasher: Sha256,
 }
+
+// SAFETY: the slot points into the partition table, which lives as long as the board and never changes.
+unsafe impl Send for Upload {}
 
 /// Why a transfer may not start now: off the pad, armed, or bad terms.
 fn refused(length: usize, expected: &str) -> Option<String> {
@@ -235,54 +261,103 @@ fn begin(length: usize, expected: &str) -> Result<String, String> {
     if upload.is_some() {
         return Err("a transfer is already running (ota abort drops it)".into());
     }
-    let (slot, jobs) = Writer::open(length)?;
+    // SAFETY: the partition table only: the app slot after the running one.
+    let slot = unsafe { sys::esp_ota_get_next_update_partition(std::ptr::null()) };
+    if slot.is_null() {
+        return Err("no slot to write".into());
+    }
     *upload = Some(Upload {
-        jobs,
         slot,
         length,
         written: 0,
+        erased: 0,
         expected: expected.to_ascii_lowercase(),
         hasher: Sha256::new(),
     });
-    Ok(label(slot as *const sys::esp_partition_t))
+    Ok(label(slot))
 }
 
 /// Writes the transfer's next bytes, which must start at `offset` (None: wherever it stands, the POST's); how many it
 /// holds now. A line at the wrong offset writes nothing and keeps the transfer (the sender sends it again); a failed
-/// write drops it.
+/// erase or write drops it. The slot is erased a block ahead of the writes.
 fn write(bytes: Vec<u8>, offset: Option<usize>) -> Result<usize, String> {
     let mut guard = UPLOAD
         .lock()
         .map_err(|_| "the transfer state is poisoned".to_string())?;
     let upload = guard.as_mut().ok_or("no transfer running (ota begin first)")?;
     if let Some(offset) = offset.filter(|offset| *offset != upload.written) {
-        return Err(format!("offset {offset}, the transfer stands at {}: nothing written", upload.written));
+        return Err(format!(
+            "offset {offset}, the transfer stands at {}: nothing written",
+            upload.written
+        ));
     }
-    if upload.written + bytes.len() > upload.length {
+    let end = upload.written + bytes.len();
+    if end > upload.length {
         *guard = None;
         return Err("more bytes than promised: the transfer is dropped".into());
     }
-    upload.hasher.update(&bytes);
-    let count = bytes.len();
-    let (reply, answer) = sync_channel(1);
-    let outcome = upload
-        .jobs
-        .send(Job::Write(bytes, reply))
-        .map_err(|_| "the writer thread is gone".to_string())
-        .and_then(|()| answer.recv().map_err(|_| "the writer thread is gone".to_string())?);
-    match outcome {
-        Ok(()) => {
-            upload.written += count;
-            Ok(upload.written)
-        }
-        Err(error) => {
-            *guard = None;
-            Err(error)
-        }
+    let mut failure = None;
+    while upload.erased < end && failure.is_none() {
+        // SAFETY: the slot from the partition table; an SPI1 erase of one block within it.
+        failure = sys::esp!(unsafe { sys::esp_partition_erase_range(upload.slot, upload.erased, ERASE_BLOCK) })
+            .err()
+            .map(|error| format!("erase at {}: {error}", upload.erased));
+        upload.erased += ERASE_BLOCK;
     }
+    if failure.is_none() {
+        // SAFETY: the slot and live bytes; an SPI1 write within the erased reach.
+        failure = sys::esp!(unsafe {
+            sys::esp_partition_write(upload.slot, upload.written, bytes.as_ptr().cast(), bytes.len())
+        })
+        .err()
+        .map(|error| format!("write at {}: {error}", upload.written));
+    }
+    if let Some(error) = failure {
+        *guard = None;
+        return Err(error);
+    }
+    upload.hasher.update(&bytes);
+    // progress in the log every tenth, which CC's log view streams (the operator: to see it move)
+    let tenth = |bytes: usize| bytes * 10 / upload.length;
+    if tenth(end) > tenth(upload.written) {
+        log::info!(
+            "ota :: {end} of {} bytes ({}%)",
+            upload.length,
+            end * 100 / upload.length
+        );
+    }
+    upload.written = end;
+    Ok(end)
 }
 
-/// Ends the transfer: every byte promised, the SHA-256 the sender's, the image verified. The outcome becomes `ota
+/// The image's checks by plain reads: an esp_image of this chip, and its app description; its build.
+fn check_image(slot: *const sys::esp_partition_t) -> Result<String, String> {
+    let mut header = [0u8; APP_DESC_OFFSET];
+    // SAFETY: the slot and a live buffer (an SPI1 read).
+    sys::esp!(unsafe { sys::esp_partition_read(slot, 0, header.as_mut_ptr().cast(), header.len()) })
+        .map_err(|error| format!("header read: {error}"))?;
+    let chip = u16::from_le_bytes([header[12], header[13]]);
+    if header[0] != IMAGE_MAGIC || chip != sys::esp_chip_id_t_ESP_CHIP_ID_ESP32P4 {
+        return Err(format!("no ESP32-P4 image (magic {:#04x}, chip {chip})", header[0]));
+    }
+    let mut description = sys::esp_app_desc_t::default();
+    // SAFETY: the slot and a live description to fill (an SPI1 read).
+    sys::esp!(unsafe {
+        sys::esp_partition_read(
+            slot,
+            APP_DESC_OFFSET,
+            (&mut description as *mut sys::esp_app_desc_t).cast(),
+            std::mem::size_of::<sys::esp_app_desc_t>(),
+        )
+    })
+    .map_err(|error| format!("app description read: {error}"))?;
+    if description.magic_word != sys::ESP_APP_DESC_MAGIC_WORD {
+        return Err("no app description in the image".into());
+    }
+    Ok(build(&description))
+}
+
+/// Ends the transfer: every byte promised, the SHA-256 the sender's, the image this chip's. The outcome becomes `ota
 /// status`'s `received`.
 fn end() -> Result<String, String> {
     let upload = UPLOAD
@@ -307,17 +382,11 @@ fn end() -> Result<String, String> {
             upload.expected
         ))
     } else {
-        let (reply, answer) = sync_channel(1);
-        upload
-            .jobs
-            .send(Job::End(reply))
-            .map_err(|_| "the writer thread is gone".to_string())
-            .and_then(|()| answer.recv().map_err(|_| "the writer thread is gone".to_string())?)
-            .map(|build| Received {
-                slot: upload.slot as *const sys::esp_partition_t,
-                bytes: upload.written,
-                build,
-            })
+        check_image(upload.slot).map(|build| Received {
+            slot: upload.slot,
+            bytes: upload.written,
+            build,
+        })
     };
     let text = match &outcome {
         Ok(received) => {
@@ -341,7 +410,7 @@ fn end() -> Result<String, String> {
     text
 }
 
-/// Drops the running transfer, if any: the writer thread aborts, the slot stays unselected.
+/// Drops the running transfer, if any: the slot stays unselected.
 fn abort() -> bool {
     UPLOAD.lock().map(|mut upload| upload.take().is_some()).unwrap_or(false)
 }
@@ -441,15 +510,7 @@ fn commit() -> Result<String, String> {
     let Some(Ok(image)) = received.as_ref() else {
         return Err("no verified image received".into());
     };
-    let slot = image.slot as usize;
-    // otadata is mapped: an internal stack
-    let set = on_internal_stack(move || {
-        // SAFETY: a verified app slot from the partition table.
-        sys::esp!(unsafe { sys::esp_ota_set_boot_partition(slot as *const sys::esp_partition_t) })
-            .map_err(|error| error.to_string())
-    })
-    .map_err(|error| format!("the commit did not run: {error}"))?;
-    set.map_err(|error| format!("{}: {error}", label(image.slot)))?;
+    select(image.slot).map_err(|error| format!("{}: {error}", label(image.slot)))?;
     BOOT.store(image.slot.cast_mut(), Ordering::Release);
     let text = format!(
         "committed {} build {}: reboot to run it",
@@ -463,10 +524,10 @@ fn commit() -> Result<String, String> {
 
 /// Reads the slots (on the main task: its stack is internal) and registers the OTA's console commands (crate::gcl).
 pub fn register_commands() {
-    // SAFETY: plain reads of the partition table and otadata, on the main task's internal stack.
+    // SAFETY: plain reads of the partition table; otadata by SPI1 reads (boot_slot).
     unsafe {
         RUNNING.store(sys::esp_ota_get_running_partition().cast_mut(), Ordering::Release);
-        BOOT.store(sys::esp_ota_get_boot_partition().cast_mut(), Ordering::Release);
+        BOOT.store(boot_slot().cast_mut(), Ordering::Release);
     }
     gcl::register(vec![
         Command {
@@ -570,7 +631,10 @@ pub fn register_commands() {
                         if crc == arguments.text("crc").to_ascii_lowercase() {
                             Ok(bytes)
                         } else {
-                            Err(format!("crc {crc}, the line's {}: nothing written", arguments.text("crc")))
+                            Err(format!(
+                                "crc {crc}, the line's {}: nothing written",
+                                arguments.text("crc")
+                            ))
                         }
                     })
                     .and_then(|bytes| write(bytes, Some(arguments.integer("offset") as usize)))

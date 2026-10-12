@@ -19,6 +19,7 @@ SHA-256, as esptool stamps it) and the running slot is the boot slot. The board 
 import argparse
 import base64
 import binascii
+import collections
 import hashlib
 import os
 import subprocess
@@ -71,6 +72,7 @@ class _Console:
         self._serial.rts = True
         self._serial.open()
         self._pending = b''
+        self._seen = collections.deque(maxlen=60)  # the last lines that were no answer: a crash dump, the log
 
     def rate(self, baud: int) -> None:
         """Reopen the port's side at `baud` (the board changed first)."""
@@ -90,7 +92,10 @@ class _Console:
                 text = raw.decode(errors='replace').strip()
                 if text.startswith(('ok', 'err')):
                     return cc.parse(text)
-        raise SystemExit('no answer to %r within %.0f s' % (line.split(' data=')[0], timeout))
+                if text:
+                    self._seen.append(text)
+        raise SystemExit('no answer to %r within %.0f s; the console said last:\n  %s'
+                         % (line.split(' data=')[0], timeout, '\n  '.join(self._seen)))
 
 
 def _console_transfer(port: str, data: bytes, digest: str) -> dict:
@@ -116,16 +121,18 @@ def _console_transfer(port: str, data: bytes, digest: str) -> dict:
         line = 'ota write offset=%d crc=%08x data=%s' % (
             offset, binascii.crc32(part), base64.urlsafe_b64encode(part).rstrip(b'=').decode())
         # a line the UART damaged writes nothing (its CRC, its offset, or a word lost): send it again
+        why = None
         for _ in range(_LINE_ATTEMPTS):
             try:
                 reply = console.ask(line, timeout=5.0)
-            except SystemExit:
-                reply = None
+                why = reply.args
+            except SystemExit as silence:  # its text carries the console's last lines (a crash dump)
+                reply, why = None, str(silence)
             if reply is not None and reply.command == 'ok':
                 break
             retried += 1
         else:
-            raise SystemExit('ota write at %d failed %d times: %s' % (offset, _LINE_ATTEMPTS, reply and reply.args))
+            raise SystemExit('ota write at %d failed %d times: %s' % (offset, _LINE_ATTEMPTS, why))
     print('lines sent again: %d' % retried)
     reply = console.ask('ota end', timeout=60.0)  # the image's verify
     print('sent %d bytes in %.1f s: %s %s' % (len(data), time.monotonic() - started, reply.command, reply.args))
