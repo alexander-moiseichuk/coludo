@@ -26,11 +26,13 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/param.h> /* MIN */
 
 #include "driver/gpio.h"
 #include "driver/sdmmc_host.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_memory_utils.h"
 #include "esp_vfs.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
@@ -109,14 +111,57 @@ static DSTATUS card_status(BYTE drive)
     return 0; /* IDF's default (disk_status_check_enable off): no card command per FatFs call */
 }
 
+/*
+ * Whether the SDMMC DMA reaches `buffer` through the cache: internal L2 RAM or PSRAM. The heap also hands out the TCM
+ * (SPM, 0x3010_0000) and the LP RAM (0x5010_8000) as internal memory once L2 runs short, and FatFs passes a caller's
+ * buffer straight to the disk for whole sectors. IDF's sdmmc_*_sectors checks only the buffer's alignment: an aligned
+ * buffer there went to the DMA as it was, and the cache sync refused its address ("invalid addr or null pointer",
+ * ESP_ERR_INVALID_ARG). Measured on the taster, 2026-10-12: one 6-sector write of the ring_saver's failed every 5 s for
+ * good, the saver stuck and the ring lapping it.
+ */
+static bool dma_reaches(const void *buffer)
+{
+    return esp_ptr_dma_capable(buffer) || esp_ptr_dma_ext_capable(buffer);
+}
+
+/* The transfers that went through the bounce buffer for their memory (sd_card_bounced), under the card lock. */
+static uint32_t bounced;
+
+uint32_t sd_card_bounced(void)
+{
+    return bounced;
+}
+
+/* The sectors per pass through the bounce buffer. */
+static UINT bounce_sectors(void)
+{
+    return BOUNCE_BYTES / card->csd.sector_size;
+}
+
 static DRESULT card_read(BYTE drive, BYTE *buffer, DWORD sector, UINT count)
 {
     (void)drive;
+    esp_err_t err = ESP_OK;
     xSemaphoreTake(card_lock, portMAX_DELAY);
-    esp_err_t err = sdmmc_read_sectors(card, buffer, sector, count);
+    if (dma_reaches(buffer)) {
+        err = sdmmc_read_sectors(card, buffer, sector, count);
+    } else {
+        /* into the bounce buffer (the card lock keeps it ours), then out to where the caller wants it */
+        bounced++;
+        size_t size = card->csd.sector_size;
+        for (UINT done = 0; done < count && err == ESP_OK;) {
+            UINT sectors = MIN(count - done, bounce_sectors());
+            err = sdmmc_read_sectors(card, bounce, sector + done, sectors);
+            if (err == ESP_OK) {
+                memcpy(buffer + done * size, bounce, sectors * size);
+            }
+            done += sectors;
+        }
+    }
     xSemaphoreGive(card_lock);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "read of %u sectors at %lu: %s", count, (unsigned long)sector, esp_err_to_name(err));
+        ESP_LOGE(TAG, "read of %u sectors at %lu into %p: %s", count, (unsigned long)sector, (void *)buffer,
+                 esp_err_to_name(err));
         return RES_ERROR;
     }
     return RES_OK;
@@ -125,11 +170,25 @@ static DRESULT card_read(BYTE drive, BYTE *buffer, DWORD sector, UINT count)
 static DRESULT card_write(BYTE drive, const BYTE *buffer, DWORD sector, UINT count)
 {
     (void)drive;
+    esp_err_t err = ESP_OK;
     xSemaphoreTake(card_lock, portMAX_DELAY);
-    esp_err_t err = sdmmc_write_sectors(card, buffer, sector, count);
+    if (dma_reaches(buffer)) {
+        err = sdmmc_write_sectors(card, buffer, sector, count);
+    } else {
+        /* through the bounce buffer, which the DMA reaches (see dma_reaches) */
+        bounced++;
+        size_t size = card->csd.sector_size;
+        for (UINT done = 0; done < count && err == ESP_OK;) {
+            UINT sectors = MIN(count - done, bounce_sectors());
+            memcpy(bounce, buffer + done * size, sectors * size);
+            err = sdmmc_write_sectors(card, bounce, sector + done, sectors);
+            done += sectors;
+        }
+    }
     xSemaphoreGive(card_lock);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "write of %u sectors at %lu: %s", count, (unsigned long)sector, esp_err_to_name(err));
+        ESP_LOGE(TAG, "write of %u sectors at %lu from %p: %s", count, (unsigned long)sector, (const void *)buffer,
+                 esp_err_to_name(err));
         return RES_ERROR;
     }
     return RES_OK;

@@ -360,7 +360,8 @@ pub fn register_commands(session: String) {
         Command {
             owner: "sd",
             words: "df",
-            about: "the card's size and free space per volume (recordings; videos on a two-partition card)",
+            about: "the card's size and free space per volume (recordings; videos on a two-partition card), and the \
+                transfers bounced for their memory",
             gate: Gate::Open,
             reach: Reach::Everywhere,
             parameters: &[],
@@ -373,6 +374,8 @@ pub fn register_commands(session: String) {
                         named.push((name, format!("{}/{}", space.free_megabytes, space.total_megabytes)));
                     }
                 }
+                // SAFETY: a plain read of a counter the card lock's holder writes.
+                named.push(("bounced", unsafe { sys::sd_card_bounced() }.to_string()));
                 let named: Vec<(&str, &str)> = named.iter().map(|(name, value)| (*name, value.as_str())).collect();
                 cc_protocol::build("ok", &["df"], &named)
             }),

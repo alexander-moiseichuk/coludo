@@ -62,6 +62,10 @@ esp_err_t sd_card_videos_serial(uint32_t *serial);
  * that volume is not mounted, ESP_FAIL when FatFs would not tell. */
 esp_err_t sd_card_space(sd_card_volume_t volume, uint64_t *total_bytes, uint64_t *free_bytes);
 
+/* The transfers since boot whose buffer the SDMMC DMA cannot reach (the TCM, the LP RAM: sd_card.c dma_reaches), which
+ * went through the bounce buffer instead. */
+uint32_t sd_card_bounced(void);
+
 /* Print the mounted card's identity, speed and capacity to the console. */
 void sd_card_print_info(void);
 
