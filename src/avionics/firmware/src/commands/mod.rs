@@ -223,12 +223,12 @@ pub fn diagnostic_refused() -> Option<String> {
 }
 
 /// Why a change to the device `target` must not run now, or None when it may: in SETTING, and at DONE when the
-/// target is a barometer that re-zeroes (crate::sensors::rezeroes), its `update` and `calibrate`.
+/// target is a barometer that re-zeroes (parts::rezeroes), its `update` and `calibrate`.
 pub fn change_refused(context: &Context, target: &str) -> Option<String> {
     let rezero = context
         .devices
         .find(target)
-        .is_some_and(|entry| crate::sensors::rezeroes(entry.implementation));
+        .is_some_and(|entry| parts::rezeroes(entry.implementation));
     FLIGHT
         .load()
         .stage

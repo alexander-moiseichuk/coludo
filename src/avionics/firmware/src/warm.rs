@@ -46,8 +46,9 @@ use serde_json::{Value, json};
 use warmstart::{ApplyPlan, Freeze, Identity, Keeper, Live, Nvs, NvsError, Reason, ResetReason, Restore, Write};
 
 use crate::clock;
-use crate::devices::{CheckpointMember, Member, Topology};
+use crate::devices::{CheckpointMember, Topology};
 use crate::logging::CONSOLE_ONLY;
+use crate::sensors::Member;
 use crate::status::{FLIGHT, WARM_STARTED};
 use firmware::time::uptime_us;
 
@@ -279,7 +280,7 @@ fn apply(plan: &ApplyPlan, mission: &mut Mission, members: &mut [Vec<Member>; 2]
             };
             // its own ground from the crumb, else the pad altitude (plan B's one ground for every barometer)
             let ground_m = rebase.ground_of(index);
-            match member.part.update(None, &json!({"ground": ground_m}), now_us) {
+            match member.update(&json!({"ground": ground_m}), now_us) {
                 Ok(changed) if changed.is_empty() => log::info!(
                     "warmstart :: {} not rebased to the pad: its driver publishes no elevation yet",
                     member.name
@@ -303,7 +304,7 @@ fn apply(plan: &ApplyPlan, mission: &mut Mission, members: &mut [Vec<Member>; 2]
         let restored = members
             .iter_mut()
             .flatten()
-            .filter_map(|member| member.part.restore_pitot_zero(zero).then_some(member.name))
+            .filter_map(|member| member.restore_pitot_zero(zero).then_some(member.name))
             .next();
         match restored {
             Some(name) => log::info!("warmstart :: {name} tare restored: {zero} Pa"),
@@ -519,7 +520,7 @@ impl Keeping {
                 fresh_altitude_m: altitude_m,
                 // the pad's calibration, frozen with the rest of the recovery identity (plan B warmstart.py:373-384):
                 // a pitot that runs gives its zero offset, 0.0 Pa a valid tare
-                pitot_zero_pa: crate::sensors::pitot_inspection().map(|(_, _, zero_pa, _, _)| zero_pa),
+                pitot_zero_pa: crate::sensors::pitot_zero_pa(),
                 grounds_m: own_grounds(topology, baros, now_us),
             }
         };

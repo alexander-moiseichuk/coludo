@@ -63,70 +63,18 @@ struct Snapshot<'a> {
     own: Own,
 }
 
-/// A driver's own inspect keys (plan B lsm6dso32.py:300-308, icp10111.py:455-459, separation.py:190-193).
+/// A driver's own inspect keys (plan B lsm6dso32.py:300-308, separation.py:190-193, ...).
 #[derive(Serialize)]
 #[serde(untagged)]
 enum Own {
+    /// An I2C part's (crates/parts): its published state and its channels' latest.
+    Part(parts::Own),
     /// The LSM6DSO32: its INT1 line, and its own channels' latest values (g, deg/s).
     Imu {
         interrupt: bool,
         interrupt_silent: bool,
         accel_g: Option<[f32; 3]>,
         rate_dps: Option<[f32; 3]>,
-    },
-    /// The BMI323 (M9): the LSM6DSO32's keys -- its INT1 wired and silent (None: no wire declared, polled by
-    /// design, plan B bmi323.py:310-315), its own channels' latest values -- and the edges its latest read took; the
-    /// port's own: its measured ODR (null before two conversions), its channels' lapses by quantity, and its raced
-    /// and identical halves (accel, rate).
-    Bmi323 {
-        addr: Option<String>,
-        interrupt: bool,
-        interrupt_silent: Option<bool>,
-        accel_g: Option<[f32; 3]>,
-        rate_dps: Option<[f32; 3]>,
-        irq_runs: u32,
-        odr_hz: Option<f32>,
-        lapses: serde_json::Map<String, Value>,
-        raced: [u32; 2],
-        identical: [u32; 2],
-    },
-    /// A barometer, the ICP-10111 or the BMP581: its own channels' latest values, and its climb rate (m/s, M9).
-    Barometer {
-        altitude_m: Option<f32>,
-        temperature_c: Option<f32>,
-        pressure_pa: Option<f32>,
-        elevation_m: Option<f32>,
-        change_m_s: Option<f32>,
-    },
-    /// The BMP581 (M9): the barometer keys, and its double read's guard: the pairs that disagreed and the agreeing
-    /// reads outside the part's operating range, since boot.
-    Bmp581 {
-        addr: Option<String>,
-        altitude_m: Option<f32>,
-        temperature_c: Option<f32>,
-        pressure_pa: Option<f32>,
-        elevation_m: Option<f32>,
-        change_m_s: Option<f32>,
-        torn: u32,
-        implausible: u32,
-    },
-    /// The SDP810 (plan B sdp810.py inspect): its channels' latest, its temperature, scale, zero offset, whether a tare
-    /// is in force, and its q -> v air density.
-    Pitot {
-        dynamic_pressure_pa: Option<f32>,
-        airspeed_ms: Option<f32>,
-        temperature_c: Option<f32>,
-        scale: Option<i32>,
-        zero_offset_pa: Option<f32>,
-        tared: Option<bool>,
-        air_density: Option<f32>,
-    },
-    /// The INA226 (plan B ina226.py inspect): mV, mA, mW and the over-current ALERT trips.
-    Power {
-        voltage_mv: Option<i32>,
-        current_ma: Option<i32>,
-        power_mw: Option<i32>,
-        alerts: u32,
     },
     /// The GNSS (plan B gnss.py inspect): the fix, its quality, satellites and HDOP, its own channels' latest (the
     /// position in degrees), the sky (in view, used, the GSA mode, the four strongest C/N0 and their mean, the
@@ -177,30 +125,6 @@ enum Own {
         trim: i32,
         feedback: Option<i32>,
     },
-    /// The BNO055 (plan B bno055.py inspect, M18): its channels' latest, whether its fusion is stalled (the attitude
-    /// withheld: a channel going quiet looks like a missing sensor), the live CALIB_STAT (sys, gyr, acc, mag), the
-    /// convergence latch, and whether the latch came from a restored profile.
-    Absolute {
-        addr: Option<String>,
-        attitude_deg: Option<[f32; 3]>,
-        accel_g: Option<[f32; 3]>,
-        fusion_stalled: bool,
-        calibration: Option<[u8; 4]>,
-        calibrated: bool,
-        calibration_restored: bool,
-    },
-    /// A laser ranger (plan B vl53l1x.py inspect): whether its data-ready line is wired, its channel's latest.
-    Ranger { interrupt: bool, agl_m: Option<f32> },
-    /// The BMM350 (plan B bmm350.py:382-387): its channel's latest counts, whether its calibration is in force, the
-    /// octants its turn covered and the samples it has seen.
-    Magnetometer {
-        addr: Option<String>,
-        mag_counts: Option<[f32; 3]>,
-        calibrated: bool,
-        span: Option<[i32; 4]>,
-        samples: u32,
-        sectors: u32,
-    },
     /// The stage machine (M9): which source holds each slot, the sources past their class's slots, and the veto
     /// episode edges it reported.
     Sequencer {
@@ -229,8 +153,35 @@ enum Own {
 fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
     let entry = context.devices.find(name).filter(|entry| entry.active())?;
     let ok = matches!(entry.status(), controller::Status::Up);
-    let topology = context.topology;
     let now_us = uptime_us();
+    let lookup = parts::Lookup {
+        topology: context.topology,
+        name,
+        now_us,
+        addr: address(context, name),
+    };
+    let own = match parts::own(
+        entry.implementation,
+        crate::sensors::shared(name),
+        &lookup,
+        &crate::sensors::PLATFORM,
+    ) {
+        Some(own) => Own::Part(own),
+        None => component(context, entry.implementation, name, now_us)?,
+    };
+    Some(Snapshot {
+        name,
+        ok,
+        healthy: entry.healthy(),
+        own,
+    })
+}
+
+/// The own keys of a device that is no I2C part (crates/parts answers for those): the SPI IMU, the GNSS and its
+/// calibration, the sim-link, the servos, the control thread's components, the supervisor's, the bluetooth stub; None
+/// for the SPI IMU when the control thread does not hold it.
+fn component(context: &Context, implementation: &str, name: &str, now_us: u64) -> Option<Own> {
+    let topology = context.topology;
     let scalar = |quantity: &str| {
         let parameter = topology.scalar(quantity)?;
         parameter.channel(name)?.recent(parameter.window_us(), now_us)
@@ -239,7 +190,7 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
         let parameter = topology.vector(quantity)?;
         parameter.channel(name)?.recent(parameter.window_us(), now_us)
     };
-    let own = match entry.implementation {
+    Some(match implementation {
         "lsm6dso32" if crate::control::imu().is_some_and(|(imu, ..)| imu == name) => {
             let (_, interrupt, interrupt_silent) = crate::control::imu()?;
             Own::Imu {
@@ -247,80 +198,6 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
                 interrupt_silent,
                 accel_g: vector("accel"),
                 rate_dps: vector("rate"),
-            }
-        }
-        "bmi323" => {
-            let (interrupt_silent, irq_runs, odr_hz, raced, identical) = crate::sensors::bmi323_inspection();
-            Own::Bmi323 {
-                addr: address(context, name),
-                interrupt: interrupt_silent.is_some(),
-                interrupt_silent,
-                accel_g: vector("accel"),
-                rate_dps: vector("rate"),
-                irq_runs,
-                odr_hz,
-                lapses: crate::control::lapses_of(name)
-                    .into_iter()
-                    .map(|(quantity, count)| (quantity, Value::from(count)))
-                    .collect(),
-                raced,
-                identical,
-            }
-        }
-        "bno055" => match crate::sensors::absolute_inspection() {
-            Some(state) => Own::Absolute {
-                addr: address(context, name),
-                attitude_deg: vector("attitude"),
-                accel_g: vector("accel"),
-                fusion_stalled: state.fusion_stalled,
-                calibration: state.calibration,
-                calibrated: state.calibrated,
-                calibration_restored: state.calibration_restored,
-            },
-            None => Own::None {},
-        },
-        "icp10111" => Own::Barometer {
-            altitude_m: scalar("altitude"),
-            temperature_c: scalar("temperature"),
-            pressure_pa: scalar("pressure"),
-            elevation_m: scalar("elevation"),
-            change_m_s: scalar("change"),
-        },
-        "bmp280" | "bmp581" => {
-            let (torn, implausible) = crate::sensors::backup_barometer_inspection(match entry.implementation {
-                "bmp280" => crate::sensors::Backup::Bmp280,
-                _ => crate::sensors::Backup::Bmp581,
-            });
-            Own::Bmp581 {
-                addr: address(context, name),
-                altitude_m: scalar("altitude"),
-                temperature_c: scalar("temperature"),
-                pressure_pa: scalar("pressure"),
-                elevation_m: scalar("elevation"),
-                change_m_s: scalar("change"),
-                torn,
-                implausible,
-            }
-        }
-        "sdp810" => {
-            let state = crate::sensors::pitot_inspection();
-            Own::Pitot {
-                dynamic_pressure_pa: scalar("dynamic_pressure"),
-                airspeed_ms: scalar("airspeed"),
-                temperature_c: state.map(|state| state.0),
-                scale: state.map(|state| state.1),
-                zero_offset_pa: state.map(|state| state.2),
-                tared: state.map(|state| state.3),
-                air_density: state.map(|state| state.4),
-            }
-        }
-        "ina226" => {
-            let reading = crate::sensors::power_inspection();
-            Own::Power {
-                voltage_mv: reading.map(|(values, _)| values[0]),
-                current_ma: reading.map(|(values, _)| values[1]),
-                power_mw: reading.map(|(values, _)| values[2]),
-                alerts: reading.map_or(0, |(_, alerts)| alerts),
             }
         }
         "neo6mv2" | "atgm336h" => match crate::gnss::inspection() {
@@ -382,21 +259,6 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
             },
             None => Own::None {},
         },
-        "vl53l1x" | "vl53l4cx" => Own::Ranger {
-            interrupt: false,
-            agl_m: scalar("agl"),
-        },
-        "bmm350" => {
-            let (calibrated, span, sectors, samples) = crate::sensors::magnetometer_inspection();
-            Own::Magnetometer {
-                addr: address(context, name),
-                mag_counts: vector("mag"),
-                calibrated,
-                span,
-                samples,
-                sectors,
-            }
-        }
         "attitude" => crate::control::attitude_inspection().map_or(Own::None {}, Own::Attitude),
         "sequencer" => match crate::control::sequencer_inspection() {
             Some((sources, ignored, veto_edges)) => Own::Sequencer {
@@ -416,12 +278,6 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
             active: None,
         },
         _ => Own::None {},
-    };
-    Some(Snapshot {
-        name,
-        ok,
-        healthy: entry.healthy(),
-        own,
     })
 }
 
@@ -602,7 +458,7 @@ fn address(context: &Context, name: &str) -> Option<String> {
         .fields
         .get("addr")
         .and_then(Value::as_u64)
-        .or_else(|| crate::sensors::default_address(entry.implementation).map(u64::from))?;
+        .or_else(|| parts::default_address(entry.implementation).map(u64::from))?;
     Some(format!("{address:#x}"))
 }
 

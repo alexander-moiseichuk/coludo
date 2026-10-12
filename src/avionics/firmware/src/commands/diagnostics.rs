@@ -234,8 +234,9 @@ pub fn verify(_message: &Message, context: &mut Context) -> Reply {
     );
     // plan B's `imu_calibration`: a BNO055 that never converged reaches launch with a frozen attitude on healthy
     // hardware, so it is a readiness item, not a hardware failure (the operator picks the airframe up)
-    if let Some((_, owed)) = crate::sensors::absolute_instruction()
-        && !crate::sensors::absolute_inspection().is_some_and(|state| state.calibrated)
+    if let Some(state) = crate::sensors::absolute_state()
+        && let Some(owed) = state.instruction()
+        && !state.calibrated
     {
         readiness.insert("imu_calibration", format!("BNO055 not calibrated -- {owed}"));
     }

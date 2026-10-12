@@ -194,7 +194,7 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         flight: flight_panel(context.topology, uptime_us()),
         calibration: Some(crate::owner::calibrations().into_iter().collect::<BTreeMap<_, _>>())
             .filter(|pending| !pending.is_empty()),
-        imu_calibration: crate::sensors::absolute_inspection().and_then(|state| state.calibration),
+        imu_calibration: crate::sensors::absolute_state().and_then(|state| state.calibration),
         degraded: degraded(context, flight),
     };
     super::ok_json(&info)

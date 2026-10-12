@@ -29,10 +29,11 @@ use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
 use layout::Addresses;
 use sequencer::ChangeRefused;
 
-use crate::devices::{Member, Topology};
-use crate::sensors::{Calibrated, Event, Run};
+use crate::devices::Topology;
+use crate::sensors::Member;
 use firmware::threads::{self, Spec, Stack};
 use firmware::time::uptime_us;
+use parts::{Calibrated, Event, Run};
 
 /// The owners' priorities, by port: the bus owners sit below the control thread (§4.2).
 const PRIORITIES: [u8; 2] = [18, 17];
@@ -159,8 +160,7 @@ fn note_calibration(member: &Member) {
 }
 
 /// Every part's pending calibration, by name, sorted: empty when nothing is pending. The magnetometer's and the
-/// BNO055's are worded here, on the executor, from their runs' atomics (crate::sensors::magnetometer_instruction,
-/// absolute_instruction).
+/// BNO055's are worded here, on the executor, from their published state (crate::sensors::owed_calibrations).
 pub fn calibrations() -> Vec<(&'static str, String)> {
     let mut calibrations: BTreeMap<&'static str, String> = CALIBRATIONS
         .lock()
@@ -168,8 +168,7 @@ pub fn calibrations() -> Vec<(&'static str, String)> {
         .iter()
         .map(|(name, text)| (*name, (*text).to_string()))
         .collect();
-    calibrations.extend(crate::sensors::magnetometer_instruction());
-    calibrations.extend(crate::sensors::absolute_instruction());
+    calibrations.extend(crate::sensors::owed_calibrations());
     calibrations.into_iter().collect()
 }
 
@@ -229,7 +228,7 @@ pub fn start(
     // by name, the order plan B's Inspector walks them for probes and re-arms
     members.sort_by(|left, right| left.name.cmp(right.name));
     for member in &mut members {
-        member.run = Run::new(member, topology, table.find(member.name));
+        member.run = Run::new(member, topology, table.find(member.name), &crate::sensors::PLATFORM);
         note_calibration(member);
     }
     parked
@@ -322,7 +321,7 @@ fn run(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, now_us: u6
             let Some(run) = member.run.as_mut() else {
                 continue;
             };
-            if done && matches!(run, Run::Imu(_) | Run::Magnetometer(_) | Run::Pitot(_)) {
+            if done && run.stops_at_done() {
                 continue;
             }
             if let Some(Event::Rearm) = member.part.tick(member.name, run, port, delay, now_us) {
@@ -431,14 +430,14 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
         Request::Update { name, properties } => {
             Answer::Updated(members.iter_mut().find(|member| member.name == name).map(|member| {
                 let now_us = uptime_us();
-                let changed = member.part.update(member.run.as_ref(), &properties, now_us);
+                let changed = member.update(&properties, now_us);
                 note_calibration(member);
                 changed
             }))
         }
         Request::Calibrate { name } => {
             Answer::Calibrated(members.iter_mut().find(|member| member.name == name).map(|member| {
-                let result = member.part.calibrate(member.name, port, delay);
+                let result = member.calibrate(port, delay);
                 note_calibration(member);
                 result
             }))
@@ -447,7 +446,7 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
             members
                 .iter_mut()
                 .find(|member| member.name == name)
-                .map(|member| Calibrated::Done(member.part.apply_calibration(member.name, &blob))),
+                .map(|member| Calibrated::Done(member.apply_calibration(&blob))),
         ),
         Request::GeneralCall { rearm } => {
             let acknowledged = port.general_call_reset().is_ok();

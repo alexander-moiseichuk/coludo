@@ -6669,9 +6669,9 @@ The panic partition: its slots and the records they hold.
 
 # `recorder` — `src/avionics/crates/recorder`
 
-_Uses: `flash_ring`, `recorder_wire`. External: none._
+_Uses: `flash_ring`, `recorder_wire`. External: log._
 
-_Integration tests: `tests/end_to_end.rs`, `tests/golden.rs`, `tests/newest_wins_cut.rs`, `tests/power_cut.rs`, `tests/repeats.rs`, `tests/saver.rs`, `tests/saver_tools.rs`, `tests/writer.rs`._
+_Integration tests: `tests/end_to_end.rs`, `tests/golden.rs`, `tests/newest_wins_cut.rs`, `tests/power_cut.rs`, `tests/repeats.rs`, `tests/rows.rs`, `tests/saver.rs`, `tests/saver_tools.rs`, `tests/writer.rs`._
 
 ## `recorder`
 
@@ -7153,6 +7153,33 @@ The uart_saver's walk: see the module notes.
 ### Constants
 
 - `const BEHIND_BLOCKS: u32 = 64` — How far behind the writer the firmware's relay may fall before it jumps forward, in 4 KiB blocks: ~10 s of the flight's ~26 KB/s of records.
+
+## `recorder::rows`
+
+_Tested by its own `mod tests`._
+
+The error policy's latches (doc/skills.md "Error policy"): a failure that comes back every tick is logged once a
+run, the first of the run, and the run ends at the next success. [`LogOnce`] is the latch itself; [`Rows`] is a
+stream that uses it for its refused rows. The recorder counts every refused row (`tlm.dropped`); the log says only
+the first of a run.
+
+### `pub struct LogOnce`
+
+A failure's log latch: open until the first failure of a run, shut until the run ends.
+
+- `fn first(&mut self) -> bool` — A failure: true when it is the first of its run, the one to log.
+- `fn clear(&mut self)` — A success: the run of failures ended, and the next failure logs again.
+- `fn on(&self) -> bool` — Whether a run of failures is on.
+
+### `pub struct Rows<'r>`
+
+A stream as a run records it: its [`Telemetry`] (None when the board records nothing, or the registry has no such
+stream) and the latch of its refused rows, logged as `<name> :: <label> <overflow>`.
+
+- `fn new(name: &'static str, label: &'static str, telemetry: Option<Telemetry<'r>>) -> Rows<'r>` — The rows of the run `name`, its stream called `label` in the log; a refusal logs again after an accepted row.
+- `fn logged_once(mut self) -> Rows<'r>` — As [`Rows::new`], but only the first refusal ever is logged.
+- `fn recording(&self) -> bool` — Whether the stream records at all.
+- `fn push(&mut self, now_us: u64, row: &[Cell]) -> bool` — Queue `row` at `now_us` (nothing when the stream does not record). Returns whether the row was refused and the refusal is the one logged.
 
 ## `recorder::saver`
 
@@ -7704,9 +7731,349 @@ config's (name, driver) pairs for the baro rebase.
 - `const GROUND_SLOTS: usize = REBASED_BAROS.len()` — The rebased barometers whose own pad ground a crumb carries ([`Identity::grounds_m`]): one per driver in [`REBASED_BAROS`].
 - `const WARM_CAP: u32 = 3` — A flight's warm starts after which the next recovers DISARMED (the port's own, with no plan B counterpart): the law and the fins stay off, the stage machine still walks the flight to DONE and its beacon. A crash that returns every boot (a fault in the law, the fins, or what they read) would otherwise reset the board over and over in the air; a cold boot mid-air instead would never reach DONE, so nothing would beacon.
 
+# `parts` — `src/avionics/crates/parts`
+
+_Uses: `board_config`, `control`, `controller`, `databoard`, `drivers`, `recorder`. External: embedded-hal, log, serde, serde_json._
+
+_Integration tests: `tests/runs.rs`._
+
+## `parts`
+
+_Tested by its own `mod tests`._
+
+The I2C parts as their bus owner runs them (doc/specs/avionics-refactor.md R2; plan B's task registry and its
+drivers' run loops), over embedded-hal, so the host tests drive them on the drivers' mock bus:
+
+- what runs each board-config implementation ([`Kind`], [`classify`]);
+- [`Part`]: one I2C part's driver, built afresh from its entry for every setup attempt, as plan B creates a task
+  per attempt; its owner sets it up, re-arms it after a general call and asks its diagnose when the last attempt
+  failed;
+- [`Member`]: a part that came up, with its [`Run`] (its channels, its stream, its health; plan B's run loop) and
+  its [`Shared`] state, which the owner publishes ([`published::Published`]) and the executor reads (plan B's
+  `inspect`, [`own`]);
+- the calibrations a part keeps across power cycles, read through the board's [`Store`] ([`restore_profiles`],
+  [`restore_saved`]).
+
+The board's own facilities -- the control thread's GPIO interrupts and the recorder's streams -- come in through
+[`Platform`]; the firmware keeps the platform, the registry of names and the calibrations' NVS writes.
+
+### `pub enum Kind`
+
+What runs an entry's implementation (its `driver`, else its `activity`).
+
+### `pub trait Platform: Sync`
+
+What a part's run needs of the board beyond its bus: the GPIO interrupts the control thread serves (it installs
+the ISR service), the control thread's lapse watches, and the recorder's streams. Every call is cheap and never
+blocks: the owner calls them on its wake.
+
+- `fn interrupts_ready(&self) -> bool` — Whether the GPIO interrupt service runs: a run arms its line only after.
+- `fn arm_second_interrupt(&self, gpio: u8) -> Result<(), String>` — Counts the second IMU's INT1 edges on `gpio` from now on.
+- `fn take_second_edges(&self) -> u32` — The second IMU's INT1 edges since the last take.
+- `fn arm_alert_interrupt(&self, gpio: u8) -> Result<(), String>` — Counts the power monitor's ALERT edges on `gpio` from now on.
+- `fn alert_edges(&self) -> u32` — The power monitor's ALERT edges since boot.
+- `fn lapses(&self, name: &str) -> Vec<(String, u32)>` — The lapses of source `name`'s channels the control thread watched, by quantity.
+- `fn rows(&self, name: &'static str) -> Rows<'static>` — The rows of the stream registered under `name` (a refused row logged once a run).
+
+### `pub fn classify(entry: &Entry) -> Kind`
+
+What runs `entry`. The LSM6DSO32 is an SPI part unless its entry binds it to I2C (plan B's lsm6dso32.py:144: the
+`bus` defaults to 'spi').
+
+### `pub fn rezeroes(implementation: &str) -> bool`
+
+Whether the implementation re-zeroes a barometer's ground: the ICP-10111, the BMP280 and the BMP581 (M9), whose
+`calibrate` and `update` (`ground`, `rezero`) also run at DONE, the way back from a false launch ([`Part::rezeroes`]
+says it of a built part).
+
+### `pub fn imu_axes(entry: &Entry) -> Result<Axes, String>`
+
+The `axes` of an IMU entry (drivers::axes, M9): the identity when absent.
+
+Errors: a malformed key or a mirror, naming the key (the part's setup fails with it).
+
+### `pub fn default_address(implementation: &str) -> Option<u8>`
+
+The datasheet address an I2C part's driver binds when its entry has no `addr` ([`KNOWN`]); None for an
+implementation that is no I2C part.
+
+### Constants
+
+- `const NOT_PORTED_YET: &str = "no driver/activity -- not ported yet"` — The failure reason of a plan B implementation this port has not reached yet (D13 of the M5 plan): plan B's `no driver/activity`, with why.
+- `const KNOWN: [(&str, u8); 11] = [` — Every I2C part this port drives, by implementation name, with the datasheet address its driver binds when its entry has no `addr` (plan B i2cbus.py:301). A new part is a line here, its driver, its run and its [`Part`] arm.
+
+## `parts::absolute`
+
+The BNO055's run (M18): the fused attitude of the v0.1 boards' backup, withheld while the fusion is stalled.
+
+### `pub struct AbsoluteState`
+
+What `inspect`, `verify` and the heartbeat show of the BNO055 beyond its channels (plan B bno055.inspect).
+
+- `fn instruction(&self) -> Option<String>` — Its pending calibration, in plan B's words (bno055.calibration()); None when nothing is owed.
+
+### `pub struct Absolute`
+
+The BNO055's outputs (M18, plan B bno055.run): every period one block read; the fused Euler to `attitude` unless
+the fusion is stalled (the channel then goes stale and the databoard falls to the next source), the accelerometer
+through the airframe's axes to `accel` always (that half still works), a row to its stream, and CALIB_STAT read
+about once a second for the operator.
+
+## `parts::barometer`
+
+A barometer's run (M6, M9, M18): the ICP-10111's two-phase measurement and the backups' double reads (the BMP581
+of the SEN0697, the BMP280 of the SEN0253), each conversion published to five channels and a row.
+
+### `pub struct BarometerState`
+
+What `inspect` shows of a backup barometer's double read (M9): the pairs that disagreed (mostly a conversion
+landing between the two bursts, about 1 read in 80; the rest the bus garbage the double read exists for) and the
+agreeing pairs outside the part's operating range, since boot.
+
+### `pub struct Barometer`
+
+A barometer's outputs: its five databoard channels (plan B's four in its push order, then `change`) and its stream.
+
+## `parts::due`
+
+_Tested by its own `mod tests`._
+
+[`Due`]: when a polled run reads next.
+
+## `parts::inertial`
+
+_Tested by its own `mod tests`._
+
+The BMI323's run (M9): a backup to the SPI IMU, read on every owner wake.
+
+### `pub struct InertialState`
+
+What `inspect` shows of the BMI323 beyond its channels (plan B bmi323.py:305-317 and the port's own).
+
+- `fn odr_hz(&self) -> Option<f32>` — Its measured ODR, Hz, over its fresh accel conversions: None before two of them.
+
+### `pub struct Inertial`
+
+The BMI323's outputs (M9): its `accel` and `rate` channels (a backup to the SPI IMU, at its config priority) and
+its stream, every conversion through the airframe's axes. Read every owner wake, paced by the control tick; its
+INT1, when wired, is evidence only (D12 of the M9 plan; plan B sampled on the edge).
+
+## `parts::inspect`
+
+The I2C parts' own `inspect` keys (plan B's drivers' `inspect`): [`own`] reads a part's published state and its
+channels' latest values. Typed: a `json!` value would widen every f32 to f64 (a reading of 0.774944 would print as
+0.774944007396698).
+
+### `pub struct Lookup<'a>`
+
+What an inspect answer reads besides the part's published state.
+
+### `pub enum Own`
+
+An I2C part's own inspect keys (plan B icp10111.py:455-459, bmi323.py:305-317, sdp810.py, ina226.py, bno055.py,
+vl53l1x.py, bmm350.py:382-387), in plan B's order.
+
+### `pub fn own(implementation: &str, shared: Option<Shared>, lookup: &Lookup, platform: &dyn Platform) -> Option<Own>`
+
+The own keys of the I2C part `implementation` named in `lookup`, from its `shared` state (a part that came up has
+one; one that did not shows its kind's empty state); None for an implementation with no keys here: the
+LSM6DSO32 (on I2C it has no run; on SPI it is the control thread's), a BNO055 with no state, any non-I2C part.
+
+## `parts::magnetometer`
+
+_Tested by its own `mod tests`._
+
+The BMM350's run (M9): its `mag` channel and the evidence its calibration is computed from.
+
+### `pub struct MagnetometerState`
+
+What `inspect` and the pending calibrations show of the magnetometer beyond its channel (plan B
+bmm350.py:382-387).
+
+- `fn instruction(&self) -> String` — Its pending calibration, in plan B's words (bmm350.calibration()); empty when it is calibrated.
+- `fn extrema(&self) -> Option<[i32; 4]>` — The extrema, None before a sample.
+
+### `pub struct Magnetometer`
+
+The BMM350's outputs (M9): its `mag` channel and stream, read every [`drivers::bmm350::POLL_PERIOD_MS`] (twice a
+conversion at 12.5 Hz), each fresh conversion observed once for the calibration's evidence (plan B bmm350.run).
+
+## `parts::member`
+
+[`Member`]: a part that came up, as its port's owner keeps it, with its [`Shared`] state: what the owner publishes
+and the executor reads (`inspect`, `verify`, the pending calibrations).
+
+### `pub enum Shared`
+
+A part's published state, by kind: the owner writes it, any thread reads it. Each lives as long as the board
+(made once, when its part came up).
+
+### `pub struct Member<Pin>`
+
+An I2C part that came up, as its port's owner keeps it.
+
+- `fn new(name: &'static str, part: Part<Pin>, axes: Axes, interrupt: Option<u8>, period_ms: Option<u32>) -> Member<Pin>` — The part named `name` that came up, its state published from now on, no run yet.
+- `fn calibrate<Bus: I2c>(&mut self, port: &mut Bus, delay: &mut dyn DelayNs) -> Calibrated where Pin: OutputPin,` — Plan B's `calibrate()`: None on success, else why. The barometers capture their ground again from fresh conversions (plan B icp10111.py:337-344); the pitot captures its tare, owed to NVS; a part with nothing to calibrate succeeds when nothing is pending (plan B's default `calibration() or None`).
+- `fn apply_calibration(&mut self, blob: &[u8]) -> Option<String>` — Puts the calibration `blob` in force once the executor persisted it (D9 of the M9 plan): the BMM350's, logged in plan B's words; the BNO055's profile is in force already, so it is only marked saved. None on success, else why.
+- `fn update(&mut self, properties: &Value, now_us: u64) -> Result<Vec<&'static str>, String>` — Plan B's `update()`: the changed properties. The barometers take `ground`, and `rezero` from their own altitude channel when fresh (the ICP-10111: three periods); the pitot its zero, owed to NVS; a part with nothing writable changes nothing.
+- `fn restore_pitot_zero(&mut self, pascal: f32) -> bool` — The warm start's pitot tare (the crumb's, Pa): put in force without persisting (a flash write mid-air is not wanted). Whether the part is a pitot that took it.
+
+## `parts::part`
+
+[`Part`]: one I2C part's driver, as its bus owner drives it (plan B's task, built per attempt), and [`Run`]: what
+it does on its owner's tick beyond its bus work.
+
+### `pub enum Event`
+
+What a tick asks of the owner beyond the part itself.
+
+### `pub enum Calibrated`
+
+What a part's `calibrate` answers on its owner.
+
+### `pub enum Part<Pin>`
+
+One I2C part, as its bus owner drives it; `Pin` is a laser's XSHUT line.
+
+- `fn build(document: &Value, entry: &Entry, address: u8, xshut: impl FnOnce(u8) -> Result<Pin, String>) -> Result<Part<Pin>, String>` — A fresh driver for `entry`, an I2C part ([`crate::Kind::I2c`]) at `address`, its binding's (plan B's task created for one attempt). Its INT and ALERT wires resolve through the board's pins (plan B `_pin_gpio`), its XSHUT through `xshut`, which makes the line's driver.
+- `fn setup<Bus: I2c>(&mut self, port: &mut Bus, delay: &mut dyn DelayNs) -> Result<(), (String, bool)>` — Plan B's setup (its bus half): the part from its power-on state to producing data.
+- `fn rearm<Bus: I2c>(&mut self, port: &mut Bus, delay: &mut dyn DelayNs) -> Result<(), String>` — What a general call took from the part, restored (never its setup: that would re-zero a barometer's ground and reload the pitot's tare).
+- `fn diagnose<Bus: I2c>(&self, port: &mut Bus, id: u8) -> String` — Plan B's diagnose after the last failed attempt: what the part answers at the wire level, on port `id`.
+- `fn probe<Bus: I2c>(&mut self, name: &str, port: &mut Bus, delay: &mut dyn DelayNs) -> Option<String>` — Plan B's on-demand self-test (`probe`): the part identifies itself and one reading comes back, logged in plan B's shape (`<name> :: probe: <step> ...`, then `probe: <step> ok <value>` or `probe FAILED: <step>: <why>`). None when healthy, else the failure, as plan B answers. The ICP-10111 and the SDP810 take one reading of their own, where plan B waited for its run loop's (D16 of the M5 plan: the owner cannot race itself). A driver identifies and reads in one call, so a two-step probe logs its steps as one.
+- `fn tick<Bus: I2c>(&mut self, name: &str, run: &mut Run, port: &mut Bus, delay: &mut dyn DelayNs, now_us: u64) -> Option<Event>` — One owner tick for the part named `name` (M6: the ICP-10111's two-phase measurement, plan B's run loop), publishing through `run`. Returns [`Event::Rearm`] when the part's recovery asks the owner to re-arm the port's other parts.
+- `fn first(&self) -> bool` — Whether the part is an IMU, whose run goes first in each owner wake (D13 of the M9 plan): the lowest latency for the backup IMUs, the BMI323 (v1.x) and the BNO055 (v0.1; a bench board can carry both).
+- `fn calibration(&self) -> &'static str` — The calibration the part waits for, in plan B's words (`calibration()`); empty when none. The ICP-10111 asks for its ground until it holds one (setup captures it, so an up ICP never asks); the BMM350's and the BNO055's are worded on the executor from their published state ([`crate::MagnetometerState::instruction`], [`crate::AbsoluteState::instruction`]).
+- `fn rezeroes(&self) -> bool` — Whether the part re-zeroes a barometer's ground, as [`crate::rezeroes`] says of its implementation: its `update` and `calibrate` also run at DONE.
+- `fn take_general_call(&mut self) -> bool` — Whether the part sent a general call since the last ask: only the ICP-10111 sends one, to free itself.
+
+### `pub enum Run`
+
+What a part does on its owner's tick beyond its bus work: where its readings go (M6: the ICP-10111; M9: the
+BMI323). Each variant is boxed, so the other members of a port do not pay for the largest inline (M9).
+
+- `fn new<Pin>(member: &Member<Pin>, topology: &'static Topology, entry: Option<&'static DeviceEntry<'static>>, platform: &'static dyn Platform) -> Option<Run>` — The run `member`'s part needs on its owner's tick, its writers claimed from `topology` for its source name, writing the health of its table `entry`, publishing to its shared state; None for a part with nothing to run.
+- `fn stops_at_done(&self) -> bool` — Whether the run stops at DONE (M11b): the IMU, the magnetometer and the pitot; the beacon's sources go on.
+
+## `parts::pitot`
+
+_Tested by its own `mod tests`._
+
+The SDP810's run (M10): the pitot's dynamic pressure and airspeed, and the tare its owner captures for the
+executor to persist.
+
+### `pub struct PitotState`
+
+What `inspect` shows of the pitot beyond its channels (plan B sdp810.py inspect).
+
+### `pub struct PitotShared`
+
+The pitot's shared state: its published state (None until first published) and the tare its owner captured that
+the executor has not persisted yet -- the NVS write is the executor's, never the flight core's.
+
+- `fn state(&self) -> Option<PitotState>` — Its state, None before its first publish.
+- `fn take_owed(&self) -> Option<i32>` — The tare owed to NVS (Pa x 100), taken: None when none waits.
+
+### `pub struct Pitot`
+
+The SDP810's outputs (M10, plan B sdp810.run): `dynamic_pressure` (Pa) and `airspeed` (m/s), read every
+`period_ms` (20: 50 Hz) from the part's continuous mode, a row of plan B's integers per read; a bus failure counts
+toward the driver's restart ladder, a CRC reject is only noted.
+
+## `parts::power`
+
+The INA226's run (M10): the battery's voltage, current and power, and the over-current ALERT's trips.
+
+### `pub struct PowerState`
+
+The INA226's latest reading for `inspect` (plan B ina226.py inspect).
+
+### `pub struct Power`
+
+The INA226's outputs (M10, plan B ina226.run): `voltage` (mV), `current` (mA) and `power` (mW), read every
+`period_ms` (100), a row of plan B's integers per read.
+
+## `parts::published`
+
+_Tested by its own `mod tests`._
+
+[`Published`]: a part's state, written by its owner and read whole by the executor (a seqlock). The owner never
+waits: a write is two counter stores around a copy. A reader retries while a write is under way, so it gets one
+write's state, never a mix of two. Plan B read its tasks' fields directly: one interpreter, no torn reads.
+
+One writer at a time: the part's owner on its thread, or main before the owners start (bring-up, the restores).
+RV32 has no 64-bit atomics, so the counter is a u32; it would have to wrap twice during one read to fool a
+reader, and a read takes microseconds.
+
+### `pub struct Published<T: Copy>`
+
+A `T` one writer publishes and any thread reads whole.
+
+- `const fn new(value: T) -> Published<T>` — A slot holding `value`.
+- `fn publish(&self, value: T)` — Replaces the value. One writer at a time (see the module notes).
+- `fn read(&self) -> T` — The latest value, whole.
+
+## `parts::ranger`
+
+A laser ranger's run (M10): the VL53L1X's or the VL53L4CX's height above the ground.
+
+### `pub struct Ranger`
+
+A laser ranger's outputs (M10, plan B vl53l1x.run): `agl` (m), polled every `period_ms` (50), published only for a
+waiting, valid range (the data-ready check plan B lacked; an invalid status is read, cleared, never published).
+
+## `parts::restore`
+
+What each part learned, restored at bring-up from the board's store, so a power cycle does not cost the operator a
+turn (plan B's `_restore` in each driver's setup). Once, on main, before the owners run; best effort, as plan B's:
+no saved value or a bus error leaves the calibration owed.
+
+### `pub trait Store`
+
+The board's store of calibrations (NVS on the board): read-only here; the executor writes.
+
+- `fn blob(&mut self, key: &str, buffer: &mut [u8]) -> Result<usize, String>` — The blob saved under `key`, into `buffer`: its length.
+- `fn integer(&mut self, key: &str) -> Result<i32, String>` — The integer saved under `key`.
+
+### `pub fn restore_profiles<Pin, Bus: I2c>(store: &mut dyn Store, members: &mut [Member<Pin>], port: &mut Bus, delay: &mut dyn DelayNs)`
+
+Restores each BNO055's learned profile (plan B bno055._restore_profile) among `members`, the parts of one port,
+written over `port` (CONFIG mode, the profile, NDOF).
+
+### `pub fn restore_saved<'a, Pin: 'a>(store: &mut dyn Store, members: impl Iterator<Item = &'a mut Member<Pin>>)`
+
+Restores what needs no bus among `members`, every port's: the pitot's tare (the store's wins over the config's
+`zero_offset_pa`, plan B sdp810.setup, so a reboot mid-glide keeps it), then each magnetometer's hard/soft-iron
+calibration (plan B bmm350._restore).
+
+# `sitl` — `src/avionics/sitl`
+
+_Uses: `board_config`, `control`, `controller`, `databoard`, `mission`, `sequencer`, `sim_link`. External: serde_json._
+
+## `sitl`
+
+SITL (M14): the Rust flight code on the host, behind the same UDP sim-link the board serves (doc/specs/sim-link.md),
+lockstep with the host's physics. tools/hitl_host.py `--sitl` flies it as it flies a board.
+
+The pieces are the board's own, from the same crates: the topology the board's bring-up builds from its config
+(crates/controller `topology`, the `hitl` entry its only provider: every sensor it masks is simulated), a SENSORS
+frame published into it as the `hitl` source (`HitlWriters`), the stage machine stepped on its per-source readings
+(`StageSources`, `StageMachine`) and the flight law on the fused ones (`FlightQuantities`, `FlightLaw`), the mission
+from the launch payload the host sends a board, and the attitude filter, stepped before the law on each tick as the
+board's control thread steps it (in HITL the simulated attitude outranks it and the filter mirrors it, warm, until
+that attitude drops out: then the filter carries the glide, as on a board -- without it here a dropped attitude
+left the law with none, and the SITL flew 1.8 km off where a board would not). What the host has none of is not
+here: the servos (a FINS answer carries the law's angles, as a board's centred fins at its start), the separation
+switch, the checkpoint and the warm start, the GNSS drift calibration.
+
+Lockstep: the clock is the frame's physics time (`sim_time_ms`, after a 10 s boot as the golden shims'), never the
+wall's. Each frame first runs the control ticks due before it on what the earlier frames left, then is published,
+then runs the tick due at its own time, then is answered: what a realtime board sees, every run the same.
+
+  sitl --config <board config JSON> [--mission <launch JSON>] [--port 1236]
+
 # `firmware` — `src/avionics/firmware`
 
-_Uses: `beacon`, `board_config`, `cc_protocol`, `control`, `controller`, `databoard`, `drivers`, `flash_ring`, `gnss`, `layout`, `mission`, `panics`, `recorder`, `recorder_wire`, `sequencer`, `sim_link`, `warmstart`. External: anyhow, base64, embedded-hal, esp-idf-svc, log, serde, serde_json, sha2._
+_Uses: `beacon`, `board_config`, `cc_protocol`, `control`, `controller`, `databoard`, `drivers`, `flash_ring`, `gnss`, `layout`, `mission`, `panics`, `parts`, `recorder`, `recorder_wire`, `sequencer`, `sim_link`, `warmstart`. External: anyhow, base64, embedded-hal, esp-idf-svc, log, serde, serde_json, sha2._
 
 ## `firmware`
 
@@ -8346,7 +8713,7 @@ B gates only on the stage).
 ### `pub fn change_refused(context: &Context, target: &str) -> Option<String>`
 
 Why a change to the device `target` must not run now, or None when it may: in SETTING, and at DONE when the
-target is a barometer that re-zeroes (crate::sensors::rezeroes), its `update` and `calibrate`.
+target is a barometer that re-zeroes (parts::rezeroes), its `update` and `calibrate`.
 
 ### `pub fn parse_json(text: &str, code: Code, detail: Option<&str>) -> Result<serde_json::Value, Fault>`
 
@@ -8392,7 +8759,7 @@ reboot -- restart the board (src/glider cc_client `_register_system`).
 
 ### `pub fn reboot(_message: &Message, _context: &mut Context) -> Reply`
 
-`reboot`: replies `ok`, then restarts.
+`reboot`: replies `ok`, then restarts (components/safe_restart).
 
 ## `firmware::config`
 
@@ -8697,10 +9064,6 @@ the last, the alternatives pass, the operator's lines); this module makes each a
   watchdog at IDF's warn-only default.
 - The topology: one Parameter per quantity with a provider that came up, its sources registered in setup order
   (plan B's `provide` at the end of each successful setup), then frozen.
-
-### `pub struct Member`
-
-An I2C part that came up, as its port's owner keeps it.
 
 ### `pub struct SpiMember`
 
@@ -9347,8 +9710,7 @@ One part's re-arm after a general call: its name, and the fault when the re-arm 
 ### `pub fn calibrations() -> Vec<(&'static str, String)>`
 
 Every part's pending calibration, by name, sorted: empty when nothing is pending. The magnetometer's and the
-BNO055's are worded here, on the executor, from their runs' atomics (crate::sensors::magnetometer_instruction,
-absolute_instruction).
+BNO055's are worded here, on the executor, from their published state (crate::sensors::owed_calibrations).
 
 ### `pub fn spawn(id: u8, sda: u8, scl: u8, clock_hz: u32) -> anyhow::Result<(Parked, I2cPort)>`
 
@@ -9597,6 +9959,15 @@ The health.csv stream; None without a recorder.
 
 The stream of device `name` (controller::stream); None without a recorder, or for a device that writes none.
 
+### `pub fn telemetry(stream: &str) -> Option<Telemetry<'static>>`
+
+The producer side of the device stream `stream`: None without a recorder, or when the registry has no such stream.
+
+### `pub fn rows(name: &'static str) -> Rows<'static>`
+
+The device `name`'s stream as its run records it: its rows, a refused one logged once a run as `<name> ::
+telemetry <overflow>` (recorder::Rows); recording nothing without a recorder or such a stream.
+
 ### `pub fn ring() -> Option<&'static RingView>`
 
 The flash ring; None until the writer's bring-up scan has run (or when it found no `log` partition).
@@ -9818,81 +10189,23 @@ Args:
 
 ## `firmware::sensors`
 
-The parts behind the board config's entries (doc/specs/avionics-port.md M5, "The registry"): what the port runs
-for each implementation ([`Kind`], plan B's task registry), and the I2C parts as one [`Part`] over the drivers
-crate. A part is built afresh from its entry for every setup attempt, as plan B creates a task per attempt; its
-bus owner then sets it up, re-arms it after a general call and asks its diagnose when the last attempt failed.
+The board's side of the I2C parts (crates/parts, doc/specs/avionics-refactor.md R2): the platform they run on
+([`PLATFORM`]: the control thread's GPIO interrupts and lapse watches, the recorder's streams), a laser's XSHUT
+line on esp-idf-hal ([`Xshut`]), the registry of their published state by name ([`register`], [`shared`]), and
+the calibrations' NVS: read at bring-up ([`restore_calibrations`]), written on the executor
+([`persist_pitot_tare`]; the BMM350's and the BNO055's blobs through owner::persist).
 
-Not here yet, each with its milestone: the readings and their channels (M6, M9, M10), what a plan B setup
-restores from storage (the SDP810's tare, the BMM350's hard-iron calibration: M9, M10), the `axes` of the parts
-whose vectors reach the airframe through the glue (the BMI323's and the LSM6DSO32's, with their reads: M6, M9),
-and the SPI LSM6DSO32's probe, which needs SPI2's owner (M6).
+### `pub type Part = parts::Part<Xshut>`
 
-### `pub enum Kind`
+One I2C part on this board: its laser XSHUT on an esp-idf-hal pin.
 
-What runs an entry's implementation (its `driver`, else its `activity`).
+### `pub type Member = parts::Member<Xshut>`
 
-### `pub enum Run`
+An I2C part that came up on this board.
 
-What a part does on its owner's tick beyond its bus work: where its readings go (M6: the ICP-10111; M9: the
-BMI323). Each variant is boxed, so the other members of a port do not pay for the largest inline (M9).
+### `pub struct Board`
 
-- `fn new(member: &crate::devices::Member, topology: &'static Topology, entry: Option<&'static DeviceEntry<'static>>) -> Option<Run>` — The run `member`'s part needs on its owner's tick, its writers claimed from `topology` for its source name, writing the health of its table `entry`; None for a part with nothing to run yet.
-
-### `pub enum Event`
-
-What a tick asks of the owner beyond the part itself.
-
-### `pub enum Backup`
-
-A backup barometer, the index of its guard counters: the BMP581 (the SEN0697's, v1.x) and the BMP280 (the
-SEN0253's, v0.1). A bench board can carry both (the taster does), so each has its own.
-
-### `pub struct Barometer`
-
-A barometer's outputs: its five databoard channels (plan B's four in its push order, then `change`) and its stream.
-
-### `pub struct Inertial`
-
-The BMI323's outputs (M9): its `accel` and `rate` channels (a backup to the SPI IMU, at its config priority) and
-its stream, every conversion through the airframe's axes. Read every owner wake, paced by the control tick; its
-INT1, when wired, is evidence only (D12 of the M9 plan; plan B sampled on the edge).
-
-### `pub struct Magnetometer`
-
-The BMM350's outputs (M9): its `mag` channel and stream, read every [`drivers::bmm350::POLL_PERIOD_MS`] (twice a
-conversion at 12.5 Hz), each fresh conversion observed once for the calibration's evidence (plan B bmm350.run).
-
-### `pub struct AbsoluteState`
-
-What `inspect`, `verify` and the heartbeat show of the BNO055 beyond its channels (plan B bno055.inspect).
-
-### `pub struct Absolute`
-
-The BNO055's outputs (M18, plan B bno055.run): every period one block read; the fused Euler to `attitude` unless
-the fusion is stalled (the channel then goes stale and the databoard falls to the next source), the accelerometer
-through the airframe's axes to `accel` always (that half still works), a row to its stream, and CALIB_STAT read
-about once a second for the operator.
-
-### `pub struct Pitot`
-
-The SDP810's outputs (M10, plan B sdp810.run): `dynamic_pressure` (Pa) and `airspeed` (m/s), read every
-`period_ms` (20: 50 Hz) from the part's continuous mode, a row of plan B's integers per read; a bus failure counts
-toward the driver's restart ladder, a CRC reject is only noted.
-
-### `pub struct Power`
-
-The INA226's outputs (M10, plan B ina226.run): `voltage` (mV), `current` (mA) and `power` (mW), read every
-`period_ms` (100), a row of plan B's integers per read.
-
-### `pub struct Ranger`
-
-A laser ranger's outputs (M10, plan B vl53l1x.run): `agl` (m), polled every `period_ms` (50), published only for a
-waiting, valid range (the data-ready check plan B lacked; an invalid status is read, cleared, never published).
-
-### `pub enum Calibrated`
-
-What a part's `calibrate` answers on its owner.
+The board the parts run on.
 
 ### `pub struct Xshut(ManuallyDrop<PinDriver<'static, Output>>)`
 
@@ -9901,76 +10214,29 @@ run once a part first takes it. Dropping an esp-idf-hal PinDriver disables the p
 failed attempt's part is dropped: on a pin two laser entries share (the default config's GPIO5), the fitted
 laser's XSHUT after the other entry's attempts. Plan B's `Pin` was never released either.
 
-### `pub enum Part`
+- `fn output(gpio: u8) -> Result<Xshut, String>` — GPIO `gpio` as an output for a ranger's XSHUT (crates/parts Part::build's `xshut`).
 
-One I2C part, as its bus owner drives it.
+### `pub fn register(member: &Member)`
 
-- `fn build(document: &Value, entry: &Entry, address: u8) -> Result<Part, String>` — A fresh driver for `entry`, an I2C part ([`Kind::I2c`]) at `address`, its binding's (plan B's task created for one attempt). Its INT, ALERT and XSHUT wires resolve through the board's pins (plan B `_pin_gpio`).
-- `fn setup(&mut self, port: &mut I2cPort, delay: &mut Delay) -> Result<(), (String, bool)>` — Plan B's setup (its bus half): the part from its power-on state to producing data.
-- `fn rearm(&mut self, port: &mut I2cPort, delay: &mut Delay) -> Result<(), String>` — What a general call took from the part, restored (never its setup: that would re-zero a barometer's ground and reload the pitot's tare).
-- `fn diagnose(&self, port: &mut I2cPort) -> String` — Plan B's diagnose after the last failed attempt: what the part answers at the wire level.
-- `fn probe(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Option<String>` — Plan B's on-demand self-test (`probe`): the part identifies itself and one reading comes back, logged in plan B's shape (`<name> :: probe: <step> ...`, then `probe: <step> ok <value>` or `probe FAILED: <step>: <why>`). None when healthy, else the failure, as plan B answers. The ICP-10111 and the SDP810 take one reading of their own, where plan B waited for its run loop's (D16 of the M5 plan: the owner cannot race itself). A driver identifies and reads in one call, so a two-step probe logs its steps as one.
-- `fn tick(&mut self, name: &str, run: &mut Run, port: &mut I2cPort, delay: &mut Delay, now_us: u64) -> Option<Event>` — One owner tick for the part named `name` (M6: the ICP-10111's two-phase measurement, plan B's run loop), publishing through `run`. Returns [`Event::Rearm`] when the part's recovery asks the owner to re-arm the port's other parts.
-- `fn first(&self) -> bool` — Whether the part is an IMU, whose run goes first in each owner wake (D13 of the M9 plan): the lowest latency for the backup IMUs, the BMI323 (v1.x) and the BNO055 (v0.1; a bench board can carry both).
-- `fn calibration(&self) -> &'static str` — The calibration the part waits for, in plan B's words (`calibration()`); empty when none. The ICP-10111 asks for its ground until it holds one (setup captures it, so an up ICP never asks); the BMM350's is worded on the executor from its run's atomics ([`magnetometer_instruction`]); the others' come with their milestones (M10).
-- `fn calibrate(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Calibrated` — Plan B's `calibrate()`: None on success, else why. The ICP-10111 captures its ground again from fresh conversions (plan B icp10111.py:337-344); a part with nothing to calibrate succeeds when nothing is pending (plan B's default `calibration() or None`).
-- `fn apply_calibration(&mut self, name: &str, blob: &[u8]) -> Option<String>` — Puts the calibration `blob` in force once the executor persisted it (D9 of the M9 plan): the BMM350's, logged in plan B's words; the BNO055's profile is in force already, so it is only marked saved. None on success, else why.
-- `fn update(&mut self, run: Option<&Run>, properties: &Value, now_us: u64) -> Result<Vec<&'static str>, String>` — Plan B's `update()`: the changed properties. The ICP-10111 takes `ground`, and `rezero` from its own altitude channel when fresher than three periods; a part with nothing writable changes nothing.
-- `fn restore_pitot_zero(&mut self, pascal: f32) -> bool` — The warm start's pitot tare (the crumb's, Pa): put in force without persisting (a flash write mid-air is not wanted). Whether the part is a pitot that took it.
-- `fn rezeroes(&self) -> bool` — Whether the part re-zeroes a barometer's ground, as [`rezeroes`] says of its implementation: its `update` and `calibrate` also run at DONE.
-- `fn take_general_call(&mut self) -> bool` — Whether the part sent a general call since the last ask: only the ICP-10111 sends one, to free itself.
+Registers `member`'s published state under its name, when it has one.
 
-### `pub fn classify(entry: &Entry) -> Kind`
+### `pub fn shared(name: &str) -> Option<Shared>`
 
-What runs `entry`. The LSM6DSO32 is an SPI part unless its entry binds it to I2C (plan B's lsm6dso32.py:144: the
-`bus` defaults to 'spi').
+The published state of the part named `name`.
 
-### `pub fn rezeroes(implementation: &str) -> bool`
+### `pub fn owed_calibrations() -> Vec<(&'static str, String)>`
 
-Whether the implementation re-zeroes a barometer's ground: the ICP-10111 and the BMP581 (M9), whose `calibrate`
-and `update` (`ground`, `rezero`) also run at DONE, the way back from a false launch ([`Part::rezeroes`] says it
-of a built part).
+The calibrations the magnetometers and the BNO055s owe, by name, in plan B's words (bmm350.calibration(),
+bno055.calibration()): worded here, on the executor, from their published state, so the owner never formats on its
+tick (D9 of the M9 plan).
 
-### `pub fn imu_axes(entry: &Entry) -> Result<Axes, String>`
+### `pub fn absolute_state() -> Option<AbsoluteState>`
 
-The `axes` of an IMU entry (drivers::axes, M9): the identity when absent.
+The BNO055's state, None when no BNO055 came up (`verify`, the heartbeat).
 
-Errors: a malformed key or a mirror, naming the key (the part's setup fails with it).
+### `pub fn pitot_zero_pa() -> Option<f32>`
 
-### `pub fn default_address(implementation: &str) -> Option<u8>`
-
-The datasheet address an I2C part's driver binds when its entry has no `addr` (plan B i2cbus.py:301).
-
-### `pub fn backup_barometer_inspection(part: Backup) -> (u32, u32)`
-
-What `inspect` shows of a backup barometer's guard: its torn pairs and its implausible reads since boot.
-
-### `pub fn bmi323_inspection() -> (Option<bool>, u32, Option<f32>, [u32; 2], [u32; 2])`
-
-What `inspect` shows of the BMI323 beyond its channels (plan B bmi323.py:305-317 and the port's own): whether its
-INT1 is silent (None: no wire declared), the edges its latest read took, its measured ODR (None before two
-conversions), and its raced and identical halves (accel, rate).
-
-### `pub fn magnetometer_instruction() -> Option<(&'static str, String)>`
-
-The magnetometer's pending calibration, in plan B's words (bmm350.calibration()), from the run's atomics: the
-executor words it, so the owner never takes the calibrations' mutex on its tick (D9 of the M9 plan). None when no
-magnetometer runs or it is calibrated.
-
-### `pub fn magnetometer_inspection() -> (bool, Option<[i32; 4]>, u32, u32)`
-
-What `inspect` shows of the magnetometer beyond its channel (plan B bmm350.py:382-387): whether it is calibrated,
-the extrema its evidence holds (x min, x max, y min, y max; None before a sample), the octants its turn covered,
-the samples it has seen.
-
-### `pub fn absolute_instruction() -> Option<(&'static str, String)>`
-
-The BNO055's pending calibration, in plan B's words (bno055.calibration()), from its run's atomics, as the
-magnetometer's ([`magnetometer_instruction`]). None when no BNO055 runs or nothing is owed.
-
-### `pub fn absolute_inspection() -> Option<AbsoluteState>`
-
-The BNO055's state; None when no BNO055 runs.
+The pitot's zero offset in force, Pa, None before its state is known or when no pitot came up (the checkpoint).
 
 ### `pub fn persist_pitot_tare(partition: &esp_idf_svc::nvs::EspDefaultNvsPartition) -> Option<String>`
 
@@ -9978,27 +10244,15 @@ Persists the pitot tare the owner captured, if one waits (plan B sdp810._persist
 Pa x 100 i32 shared with plan B), on the executor after the owner answered a `calibrate` or an `update`. None when
 nothing waited or it persisted, else why it did not (the tare stays in force either way).
 
-### `pub fn pitot_inspection() -> Option<(f32, i32, f32, bool, f32)>`
+### `pub fn restore_calibrations(partition: &esp_idf_svc::nvs::EspDefaultNvsPartition, members: &mut [Vec<Member>; 2], ports: &mut [(crate::owner::Parked, I2cPort)])`
 
-What `inspect` shows of the pitot beyond its channels: (temperature C, scale, zero offset Pa, tared, air density);
-None before its run published.
-
-### `pub fn power_inspection() -> Option<([i32; 3], u32)>`
-
-What `inspect` shows of the power monitor (plan B ina226.py inspect): mV, mA, mW and the ALERT trips (0: the
-over-current ALERT is counted with the servos, M13); None before a reading.
-
-### `pub fn restore_calibrations(partition: &esp_idf_svc::nvs::EspDefaultNvsPartition, members: &mut [Vec<crate::devices::Member>; 2], ports: &mut [(crate::owner::Parked, I2cPort)])`
-
-Restores what each part learned from NVS after its setup, so a power cycle does not cost the operator a turn: the
-pitot's tare, each magnetometer's hard/soft-iron calibration (plan B bmm350._restore), and the BNO055's profile
-(plan B bno055._restore_profile), written over its lent `ports` (CONFIG mode, the profile, NDOF). Once at
-bring-up, on main, before the owners run; best effort, as plan B's: no profile or a bus error leaves the figure-8
-owed.
+Restores what each part learned from NVS after its setup (crates/parts restore): each BNO055's profile over its
+lent port, then the pitot's tare and each magnetometer's calibration. Once at bring-up, on main, before the owners
+run.
 
 ### Constants
 
-- `const NOT_PORTED_YET: &str = "no driver/activity -- not ported yet"` — The failure reason of a plan B implementation this port has not reached yet (D13 of the M5 plan): plan B's `no driver/activity`, with why.
+- `static PLATFORM: Board = Board` — The one platform every part's run is handed.
 
 ## `firmware::sim_link`
 
@@ -10057,10 +10311,10 @@ base tick that never ends:
  * the control thread's stall check (controller::Stall), every `period_ms` on the base tick's grid: while the board
    controls a flight (armed, launched, in an airborne stage), a control tick older than `stall_ms` (and two tick
    periods) restarts the board. The line `<watchdog> :: control loop stalled (stage=X) -> reset` is kept in this
-   session's recorder.log first, and Wi-Fi's stop is taken off the restart's way: through the C6 it is a remote
-   call that a parked link makes wait seconds, past the task watchdog. A boot that is a stall restart's own warm
-   start never restarts for a stall again (crate::warm::stall_restart_suppressed), so a stall that comes back every
-   boot leaves the board stalled rather than cycling it;
+   session's recorder.log first, and the restart (components/safe_restart) never stops Wi-Fi: through the C6 that
+   is a remote call that a parked link makes wait seconds, past the task watchdog. A boot that is a stall restart's
+   own warm start never restarts for a stall again (crate::warm::stall_restart_suppressed), so a stall that comes
+   back every boot leaves the board stalled rather than cycling it;
  * health.csv at 1 Hz, plan B's board_health columns unchanged (spec "Row, log and index text"), so
    recorder_flight, flight_report and flight_video read the Rust board's vitals as they read plan B's;
  * the checkpoint (crate::warm::Keeping) every `poll_ms`, when the board config enables one: the crumb a reset in
@@ -10139,6 +10393,35 @@ The started sensor.
 
 - `fn new(sensor: TempSensor<'static>) -> anyhow::Result<Self>` — Install and start the sensor.
 - `fn celsius(&self) -> Option<f32>` — The die temperature in °C, None when the read fails.
+
+## `firmware::threads`
+
+The firmware's threads: one way to spawn a std thread (a FreeRTOS task underneath) on a core, at a priority, with
+its stack in the memory it needs (doc/specs/avionics-port.md §4.7, the internal RAM budget). esp-idf-svc takes a
+thread's name, core, priority and stack memory from a thread-local spawn configuration, so every spawn sets it,
+spawns, and puts the default back for the next plain `std::thread::spawn`.
+
+### `pub enum Stack`
+
+Where a thread's stack lives (§4.7).
+
+### `pub struct Spec`
+
+A thread to spawn.
+
+### `pub fn spawn<T: Send + 'static>(spec: Spec, body: impl FnOnce() -> T + Send + 'static) -> anyhow::Result<JoinHandle<T>>`
+
+Spawns `body` as `spec` describes, then puts the default spawn configuration back.
+
+Errors: the configuration would not set, or the thread would not spawn.
+
+## `firmware::time`
+
+The board's monotonic clock: microseconds since boot (esp_timer), the one place that reads it.
+
+### `pub fn uptime_us() -> u64`
+
+Microseconds since boot, from esp_timer: monotonic, never negative, safe from any context (an ISR included).
 
 ## `firmware::video`
 
@@ -10310,29 +10593,3 @@ pinned, None without one (the freeze then takes the live fix).
 
 The checkpoint's [`Inspection`], its crumb read now from `partition` (on the executor, beside the supervisor's
 handle: NVS serialises its own calls).
-
-# `sitl` — `src/avionics/sitl`
-
-_Uses: `board_config`, `control`, `controller`, `databoard`, `mission`, `sequencer`, `sim_link`. External: serde_json._
-
-## `sitl`
-
-SITL (M14): the Rust flight code on the host, behind the same UDP sim-link the board serves (doc/specs/sim-link.md),
-lockstep with the host's physics. tools/hitl_host.py `--sitl` flies it as it flies a board.
-
-The pieces are the board's own, from the same crates: the topology the board's bring-up builds from its config
-(crates/controller `topology`, the `hitl` entry its only provider: every sensor it masks is simulated), a SENSORS
-frame published into it as the `hitl` source (`HitlWriters`), the stage machine stepped on its per-source readings
-(`StageSources`, `StageMachine`) and the flight law on the fused ones (`FlightQuantities`, `FlightLaw`), the mission
-from the launch payload the host sends a board, and the attitude filter, stepped before the law on each tick as the
-board's control thread steps it (in HITL the simulated attitude outranks it and the filter mirrors it, warm, until
-that attitude drops out: then the filter carries the glide, as on a board -- without it here a dropped attitude
-left the law with none, and the SITL flew 1.8 km off where a board would not). What the host has none of is not
-here: the servos (a FINS answer carries the law's angles, as a board's centred fins at its start), the separation
-switch, the checkpoint and the warm start, the GNSS drift calibration.
-
-Lockstep: the clock is the frame's physics time (`sim_time_ms`, after a 10 s boot as the golden shims'), never the
-wall's. Each frame first runs the control ticks due before it on what the earlier frames left, then is published,
-then runs the tick due at its own time, then is answered: what a realtime board sees, every run the same.
-
-  sitl --config <board config JSON> [--mission <launch JSON>] [--port 1236]

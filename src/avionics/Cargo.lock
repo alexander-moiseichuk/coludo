@@ -749,6 +749,7 @@ dependencies = [
  "log",
  "mission",
  "panics",
+ "parts",
  "recorder",
  "recorder_wire",
  "sequencer",
@@ -1199,6 +1200,22 @@ name = "panics"
 version = "0.1.0"
 dependencies = [
  "flash_ring",
+]
+
+[[package]]
+name = "parts"
+version = "0.1.0"
+dependencies = [
+ "board_config",
+ "control",
+ "controller",
+ "databoard",
+ "drivers",
+ "embedded-hal 1.0.0",
+ "log",
+ "recorder",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

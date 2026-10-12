@@ -189,11 +189,30 @@ Each stage keeps the behaviour. Its proof:
 |---|---|---|
 | R0 | API docs (`27cc539`) | done |
 | R1 | the utilities: `uptime_us`, `threads::spawn`, `Rows`/`LogOnce` (`8939dab`) | done |
-| R2 | `crates/parts` with `Published<T>` and `Inspectable`, part by part (the BNO055 first), `parts::KNOWN`, the registry; `inspection::device` and the parts' statics removed | medium: every inspect answer must stay identical |
+| R2 | `crates/parts` with `Published<T>`, the parts' published state and its inspect keys, `parts::KNOWN`, the registry; `inspection::device` and the parts' statics removed (as built: below) | done |
 | R3 | `ControlCore` in `crates/controller`; `control/` split by subsystem; the SITL on `ControlCore` | medium: the SITL matrix must stay seed for seed |
 | R4 | the `boot` phases; `devices` from tables; the remaining long functions | low to medium |
 | R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test | none |
 | R6 | the hardware's own types (operator, 2026-10-12): see below | medium: the numbers change |
+
+**R2 as built.** `crates/parts` holds every I2C part's run, generic over embedded-hal and host-tested on the
+drivers' mock bus:
+- `Part` (the drivers, built per attempt), `Run` (each kind's channels, stream and health), and `Member`, a part that
+  came up. `calibrate`, `update`, `apply_calibration` and the warm start's pitot zero moved onto `Member`, because
+  they publish.
+- Reflection is the `Shared` enum: one `Published<T>` per kind (a seqlock, `parts::published`), and `parts::own`,
+  the typed inspect keys in plan B's order. An enum match does it, with no trait object.
+- The firmware registers each member's `Shared` by name (`sensors::register`) and looks it up for `inspect`, the
+  pending calibrations, `verify`'s `imu_calibration` and the checkpoint's pitot zero.
+- The board comes in through `parts::Platform` (the control thread's interrupts and lapse watches, the recorder's
+  rows) and `parts::Store` (the calibrations' NVS reads).
+- `parts::KNOWN` gives each part its name and default address. The streams' columns stay in
+  `crates/controller` (`streams.rs`): `parts` depends on the controller's `Topology`, so the controller cannot read
+  `parts`.
+
+Measured: `sensors.rs` went from 1963 lines to 215 and `inspection::device` from 199 to 26; its other arms are
+`component()` (100 lines, for R4). The firmware lost about 2100 lines, the new crate holds 3000 with its tests, and
+`sensors.rs`'s 27 statics became two (the platform and the registry).
 
 **R6, the 32-bit types.** The P4 is RV32 with a single-precision FPU: a u64 or i64 takes two registers, and its
 division is a library call. An f64 is all software. The tree has 480 lines with a u64, 235 with an i64 and 166

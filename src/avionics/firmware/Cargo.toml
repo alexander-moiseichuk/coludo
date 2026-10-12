@@ -24,6 +24,7 @@ control.workspace = true
 controller.workspace = true
 databoard.workspace = true
 drivers.workspace = true
+parts.workspace = true  # the I2C parts: their runs, published state and calibrations (R2)
 flash_ring.workspace = true
 gnss.workspace = true
 sha2.workspace = true

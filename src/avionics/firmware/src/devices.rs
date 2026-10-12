@@ -40,26 +40,8 @@ use firmware::buses::spi::{SpiBus, SpiHandle};
 use serde_json::Value;
 
 use crate::owner;
-use crate::sensors::{self, Kind, Part};
-
-/// An I2C part that came up, as its port's owner keeps it.
-pub struct Member {
-    /// The entry's name.
-    pub name: &'static str,
-    /// The driver.
-    pub part: Part,
-    /// What it runs on the owner's tick, from the owner's start (crate::owner).
-    pub run: Option<sensors::Run>,
-    /// How its axes map onto the airframe's (`axes`, M9): what the BMI323's run applies; the identity for a part
-    /// with no vectors, and for the BMM350, which maps its own after its calibration.
-    pub axes: Axes,
-    /// Its interrupt line, when the config wires one: the BMI323's INT1 (`int_pin`), counted as evidence (M9); the
-    /// INA226's over-current ALERT (`alert_pin`), counted as trips.
-    pub interrupt: Option<u8>,
-    /// Its read period, ms (`period_ms`), when the config sets one: the SDP810's, the INA226's and the lasers' runs
-    /// take their driver's default otherwise (M10).
-    pub period_ms: Option<u32>,
-}
+use crate::sensors::{self, Member, Part, Xshut};
+use parts::Kind;
 
 /// The LSM6DSO32 on SPI2 once it came up: the control thread, SPI2's owner, takes it (crate::control).
 pub struct SpiMember {
@@ -291,7 +273,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     for (index, entry) in entries.iter().enumerate() {
         let log = |line: String| log::info!("{line}");
         let sleep = |ms: u32| std::thread::sleep(Duration::from_millis(u64::from(ms)));
-        let outcome = match sensors::classify(entry) {
+        let outcome = match parts::classify(entry) {
             Kind::Native => {
                 let answer = |_, _| match (entry.implementation, &camera) {
                     ("recorder", _) if !recording => Attempt::Raised {
@@ -314,7 +296,7 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
                 sleep,
                 log,
             )
-            .map_err(|_| sensors::NOT_PORTED_YET.to_string()),
+            .map_err(|_| parts::NOT_PORTED_YET.to_string()),
             Kind::Unknown => controller::set_up(
                 entry.name,
                 entry.implementation,
@@ -409,14 +391,14 @@ fn set_up_ports(
     ports: &mut [(owner::Parked, I2cPort)],
     members: &mut [Vec<Member>; 2],
 ) -> BTreeMap<usize, Result<(), String>> {
-    let port_of =
-        |entry: &Entry| match controller::binding(entry, "i2c", sensors::default_address(entry.implementation)) {
-            Binding::I2c { id, .. } => id
-                .parse::<u8>()
-                .ok()
-                .filter(|id| board_config::i2c_bus(document, *id).is_some()),
-            Binding::Spi { .. } | Binding::Unbound => None,
-        };
+    let port_of = |entry: &Entry| match controller::binding(entry, "i2c", parts::default_address(entry.implementation))
+    {
+        Binding::I2c { id, .. } => id
+            .parse::<u8>()
+            .ok()
+            .filter(|id| board_config::i2c_bus(document, *id).is_some()),
+        Binding::Spi { .. } | Binding::Unbound => None,
+    };
     std::thread::scope(|scope| {
         let threads: Vec<_> = ports
             .iter_mut()
@@ -425,7 +407,7 @@ fn set_up_ports(
                 let mine: Vec<usize> = entries
                     .iter()
                     .enumerate()
-                    .filter(|(_, entry)| matches!(sensors::classify(entry), Kind::I2c) && port_of(entry) == Some(id))
+                    .filter(|(_, entry)| matches!(parts::classify(entry), Kind::I2c) && port_of(entry) == Some(id))
                     .map(|(index, _)| index)
                     .collect();
                 std::thread::Builder::new()
@@ -942,7 +924,7 @@ fn input_pulled_down(gpio: u8) -> Result<(), sys::EspError> {
 fn open_spi(document: &Value, entries: &[Entry]) -> Option<SpiBus> {
     let on_spi = |entry: &&Entry| entry.bus == Some("spi");
     for entry in entries.iter().filter(on_spi) {
-        if sensors::classify(entry) == Kind::Spi {
+        if parts::classify(entry) == Kind::Spi {
             continue;
         }
         let Some(chip_select) = board_config::pin(document, entry, "cs_pin") else {
@@ -953,7 +935,7 @@ fn open_spi(document: &Value, entries: &[Entry]) -> Option<SpiBus> {
             Err(error) => log::warn!("spi:1 {} :: CS GPIO{chip_select} not held high: {error}", entry.name),
         }
     }
-    if !entries.iter().any(|entry| sensors::classify(entry) == Kind::Spi) {
+    if !entries.iter().any(|entry| parts::classify(entry) == Kind::Spi) {
         return None;
     }
     match board_config::spi_bus(document, 1).map(SpiBus::open) {
@@ -976,7 +958,7 @@ fn set_up_i2c(
     members: &mut [Vec<Member>; 2],
     delay: &mut Delay,
 ) -> Result<(), String> {
-    let (port_id, address) = match controller::binding(entry, "i2c", sensors::default_address(entry.implementation)) {
+    let (port_id, address) = match controller::binding(entry, "i2c", parts::default_address(entry.implementation)) {
         Binding::I2c { id, address } => (id.parse::<u8>().ok(), address),
         Binding::Spi { .. } | Binding::Unbound => (None, None),
     };
@@ -1003,11 +985,12 @@ fn set_up_i2c(
                     diagnosis: last.then(|| "no address -- addr is null or not a 7-bit int".to_string()),
                 };
             };
-            let mut part = match Part::build(document, entry, address) {
+            let mut part = match Part::build(document, entry, address, Xshut::output) {
                 Ok(part) => part,
                 Err(error) => return Attempt::Raised { error, diagnosis: None },
             };
             let result = part.setup(port, delay);
+            let id = port.id();
             // the port sees any general call on it, the part only its own: ask both, so both forget it
             if port.take_general_call() | part.take_general_call() {
                 let index = usize::from(port.id());
@@ -1024,13 +1007,13 @@ fn set_up_i2c(
                 Err((fault, true)) => {
                     log::debug!("{} :: setup: {fault}", entry.name);
                     Attempt::Foreign {
-                        diagnosis: Some(part.diagnose(port)),
+                        diagnosis: Some(part.diagnose(port, id)),
                     }
                 }
                 Err((fault, false)) => {
                     log::debug!("{} :: setup: {fault}", entry.name);
                     Attempt::Failed {
-                        diagnosis: last.then(|| part.diagnose(port)),
+                        diagnosis: last.then(|| part.diagnose(port, id)),
                     }
                 }
             }
@@ -1043,14 +1026,13 @@ fn set_up_i2c(
         owner::record(id, entry.name, calls, &rearmed);
     }
     if let (Some(part), Some(id)) = (came_up, port_id) {
-        members[usize::from(id)].push(Member {
-            name: entry.name,
+        let member = Member::new(
+            entry.name,
             part,
-            run: None,
             // Part::build refused a malformed key, so the part up has a good one
-            axes: sensors::imu_axes(entry).unwrap_or_default(),
+            parts::imu_axes(entry).unwrap_or_default(),
             // the INA226's ALERT is its interrupt line (plan B `alert_pin`), every other part's INT1 `int_pin`
-            interrupt: board_config::pin(
+            board_config::pin(
                 document,
                 entry,
                 if entry.implementation == "ina226" {
@@ -1059,12 +1041,14 @@ fn set_up_i2c(
                     "int_pin"
                 },
             ),
-            period_ms: entry
+            entry
                 .fields
                 .get("period_ms")
                 .and_then(Value::as_u64)
                 .map(|period| period.clamp(1, u64::from(u32::MAX)) as u32),
-        });
+        );
+        sensors::register(&member);
+        members[usize::from(id)].push(member);
     }
     outcome
 }
@@ -1113,7 +1097,7 @@ fn set_up_spi(
     };
     let interrupt = board_config::pin(document, entry, "int_pin");
     let interrupt_wired = interrupt.is_some();
-    let axes = sensors::imu_axes(entry);
+    let axes = parts::imu_axes(entry);
     let mut came_up = None;
     let outcome = controller::set_up(
         entry.name,
