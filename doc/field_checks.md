@@ -129,9 +129,9 @@ Each battery runs from full charge until its beacon disappears. The two runs can
 The segments were proven on the bench and in HITL at 20 s. The 10-minute run at the default 300 s is left to the
 pad.
 
-- [ ] In SETTING on the pad: `video start`. After 10 minutes, `video stop`.
-- [ ] Pull the session's video (`tools/board_pull.sh <board> <session>`): two whole 300 s segments plus the
-      partial, each playable (`ffprobe` shows the frame count at ≥ 20 fps).
+- [ ] In SETTING on the pad: `video start`. After 11 minutes, `video stop`.
+- [ ] Pull the session's video (`tools/board_pull.sh <board> <session>`): two whole 300 s segments and a partial
+      third, each playable (`ffprobe` shows the frame count at ≥ 20 fps).
 
 ## After the day
 
