@@ -54,6 +54,7 @@ docs:
 	@python3 tools/gen_graph.py
 	@python3 tools/gen_schema.py
 	@python3 tools/gen_docs.py
+	@python3 tools/gen_avionics_docs.py
 
 docs-check:
 	@echo "== derived docs up to date =="
@@ -61,6 +62,7 @@ docs-check:
 	@python3 tools/gen_graph.py --check
 	@python3 tools/gen_schema.py --check
 	@python3 tools/gen_docs.py --check
+	@python3 tools/gen_avionics_docs.py --check
 
 test-board:
 	@$(MAKE) -C src/glider/test test PORT=$(PORT)

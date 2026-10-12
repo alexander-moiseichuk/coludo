@@ -1,8 +1,8 @@
-# Coludo API reference
+# Coludo glider API reference
 
 _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand; run `python3 tools/gen_docs.py` to regenerate._
 
-See [`architecture.md`](architecture.md) for the module dependency graph, class hierarchy, and the annotated `Flight._step()` hot-path call tree (`tools/gen_graph.py`).
+See [`architecture.md`](architecture.md) for the module dependency graph, class hierarchy, and the annotated `Flight._step()` hot-path call tree (`tools/gen_graph.py`). The Rust avionics: [`avionics_api.md`](avionics_api.md).
 
 # glider firmware (MicroPython) — `src/glider`
 
@@ -1939,7 +1939,7 @@ Flight-dynamics state + integrator (PURE -- host-testable).
 `boost_step()` climbs vertically; at apogee `begin_glide()` hands over to `glide_step()`
 (fin-controlled); `sensors()` returns what the on-board sensors would read.
 
-- `__init__(mass: float, launch: tuple, elevation_m: float, glide_heading: float, glide_mass: float=None)` — constructor
+- `__init__(mass: float, launch: tuple, elevation_m: float, glide_heading: float, glide_mass: float=None, airframe: str='tms7')` — constructor
 - `boost_step(dt: float, thrust: float, pitch_cmd: float=0.0, roll_cmd: float=0.0) -> None` — Vertical climb (1-DoF: thrust + gravity + drag) PLUS attitude under thrust.
 - `begin_glide() -> None` — Apogee hand-over: the booster ejects and the glider noses down into the trim glide.
 - `glide_step(dt: float, roll_cmd: float, pitch_cmd: float, yaw_cmd: float) -> None` — Rigid-body glide step under fin control.
@@ -3220,7 +3220,7 @@ One connected board: lockstep request/response over its socket.
 - `peer() -> str` _(property)_
 - `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S, quiet: bool=False) -> cc._Msg` — Send a ready board-facing line and return its parsed reply.
 - `properties() -> dict` — The Control-side snapshot of this board: identity + the cached config/inspect/stats/health.
-- `command(command: str, *args, timeout=None, quiet=False) -> cc._Msg` — Build `command args...` and exchange it.
+- `command(command: str, *args, named=None, timeout=None, quiet=False) -> cc._Msg` — Build `command args... key=value...` and exchange it.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
@@ -3329,7 +3329,8 @@ encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
   GET  /             -> the one-page dashboard (static/index.html)
   GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
   GET  /api/absent   -> known-but-disconnected gliders from the roster, each with a reboot hint
-  POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
+  POST /api/cmd      -> {board, command, params[, named]} -> run it on the board, reply as JSON {board, status,
+                        args, named}
   POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
   GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
 

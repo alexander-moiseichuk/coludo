@@ -34,6 +34,7 @@ import flight_report  # noqa: E402
 import flight_svg  # noqa: E402
 import flight_synth_capture  # noqa: E402
 import flight_telemetry  # noqa: E402
+import gen_avionics_docs  # noqa: E402
 import gen_schema  # noqa: E402
 import glide_polar  # noqa: E402
 import hitl_compare  # noqa: E402
@@ -2268,3 +2269,80 @@ def test_sitl_matrix_scores_by_the_physics_and_summarises_per_combination():
 
 
 test_sitl_matrix_scores_by_the_physics_and_summarises_per_combination()
+
+
+def test_gen_avionics_docs_reads_the_public_surface_and_never_counts_braces_in_text():
+    """
+    tools/gen_avionics_docs.py parses Rust without building it: the lexer blanks comments, strings, raw strings and
+    char literals (a `format!("{name}")` or a `'{'` would move the brace depth), the scanner lists each public item
+    with its doc, a type's public methods, the constants, and leaves `pub(crate)`, private items and test code out.
+    NEGATIVE: an unbalanced brace inside a string, a raw string and a char must not end the impl early.
+    """
+    source = r'''//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
+//! A probe module.
+
+/// The answer.
+pub const ANSWER: u32 = 42;
+
+/// A part.
+#[derive(Clone)]
+pub struct Part {
+    count: u32,
+}
+
+impl Part {
+    /// Make one.
+    pub fn new(
+        count: u32,
+    ) -> Part {
+        let _text = format!("{count} }} {{");
+        let _raw = r#"}}}"#;
+        let _brace = '}';
+        Part { count }
+    }
+
+    /// Hidden.
+    fn private(&self) {}
+
+    /// Its count.
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+}
+
+pub(crate) fn internal() {}
+
+/// Free.
+pub fn free(value: &str) -> usize {
+    value.len()
+}
+
+#[cfg(test)]
+mod tests {
+    pub fn helper() {}
+}
+'''
+    blanked = gen_avionics_docs.blank(source)
+    assert len(blanked) == len(source) and blanked.count('\n') == source.count('\n')
+    assert blanked.count('{') == blanked.count('}'), 'only code braces are left, and they balance'
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'probe.rs')
+        with open(path, 'w') as handle:
+            handle.write(source)
+        module = gen_avionics_docs.scan(path)
+    assert module['doc'] == 'A probe module.', module['doc']
+    assert [(text, doc) for text, doc, _methods in module['types']] == [('pub struct Part', 'A part.')]
+    assert module['types'][0][2] == [('fn new(count: u32) -> Part', 'Make one.'),
+                                     ('fn count(&self) -> u32', 'Its count.')], module['types'][0][2]
+    assert module['functions'] == [('pub fn free(value: &str) -> usize', 'Free.')], module['functions']
+    assert module['constants'] == [('const ANSWER: u32 = 42', 'The answer.')], module['constants']
+    assert module['tested'], 'an inline mod tests counts'
+    assert gen_avionics_docs.module_path('drivers', '/x/src', '/x/src/lib.rs') == 'drivers'
+    assert gen_avionics_docs.module_path('drivers', '/x/src', '/x/src/bmp280.rs') == 'drivers::bmp280'
+    assert gen_avionics_docs.module_path('firmware', '/x/src', '/x/src/commands/mod.rs') == 'firmware::commands'
+    names = [name for name, *_rest in gen_avionics_docs.crates()]
+    assert names.index('drivers') < names.index('firmware') and names.index('databoard') < names.index('controller')
+
+
+test_gen_avionics_docs_reads_the_public_surface_and_never_counts_braces_in_text()

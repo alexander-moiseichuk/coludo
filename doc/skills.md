@@ -303,9 +303,11 @@ so it must run on both.
 - The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
   one line — the plain password) is gitignored (`*.creds`) and pushed by `tools/deploy.sh`; `wifi.py`
   reads it for the password.
-- **API docs**: `python3 tools/gen_docs.py` regenerates [`doc/api.md`](api.md) from module
-  headers + docstrings by *parsing* the sources (stdlib `ast`, never imports them — so it works
-  for the firmware too). Regenerate it when public signatures or docstrings change.
+- **API docs**: `python3 tools/gen_docs.py` regenerates [`doc/glider_api.md`](glider_api.md) (plan B and the
+  control hub) from module headers + docstrings by *parsing* the sources (stdlib `ast`, never imports them — so it
+  works for the firmware too); `python3 tools/gen_avionics_docs.py` regenerates
+  [`doc/avionics_api.md`](avionics_api.md) from the Rust crates' `//!` and `///` docs, parsing them too (no cargo).
+  Regenerate them when public signatures or docs change; `make docs-check` fails on a stale one.
 
 ## Control Center
 

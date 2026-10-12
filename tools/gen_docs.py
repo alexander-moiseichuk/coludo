@@ -2,13 +2,14 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Generate doc/api.md from the module sources by *parsing* them (stdlib `ast`) -- never importing, so it
+Generate doc/glider_api.md (plan B and the control hub; the Rust avionics' is doc/avionics_api.md,
+tools/gen_avionics_docs.py) from the module sources by *parsing* them (stdlib `ast`) -- never importing, so it
 works for the firmware too (which imports machine/network/esp32, absent on the host) and needs no
 third-party tools. Module descriptions come from the module docstring (minus the shared copyright
 line); class, method and function descriptions from their docstrings. Public surface only (skips
 _-internals).
 
-    python3 tools/gen_docs.py        # writes doc/api.md
+    python3 tools/gen_docs.py        # writes doc/glider_api.md
 """
 
 import ast
@@ -32,7 +33,7 @@ def module_header(tree: ast.Module) -> str:
     The module's description text: its docstring with the shared copyright line stripped.
 
     Every module now opens with a docstring whose first line is the 'Coludo project, copyright ...'
-    notice; api.md wants the prose that follows, not that boilerplate repeated per module. When the
+    notice; glider_api.md wants the prose that follows, not that boilerplate repeated per module. When the
     copyright line is absent the whole docstring is returned unchanged.
 
     Args:
@@ -163,18 +164,19 @@ def render_module(path: str, out: list) -> None:
 
 
 def main(check: bool = False) -> None:
-    out = ['# Coludo API reference', '',
+    out = ['# Coludo glider API reference', '',
            '_Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand;'
            ' run `python3 tools/gen_docs.py` to regenerate._', '',
            'See [`architecture.md`](architecture.md) for the module dependency graph, class hierarchy,'
-           ' and the annotated `Flight._step()` hot-path call tree (`tools/gen_graph.py`).', '']
+           ' and the annotated `Flight._step()` hot-path call tree (`tools/gen_graph.py`). The Rust avionics:'
+           ' [`avionics_api.md`](avionics_api.md).', '']
     chapter = None
     for relative, _name, path in sources.modules(sources.GLIDER_DIRS + sources.CONTROL_DIRS):
         if relative != chapter:  # a directory with no sources never opens a chapter
             out.append('# %s — `%s`\n' % (TITLES[relative], relative))
             chapter = relative
         render_module(path, out)
-    target = os.path.join(ROOT, 'doc', 'api.md')
+    target = os.path.join(ROOT, 'doc', 'glider_api.md')
     text = '\n'.join(out).rstrip() + '\n'
     """
     --check makes this gateable like the other three generators. It was the ONLY derived doc `make
@@ -188,7 +190,7 @@ def main(check: bool = False) -> None:
             with open(target) as handle:
                 existing = handle.read()
         if existing != text:
-            print('doc/api.md is STALE -- run: python3 tools/gen_docs.py', file=sys.stderr)
+            print('doc/glider_api.md is STALE -- run: python3 tools/gen_docs.py', file=sys.stderr)
             return 1
         print('api doc up to date')
         return 0
