@@ -124,8 +124,10 @@ static IMU_RACED: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
 /// conversion's duplicate (skipped, correction (b)) or a bit-identical new conversion (pushed). What D1's residual is
 /// measured by (M9).
 static IMU_IDENTICAL: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
-/// The IMU channels the consumer side watches ([`Watch`]): an IMU's `accel` and `rate`, two IMUs.
-const WATCHED: usize = 4;
+/// The IMU channels the consumer side watches ([`Watch`]): each IMU's `accel` and `rate`. Six: a bench board carries
+/// three accelerometers (the LSM6DSO32, the BMI323, the BNO055's accel) beside two rates, and four left the BMI323's
+/// rate unwatched on the taster.
+const WATCHED: usize = 6;
 /// Each watched channel's lapses, by [`WATCH_NAMES`]' order: ticks at which the channel was not fresh in its
 /// quantity's shared window while its part was healthy -- what a consumer (the stage machine, the attitude filter) saw
 /// as a gap (M9).
