@@ -80,6 +80,36 @@ Per scenario, the miss from the zone centre (m):
 - **No noisy flight lands in the zone, on either stack.** With noise at 5 % or more every miss is 50–100 m; clean,
   both land at ~40 m inside. This is plan B's behaviour on today's sim, reproduced, not something the port changed.
 
+## 3b. The second board run (r2, 2026-10-12): the board's own run-to-run spread
+
+The same firmware build and harness as r1, a day later. One flight (F15 noise10) was refused at the arm: the taster's
+INA226 did not answer at that boot. It flew on the next boot. All 24 reached DONE.
+
+Against plan B's three seeds, r2 failed two gates. Both outliers come from plan B's own spread, which three seeds do
+not cover. Flown with 20 seeds, plan B gives a wider range, and **r2 passes all 24**. Table:
+[`board_r1_r2_vs_planb20.md`](board_r1_r2_vs_planb20.md).
+
+| scenario | r2 | plan B, 3 seeds | plan B, 20 seeds |
+|---|---|---|---|
+| E16 noise25, the miss | 156.3 m | 74.1..121.5 m | 72.4..188.6 m |
+| F15 noise100, GLIDING | 7.8 s | 8.8..10.5 s | 7.5..10.5 s |
+
+r1's one failure (E16 corner_stress, GLIDING 5.6 s) stays just outside the 20 seeds too (6.2..6.9 s, gate 0.5 s). Its
+three re-flights and r2 (6.5 s) were inside.
+
+r1 against r2, the same scenario flown twice on the board:
+
+| family | pairs | miss difference, median / max | GLIDING difference, max |
+|---|---|---|---|
+| wind 00-12 | 10 | 2.7 / 9.8 m | 0.10 s |
+| low noise 05-25 | 6 | 2.5 / 77.7 m (E16 noise25) | 0.15 s |
+| corner spike/stress | 4 | 0.6 / 3.2 m | 0.80 s |
+| high noise 50-100 | 4 | 11.0 / 143.3 m (F15 noise100) | 1.45 s |
+
+The wind family repeats within ~10 m. This sits next to the 7.7 m median the miss gate takes from the post-audit
+board study. noise25 forks the way plan B's seeds fork. The stage machine repeats within 0.15 s outside the
+high-noise and corner families.
+
 ## 4. What it took
 
 - `tools/hitl_matrix_host.sh`: the matrix for a Rust board, the scenario table of `hitl_matrix.sh` (a test keeps the

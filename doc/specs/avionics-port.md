@@ -1562,8 +1562,12 @@ corner families are not gated on miss). All silent-success guards are kept.
   and 10 seeds on each SITL stayed inside plan B's range. Not gated by the family rule; recorded.
 - The board on the shared plumbing: F15 clean 38.7 m in the zone, as before the refactor.
 
-**Not here:** a second board run (r2) for the board's own run-to-run spread; the matrix's reboot and drop scenarios
-on the SITLs (they are realtime events).
+- **r2 (2026-10-12):** 24 of 24 pass against 20 plan B seeds. With 3 seeds it failed two gates. E16 noise25 missed by
+  156 m; plan B's 20 seeds give 72-189 m. F15 noise100 reached GLIDING at 7.8 s; plan B's give 7.5-10.5 s. r1 against
+  r2: the wind family repeats within 2.7 m median and 9.8 m max, and the stage machine within 0.15 s outside high
+  noise (doc/sims/TMS-7-rust_hitl_m14 §3b).
+
+**Not here:** the matrix's reboot and drop scenarios on the SITLs (they are realtime events).
 
 **Operator gains.** Evidence that the Rust board flies like plan B, which is the precondition to migrate 7F.
 
