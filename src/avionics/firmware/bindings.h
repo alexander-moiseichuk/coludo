@@ -7,4 +7,5 @@
 #include "coludo_video.h"
 #include "log_hook.h"
 #include "panic_capture.h"
+#include "safe_restart.h"
 #include "esp_heap_task_info.h"

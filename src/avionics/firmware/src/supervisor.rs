@@ -9,10 +9,10 @@
 //!  * the control thread's stall check (controller::Stall), every `period_ms` on the base tick's grid: while the board
 //!    controls a flight (armed, launched, in an airborne stage), a control tick older than `stall_ms` (and two tick
 //!    periods) restarts the board. The line `<watchdog> :: control loop stalled (stage=X) -> reset` is kept in this
-//!    session's recorder.log first, and Wi-Fi's stop is taken off the restart's way: through the C6 it is a remote
-//!    call that a parked link makes wait seconds, past the task watchdog. A boot that is a stall restart's own warm
-//!    start never restarts for a stall again (crate::warm::stall_restart_suppressed), so a stall that comes back every
-//!    boot leaves the board stalled rather than cycling it;
+//!    session's recorder.log first, and the restart (components/safe_restart) never stops Wi-Fi: through the C6 that
+//!    is a remote call that a parked link makes wait seconds, past the task watchdog. A boot that is a stall restart's
+//!    own warm start never restarts for a stall again (crate::warm::stall_restart_suppressed), so a stall that comes
+//!    back every boot leaves the board stalled rather than cycling it;
 //!  * health.csv at 1 Hz, plan B's board_health columns unchanged (spec "Row, log and index text"), so
 //!    recorder_flight, flight_report and flight_video read the Rust board's vitals as they read plan B's;
 //!  * the checkpoint (crate::warm::Keeping) every `poll_ms`, when the board config enables one: the crumb a reset in
@@ -365,24 +365,17 @@ fn arm_task_watchdog(timeout_ms: u32) -> Result<(), sys::EspError> {
 
 /// Restarts the board for a stalled control thread (plan B's `machine.reset()`): the line first, into this session's
 /// recorder.log (waiting at most 100 ms for the ring_writer) and to the console (at most 100 ms more for the printer,
-/// which a console reply may hold up: the line then goes unprinted, never the restart late); Wi-Fi's stop taken off
-/// the restart's shutdown handlers (esp_wifi registers it; through the C6 it is a remote call a parked link makes
-/// wait seconds, past the task watchdog); then a software reset, which the warm start recovers from. Nothing on the
-/// way waits unbounded, so the task watchdog, unfed meanwhile, never fires first and the reset stays a software one,
-/// which the stall restart's guard knows.
+/// which a console reply may hold up: the line then goes unprinted, never the restart late); then a software reset
+/// (components/safe_restart: no Wi-Fi stop on the way, which through the C6 is a remote call a parked link makes wait
+/// seconds, past the task watchdog), which the warm start recovers from. Nothing on the way waits unbounded, so the
+/// task watchdog, unfed meanwhile, never fires first and the reset stays a software one, which the stall restart's
+/// guard knows.
 fn restart(name: &str, stage: Stage) -> ! {
     log::warn!("{name} :: control loop stalled (stage={}) -> reset", stage.name());
-    let stop: unsafe extern "C" fn() -> sys::esp_err_t = sys::esp_wifi_stop;
-    // SAFETY: IDF registers esp_wifi_stop cast to a shutdown handler, `void (*)(void)` (esp_wifi's wifi_default.c);
-    // the unregister only compares the address, it never calls through the cast.
-    let handler =
-        unsafe { core::mem::transmute::<unsafe extern "C" fn() -> sys::esp_err_t, unsafe extern "C" fn()>(stop) };
-    // SAFETY: a plain removal from IDF's handler list; ESP_ERR_INVALID_STATE when Wi-Fi never registered it.
-    unsafe { sys::esp_unregister_shutdown_handler(Some(handler)) };
     crate::recorder::catch_up();
     crate::logging::wait_for_printer(PRINTER_LIMIT);
-    // SAFETY: the restart never returns.
-    unsafe { sys::esp_restart() }
+    // SAFETY: called from the supervisor's task; the restart never returns.
+    unsafe { sys::safe_restart() }
 }
 
 /// Stops feeding the task watchdog (`panic kind=twdt`), which panics the board `wdt_timeout_ms` later; the supervisor

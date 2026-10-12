@@ -70,11 +70,12 @@ pub fn run(
     beacon: crate::beacon::Beacon,
 ) -> ! {
     let events = event_loop.clone();
-    let mut driver = BlockingWifi::wrap(
-        EspWifi::new(modem, event_loop.clone(), Some(partition)).expect("the C6 Wi-Fi driver"),
-        event_loop,
-    )
-    .expect("the Wi-Fi event loop");
+    let mut driver = match EspWifi::new(modem, event_loop.clone(), Some(partition))
+        .and_then(|wifi| BlockingWifi::wrap(wifi, event_loop))
+    {
+        Ok(driver) => driver,
+        Err(error) => without_driver(error),
+    };
     // the C6 must not keep the networks: wipe what earlier boots stored in its own NVS (SSID and password in
     // clear) and hold the configuration in RAM from now on, as MicroPython does (network_wlan.c)
     // SAFETY: plain driver calls on the initialised (not started) Wi-Fi, remoted to the C6.
@@ -193,6 +194,20 @@ pub fn run(
             Ok(()) => log::info!("link :: hub closed the link"),
             Err(error) => log::warn!("link :: {error}"),
         }
+    }
+}
+
+/// No Wi-Fi driver: the C6 never answered at boot (a reset left its SDIO link wedged, 7F 2026-10-12, or the C6 is
+/// gone). The link is gone until the next boot, as when hosted_no_reboot parks a failed transport; the flight goes on.
+/// Never a panic: that made every boot a reboot ~30 s in, a flight's included, until a chip reset.
+fn without_driver(error: esp_idf_svc::sys::EspError) -> ! {
+    log::error!("link :: no C6 Wi-Fi driver ({error}) -- Wi-Fi is off until the next boot");
+    crate::panics_logger::oops(
+        "c6-driver-failed",
+        &format!("the C6 Wi-Fi driver did not start ({error}). Wi-Fi is off until the next boot; the flight goes on."),
+    );
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
     }
 }
 
