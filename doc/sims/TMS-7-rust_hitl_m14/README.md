@@ -135,6 +135,23 @@ channel. The airspeed estimator integrates |a| - g, so the accel's change moves 
 
 The reboot stays realtime-only: it needs a warm start, which the SITL does not have.
 
+## 3d. The third board run (r3, 2026-10-12): the new frames and the day's firmware
+
+The taster flew the matrix on the frames of §3c and the firmware of the day: the law reading the marks-frame rate,
+the BNO055 and BMP280, the SD bounce fix, the INA226 alert, the warm-start cap and grounds. The reference is plan B's
+SITL on the same frames, 20 seeds. Table: [`board_r3_vs_planb20_newframes.md`](board_r3_vs_planb20_newframes.md).
+
+- 22 of 24 flew and passed every gate.
+- The two noise100 flights never flew: both launched falsely on the pad, |a| 2.5 and 2.7 g held 100 ms, while the
+  arm's probe sweep still ran. At 100 % noise the pad's |a| is uniform from -1 to 3 g, so the dwell can fill by
+  chance, and the arm then finds the board in BOOSTING. r1 and r2 got through those seconds; replayed through the
+  dwell rule, their pads could have fired too.
+- Flown twice more each, all four noise100 flights armed and passed (F15 216 and 224 m against plan B's 28-295 m;
+  E16 130 and 121 m against 107-154 m; GLIDING inside).
+
+So 26 of 26 flights flown on the new frames pass. The noise100 pad keeps a false-launch risk that is the
+scenario's own, not the board's.
+
 ## 4. What it took
 
 - `tools/hitl_matrix_host.sh`: the matrix for a Rust board, the scenario table of `hitl_matrix.sh` (a test keeps the

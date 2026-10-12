@@ -1584,6 +1584,11 @@ corner families are not gated on miss). All silent-success guards are kept.
   carries the glide, where it landed ~500 m off before. The GNSS drop agrees with plan B within 13 m. On the new
   frames both SITL matrices pass 72 of 72, seed for seed as before (doc/sims/TMS-7-rust_hitl_m14 §3c).
 
+- **r3 (2026-10-12, the new frames and the day's firmware):** 26 of 26 flown flights pass against plan B's 20
+  seeds on the same frames. Both noise100 flights launched falsely on the pad during the arm's sweep (uniform
+  +-2 g noise can fill the 100 ms dwell), and flown twice more each they passed (doc/sims/TMS-7-rust_hitl_m14
+  §3d).
+
 **Not here:** the reboot scenario on the SITLs: it needs the warm start, a board's (realtime only).
 
 **Operator gains.** Evidence that the Rust board flies like plan B, which is the precondition to migrate 7F.
