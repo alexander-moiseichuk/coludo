@@ -47,7 +47,7 @@ Sequence numbers wrap: `b` is newer than `a` when `(b - a) mod 2^32` is in 1..2^
 | 8 | 4 | seq | u32, +1 per frame | — |
 | 12 | 4 | sim_time_ms | u32, the physics clock | — |
 | 16 | 12 | accel | 3 x f32, g, body axes (x forward, y left, z up) | 0 |
-| 28 | 12 | rate | 3 x f32, deg/s: roll, pitch, yaw | 1 |
+| 28 | 12 | rate | 3 x f32, deg/s, body axes (x forward, y left, z up) by the right-hand rule, as the IMU drivers publish it: (roll, -pitch, -yaw) | 1 |
 | 40 | 12 | attitude | 3 x f32, degrees: heading [0, 360), roll, pitch | 2 |
 | 52 | 12 | mag | 3 x f32, calibrated counts (heading = atan2(-my, mx)) | 3 |
 | 64 | 4 | altitude | f32, m MSL | 4 |

@@ -178,7 +178,9 @@ class _Stack:
             heading, roll, pitch = fields['attitude']
             channels['attitude'].value_now = (heading, fixed.from_float(roll), fixed.from_float(pitch))
         if 'rate' in fields:
-            channels['rate'].value_now = tuple(fixed.from_float(rate) for rate in fields['rate'])
+            # the frame's rate is the marks frame (x forward, y left, z up); plan B's channel is (roll, pitch, yaw)
+            x, y, z = fields['rate']
+            channels['rate'].value_now = tuple(fixed.from_float(rate) for rate in (x, -y, -z))
         if 'accel' in fields:
             channels['accel'].value_now = tuple(fields['accel'])
         channels['speed'].value_now = fields.get('speed')

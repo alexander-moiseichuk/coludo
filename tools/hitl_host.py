@@ -329,8 +329,17 @@ class _Sim:
         body, noise, t = self.body, self.args.noise, self.sim_time
         self.apogee = max(self.apogee, body.alt)
         noisy = sim_model.noisy
+        # the marks frame (x forward, y left, z up), as the IMU drivers publish it. On the pad and through the boost
+        # the |a| rides one axis (plan B's magnitude parity, `--boost-axis`); in the glide the specific force is the
+        # load along z with gravity's share on x, (sin pitch, 0, n cos pitch), so the attitude filter's gravity
+        # vector agrees with the attitude when it flies alone (an attitude drop)
         accel = [0.0, 0.0, 0.0]
-        accel[self.axis] = noisy(body.accel_g, noise, -200.0, 200.0)
+        if body.gliding:
+            pitch_rad = math.radians(body.pitch)
+            accel = [noisy(math.sin(pitch_rad), noise, -200.0, 200.0), 0.0,
+                     noisy(body.accel_g * math.cos(pitch_rad), noise, -200.0, 200.0)]
+        else:
+            accel[self.axis] = noisy(body.accel_g, noise, -200.0, 200.0)
         heading = noisy(body.heading % 360.0, noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
         roll = noisy(body.roll, noise, -180.0, 180.0)
         pitch = noisy(body.pitch, noise, -180.0, 180.0)
@@ -340,8 +349,10 @@ class _Sim:
         agl_clean = max(0.0, body.alt)
         fields = {
             'accel': self.faults.apply('accel', accel, t),
-            'rate': [noisy(body.roll_rate, noise, -2000.0, 2000.0), noisy(body.pitch_rate, noise, -2000.0, 2000.0),
-                     noisy(body.yaw_rate, noise, -2000.0, 2000.0)],
+            # the marks frame too, by the right-hand rule: about y left the nose goes DOWN, about z up it goes LEFT
+            # (crates/control attitude::rate_from_marks maps it back to roll, pitch, yaw)
+            'rate': [noisy(body.roll_rate, noise, -2000.0, 2000.0), -noisy(body.pitch_rate, noise, -2000.0, 2000.0),
+                     -noisy(body.yaw_rate, noise, -2000.0, 2000.0)],
             'attitude': None if self.drop_attitude else self.faults.apply('attitude', [heading, roll, pitch], t),
             'altitude': self.faults.apply('baro', altitude, t),
             'elevation': self.faults.apply('baro', elevation, t),

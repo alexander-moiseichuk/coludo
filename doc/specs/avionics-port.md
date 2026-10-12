@@ -1567,7 +1567,12 @@ corner families are not gated on miss). All silent-success guards are kept.
   r2: the wind family repeats within 2.7 m median and 9.8 m max, and the stage machine within 0.15 s outside high
   noise (doc/sims/TMS-7-rust_hitl_m14 §3b).
 
-**Not here:** the matrix's reboot and drop scenarios on the SITLs (they are realtime events).
+- **The drops on the SITLs (2026-10-12):** the sim now publishes the rate and the glide's accel in the marks frame, as
+  the IMU drivers do (doc/specs/sim-link.md). The attitude drop then lands with the no-drop flights: the filter
+  carries the glide, where it landed ~500 m off before. The GNSS drop agrees with plan B within 13 m. On the new
+  frames both SITL matrices pass 72 of 72, seed for seed as before (doc/sims/TMS-7-rust_hitl_m14 §3c).
+
+**Not here:** the reboot scenario on the SITLs: it needs the warm start, a board's (realtime only).
 
 **Operator gains.** Evidence that the Rust board flies like plan B, which is the precondition to migrate 7F.
 

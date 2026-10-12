@@ -110,6 +110,26 @@ The wind family repeats within ~10 m. This sits next to the 7.7 m median the mis
 board study. noise25 forks the way plan B's seeds fork. The stage machine repeats within 0.15 s outside the
 high-noise and corner families.
 
+## 3c. The drops on the SITLs, and the sim's IMU frames (2026-10-12)
+
+The lockstep SITLs now fly the realtime matrix's drops: the attitude gone 3 s into the glide, or the GNSS out for
+5 s from 2-6 s in. First the sim's IMU frames had to match a board's. The sim published the rate as (roll, pitch,
+yaw) and the glide's accel on one axis. The IMU drivers publish both in the marks frame (x forward, y left, z up),
+and the law and the filter read them so (`rate_from_marks`). Now the sim publishes the rate as (roll, -pitch, -yaw)
+and the glide's specific force as (sin pitch, 0, n cos pitch). `tools/planb_sitl.py` maps the rate back to plan B's
+channel. The airspeed estimator integrates |a| - g, so the accel's change moves it only in a bank.
+
+- **Both stacks on the new frames, 72 + 72 flights:** 72 of 72 pass. Seed for seed the misses agree within 0.7 m
+  (wind) and 0.8 m (low noise) median, and GLIDING to the hundredth. The frames moved plan B's own misses by 2.7-3.2 m
+  median (the bank's load), so later board runs compare against a reference flown on these frames.
+- **The attitude drop** (noise 10 %, no wind, seeds 1-3): the Rust filter carries the glide. F15 lands 28 / 95 / 87 m
+  from the centre against 92 / 90 / 89 m without the drop; E16 lands 71 / 75 / 99 m against 84 / 74 / 77 m. Before the
+  frames it landed ~500 m off. Plan B's SITL has no reference here: it runs no attitude filter, so after the drop its
+  law flies a frozen attitude (219-405 m off).
+- **The GNSS drop:** the two stacks agree within 13 m (F15 70-87 m Rust, 77-86 m plan B; E16 95-110 m and 94-107 m).
+
+The reboot stays realtime-only: it needs a warm start, which the SITL does not have.
+
 ## 4. What it took
 
 - `tools/hitl_matrix_host.sh`: the matrix for a Rust board, the scenario table of `hitl_matrix.sh` (a test keeps the
