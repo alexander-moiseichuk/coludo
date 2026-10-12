@@ -584,7 +584,8 @@ def test_preview_fetch_reads_a_chunked_jpeg_and_a_refusal():
         request = await reader.read(4096)
         if b'/camera/preview.jpg' in request and b'ghost' not in request:
             chunks = b''.join(b'%x\r\n%s\r\n' % (len(part), part) for part in (jpeg[:4000], jpeg[4000:]))
-            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nTransfer-Encoding: chunked\r\n\r\n'
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nTransfer-Encoding: chunked\r\n'
+                         b'X-Coludo-Uptime-Us: 254108842\r\n\r\n'
                          + chunks + b'0\r\n\r\n')
         elif b'ghost' in request:
             writer.write(b'not http at all')
@@ -596,10 +597,10 @@ def test_preview_fetch_reads_a_chunked_jpeg_and_a_refusal():
     async def run():
         server = await asyncio.start_server(board, '127.0.0.1', 0)
         port = server.sockets[0].getsockname()[1]
-        status, body = await web._fetch('127.0.0.1', port, '/camera/preview.jpg')
-        assert status == 200 and body == jpeg, (status, len(body))
-        status, body = await web._fetch('127.0.0.1', port, '/other')
-        assert status == 404 and body == b'no preview\n', (status, body)
+        status, body, uptime = await web._fetch('127.0.0.1', port, '/camera/preview.jpg')
+        assert status == 200 and body == jpeg and uptime == '254108842', (status, len(body), uptime)
+        status, body, uptime = await web._fetch('127.0.0.1', port, '/other')
+        assert status == 404 and body == b'no preview\n' and uptime is None, (status, body, uptime)
         try:
             await web._fetch('127.0.0.1', port, '/camera/preview.jpg?ghost')
         except ValueError:

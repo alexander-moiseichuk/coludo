@@ -1121,6 +1121,13 @@ esp_err_t coludo_video_stop(void)
     portENTER_CRITICAL(&_stats_lock);
     _stats.stopped_microseconds = esp_timer_get_time();
     portEXIT_CRITICAL(&_stats_lock);
+    /* the last preview is no picture of now: kept, it was served as live after the stop (the dashboard showed one frozen
+     * frame and never turned the camera on again); none until the camera runs again */
+    if (_preview.lock != NULL) {
+        xSemaphoreTake(_preview.lock, portMAX_DELAY);
+        _preview.published = -1;
+        xSemaphoreGive(_preview.lock);
+    }
     _recorder = NULL;
     _release(recorder);
     return ESP_OK;

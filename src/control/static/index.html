@@ -1033,6 +1033,7 @@ new EventSource('/logs').onmessage = (event) => {
 let previewTimer = null;
 let previewBoard = null;     // the board the open preview shows
 let previewStarted = false;  // this button started its camera (`video preview`), so closing it stops it
+let previewFrames = [];      // the board-uptime (us) of each new frame shown, for the count and the fps meter
 document.getElementById('actpreview').addEventListener('click', async () => {
   const image = document.getElementById('preview');
   const line = document.getElementById('previewmsg');
@@ -1051,6 +1052,7 @@ document.getElementById('actpreview').addEventListener('click', async () => {
   }
   if (!selected) { line.textContent = 'pick a board in the table'; return; }
   previewBoard = selected;
+  previewFrames = [];
   let asked = false;
   const look = async () => {
     try {
@@ -1077,11 +1079,22 @@ document.getElementById('actpreview').addEventListener('click', async () => {
         return;
       }
       image.style.opacity = '';
-      const old = image.src;
-      image.src = URL.createObjectURL(await reply.blob());
-      if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+      // a new frame only when the board's frame time moved: a repeated fetch of the same frame counts nothing
+      const uptime = Number(reply.headers.get('X-Coludo-Uptime-Us'));
+      const fresh = !previewFrames.length || uptime !== previewFrames[previewFrames.length - 1];
+      if (fresh) {
+        const old = image.src;
+        image.src = URL.createObjectURL(await reply.blob());
+        if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+        previewFrames.push(uptime);
+      }
       image.style.display = '';
-      line.textContent = previewBoard + ' ' + new Date().toLocaleTimeString() + (previewStarted ? ' (camera on for the preview)' : '');
+      // the rate over the last ten frames, by the board's own clock
+      const recent = previewFrames.slice(-10);
+      const span = (recent[recent.length - 1] - recent[0]) / 1e6;
+      const fps = recent.length > 1 && span > 0 ? ((recent.length - 1) / span).toFixed(2) + ' fps' : '— fps';
+      line.textContent = previewBoard + ' ' + new Date().toLocaleTimeString() + ' · frame ' + previewFrames.length +
+        ' · ' + fps + (previewStarted ? ' (camera on for the preview)' : '');
     } catch (error) {
       line.textContent = 'preview: ' + error;
     }

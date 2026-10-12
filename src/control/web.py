@@ -34,15 +34,16 @@ def _load_page(path: str = None) -> str:
         return '<!doctype html><title>Coludo</title><h1>Coludo Control</h1><p>static page missing</p>'
 
 
-async def _send(writer, status: int, content_type: str, body) -> None:
+async def _send(writer, status: int, content_type: str, body, headers: tuple = ()) -> None:
     if isinstance(body, str):
         body = body.encode()
     # NO-CACHE on everything. The dashboard is a live operator surface: a browser holding a stale copy
     # shows stale controls, and the failure is silent -- an edited page that simply never appears.
+    extra = ''.join('%s: %s\r\n' % header for header in headers)
     head = (
         'HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n'
-        'Cache-Control: no-store\r\nConnection: close\r\n\r\n'
-        % (status, _REASON.get(status, 'OK'), content_type, len(body))
+        'Cache-Control: no-store\r\nConnection: close\r\n%s\r\n'
+        % (status, _REASON.get(status, 'OK'), content_type, len(body), extra)
     )
     writer.write(head.encode() + body)
     await writer.drain()
@@ -62,7 +63,8 @@ async def _fetch(host: str, port: int, path: str) -> tuple:
     One HTTP/1.0 GET straight to a board (no proxy: the host's http_proxy hijacks the panda net).
 
     Returns:
-        (status, body bytes). Raises ValueError on a reply that is no HTTP, OSError when it will not connect.
+        (status, body bytes, the board's X-Coludo-Uptime-Us or None). Raises ValueError on a reply that is no HTTP,
+        OSError when it will not connect.
     """
     reader, writer = await asyncio.open_connection(host, port)
     try:
@@ -83,7 +85,12 @@ async def _fetch(host: str, port: int, path: str) -> tuple:
         raise ValueError('no HTTP reply')
     if b'transfer-encoding: chunked' in head.lower():
         body = _unchunk(body)
-    return int(status_line[1]), body
+    uptime = None
+    for line in head.split(b'\r\n')[1:]:
+        name, _, value = line.partition(b':')
+        if name.strip().lower() == b'x-coludo-uptime-us':
+            uptime = value.strip().decode(errors='replace')
+    return int(status_line[1]), body, uptime
 
 
 def _whole(reply: bytes) -> bool:
@@ -228,14 +235,15 @@ class Web:
             return await _send_json(writer, 404, {'error': 'no online board %r' % board_id})
         host = board.peer.rsplit(':', 1)[0]
         try:
-            status, body = await asyncio.wait_for(_fetch(host, _BOARD_FILES_PORT, '/camera/preview.jpg'),
-                                                  _PREVIEW_TIMEOUT_S)
+            status, body, uptime = await asyncio.wait_for(_fetch(host, _BOARD_FILES_PORT, '/camera/preview.jpg'),
+                                                          _PREVIEW_TIMEOUT_S)
         except (OSError, asyncio.TimeoutError, ValueError) as error:
             return await _send_json(writer, 502, {'error': 'the board did not answer: %s' % (error or 'timeout')})
         if status != 200:
             return await _send_json(writer, 404 if status == 404 else 502,
                                     {'error': body.decode(errors='replace').strip() or 'HTTP %d' % status})
-        return await _send(writer, 200, 'image/jpeg', body)
+        # the frame's uptime on the board: the dashboard counts new frames by it (a repeated fetch is no new frame)
+        return await _send(writer, 200, 'image/jpeg', body, (('X-Coludo-Uptime-Us', uptime),) if uptime else ())
 
     async def _api_board(self, board_id: str, writer) -> None:
         """
