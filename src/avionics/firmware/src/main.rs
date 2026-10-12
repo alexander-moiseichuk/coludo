@@ -349,7 +349,7 @@ fn main() -> anyhow::Result<()> {
     credentials.register_commands();
     link::register_commands();
     if sd_mounted {
-        firmware::sd::register_commands();
+        firmware::sd::register_commands(board.session.clone());
         // the camera's one owner: the flight recording by the flight word, and `video start`/`stop` through its
         // mailbox
         if let Some(camera) = camera

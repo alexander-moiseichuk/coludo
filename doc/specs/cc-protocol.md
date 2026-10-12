@@ -304,7 +304,15 @@ with a space, parsed by the same parser.
   So `video start fps=25` works from the hub (`cc.py <board> video start fps=25`), and `stage`, `health` and the
   rest work from the console.
 - **Components own their commands.** Each component registers its commands when it activates:
-  - the SD card when it mounts: `sdtest`, `video start|stop|stats`;
+  - the SD card when it mounts: `sdtest`, `video start|stop|stats`, and the card's files (the flight recorder's
+    console has the same three):
+    - `ls path=<dir>`: `ok {"path": ..., "entries": [[name, bytes], [name/, null], ...]}`, the root's `videos/`
+      listed on a two-partition card although partition 1 does not hold it;
+    - `df`: `ok df layout=<one_partition|two_partitions|...> recordings=<free>/<total> [videos=<free>/<total>]`
+      in MB, measured now;
+    - `rm path=<path> confirm` (SETTING only): a file, or a directory with all it holds. It refuses the root,
+      `..`, this boot's session directories and any directory holding one (`videos` too): the ring_saver and the
+      camera write there now. How the HITL runs clear a card before a test (the operator, 2026-10-11);
   - the diagnostics: `load`, `pace`;
   - the credential store: `wifi`;
   - the C6 link: `c6reset`;
@@ -322,7 +330,8 @@ with a space, parsed by the same parser.
   - A command whose arguments must never cross the network is console only (`wifi`: the hub logs every line).
     The board then answers the hub `err unsafe <command> is console only`. The hub has still logged the line,
     so never type a password at the hub.
-  - A command that takes the board away needs the word `confirm` (`panic confirm`, `c6reset confirm`).
+  - A command that takes the board away needs the word `confirm` (`panic confirm`, `c6reset confirm`), and so
+    does one whose work cannot be undone (`rm path=... confirm`); the refusal says which.
   - A bus diagnostic (`i2c read`, `i2c touch`, `i2c general-call`, `imu mute`) also refuses while armed, `err unsafe
     refused -- armed (bus diagnostics only while disarmed)`: it holds a bus owner off its parts, so never in the
     last seconds on the pad (M9). `bustune` (a CC command) runs armed only back to the bus's configured clock, so an

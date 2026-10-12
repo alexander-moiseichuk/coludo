@@ -1,7 +1,8 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The microSD card (components/sd_card): mount once at boot, name the card by its FAT volume serial, report free
-//! space, and a write test an operator can run from the console.
+//! space, a write test an operator can run from the console, and the card's files from the console or the hub: `ls`,
+//! `df`, `rm` (the flight recorder's console has the same three, src/avionics/recorder).
 //!
 //! The card holds one or two FAT volumes (doc/specs/avionics-port.md "SD and flash file layout"): partition 1, the
 //! recordings, at [`MOUNT`] (`/sdcard`), and on a two-partition card partition 2, the videos, at [`videos_mount`]
@@ -17,7 +18,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use esp_idf_svc::sys;
 use recorder::layout;
 
-use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach};
+use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach, Word};
 
 /// The last measured free space in MB of the recordings volume, the one the ring_saver writes (u32::MAX = unknown):
 /// health's `sd_free_mb`. Not both volumes together: a full recordings partition stops the recordings while the
@@ -243,43 +244,196 @@ pub fn write_test(megabytes: usize, kilobytes_per_second: Option<u32>) -> anyhow
     result
 }
 
-/// The card's console command (the Glider Command Language, crate::gcl), registered when the card mounts.
-pub fn register_commands() {
-    gcl::register(vec![Command {
-        owner: "sd",
-        words: "sdtest",
-        about: "write to the card and report the sustained rate and the worst single write (the ring sizes this)",
-        gate: Gate::Setting,
-        reach: Reach::Everywhere,
-        parameters: &[
-            Parameter {
-                name: "megabytes",
-                kind: Kind::Integer { low: 1, high: 1024 },
-                default: Some("16"),
-                about: "how much to write",
-            },
-            Parameter {
-                name: "rate",
-                kind: Kind::Integer { low: 0, high: 100_000 },
-                default: Some("0"),
-                about: "pace the writes at this many KB/s (the video case is ~1000 at 8 Mbit/s); 0 writes flat out",
-            },
-        ],
-        bare_words: &[],
-        run: Box::new(|arguments| {
-            let rate = arguments.integer("rate");
-            let pace = (rate > 0).then_some(rate as u32);
-            match write_test(arguments.integer("megabytes") as usize, pace) {
-                Ok(test) => cc_protocol::build(
-                    "ok",
-                    &["sdtest"],
-                    &[
-                        ("rate_mbs", &format!("{:.2}", test.rate)),
-                        ("worst_ms", &format!("{:.1}", test.worst_write_ms)),
-                    ],
-                ),
-                Err(error) => cc_protocol::build("err", &["sdtest", &error.to_string()], &[]),
-            }
-        }),
-    }]);
+/// One directory's entries: `[name, bytes]` for a file, `[name/, null]` for a directory, as `ls` answers them.
+///
+/// Args:
+/// * `relative` - the directory from the card's root (`/` or empty for the root).
+///
+/// Returns the JSON reply's `entries`. Errors: `..` in the path, or the directory would not read (the error says
+/// why: a missing one, a file).
+fn list(relative: &str) -> Result<Vec<serde_json::Value>, String> {
+    let relative = relative.trim_matches('/');
+    if relative.split('/').any(|part| part == "..") {
+        return Err("no .. in a path".into());
+    }
+    let path = if relative.is_empty() {
+        MOUNT.to_string()
+    } else {
+        format!("{MOUNT}/{relative}")
+    };
+    let entries = std::fs::read_dir(&path).map_err(|error| format!("{path}: {error}"))?;
+    let mut listed = Vec::new();
+    let mut videos_listed = false;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        videos_listed |= name.eq_ignore_ascii_case(layout::VIDEOS); // FAT folds case
+        match entry.metadata() {
+            Ok(metadata) if metadata.is_dir() => listed.push(serde_json::json!([format!("{name}/"), null])),
+            Ok(metadata) => listed.push(serde_json::json!([name, metadata.len()])),
+            Err(error) => listed.push(serde_json::json!([name, error.to_string()])),
+        }
+    }
+    // the videos partition is mounted at the root's `videos`, a mount point partition 1 does not list
+    if relative.is_empty() && videos_mounted() && !videos_listed {
+        listed.push(serde_json::json!([format!("{}/", layout::VIDEOS), null]));
+    }
+    Ok(listed)
+}
+
+/// Removes a file, or a directory with all it holds, from the card.
+///
+/// Args:
+/// * `relative` - the path from the card's root.
+/// * `session` - this boot's session: its directories are refused, and so is any directory that holds one (the
+///   root, `videos`): the ring_saver and the camera write there now.
+///
+/// Returns the path removed, as the card names it. Errors: the path is refused, or it would not go (a file a writer
+/// holds open answers busy).
+fn remove(relative: &str, session: &str) -> Result<String, String> {
+    let relative = relative.trim_matches('/');
+    if relative.is_empty() || relative.split('/').any(|part| part.is_empty() || part == "..") {
+        return Err(format!("{relative:?} is the card's root, or not a path on it"));
+    }
+    // ancestor-or-self either way, in any case (FAT folds case)
+    let related = |live: &str| {
+        let (path, live) = (relative.to_ascii_lowercase(), live.to_ascii_lowercase());
+        path == live || live.starts_with(&format!("{path}/")) || path.starts_with(&format!("{live}/"))
+    };
+    for kind in [layout::RECORDINGS, layout::VIDEOS] {
+        let live = layout::directory(session, kind);
+        let live = if kind == layout::VIDEOS {
+            live
+        } else {
+            live.split('/').next().unwrap_or("").to_string()
+        };
+        if related(&live) {
+            return Err(format!(
+                "{relative} holds or is in this session's {live}, which is being written"
+            ));
+        }
+    }
+    let path = format!("{MOUNT}/{relative}");
+    let removed = match std::fs::metadata(&path) {
+        Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(&path),
+        Ok(_) => std::fs::remove_file(&path),
+        Err(error) => Err(error),
+    };
+    removed.map_err(|error| format!("{path}: {error}"))?;
+    let volumes = measure_free();
+    log::info!("sd :: removed {path}: {}", describe(&volumes));
+    Ok(relative.to_string())
+}
+
+/// `rm`'s word: nothing removed comes back.
+const RM_CONFIRM: Word = Word {
+    name: "confirm",
+    about: "required: what it removes is gone for good",
+};
+
+/// The card's console commands (the Glider Command Language, crate::gcl), registered when the card mounts.
+///
+/// Args:
+/// * `session` - this boot's session, which `rm` refuses.
+pub fn register_commands(session: String) {
+    gcl::register(vec![
+        Command {
+            owner: "sd",
+            words: "ls",
+            about: "a directory of the card: [name, bytes] per file, [name/, null] per directory",
+            gate: Gate::Open,
+            reach: Reach::Everywhere,
+            parameters: &[Parameter {
+                name: "path",
+                kind: Kind::Text,
+                default: Some("/"),
+                about: "the directory from the card's root: <session>/recordings, videos/<session>",
+            }],
+            bare_words: &[],
+            run: Box::new(|arguments| {
+                let path = arguments.text("path");
+                match list(path).and_then(|entries| {
+                    serde_json::to_string(&serde_json::json!({"path": path, "entries": entries}))
+                        .map_err(|error| error.to_string())
+                }) {
+                    Ok(json) => cc_protocol::build("ok", &[&json], &[]),
+                    Err(error) => cc_protocol::build("err", &["ls", &error], &[]),
+                }
+            }),
+        },
+        Command {
+            owner: "sd",
+            words: "df",
+            about: "the card's size and free space per volume (recordings; videos on a two-partition card)",
+            gate: Gate::Open,
+            reach: Reach::Everywhere,
+            parameters: &[],
+            bare_words: &[],
+            run: Box::new(|_| {
+                let volumes = measure_free();
+                let mut named = vec![("layout", layout().map_or("none", Layout::name).replace(' ', "_"))];
+                for (name, space) in [("recordings", volumes.recordings), ("videos", volumes.videos)] {
+                    if let Some(space) = space {
+                        named.push((name, format!("{}/{}", space.free_megabytes, space.total_megabytes)));
+                    }
+                }
+                let named: Vec<(&str, &str)> = named.iter().map(|(name, value)| (*name, value.as_str())).collect();
+                cc_protocol::build("ok", &["df"], &named)
+            }),
+        },
+        Command {
+            owner: "sd",
+            words: "rm",
+            about: "remove a file, or a directory with all it holds; never this session's own directories",
+            gate: Gate::Setting,
+            reach: Reach::Everywhere,
+            parameters: &[Parameter {
+                name: "path",
+                kind: Kind::Text,
+                default: None,
+                about: "the path from the card's root: <session>, videos/<session>, a file",
+            }],
+            bare_words: &[RM_CONFIRM],
+            run: Box::new(move |arguments| match remove(arguments.text("path"), &session) {
+                Ok(path) => cc_protocol::build("ok", &["rm"], &[("path", &path)]),
+                Err(error) => cc_protocol::build("err", &["rm", &error], &[]),
+            }),
+        },
+        Command {
+            owner: "sd",
+            words: "sdtest",
+            about: "write to the card and report the sustained rate and the worst single write (the ring sizes this)",
+            gate: Gate::Setting,
+            reach: Reach::Everywhere,
+            parameters: &[
+                Parameter {
+                    name: "megabytes",
+                    kind: Kind::Integer { low: 1, high: 1024 },
+                    default: Some("16"),
+                    about: "how much to write",
+                },
+                Parameter {
+                    name: "rate",
+                    kind: Kind::Integer { low: 0, high: 100_000 },
+                    default: Some("0"),
+                    about: "pace the writes at this many KB/s (the video case is ~1000 at 8 Mbit/s); 0 writes flat out",
+                },
+            ],
+            bare_words: &[],
+            run: Box::new(|arguments| {
+                let rate = arguments.integer("rate");
+                let pace = (rate > 0).then_some(rate as u32);
+                match write_test(arguments.integer("megabytes") as usize, pace) {
+                    Ok(test) => cc_protocol::build(
+                        "ok",
+                        &["sdtest"],
+                        &[
+                            ("rate_mbs", &format!("{:.2}", test.rate)),
+                            ("worst_ms", &format!("{:.1}", test.worst_write_ms)),
+                        ],
+                    ),
+                    Err(error) => cc_protocol::build("err", &["sdtest", &error.to_string()], &[]),
+                }
+            }),
+        },
+    ]);
 }

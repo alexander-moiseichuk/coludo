@@ -305,12 +305,13 @@ fn parse(command: &Command, message: &cc_protocol::Message, consumed: usize) -> 
         };
         words.push(word.name);
     }
-    let needs_confirm = command.bare_words.iter().any(|word| word.name == CONFIRM.name);
-    if needs_confirm && !words.contains(&CONFIRM.name) {
-        return Err(format!(
-            "{} needs the word confirm: it takes the board away",
-            command.words
-        ));
+    // its own word's reason: `rm` takes files away, not the board
+    let confirm = command.bare_words.iter().find(|word| word.name == CONFIRM.name);
+    if let Some(confirm) = confirm
+        && !words.contains(&CONFIRM.name)
+    {
+        let why = confirm.about.trim_start_matches("required: ");
+        return Err(format!("{} needs the word confirm: {why}", command.words));
     }
     Ok(Arguments { values, words })
 }

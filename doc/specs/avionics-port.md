@@ -2104,6 +2104,17 @@ Partition 2, the videos (mounted at /sdcard/videos):
     was reverted: internal RAM comes before Wi-Fi speed (§4.7). Also seen once on the taster in this run: `H_SDIO_DRV: task still writing Rx data to queue!`. esp_hosted
     drops a whole received chunk when its copy task has not finished the last one (`sdio_drv.c:1084`), and the copy
     is now PSRAM to PSRAM beside the encoder. TCP retransmits it; an RPC frame to the C6 has no retransmit.
+- **Next: the A/B under a HITL flight (operator, 2026-10-11).** The bench load above is video + `ring load` +
+  pulls; a flight adds the control loop, whose lateness is the latency that matters. So: the same HITL scenario on
+  both layouts with video recording through the flight (a real flight records from the rod trigger), several runs
+  each, then the layouts swapped between the cards (the operator re-prepares them) to part card from layout. Compare
+  the control tick's lateness and overruns, the saver's backlog, the video's missed and dropped frames, SD write max
+  and busy share.
+  - **The decision rule (operator):** if two partitions are not clearly better on I/O and latency, one partition
+    wins: it is the more space-efficient (no fixed split between recordings and videos), and every session keeps
+    all its data in one directory, `<session>/recordings/`, `<session>/videos/`, `<session>/<kind>/`, so a session
+    is pulled, listed and removed as one. That moves videos from `videos/<session>/` into the session's directory
+    (`layout::directory`), and two-partition cards stay readable by the tools.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
   partition 1. A session is `GET /sd/<session>/recordings/`, its videos `GET /sd/videos/<session>/`.
 - **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and
