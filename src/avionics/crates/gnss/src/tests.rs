@@ -717,3 +717,157 @@ fn a_line_is_counted_decoded_stripped_and_followed_by_a_sweep() {
         }]
     );
 }
+
+/// The NEO-M8N's binary path (M16): a NAV-PVT fills what an RMC and a GGA fill, a NAV-SAT the sky.
+mod ubx_path {
+    use super::super::ubx::{self, Answer, Message, Pvt};
+    use super::super::{Event, Gnss, Sentence};
+    use control::navigation::Position;
+    use sequencer::Stage;
+
+    /// A NAV-PVT message of `fix_type`/`flags` at `altitude_mm`.
+    fn pvt(fix_type: u8, flags: u8, altitude_mm: i32) -> Message {
+        let mut payload = vec![0_u8; 92];
+        payload[20] = fix_type;
+        payload[21] = flags;
+        payload[23] = 11;
+        payload[24..28].copy_from_slice(&115_167_000_i32.to_le_bytes());
+        payload[28..32].copy_from_slice(&481_173_000_i32.to_le_bytes());
+        payload[36..40].copy_from_slice(&altitude_mm.to_le_bytes());
+        payload[60..64].copy_from_slice(&2_572_i32.to_le_bytes());
+        payload[64..68].copy_from_slice(&9_000_000_i32.to_le_bytes());
+        payload[76..78].copy_from_slice(&95_u16.to_le_bytes());
+        Message {
+            class: ubx::NAVIGATION_CLASS,
+            id: ubx::PVT,
+            payload,
+        }
+    }
+
+    const SECOND: u64 = 1_000_000;
+
+    #[test]
+    fn a_3d_fix_publishes_what_rmc_and_gga_publish() {
+        let mut gnss = Gnss::new();
+        let (update, answer) = gnss.message(&pvt(3, 1, 12_500), SECOND);
+        assert_eq!(answer, None);
+        assert_eq!(
+            update.position,
+            Some(Position {
+                latitude_e7: 481_173_000,
+                longitude_e7: 115_167_000
+            })
+        );
+        assert_eq!(update.speed_ms, Some(2.572));
+        assert_eq!(update.course_deg, Some(90.0));
+        assert_eq!(
+            (update.altitude_m, update.elevation_m),
+            (Some(12.5), Some(0.0)),
+            "the first altitude is the ground"
+        );
+        let fix_row = update.fix_row.expect("a fix row");
+        assert!((fix_row.speed_knots - 5.0).abs() < 0.001, "the legacy row keeps knots");
+        let gga_row = update.gga_row.expect("a GGA row");
+        assert_eq!((gga_row.quality, gga_row.satellites, gga_row.hdop_centi), (1, 11, 95));
+        assert!(gnss.fix());
+        assert_eq!(gnss.lines(), 1);
+        // the next solution's elevation is above that ground
+        let (update, _) = gnss.message(&pvt(3, 1, 20_000), 2 * SECOND);
+        assert_eq!(update.elevation_m, Some(7.5));
+    }
+
+    #[test]
+    fn no_fix_publishes_the_quality_alone() {
+        // NEGATIVE: gnssFixOK clear: no position, no speed, no altitude; the GGA row still says quality 0
+        let mut gnss = Gnss::new();
+        let (update, _) = gnss.message(&pvt(3, 0, 12_500), SECOND);
+        assert_eq!(
+            (update.position, update.speed_ms, update.altitude_m),
+            (None, None, None)
+        );
+        let gga_row = update.gga_row.expect("a GGA row");
+        assert_eq!((gga_row.quality, gga_row.altitude_m), (0, 0.0));
+        assert!(!gnss.fix());
+    }
+
+    #[test]
+    fn a_2d_fix_has_no_altitude() {
+        // NEGATIVE: a 2D solution's height is not measured
+        let mut gnss = Gnss::new();
+        let (update, _) = gnss.message(&pvt(2, 1, 12_500), SECOND);
+        assert!(update.position.is_some());
+        assert_eq!((update.altitude_m, update.elevation_m), (None, None));
+    }
+
+    #[test]
+    fn a_silent_pvt_is_an_outage_and_nmea_is_never_lost() {
+        let mut gnss = Gnss::new();
+        gnss.message(&pvt(3, 1, 0), SECOND);
+        assert_eq!(gnss.sweep(3 * SECOND), Vec::<Event>::new(), "quiet 2 s: no outage yet");
+        assert_eq!(
+            gnss.sweep(5 * SECOND),
+            [Event::Lost {
+                sentence: Sentence::Pvt,
+                quiet_ms: 4000
+            }],
+            "PVT alone: RMC and GGA were never heard"
+        );
+        let (update, _) = gnss.message(&pvt(3, 1, 0), 6 * SECOND);
+        assert_eq!(
+            update.events,
+            [Event::Back {
+                sentence: Sentence::Pvt,
+                after_ms: 5000
+            }]
+        );
+        assert_eq!(update.events[0].to_string(), "PVT back after 5000 ms");
+    }
+
+    #[test]
+    fn a_sat_is_the_sky_burst() {
+        let mut gnss = Gnss::new();
+        gnss.message(&pvt(3, 1, 0), SECOND);
+        let mut payload = vec![0_u8; 8];
+        payload[5] = 3;
+        for (cn0, used) in [(41_u8, true), (37, true), (0, false)] {
+            let mut block = [0_u8; 12];
+            block[2] = cn0;
+            block[8] = if used { 0x0F } else { 0x01 };
+            payload.extend_from_slice(&block);
+        }
+        let sat = Message {
+            class: ubx::NAVIGATION_CLASS,
+            id: ubx::SAT,
+            payload,
+        };
+        gnss.message(&sat, 2 * SECOND);
+        assert!(
+            gnss.tick(2 * SECOND + 400_000, Stage::Setting).sky_row.is_none(),
+            "inside the burst's quiet"
+        );
+        let tick = gnss.tick(3 * SECOND, Stage::Setting);
+        let row = tick.sky_row.expect("the burst's row");
+        assert_eq!((row.in_view, row.used, row.mode, row.cn0), (3, 2, 3, [41, 37, 0, 0]));
+        assert!(matches!(tick.events.as_slice(), [Event::FirstSkyView(_)]));
+    }
+
+    #[test]
+    fn an_ack_comes_back_as_its_answer() {
+        let mut gnss = Gnss::new();
+        let nak = Message {
+            class: ubx::ACKNOWLEDGEMENT_CLASS,
+            id: ubx::NAK,
+            payload: vec![0x06, 0x24],
+        };
+        let (update, answer) = gnss.message(&nak, SECOND);
+        assert_eq!(answer, Some(Answer::Refused(0x06, 0x24)));
+        assert_eq!(update.position, None);
+        // NEGATIVE: a damaged PVT (short) changes nothing but the count
+        let mut short = pvt(3, 1, 0);
+        short.payload.truncate(84);
+        let (update, _) = gnss.message(&short, 2 * SECOND);
+        assert_eq!((update.position, update.gga_row), (None, None));
+        assert_eq!(gnss.lines(), 2);
+        assert!(Pvt::decode(&short.payload).is_none());
+    }
+}

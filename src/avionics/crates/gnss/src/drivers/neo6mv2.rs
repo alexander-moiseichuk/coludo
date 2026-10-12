@@ -14,9 +14,6 @@ use crate::{DIAGNOSTICS_S, SkySwitch, nmea};
 /// The pause between two setup frames, in milliseconds (plan B's `_configure`).
 pub const SEND_GAP_MS: u32 = 40;
 
-/// UBX's two sync characters, `µb`.
-const SYNC: [u8; 2] = [0xB5, 0x62];
-
 /// UBX-CFG, the configuration class.
 const CONFIGURATION_CLASS: u8 = 0x06;
 
@@ -49,18 +46,7 @@ const RATE_CAP: i32 = 255;
 ///
 /// Panics when the payload is longer than UBX's u16 length can say (65535 bytes); the frames here are 6 and 36.
 pub fn ubx(class: u8, id: u8, payload: &[u8]) -> Vec<u8> {
-    let length = u16::try_from(payload.len()).expect("a UBX payload fits its u16 length");
-    let mut frame = Vec::with_capacity(payload.len() + 8);
-    frame.extend_from_slice(&SYNC);
-    frame.extend_from_slice(&[class, id]);
-    frame.extend_from_slice(&length.to_le_bytes());
-    frame.extend_from_slice(payload);
-    let (first, second) = frame[SYNC.len()..].iter().fold((0_u8, 0_u8), |(first, second), byte| {
-        let first = first.wrapping_add(*byte);
-        (first, second.wrapping_add(first))
-    });
-    frame.extend_from_slice(&[first, second]);
-    frame
+    crate::ubx::frame(class, id, payload)
 }
 
 /// The setup frames for `hz` fixes per second, in send order (plan B `_commands`).

@@ -5774,7 +5774,11 @@ This crate is the receiver's logic, with no UART and no clock: the firmware's gn
 read and the time ([`Gnss::line`]), runs the 1 s tick ([`Gnss::tick`]), and publishes what comes back: an
 [`Update`] (the channel values, the `<name>.csv` and `<name>_gga.csv` rows, the events) and a [`Tick`] (the
 events, the sky switch frame to write, the `<name>_sky.csv` row). The module-specific sentence selection and
-rate are the drivers' command bytes ([`drivers::atgm336h`], [`drivers::neo6mv2`]).
+rate are the drivers' command bytes ([`drivers::atgm336h`], [`drivers::neo6mv2`], [`drivers::neom8n`]).
+
+The NEO-M8N delivers binary instead (M16, [`ubx`]): the thread hands in each UBX frame ([`Gnss::message`]), and a
+NAV-PVT fills the same [`Update`] an RMC and a GGA fill (the position, the speed and course, the altitude and
+elevation, both rows), a NAV-SAT the sky row. The outage events watch PVT as they watch RMC and GGA.
 
 Positions are [`Position`] integers in 1e-7 degree, parsed straight from the ddmm.mmmm digits
 ([`degrees_e7`]): plan B's board is single precision, where an f32 degree at latitude 48 has a 0.42 m ulp. The
@@ -5793,8 +5797,8 @@ Deliberate differences from plan B (marked in the golden fixture or covered by t
    `nan`), but an underscore between digits, which Python accepts, is malformed here;
  * the outage sweep reports RMC before GGA (CPython's dict order; a board's MicroPython dict has its own).
 
-Not ported: the UART, `probe()` and `diagnose()` (the firmware's I/O), inspect's databoard values (the channels
-are the firmware's), and the UBX NAV-PVT path for the NEO-M8N (M16).
+Not ported: the UART, `probe()` and `diagnose()` (the firmware's I/O), and inspect's databoard values (the
+channels are the firmware's).
 
 ### `pub enum Antenna`
 
@@ -5809,8 +5813,10 @@ rows carry 0.
 
 The sentences watched for an outage. RMC and GGA are tracked apart because they fail apart: a receiver holding
 almanac but no fix keeps emitting GGA (quality 0) while RMC goes void, and a selection mistake can silence one.
+The NEO-M8N's UBX-NAV-PVT carries both in one message, watched as PVT. A sentence never heard is never lost, so
+each module's outages name its own.
 
-- `fn name(self) -> &'static str` — The sentence's type as NMEA spells it.
+- `fn name(self) -> &'static str` — The sentence's type as NMEA spells it (PVT: UBX's message name).
 
 ### `pub struct SkyRow`
 
@@ -5864,6 +5870,9 @@ The receiver: plan B's Gnss task state, without the UART.
 - `fn new() -> Gnss` — A receiver as its setup leaves it: nothing heard, the diagnostics on.
 - `fn line(&mut self, raw: &[u8], now_us: u64) -> Update` — One line as the UART gave it (plan B's run loop body): count it, decode it, strip it, parse it, then sweep for outages (on every line, so a sentence that stopped is seen even while another flows).
 - `fn parse(&mut self, line: &str, now_us: u64) -> Update` — Parse one NMEA sentence (plan B `_parse`): RMC -> the fix, GGA -> the altitude and quality, GSV/GSA/TXT -> the sky. A sentence without '$' or with a bad checksum is ignored. A malformed field drops the rest of the line, keeping what was already applied, as plan B does.
+- `fn message(&mut self, message: &ubx::Message, now_us: u64) -> (Update, Option<ubx::Answer>)` — One UBX frame as the NEO-M8N delivered it (M16): count it, apply a NAV-PVT ([`Gnss::pvt`]) or a NAV-SAT ([`Gnss::sat`]), hand back an ACK's answer, then sweep for outages, as [`Gnss::line`] does for a line. Any other message is counted and ignored.
+- `fn pvt(&mut self, pvt: &ubx::Pvt, now_us: u64) -> Update` — One navigation solution: what an RMC and a GGA give together. The fix flag, quality, satellites and the DOP always (the position DOP stands in for HDOP: NAV-PVT carries no horizontal one); with a fix the position, the ground speed and the heading of motion, and the fix row; with a 3D fix the altitude and the elevation above the first one; the GGA row on every solution, as on every GGA.
+- `fn sat(&mut self, sat: ubx::Sat, now_us: u64)` — One sky view: it stands for the GSV and GSA burst, and restarts the burst's quiet clock (one message is the whole burst).
 - `fn sky_row(&self) -> SkyRow` — The sky as the `<name>_sky.csv` row (plan B `_sky_row`): each talker's last whole group and each system's last GSA count; all zeros before the first diagnostics.
 - `fn settle(&mut self, now_us: u64) -> Option<(SkyRow, Option<Event>)>` — Push the sky row once a burst is over (plan B `_settle`): on the first tick that finds diagnostics no row carries yet AND none of them in the last half second.
 - `fn sky_window(&mut self, stage: Stage) -> Option<(SkyFrame, Event)>` — Keep the diagnostics to the pad (plan B `_sky_window`): on before BOOSTING and again from DONE, off from BOOSTING until DONE. Only a change writes, one write per edge; the frame is the driver's, made at setup. Returns the frame and its event at an edge, None while the window holds.
@@ -5911,9 +5920,10 @@ command is).
 
 ## `gnss::drivers`
 
-The GNSS module drivers (src/glider drivers/atgm336h.py, drivers/neo6mv2.py): the bytes each module's setup
-sends, and the sky switch pair it keeps. Both share the NMEA receiver of the crate root; they differ only in how
-they configure the module. Either sits on the same UART: the board config's `driver` picks one.
+The GNSS module drivers (src/glider drivers/atgm336h.py, drivers/neo6mv2.py; the NEO-M8N's is the port's own, M16):
+the bytes each module's setup sends, and the sky switch pair it keeps. The ATGM336H and the NEO-6M share the NMEA
+receiver of the crate root; the NEO-M8N delivers UBX ([`crate::ubx`]). Each sits on the same UART: the board
+config's `driver` picks one.
 
 ## `gnss::drivers::atgm336h`
 
@@ -5979,6 +5989,132 @@ yet.
 ### Constants
 
 - `const SEND_GAP_MS: u32 = 40` — The pause between two setup frames, in milliseconds (plan B's `_configure`).
+
+## `gnss::drivers::neom8n`
+
+_Tested by its own `mod tests`._
+
+The u-blox NEO-M8N (M16): binary delivery. Plan B had no driver for it (its NEO-M8N ran as the NEO-6M, on NMEA);
+this one switches the module's UART to UBX only and reads the navigation solution as one UBX-NAV-PVT per epoch
+(crate::ubx), so no epoch is half delivered and no text is parsed. Every frame is UBX:
+
+* UBX-CFG-PRT: UART1 at [`BAUD`] (8N1), UBX and NMEA taken in, UBX only out. 9600 baud carries a 100-byte NAV-PVT
+  at most ~9 times a second with nothing else, so the port goes up first;
+* UBX-CFG-RATE: the measurement period (the entry's `hz`; the M8N runs GPS + GLONASS at up to 10 Hz);
+* UBX-CFG-NAV5: the airborne <4g dynamic model, the NEO-6M driver's (drivers::neo6mv2 says why);
+* UBX-CFG-MSG: NAV-PVT on every solution, and NAV-SAT every `hz` x 10 s, the sky diagnostics (its switch).
+
+Each frame is answered with an ACK-ACK or an ACK-NAK, which the firmware logs: the NMEA path could only tell a
+refusal from a `$GPTXT ... inv format`.
+
+**The baud after a P4 reboot (autobaud):** the module keeps the port settings until its own power cycle, so a P4
+that reboots while the module stays powered finds it at [`BAUD`], not at its power-on 9600. The firmware writes
+the CFG-PRT frame at both rates ([`port`] at [`BAUD`] first, then at the power-on rate) and talks at [`BAUD`]
+after: whichever rate the module listens at, one copy lands, and the other is noise it drops.
+
+### `pub fn port(baud: u32) -> Vec<u8>`
+
+The CFG-PRT frame: UART1 at `baud`, 8N1, UBX and NMEA in, UBX out.
+
+### `pub fn commands(hz: i32) -> [Vec<u8>; 4]`
+
+The setup frames after the port's ([`port`]), at `hz` solutions per second, in send order: the period, the
+dynamic model, NAV-PVT on every solution, NAV-SAT every 10 s.
+
+### `pub fn sky_switch(hz: i32) -> SkySwitch`
+
+The sky switch for `hz`: NAV-SAT off for the flight, back every 10 s on the pad.
+
+### Constants
+
+- `const SEND_GAP_MS: u32 = 40` — The pause between two setup frames, ms: the module answers each with its ACK first.
+- `const BAUD: u32 = 38_400` — The UART's rate after the configuration: NAV-PVT (100 bytes) at 10 Hz and a NAV-SAT (~300 bytes) every 10 s use about a quarter of it.
+
+## `gnss::ubx`
+
+_Tested by its own `mod tests`._
+
+u-blox's binary protocol (UBX), the NEO-M8N's delivery (M16): a frame is `µb`, the class and the id, the
+little-endian payload length, the payload, and the 8-bit Fletcher checksum over class..payload ([`frame`] builds
+one, [`Frames`] finds them in the byte stream). What the receiver reads of it:
+* UBX-NAV-PVT ([`Pvt`]): the whole navigation solution in one message per epoch -- the time, the fix type and
+  flags, the satellites used, the position already in 1e-7 degree integers, the heights in mm, the NED velocity,
+  the ground speed and the heading of motion, the position DOP. It replaces NMEA's RMC + GGA pair: one message, so
+  no epoch is ever half delivered, and no text to parse;
+* UBX-NAV-SAT ([`Sat`]): every satellite tracked, its C/N0 and whether the solution uses it: the sky diagnostics
+  (NMEA's GSV + GSA);
+* UBX-ACK-ACK / ACK-NAK: the module's answer to each configuration frame;
+* UBX-MON-VER ([`Version`]): the module's own name for itself, its answer to the poll [`frame`] with no payload
+  makes: proof that it hears the board, and which receiver it is (a clone shows here).
+
+The layouts are the u-blox 8 / M8 Receiver Description's (protocol 15 and later). Integers only: the position
+never passes through a float (`Position`'s 1e-7 degree, as the NMEA path keeps it).
+
+### `pub struct Message`
+
+A frame's class, id and payload, its checksum passed.
+
+### `pub struct Frames`
+
+The UBX frames in a byte stream, found byte by byte: anything between frames (the module's NMEA before its
+configuration took, line noise) is skipped, and a frame whose checksum fails is dropped and counted.
+
+- `fn new() -> Frames` — Nothing heard yet.
+- `fn push(&mut self, byte: u8) -> Option<Message>` — One byte: the frame it completes, if any.
+- `fn rejected(&self) -> u32` — Frames dropped so far: a failed checksum, or a length past [`MAXIMUM_PAYLOAD`].
+
+### `pub struct Pvt`
+
+One UBX-NAV-PVT: the navigation solution of one epoch.
+
+- `fn decode(payload: &[u8]) -> Option<Pvt>` — The payload of a NAV-PVT, None when it is not one (a short or long payload).
+- `fn fixed(&self) -> bool` — Whether the solution is a fix to use: gnssFixOK, and a 2D, 3D or GNSS + dead-reckoning fix (NMEA RMC's `A`).
+- `fn quality(&self) -> i32` — The fix quality as GGA spells it: 0 none, 1 GPS, 2 differential.
+- `fn mode(&self) -> i32` — The fix mode as GSA spells it: 1 none, 2 2D, 3 3D.
+
+### `pub struct Sat`
+
+One UBX-NAV-SAT, folded: what the sky row reads of it.
+
+- `fn decode(payload: &[u8]) -> Option<Sat>` — The payload of a NAV-SAT, None when its length does not match its count.
+
+### `pub struct Version`
+
+One UBX-MON-VER: the module's software and hardware versions and its extension strings (`PROTVER=18.00`,
+`MOD=NEO-M8N`, ...).
+
+- `fn decode(payload: &[u8]) -> Option<Version>` — The payload of a MON-VER, None when its length is not 40 plus whole extensions.
+
+### `pub enum Answer`
+
+The module's answer to a configuration frame.
+
+- `fn decode(id: u8, payload: &[u8]) -> Option<Answer>` — The ACK class's message `id` with `payload`, None for anything else.
+
+### `pub fn frame(class: u8, id: u8, payload: &[u8]) -> Vec<u8>`
+
+One UBX frame of `class`/`id` around `payload`.
+
+Panics when the payload is longer than UBX's u16 length can say (65535 bytes).
+
+### `pub fn configuration_name(id: u8) -> String`
+
+The name a configuration message (UBX-CFG `id`) goes by in the u-blox manual, for the log: `CFG-PRT`; a hex id for
+one the drivers do not send.
+
+### Constants
+
+- `const SYNC: [u8; 2] = [0xB5, 0x62]` — UBX's two sync characters, `µb`.
+- `const NAVIGATION_CLASS: u8 = 0x01` — UBX-NAV, the navigation results class.
+- `const PVT: u8 = 0x07` — UBX-NAV-PVT: the navigation solution.
+- `const SAT: u8 = 0x35` — UBX-NAV-SAT: the satellites.
+- `const ACKNOWLEDGEMENT_CLASS: u8 = 0x05` — UBX-ACK, the acknowledgement class.
+- `const ACK: u8 = 0x01` — UBX-ACK-ACK: the configuration frame was taken.
+- `const NAK: u8 = 0x00` — UBX-ACK-NAK: the configuration frame was refused.
+- `const CONFIGURATION_CLASS: u8 = 0x06` — UBX-CFG, the configuration class.
+- `const MONITOR_CLASS: u8 = 0x0A` — UBX-MON, the monitoring class.
+- `const VERSION: u8 = 0x04` — UBX-MON-VER: the receiver's software, hardware and protocol versions.
+- `const MAXIMUM_PAYLOAD: usize = 1280` — The longest payload [`Frames`] keeps: NAV-SAT with 100 satellites is 1208 bytes; a longer length is noise.
 
 # `mission` — `src/avionics/crates/mission`
 
@@ -9598,7 +9734,14 @@ the stage now (the diagnostics on the pad, off from BOOSTING to DONE: the switch
 row when a burst has ended.
 
 The executor sees it through atomics (`inspect`, `probe`, `health`), so the thread holds no lock and makes its
-text only for its own event rows and log lines. The UBX NAV-PVT path (the NEO-M8N) comes with M16.
+text only for its own event rows and log lines.
+
+The NEO-M8N (`neom8n`, M16) delivers UBX instead of NMEA (gnss::drivers::neom8n): the thread finds its frames in
+the byte stream (gnss::ubx `Frames`) and hands each to the engine ([`gnss::Gnss::message`]), which fills the same
+update a line does. Its bring-up ([`bring_up_m8`]) finds the module's rate by listening (it keeps its port
+settings over a P4 reboot), names it (UBX-MON-VER), raises the port to the driver's baud, and falls back to UBX at
+the power-on rate, then to NMEA, when the module does not follow; each frame's ACK or NAK is logged, a refusal and a
+fallback are events.
 
 The pad drift calibration (plan B tasks/gnss_calib.py, [`Calibration`]) is the supervisor's duty: it reads the
 fused speed and course, whoever provides them, and publishes the frozen drift through atomics for `inspect` and
@@ -9607,6 +9750,8 @@ the flight loop (M13).
 ### `pub enum Module`
 
 The module on the UART, as the entry's driver names it.
+
+- `fn of(implementation: &str) -> Option<Module>` — The module the entry's implementation names, None for one that is no GNSS module.
 
 ### `pub struct Inspection`
 

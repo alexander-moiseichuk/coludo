@@ -109,7 +109,7 @@ pub fn classify(entry: &Entry) -> Kind {
         "attitude" => Kind::Attitude,
         "checkpoint" => Kind::Checkpoint,
         "watchdog" => Kind::Watchdog,
-        "neo6mv2" | "atgm336h" => Kind::Gnss,
+        "neo6mv2" | "atgm336h" | "neom8n" => Kind::Gnss,
         "gnss_calib" => Kind::GnssCalib,
         "field" => Kind::Field,
         "hitl" => Kind::Hitl,

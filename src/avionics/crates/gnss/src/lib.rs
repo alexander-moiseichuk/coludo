@@ -14,7 +14,11 @@
 //! read and the time ([`Gnss::line`]), runs the 1 s tick ([`Gnss::tick`]), and publishes what comes back: an
 //! [`Update`] (the channel values, the `<name>.csv` and `<name>_gga.csv` rows, the events) and a [`Tick`] (the
 //! events, the sky switch frame to write, the `<name>_sky.csv` row). The module-specific sentence selection and
-//! rate are the drivers' command bytes ([`drivers::atgm336h`], [`drivers::neo6mv2`]).
+//! rate are the drivers' command bytes ([`drivers::atgm336h`], [`drivers::neo6mv2`], [`drivers::neom8n`]).
+//!
+//! The NEO-M8N delivers binary instead (M16, [`ubx`]): the thread hands in each UBX frame ([`Gnss::message`]), and a
+//! NAV-PVT fills the same [`Update`] an RMC and a GGA fill (the position, the speed and course, the altitude and
+//! elevation, both rows), a NAV-SAT the sky row. The outage events watch PVT as they watch RMC and GGA.
 //!
 //! Positions are [`Position`] integers in 1e-7 degree, parsed straight from the ddmm.mmmm digits
 //! ([`degrees_e7`]): plan B's board is single precision, where an f32 degree at latitude 48 has a 0.42 m ulp. The
@@ -33,10 +37,11 @@
 //!    `nan`), but an underscore between digits, which Python accepts, is malformed here;
 //!  * the outage sweep reports RMC before GGA (CPython's dict order; a board's MicroPython dict has its own).
 //!
-//! Not ported: the UART, `probe()` and `diagnose()` (the firmware's I/O), inspect's databoard values (the channels
-//! are the firmware's), and the UBX NAV-PVT path for the NEO-M8N (M16).
+//! Not ported: the UART, `probe()` and `diagnose()` (the firmware's I/O), and inspect's databoard values (the
+//! channels are the firmware's).
 
 pub mod drivers;
+pub mod ubx;
 
 use control::navigation::Position;
 use sequencer::Stage;
@@ -109,23 +114,28 @@ impl Antenna {
 
 /// The sentences watched for an outage. RMC and GGA are tracked apart because they fail apart: a receiver holding
 /// almanac but no fix keeps emitting GGA (quality 0) while RMC goes void, and a selection mistake can silence one.
+/// The NEO-M8N's UBX-NAV-PVT carries both in one message, watched as PVT. A sentence never heard is never lost, so
+/// each module's outages name its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sentence {
     /// RMC, the fix.
     Rmc,
     /// GGA, the altitude and the signal quality.
     Gga,
+    /// UBX-NAV-PVT, the binary solution (M16).
+    Pvt,
 }
 
 impl Sentence {
-    /// Both, in the order the sweep reports them.
-    const ALL: [Sentence; 2] = [Sentence::Rmc, Sentence::Gga];
+    /// All, in the order the sweep reports them.
+    const ALL: [Sentence; 3] = [Sentence::Rmc, Sentence::Gga, Sentence::Pvt];
 
-    /// The sentence's type as NMEA spells it.
+    /// The sentence's type as NMEA spells it (PVT: UBX's message name).
     pub fn name(self) -> &'static str {
         match self {
             Sentence::Rmc => "RMC",
             Sentence::Gga => "GGA",
+            Sentence::Pvt => "PVT",
         }
     }
 
@@ -374,10 +384,10 @@ pub struct Gnss {
     pending_us: u64,
     /// A sky row went out: only the first burst is evented.
     sky_seen: bool,
-    /// The last arrival of RMC and GGA in microseconds (None: never), for the outage events.
-    seen_us: [Option<u64>; 2],
+    /// The last arrival of RMC, GGA and PVT in microseconds (None: never), for the outage events.
+    seen_us: [Option<u64>; 3],
     /// Whether each is currently out, so each edge fires once.
-    absent: [bool; 2],
+    absent: [bool; 3],
     /// The last RMC's status was A (a valid fix).
     fix: bool,
     /// GGA's fix quality: 0 none, 1 GPS, 2 DGPS.
@@ -395,6 +405,10 @@ pub struct Gnss {
     diagnosing: bool,
     /// The sentence families the module refused this session, each evented once.
     rejected: Vec<&'static str>,
+    /// The NEO-M8N's sky from its last UBX-NAV-SAT, which stands for every talker's GSV and GSA; None on NMEA.
+    sat: Option<ubx::Sat>,
+    /// The fix mode of its last UBX-NAV-PVT (GSA's: 1 none, 2 2D, 3 3D).
+    mode: i32,
 }
 
 impl Default for Gnss {
@@ -416,8 +430,8 @@ impl Gnss {
             pending: false,
             pending_us: 0,
             sky_seen: false,
-            seen_us: [None; 2],
-            absent: [false; 2],
+            seen_us: [None; 3],
+            absent: [false; 3],
             fix: false,
             fix_quality: 0,
             satellites: 0,
@@ -426,6 +440,8 @@ impl Gnss {
             ground_m: None,
             diagnosing: true,
             rejected: Vec::new(),
+            sat: None,
+            mode: 0,
         }
     }
 
@@ -617,9 +633,98 @@ impl Gnss {
         Ok(())
     }
 
+    /// One UBX frame as the NEO-M8N delivered it (M16): count it, apply a NAV-PVT ([`Gnss::pvt`]) or a NAV-SAT
+    /// ([`Gnss::sat`]), hand back an ACK's answer, then sweep for outages, as [`Gnss::line`] does for a line. Any other
+    /// message is counted and ignored.
+    pub fn message(&mut self, message: &ubx::Message, now_us: u64) -> (Update, Option<ubx::Answer>) {
+        self.lines = self.lines.wrapping_add(1);
+        let mut update = Update::default();
+        let mut answer = None;
+        match (message.class, message.id) {
+            (ubx::NAVIGATION_CLASS, ubx::PVT) => {
+                if let Some(pvt) = ubx::Pvt::decode(&message.payload) {
+                    update = self.pvt(&pvt, now_us);
+                }
+            }
+            (ubx::NAVIGATION_CLASS, ubx::SAT) => {
+                if let Some(sat) = ubx::Sat::decode(&message.payload) {
+                    self.sat(sat, now_us);
+                }
+            }
+            (ubx::ACKNOWLEDGEMENT_CLASS, id) => answer = ubx::Answer::decode(id, &message.payload),
+            _ => {}
+        }
+        self.sweep_into(now_us, &mut update.events);
+        (update, answer)
+    }
+
+    /// One navigation solution: what an RMC and a GGA give together. The fix flag, quality, satellites and the DOP
+    /// always (the position DOP stands in for HDOP: NAV-PVT carries no horizontal one); with a fix the position, the
+    /// ground speed and the heading of motion, and the fix row; with a 3D fix the altitude and the elevation above
+    /// the first one; the GGA row on every solution, as on every GGA.
+    pub fn pvt(&mut self, pvt: &ubx::Pvt, now_us: u64) -> Update {
+        let mut update = Update::default();
+        self.mark(Sentence::Pvt, now_us, &mut update.events);
+        self.fix = pvt.fixed();
+        self.fix_quality = pvt.quality();
+        self.satellites = i32::from(pvt.satellites);
+        self.hdop = f32::from(pvt.position_dop_centi) / 100.0;
+        self.mode = pvt.mode();
+        if self.fix {
+            let speed_ms = pvt.ground_speed_mm_s as f32 / 1000.0;
+            let course_deg = pvt.heading_e5 as f32 / 100_000.0;
+            update.position = Some(pvt.position);
+            update.speed_ms = Some(speed_ms);
+            update.course_deg = Some(course_deg);
+            update.fix_row = Some(FixRow {
+                position: pvt.position,
+                speed_knots: speed_ms / KNOTS_TO_METRES_PER_SECOND,
+                course_deg,
+            });
+        }
+        let (altitude_m, elevation_m) = if self.fix && self.mode == 3 {
+            let altitude_m = pvt.altitude_mm as f32 / 1000.0;
+            let ground_m = *self.ground_m.get_or_insert(altitude_m); // the first altitude is the ground
+            update.altitude_m = Some(altitude_m);
+            update.elevation_m = Some(altitude_m - ground_m);
+            (altitude_m, altitude_m - ground_m)
+        } else {
+            (0.0, 0.0)
+        };
+        update.gga_row = Some(GgaRow {
+            altitude_m,
+            elevation_m,
+            quality: self.fix_quality,
+            satellites: self.satellites,
+            hdop_centi: i32::from(pvt.position_dop_centi),
+        });
+        update
+    }
+
+    /// One sky view: it stands for the GSV and GSA burst, and restarts the burst's quiet clock (one message is the
+    /// whole burst).
+    pub fn sat(&mut self, sat: ubx::Sat, now_us: u64) {
+        self.sat = Some(sat);
+        self.pending = true;
+        self.pending_us = now_us;
+    }
+
     /// The sky as the `<name>_sky.csv` row (plan B `_sky_row`): each talker's last whole group and each system's
     /// last GSA count; all zeros before the first diagnostics.
     pub fn sky_row(&self) -> SkyRow {
+        if let Some(sat) = &self.sat {
+            let mut cn0 = [0; 4];
+            for (slot, value) in cn0.iter_mut().zip(&sat.strongest) {
+                *slot = *value;
+            }
+            return SkyRow {
+                in_view: sat.in_view,
+                used: sat.used,
+                mode: self.mode,
+                cn0,
+                antenna: self.antenna,
+            };
+        }
         let mut strongest: Vec<i32> = self
             .views
             .iter()

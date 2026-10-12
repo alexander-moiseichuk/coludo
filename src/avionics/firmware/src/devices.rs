@@ -637,11 +637,7 @@ fn set_up_gnss(document: &Value, entry: &Entry<'static>, gnss: &mut Option<GnssM
     let specification = id
         .filter(|_| kind == "uart")
         .and_then(|id| board_config::uart_bus(document, id));
-    let module = if entry.implementation == "atgm336h" {
-        crate::gnss::Module::Atgm
-    } else {
-        crate::gnss::Module::Neo6
-    };
+    let module = crate::gnss::Module::of(entry.implementation).unwrap_or(crate::gnss::Module::Neo6);
     let hz = entry
         .fields
         .get("hz")

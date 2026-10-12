@@ -113,8 +113,9 @@ pub const SKY_FIELDS: [&str; 8] = ["in_view", "used", "mode", "cn0_1", "cn0_2", 
 /// A task's durable event record (plan B task.py:104, `<name>_events.csv`): one text per event.
 pub const EVENT_FIELDS: [&str; 1] = ["event"];
 
-/// The GNSS drivers (plan B's two NMEA modules): each writes `<name>.csv` and the three companions ([`companions`]).
-const GNSS_DRIVERS: [&str; 2] = ["neo6mv2", "atgm336h"];
+/// The GNSS drivers (plan B's two NMEA modules, and the NEO-M8N's binary one, M16): each writes `<name>.csv` and the
+/// three companions ([`companions`]).
+const GNSS_DRIVERS: [&str; 3] = ["neo6mv2", "atgm336h", "neom8n"];
 
 /// The separation switch's columns: plan B's event (`separated` or `nested`, and the port's `blip`) and the stage after
 /// it (drivers/separation.py:57), then the port's `moment`, the uptime (µs) of the first edge of the episode the event
@@ -607,7 +608,7 @@ mod tests {
 
     #[test]
     fn the_gnss_writes_its_fix_and_three_companions() {
-        for driver in ["neo6mv2", "atgm336h"] {
+        for driver in ["neo6mv2", "atgm336h", "neom8n"] {
             let document = sensor("gnss", driver, Some(json!(200)));
             assert_eq!(only(&document), Some(measured("gnss.csv", &GNSS_FIELDS)), "{driver}");
             let found = companions(&entries(&document)[0]);

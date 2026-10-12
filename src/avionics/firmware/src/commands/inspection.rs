@@ -200,7 +200,7 @@ fn component(context: &Context, implementation: &str, name: &str, now_us: u64) -
                 rate_dps: vector("rate"),
             }
         }
-        "neo6mv2" | "atgm336h" => match crate::gnss::inspection() {
+        "neo6mv2" | "atgm336h" | "neom8n" => match crate::gnss::inspection() {
             Some(state) => Own::Gnss {
                 fix: state.fix,
                 satellites: state.satellites,

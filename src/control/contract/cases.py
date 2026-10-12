@@ -1551,7 +1551,7 @@ _SERVO: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'angle': 'int', 
 _ABSOLUTE: dict = {'name': 'str', 'ok': 'bool', 'healthy': 'bool', 'addr': 'str', 'attitude_deg': 'list|null',
                    'accel_g': 'list|null', 'fusion_stalled': 'bool', 'calibration': 'list|null', 'calibrated': 'bool',
                    'calibration_restored': 'bool'}
-_GNSS_DRIVERS: tuple = ('neo6mv2', 'atgm336h')
+_GNSS_DRIVERS: tuple = ('neo6mv2', 'atgm336h', 'neom8n')
 _LASER_DRIVERS: tuple = ('vl53l4cx', 'vl53l1x')
 _SERVO_DRIVERS: tuple = ('sg90', 'mg90s')
 _M18_DRIVERS: tuple = ('bno055', 'bmp280')
