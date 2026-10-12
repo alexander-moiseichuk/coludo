@@ -17,6 +17,7 @@ path = "src/main.rs"
 harness = false  # no libtest on the board; on-board tests are their own binaries
 
 [dependencies]
+base64.workspace = true
 board_config.workspace = true
 cc_protocol.workspace = true
 control.workspace = true
@@ -25,6 +26,7 @@ databoard.workspace = true
 drivers.workspace = true
 flash_ring.workspace = true
 gnss.workspace = true
+sha2.workspace = true
 sim_link.workspace = true
 beacon = { workspace = true, features = ["esp"] }
 embedded-hal.workspace = true

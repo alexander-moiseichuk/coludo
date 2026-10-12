@@ -75,6 +75,10 @@ pub fn arm(_message: &Message, context: &mut Context) -> Reply {
     if let Some(problem) = crate::entry::problem() {
         problems.insert("entry-file", problem);
     }
+    // a committed build never waits for a reset in flight (M15)
+    if let Some(problem) = crate::ota::problem() {
+        problems.insert("ota", problem);
+    }
     if FLIGHT.load().stage.change_refused(false).is_none() {
         // the probes sweep the fins: only in SETTING
         if let Some(problem) = super::diagnostics::probe_mission(context) {

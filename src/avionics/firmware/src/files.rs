@@ -1,6 +1,6 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! Read-only HTTP access to the microSD and to the flash ring: how recordings and logs come off the board over Wi-Fi
+//! HTTP access to the microSD and to the flash ring (read-only; the one write is an OTA image): how recordings and logs come off the board over Wi-Fi
 //! -- on the pad, and after landing. Nothing is ever written.
 //! * `GET /sd/<path>` returns a file, or a directory's listing (one `<name>;<bytes>` line per entry). Paths are
 //!   confined to the card, laid out as crates/recorder's layout says: a session's recordings at
@@ -21,6 +21,8 @@
 //!   ring_saver would file (doc/specs/avionics-port.md "CC tees and the HTTP exits"). `boot=N` keeps only that
 //!   boot's blocks.
 //! * `GET /ring/image` streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
+//! * `POST /ota?sha256=<hex>` writes a firmware image into the next app slot (M15, crate::ota): the one write this
+//!   server takes, on the pad and disarmed only.
 //! * `GET /camera/preview.jpg` is the camera's latest preview (M7b): 720x384, made once a second while the camera
 //!   records on the pad (404 before the first), for the operator to check its aim.
 //! * `GET /beacon` is the recovery beacon's page as the access point serves it at DONE (crate::beacon): the bench sees
@@ -72,6 +74,8 @@ pub fn serve(beacon: crate::beacon::Beacon) -> anyhow::Result<EspHttpServer<'sta
         task_caps: esp_idf_svc::sys::MALLOC_CAP_SPIRAM | esp_idf_svc::sys::MALLOC_CAP_8BIT,
         ..Default::default()
     })?;
+    // firmware OTA (M15): the image into the next app slot, on the pad and disarmed (crate::ota)
+    server.fn_handler::<anyhow::Error, _>("/ota", Method::Post, crate::ota::receive)?;
     // the camera's aim on the pad (M7b): the latest preview JPEG, made once a second while the camera records in
     // SETTING; 404 before the first
     server.fn_handler::<anyhow::Error, _>("/camera/preview.jpg", Method::Get, |request| {

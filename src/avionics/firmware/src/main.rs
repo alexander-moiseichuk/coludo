@@ -27,6 +27,7 @@ mod flight;
 mod gnss;
 mod link;
 mod logging;
+mod ota;
 mod owner;
 mod panics_logger;
 mod recorder;
@@ -349,6 +350,8 @@ fn main() -> anyhow::Result<()> {
     diagnostics::register_commands();
     credentials.register_commands();
     link::register_commands();
+    ota::register_commands();
+    console::register_commands();
     if sd_mounted {
         firmware::sd::register_commands(board.session.clone());
         entry::register_commands();

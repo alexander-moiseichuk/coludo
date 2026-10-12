@@ -20,12 +20,45 @@ use esp_idf_svc::hal::gpio::{AnyIOPin, InputPin, OutputPin};
 use esp_idf_svc::hal::task::thread::{MallocCap, ThreadSpawnConfiguration};
 use esp_idf_svc::hal::uart::{Uart, UartDriver};
 use esp_idf_svc::io::vfs::BlockingStdIo;
-use firmware::gcl::Origin;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use firmware::gcl::{self, Command, Gate, Kind, Origin, Parameter, Reach};
 
 use crate::commands::Executor;
 
 /// The console thread's stack: it reads a line and prints a reply, nothing deeper.
 const STACK_SIZE: usize = 8192;
+
+/// A rate `console baud` asked for, set once its answer has gone (0: none).
+static PENDING_BAUD: AtomicU32 = AtomicU32::new(0);
+
+/// The console's own command (crate::gcl): `console baud rate=<n>`, for big transfers over the console (the operator,
+/// 2026-10-11: more reliable than Wi-Fi; tools/ota.py --console). The answer goes at the old rate, the rate changes
+/// after it; the next boot is back at 115200 (the bootloader's and the ROM's rate).
+pub fn register_commands() {
+    gcl::register(vec![Command {
+        owner: "console",
+        words: "console baud",
+        about: "the console's rate from after this answer until the next boot (115200 again), for big transfers",
+        gate: Gate::Setting,
+        reach: Reach::Console,
+        parameters: &[Parameter {
+            name: "rate",
+            kind: Kind::Integer {
+                low: 115_200,
+                high: 3_000_000,
+            },
+            default: None,
+            about: "baud, e.g. 2000000 (the CH343P takes up to 6 Mbaud)",
+        }],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let rate = arguments.integer("rate") as u32;
+            PENDING_BAUD.store(rate, Ordering::Release);
+            cc_protocol::build("ok", &["console", "baud", &rate.to_string()], &[])
+        }),
+    }]);
+}
 
 /// UART0 with its driver in place, stdin and stdout through it, until [`Console::serve`] reads it.
 pub struct Console(BlockingStdIo<'static, UartDriver<'static>>);
@@ -80,6 +113,18 @@ impl Console {
                 if let Some(reply) = executor.ask(line.trim(), Origin::Console) {
                     println!("{reply}");
                     let _ = std::io::stdout().flush();
+                }
+                // `console baud`: the new rate once its answer has left at the old one
+                let rate = PENDING_BAUD.swap(0, Ordering::AcqRel);
+                if rate != 0 {
+                    // SAFETY: UART0's driver is installed (install); waits for the transmit FIFO, then sets the rate.
+                    // the receive interrupt at 32 bytes in the 128-byte FIFO, not near its top: ~0.5 ms of slack at
+                    // 2 Mbaud for an interrupt that comes late (a flash write's), where the default left microseconds
+                    unsafe {
+                        esp_idf_svc::sys::uart_wait_tx_done(0, 100);
+                        esp_idf_svc::sys::uart_set_baudrate(0, rate);
+                        esp_idf_svc::sys::uart_set_rx_full_threshold(0, 32);
+                    }
                 }
             }
         });
