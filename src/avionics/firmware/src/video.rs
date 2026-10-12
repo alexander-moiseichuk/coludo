@@ -669,7 +669,12 @@ fn register_commands(orders: SyncSender<Posted>) {
             reach: Reach::Everywhere,
             parameters: &[],
             bare_words: &[],
-            run: Box::new(|_| counters("running")),
+            run: Box::new(|_| {
+                // running from a start until its stop; idle before the first start and after a stop
+                let counters_now = stats();
+                let running = counters_now.started_microseconds != 0 && counters_now.stopped_microseconds == 0;
+                counters(if running { "running" } else { "idle" })
+            }),
         },
     ]);
 }

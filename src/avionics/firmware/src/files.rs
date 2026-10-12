@@ -82,7 +82,7 @@ pub fn serve(beacon: crate::beacon::Beacon) -> anyhow::Result<EspHttpServer<'sta
         let Some((jpeg, uptime)) = firmware::video::preview() else {
             request
                 .into_status_response(404)?
-                .write_all(b"no preview: the camera records none (video start, on the pad)\n")?;
+                .write_all(b"no preview: the camera is off (video preview, or video start, on the pad)\n")?;
             return Ok(());
         };
         let uptime = uptime.to_string();
