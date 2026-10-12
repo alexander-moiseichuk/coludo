@@ -262,8 +262,8 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
             elevation_m: scalar("elevation"),
             change_m_s: scalar("change"),
         },
-        "bmp581" => {
-            let (torn, implausible) = crate::sensors::bmp581_inspection();
+        "bmp280" | "bmp581" => {
+            let (torn, implausible) = crate::sensors::backup_barometer_inspection();
             Own::Bmp581 {
                 addr: address(context, name),
                 altitude_m: scalar("altitude"),

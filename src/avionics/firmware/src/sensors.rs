@@ -20,6 +20,8 @@ use databoard::Writer;
 use drivers::axes::Axes;
 use drivers::bmi323::Bmi323;
 use drivers::bmm350::Bmm350;
+use drivers::bmp280;
+use drivers::bmp280::Bmp280;
 use drivers::bmp581;
 use drivers::bmp581::Bmp581;
 use drivers::device::Device;
@@ -92,7 +94,9 @@ const NOT_PORTED: [&str; 3] = ["adxl375", "bno055", "bmp280"];
 /// `bus` defaults to 'spi').
 pub fn classify(entry: &Entry) -> Kind {
     match entry.implementation {
-        "bmi323" | "bmm350" | "bmp581" | "icp10111" | "ina226" | "sdp810" | "vl53l1x" | "vl53l4cx" => Kind::I2c,
+        "bmi323" | "bmm350" | "bmp280" | "bmp581" | "icp10111" | "ina226" | "sdp810" | "vl53l1x" | "vl53l4cx" => {
+            Kind::I2c
+        }
         "lsm6dso32" => match controller::binding(entry, "spi", Some(drivers::lsm6dso32::ADDRESS)) {
             controller::Binding::I2c { .. } => Kind::I2c,
             _ => Kind::Spi,
@@ -118,7 +122,7 @@ pub fn classify(entry: &Entry) -> Kind {
 /// and `update` (`ground`, `rezero`) also run at DONE, the way back from a false launch ([`Part::rezeroes`] says it
 /// of a built part).
 pub fn rezeroes(implementation: &str) -> bool {
-    matches!(implementation, "icp10111" | "bmp581")
+    matches!(implementation, "icp10111" | "bmp280" | "bmp581")
 }
 
 /// The `axes` of an IMU entry (drivers::axes, M9): the identity when absent.
@@ -133,6 +137,7 @@ pub fn default_address(implementation: &str) -> Option<u8> {
     match implementation {
         "bmi323" => Some(drivers::bmi323::ADDRESS),
         "bmm350" => Some(drivers::bmm350::ADDRESS),
+        "bmp280" => Some(drivers::bmp280::ADDRESS),
         "bmp581" => Some(drivers::bmp581::ADDRESS),
         "icp10111" => Some(drivers::icp10111::ADDRESS),
         "ina226" => Some(drivers::ina226::ADDRESS),
@@ -173,7 +178,7 @@ impl Run {
             Part::Icp10111(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
             // its elevation on the databoard too: the multi-source machine reads each barometer against itself, so an
             // ICP -> BMP581 handover is never a climb (M9)
-            Part::Bmp581(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
+            Part::Bmp280(_) | Part::Bmp581(_) => Some(Run::Barometer(Box::new(Barometer::new(name, topology, entry)))),
             Part::Bmm350(_) => Some(Run::Magnetometer(Box::new(Magnetometer::new(name, topology, entry)))),
             Part::Sdp810(_) => Some(Run::Pitot(Box::new(Pitot::new(
                 name,
@@ -214,21 +219,21 @@ pub enum Event {
     Rearm,
 }
 
-/// The BMP581's read pairs that disagreed (drivers::bmp581::Outcome::Torn): mostly a conversion landing between the
-/// two bursts (about 1 read in 80), the rest the bus garbage the double read exists for (M9).
-static BMP581_TORN: AtomicU32 = AtomicU32::new(0);
-/// Its agreeing pairs outside the part's operating range (drivers::bmp581::Outcome::Implausible): bus garbage read
-/// twice alike.
-static BMP581_IMPLAUSIBLE: AtomicU32 = AtomicU32::new(0);
-/// How many BMP581 reads in a row may go unjudged (torn or implausible) before the part is unhealthy: 60 ms, three
+/// The backup barometer's read pairs that disagreed (drivers::bmp581 / bmp280 `Outcome::Torn`; the BMP581 on v1.x, the
+/// BMP280 on v0.1, never both fitted): mostly a conversion landing between the two bursts (about 1 read in 80), the
+/// rest the bus garbage the double read exists for (M9).
+static BACKUP_TORN: AtomicU32 = AtomicU32::new(0);
+/// Its agreeing pairs outside the part's operating range (`Outcome::Implausible`): bus garbage read twice alike.
+static BACKUP_IMPLAUSIBLE: AtomicU32 = AtomicU32::new(0);
+/// How many backup-barometer reads in a row may go unjudged (torn or implausible) before the part is unhealthy: 60 ms, three
 /// conversion periods, as its stale rule.
 const UNJUDGED_LIMIT: u32 = 6;
 
-/// What `inspect` shows of the BMP581's guard: its torn pairs and its implausible reads since boot.
-pub fn bmp581_inspection() -> (u32, u32) {
+/// What `inspect` shows of the backup barometer's guard (BMP581 or BMP280): its torn pairs and its implausible reads since boot.
+pub fn backup_barometer_inspection() -> (u32, u32) {
     (
-        BMP581_TORN.load(Ordering::Relaxed),
-        BMP581_IMPLAUSIBLE.load(Ordering::Relaxed),
+        BACKUP_TORN.load(Ordering::Relaxed),
+        BACKUP_IMPLAUSIBLE.load(Ordering::Relaxed),
     )
 }
 
@@ -245,6 +250,16 @@ struct Conversion {
 
 impl From<&Reading> for Conversion {
     fn from(reading: &Reading) -> Conversion {
+        Conversion {
+            altitude: reading.altitude,
+            temperature: reading.temperature,
+            pressure: reading.pressure,
+        }
+    }
+}
+
+impl From<&drivers::bmp280::Reading> for Conversion {
+    fn from(reading: &drivers::bmp280::Reading) -> Conversion {
         Conversion {
             altitude: reading.altitude,
             temperature: reading.temperature,
@@ -1230,6 +1245,8 @@ pub enum Part {
     Bmi323(Bmi323),
     /// The SEN0697's magnetometer.
     Bmm350(Bmm350),
+    /// The SEN0253's barometer (v0.1 boards, M18).
+    Bmp280(Bmp280),
     /// The SEN0697's barometer.
     Bmp581(Bmp581),
     /// The primary barometer.
@@ -1250,6 +1267,7 @@ macro_rules! each {
         match $part {
             Part::Bmi323($driver) => $body,
             Part::Bmm350($driver) => $body,
+            Part::Bmp280($driver) => $body,
             Part::Bmp581($driver) => $body,
             Part::Icp10111($driver) => $body,
             Part::Ina226($driver) => $body,
@@ -1278,6 +1296,7 @@ impl Part {
                 let axes = Axes::from_config(&fields).map_err(|error| error.to_string())?;
                 Part::Bmm350(Bmm350::new(address).mounted(axes).map_err(|error| error.to_string())?)
             }
+            "bmp280" => Part::Bmp280(Bmp280::new(address)),
             "bmp581" => Part::Bmp581(Bmp581::new(address)),
             "icp10111" => {
                 let period_ms = fields
@@ -1335,6 +1354,7 @@ impl Part {
         match self {
             Part::Bmi323(driver) => driver.diagnose(port, id),
             Part::Bmm350(driver) => driver.diagnose(port, id),
+            Part::Bmp280(driver) => driver.diagnose(port),
             Part::Bmp581(driver) => driver.diagnose(port),
             Part::Icp10111(driver) => driver.diagnose(port),
             Part::Ina226(driver) => driver.diagnose(port),
@@ -1351,7 +1371,7 @@ impl Part {
     /// identifies and reads in one call, so a two-step probe logs its steps as one.
     pub fn probe(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Option<String> {
         let step = match self {
-            Part::Bmi323(_) | Part::Bmm350(_) | Part::Bmp581(_) => "chip id + read",
+            Part::Bmi323(_) | Part::Bmm350(_) | Part::Bmp280(_) | Part::Bmp581(_) => "chip id + read",
             Part::Icp10111(_) | Part::Sdp810(_) => "data",
             Part::Ina226(_) => "die id + read",
             Part::Lsm6dso32(_) => "who_am_i + sample",
@@ -1368,6 +1388,10 @@ impl Part {
                 Err(drivers::bmm350::ProbeFailure::Fault(fault)) => Err(fault.to_string()),
                 Err(drivers::bmm350::ProbeFailure::NotMeasuring(why)) => Err(why.to_string()),
             },
+            Part::Bmp280(driver) => driver
+                .probe(port)
+                .map(|reading| format!("{:.0} Pa", reading.pressure))
+                .map_err(|fault| fault.to_string()),
             Part::Bmp581(driver) => driver
                 .probe(port)
                 .map(|reading| format!("{:.0} Pa", reading.pressure))
@@ -1446,6 +1470,38 @@ impl Part {
                 outputs.tick(name, imu, port, now_us);
                 None
             }
+            (Part::Bmp280(barometer), Run::Barometer(outputs)) => {
+                let unjudged = match barometer.read_fresh(port, now_us) {
+                    Ok(bmp280::Outcome::Fresh(reading)) => {
+                        let elevation = barometer.elevation(&reading);
+                        outputs.publish(name, Some(elevation), Conversion::from(&reading), now_us);
+                        false
+                    }
+                    Ok(bmp280::Outcome::Unchanged) => false,
+                    Ok(bmp280::Outcome::Stale) => {
+                        outputs.freeze(name);
+                        false
+                    }
+                    Ok(bmp280::Outcome::Torn) => {
+                        BACKUP_TORN.fetch_add(1, Ordering::Relaxed);
+                        true
+                    }
+                    Ok(bmp280::Outcome::Implausible(_)) => {
+                        BACKUP_IMPLAUSIBLE.fetch_add(1, Ordering::Relaxed);
+                        true
+                    }
+                    Err(fault) => {
+                        outputs.fail(name, &fault);
+                        false
+                    }
+                };
+                // a part that answers only garbage is never judged stale: unhealthy after a run of it all the same
+                outputs.unjudged_run = if unjudged { outputs.unjudged_run + 1 } else { 0 };
+                if outputs.unjudged_run >= UNJUDGED_LIMIT {
+                    outputs.freeze(name);
+                }
+                None
+            }
             (Part::Bmp581(barometer), Run::Barometer(outputs)) => {
                 let unjudged = match barometer.read_fresh(port, now_us) {
                     Ok(bmp581::Outcome::Fresh(reading)) => {
@@ -1459,11 +1515,11 @@ impl Part {
                         false
                     }
                     Ok(bmp581::Outcome::Torn) => {
-                        BMP581_TORN.fetch_add(1, Ordering::Relaxed);
+                        BACKUP_TORN.fetch_add(1, Ordering::Relaxed);
                         true
                     }
                     Ok(bmp581::Outcome::Implausible(_)) => {
-                        BMP581_IMPLAUSIBLE.fetch_add(1, Ordering::Relaxed);
+                        BACKUP_IMPLAUSIBLE.fetch_add(1, Ordering::Relaxed);
                         true
                     }
                     Err(fault) => {
@@ -1525,6 +1581,13 @@ impl Part {
     pub fn calibrate(&mut self, name: &str, port: &mut I2cPort, delay: &mut Delay) -> Calibrated {
         Calibrated::Done(match self {
             Part::Icp10111(barometer) => match barometer.capture_ground(port, delay) {
+                Ok(ground) => {
+                    log::info!("{name} :: calibrated: ground {ground:.1} m AMSL");
+                    None
+                }
+                Err(fault) => Some(format!("ground zero: {fault}")),
+            },
+            Part::Bmp280(barometer) => match barometer.capture_ground(port, delay) {
                 Ok(ground) => {
                     log::info!("{name} :: calibrated: ground {ground:.1} m AMSL");
                     None
@@ -1600,6 +1663,18 @@ impl Part {
                     .update(properties, fresh)
                     .map_err(|refusal| refusal.to_string())
             }
+            Part::Bmp280(barometer) => {
+                let fresh = match run {
+                    Some(Run::Barometer(outputs)) => outputs
+                        .altitude
+                        .as_ref()
+                        .and_then(|writer| writer.recent(drivers::bmp280::REZERO_WINDOW_US as u32, now_us)),
+                    _ => None,
+                };
+                barometer
+                    .update(properties, fresh)
+                    .map_err(|refusal| refusal.to_string())
+            }
             Part::Bmp581(barometer) => {
                 let fresh = match run {
                     Some(Run::Barometer(outputs)) => outputs
@@ -1638,7 +1713,7 @@ impl Part {
     /// Whether the part re-zeroes a barometer's ground, as [`rezeroes`] says of its implementation: its `update` and
     /// `calibrate` also run at DONE.
     pub fn rezeroes(&self) -> bool {
-        matches!(self, Part::Icp10111(_) | Part::Bmp581(_))
+        matches!(self, Part::Icp10111(_) | Part::Bmp280(_) | Part::Bmp581(_))
     }
 
     /// Whether the part sent a general call since the last ask: only the ICP-10111 sends one, to free itself.

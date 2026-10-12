@@ -45,6 +45,7 @@ pub mod axes;
 pub mod bluetooth;
 pub mod bmi323;
 pub mod bmm350;
+pub mod bmp280;
 pub mod bmp581;
 pub mod commons;
 pub mod debounce;

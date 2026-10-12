@@ -181,7 +181,7 @@ pub fn stream(entry: &Entry) -> Option<Stream> {
     let named = || format!("{}.csv", entry.name);
     let (file, fields, durable): (String, &'static [&'static str], bool) = match entry.implementation {
         "lsm6dso32" | "bmi323" => (named(), &IMU_FIELDS, false),
-        "icp10111" | "bmp581" => (named(), &BAROMETER_FIELDS, false),
+        "icp10111" | "bmp280" | "bmp581" => (named(), &BAROMETER_FIELDS, false),
         "bmm350" => (named(), &MAGNETOMETER_FIELDS, false),
         "sdp810" => (named(), &PITOT_FIELDS, false),
         "ina226" => (named(), &POWER_FIELDS, false),
@@ -316,6 +316,7 @@ mod tests {
                 ("imu_lsm6dso32", measured("imu_lsm6dso32.csv", &IMU_FIELDS)),
                 ("attitude", measured("attitude.csv", &control::attitude::FIELDS)),
                 ("baro_icp10111", measured("baro_icp10111.csv", &BAROMETER_FIELDS)),
+                ("baro_bmp280", measured("baro_bmp280.csv", &BAROMETER_FIELDS)),
                 ("imu_bmi323", measured("imu_bmi323.csv", &IMU_FIELDS)),
                 ("mag_bmm350", measured("mag_bmm350.csv", &MAGNETOMETER_FIELDS)),
                 ("baro_bmp581", measured("baro_bmp581.csv", &BAROMETER_FIELDS)),
@@ -377,7 +378,7 @@ mod tests {
             Some(json!([50])),
             Some(json!({"ms": 50})),
         ];
-        for driver in ["lsm6dso32", "bmi323", "icp10111", "bmp581", "bmm350"] {
+        for driver in ["lsm6dso32", "bmi323", "icp10111", "bmp280", "bmp581", "bmm350"] {
             for telemetry_ms in &windows {
                 let device = only(&sensor("part", driver, telemetry_ms.clone())).expect("a stream");
                 assert_eq!(
@@ -623,7 +624,7 @@ mod tests {
 
     #[test]
     fn a_part_the_port_does_not_record_has_no_stream() {
-        for driver in ["adxl375", "bno055", "bmp280"] {
+        for driver in ["adxl375", "bno055"] {
             assert_eq!(only(&sensor("part", driver, Some(json!(10)))), None, "{driver}");
         }
         assert_eq!(only(&json!({"sensors": [{"name": "no_implementation"}]})), None);
