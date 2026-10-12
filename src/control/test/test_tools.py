@@ -828,7 +828,9 @@ def test_recorder_flight_salvages_a_wrapped_dump():
     assert len(recorded) == 20, len(recorded)  # 21 rows, less the corrupted one
     assert all(recorder_wire.verify(baro_routing, line) for line in recorded), 'recorder/ must keep proven rows'
     flown = _read(os.path.join(out, 'flight', 'baro_bmp280.csv'))
-    assert flown[0] == 't_s;altitude;temperature;pressure;elevation;uptime_us', flown[0]  # the _FIELDS fallback
+    # the _FIELDS fallback: the Rust port's `change` after plan B's four, empty in plan B's rows
+    assert flown[0] == 't_s;altitude;temperature;pressure;elevation;change;uptime_us', flown[0]
+    assert all(line.split(';')[-2] == '' for line in flown[1:]), flown[1:3]
     assert [line.split(';')[-1] for line in flown[1:]] == [str(row.split(';')[0]) for row in baro
                                                            if not row.startswith('1200000;')]
     assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + 200  # less the spliced row
@@ -1123,6 +1125,8 @@ _RUST_STREAMS: dict = {
     'imu_bmi323': ('controller/src/streams.rs', 'IMU_FIELDS'),
     'baro_icp10111': ('controller/src/streams.rs', 'BAROMETER_FIELDS'),
     'baro_bmp581': ('controller/src/streams.rs', 'BAROMETER_FIELDS'),
+    'baro_bmp280': ('controller/src/streams.rs', 'BAROMETER_FIELDS'),
+    'imu_bno055': ('controller/src/streams.rs', 'ABSOLUTE_FIELDS'),
     'mag_bmm350': ('controller/src/streams.rs', 'MAGNETOMETER_FIELDS'),
     'airspeed_sdp810': ('controller/src/streams.rs', 'PITOT_FIELDS'),
     'power_ina226': ('controller/src/streams.rs', 'POWER_FIELDS'),
@@ -1151,6 +1155,8 @@ _PLAN_B_STREAMS: dict = {
     'imu_bmi323': 'drivers/bmi323.py',
     'baro_icp10111': 'drivers/icp10111.py',
     'baro_bmp581': 'drivers/bmp581.py',
+    'baro_bmp280': 'drivers/bmp280.py',
+    'imu_bno055': 'drivers/bno055.py',
     'mag_bmm350': 'drivers/bmm350.py',
     'attitude': 'tasks/attitude.py',
     'separation': 'drivers/separation.py',
@@ -1226,7 +1232,7 @@ def test_recorder_flight_knows_the_rust_streams_as_declared():
     with open(streams_rs) as handle:
         text = handle.read()
     for original, doctored, broken in (('"pressure", "elevation", "change"', '"elevation", "pressure", "change"',
-                                        ['baro_icp10111', 'baro_bmp581']),
+                                        ['baro_icp10111', 'baro_bmp581', 'baro_bmp280']),
                                        ('"detector", "edge", "decider"', '"detector", "decider"', ['vetoes'])):
         assert text.count(original) == 1, original  # the doctoring below must hit the declaration itself
         path = os.path.join(_folder(), 'streams.rs')
@@ -1240,8 +1246,8 @@ def test_recorder_flight_reads_a_barometer_with_and_without_its_change():
     """
     The Rust port appended `change` to every barometer's row (its climb rate, m/s; 'None' until its window fills);
     plan B's rows have four cells. With the header lost, recorder_flight names both: a Rust row in full, a plan B row
-    with the change empty. A file that kept its header is read by it alone. NEGATIVE: a Rust file's row cut short, a
-    row of three or of six cells, and the BMP280 (which the port does not record, so nothing was appended to it).
+    with the change empty. A file that kept its header is read by it alone; the BMP280 (M18) alike. NEGATIVE: a Rust
+    file's row cut short, a row of three or of six cells.
     Then a Rust session end to end: a BMP581 whose header was lost, its change 'None' at first, and the stage
     machine's vetoes.csv with its words verbatim and a word in its value's place blanked. And a dump from before the
     wrapper, which predates the change: its ICP-10111 rows are named by plan B's four, as the 2026-10-03 cuts were
@@ -1249,7 +1255,7 @@ def test_recorder_flight_reads_a_barometer_with_and_without_its_change():
     """
     rust, plan_b = ['1234.56', '21.5', '87500.25', '3.21', '0.12'], ['1234.56', '21.5', '87500.25', '3.21']
     header = ('altitude', 'temperature', 'pressure', 'elevation', 'change')
-    for stream in ('baro_icp10111', 'baro_bmp581'):
+    for stream in ('baro_icp10111', 'baro_bmp581', 'baro_bmp280'):
         assert recorder_flight._cells(stream, None, rust) == rust
         assert recorder_flight._cells(stream, None, plan_b) == plan_b + ['']
         assert recorder_flight._cells(stream, header[:4], plan_b) == plan_b
@@ -1257,8 +1263,6 @@ def test_recorder_flight_reads_a_barometer_with_and_without_its_change():
         assert recorder_flight._cells(stream, header, plan_b) is None, stream
         assert recorder_flight._cells(stream, None, plan_b[:3]) is None, stream
         assert recorder_flight._cells(stream, None, rust + ['1']) is None, stream
-    assert recorder_flight._cells('baro_bmp280', None, plan_b) == plan_b
-    assert recorder_flight._cells('baro_bmp280', None, rust) is None
 
     session, imu_routing = '000123', '000123_imu_lsm6dso32.csv'
     baro_routing, vetoes_routing = '000123_baro_bmp581.csv', '000123_vetoes.csv'
@@ -1581,9 +1585,11 @@ def test_recorder_flight_times_the_log_from_this_boot_only():
         # the previous boot's stranded row is not this session's to count as rejected
         assert re.search(r'\(no stream\)\s+0 good,\s+0 salvaged in,\s+0 rejected', printed.getvalue()), tail
         assert '  1 more damaged line(s) in junk files' in printed.getvalue(), printed.getvalue()
+        # each row's elevation is its uptime in ms, the witness of where it was filed; the port's `change` (empty in
+        # these plan B rows) sits between it and the uptime
         flown = [line.split(';') for line in _read(os.path.join(recordings, 'flight', 'baro_bmp280.csv'))[1:]]
-        assert ['200500000', '200500'] in [cells[-1:] + cells[-2:-1] for cells in flown], (tail, flown[80:82])
-        assert all(int(cells[-1]) // 1000 == int(cells[-2]) for cells in flown), 'a row filed at another time'
+        assert ['200500000', '200500'] in [cells[-1:] + cells[-3:-2] for cells in flown], (tail, flown[80:82])
+        assert all(int(cells[-1]) // 1000 == int(cells[-3]) for cells in flown), 'a row filed at another time'
 
 
 def test_recorder_flight_files_a_log_line_found_in_a_stream():

@@ -94,7 +94,7 @@ _FIELDS: dict = {
     'imu_bno055': ('heading', 'roll', 'pitch', 'ax', 'ay', 'az'),
     'mag_bmm350': ('mx', 'my', 'mz'),
     'attitude': ('heading_cd', 'roll_cd', 'pitch_cd', 'free', 'mag_known', 'mag_offset_cd'),
-    'baro_bmp280': ('altitude', 'temperature', 'pressure', 'elevation'),
+    'baro_bmp280': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
     'baro_icp10111': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
     'baro_bmp581': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
     'airspeed_sdp810': ('dynamic_pressure', 'airspeed_cms', 'temperature'),
@@ -129,6 +129,7 @@ from before the wrapper predates every one of them, and is named without them (_
 _APPENDED: dict = {
     'separation': ('moment', 'duration'),
     'baro_icp10111': ('change',),
+    'baro_bmp280': ('change',),
     'baro_bmp581': ('change',),
 }
 _BOOST_G: float = 3.0
