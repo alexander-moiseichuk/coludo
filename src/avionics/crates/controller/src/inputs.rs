@@ -83,7 +83,10 @@ impl<'t> FlightQuantities<'t> {
             armed,
             now_us,
             attitude: fresh(self.attitude, now_us),
-            rate: fresh(self.rate, now_us),
+            // the `rate` channel is in the marks frame (the IMU drivers', x forward, y left, z up); the law's D terms
+            // take (roll, pitch, yaw): the one map the filter takes too. Unmapped, a board's pitch and yaw D terms
+            // had the wrong sign (HITL hid it: its sim published (roll, pitch, yaw) until 2026-10-12)
+            rate: fresh(self.rate, now_us).map(control::attitude::rate_from_marks),
             readings: Readings {
                 acceleration: fresh(self.accel, now_us),
                 gnss_speed: speed,
@@ -260,5 +263,37 @@ impl<'t> HitlWriters<'t> {
             writer.push(position, now_us);
         }
         change
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::FlightQuantities;
+    use crate::{Table, candidate, topology};
+    use sequencer::Stage;
+
+    #[test]
+    fn the_law_gets_the_marks_frame_rate_as_roll_pitch_and_yaw() {
+        // an IMU publishes `rate` in its marks frame (x forward, y left, z up): a nose-up pitch and a right yaw
+        // read negative on y and z there; the law's D terms take (roll, pitch, yaw), the filter's own map
+        let document: &'static Value = Box::leak(Box::new(json!({
+            "sensors": [{"name": "imu", "driver": "lsm6dso32", "enabled": true,
+                         "provides": {"rate": {"priority": 0, "timeout_ms": 20}}}],
+            "components": [],
+        })));
+        let entries = board_config::directory(document);
+        let table = Table::new(entries.iter().map(|entry| (candidate(document, entry), Ok(()))).collect());
+        let (topology, _) = topology(&entries, &table);
+        let topology: &'static _ = Box::leak(Box::new(topology));
+        let mut writer = topology.vector("rate").unwrap().writer("imu").unwrap();
+        writer.push([10.0, -20.0, -30.0], 1_000);
+        let mut quantities = FlightQuantities::new(topology);
+        let step = quantities.step(1_500, Stage::Gliding, true, None, None, [0.0; 2]);
+        assert_eq!(step.rate, Some([10.0, 20.0, 30.0]), "roll right, pitch up, yaw right: all positive");
+        // NEGATIVE: a stale rate is none at all, never a mapped zero (the PIDs then differentiate the error)
+        let late = quantities.step(1_000_000, Stage::Gliding, true, None, None, [0.0; 2]);
+        assert_eq!(late.rate, None);
     }
 }
