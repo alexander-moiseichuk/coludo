@@ -39,6 +39,7 @@ import glide_polar  # noqa: E402
 import hitl_compare  # noqa: E402
 import hitl_host  # noqa: E402
 import hitl_matrix_compare  # noqa: E402
+import partition_ab  # noqa: E402
 import recorder_console  # noqa: E402
 import recorder_flight  # noqa: E402
 import recorder_wire  # noqa: E402
@@ -2184,3 +2185,52 @@ def test_board_clean_keeps_the_running_session_videos_and_the_index():
 
 
 test_board_clean_keeps_the_running_session_videos_and_the_index()
+
+
+def test_partition_ab_reads_a_run_and_its_backlog_over_the_flight_only():
+    """
+    The layout A/B's row: hitl_host's CONTROL / VIDEO / RING / DF params, and the saver's backlog from recorder.log's
+    status lines between the stage's boosting and done lines only (the pad and the tail after DONE left out).
+    """
+    host = '\n'.join([
+        'SESSION 000696 F15 noise 0.0 wind 0.0', 'VIDEO START ok video /sdcard/videos/000696/14837.h264', 'DONE',
+        'CONTROL ok control schedule_hz=100 overruns=0 late_max_us=42 work_max_us=1002',
+        'VIDEO ok video running captured=2000 missed=20 dropped=0 write_us_max=315687 sd_busy_pct=41.7 '
+        'encode_us_max=131398',
+        'RING ok ring unsaved=90 unsaved_s=22.6', 'DF ok df layout=one_partition recordings=14787/14900'])
+
+    def line(uptime, text):
+        return '{0badc0de};%d %s;<0badc0de>' % (uptime, text)
+
+    def status(writer, saver):
+        return line(1, "Recorder :: {'ring': {'writer': (%d, %d), 'saver': (%d, %d), 'rate': 1}}" % (writer + saver))
+
+    recorder = '\n'.join([
+        status((10, 0), (1, 0)),  # on the pad: before boosting, left out
+        line(2, 'sequencer :: stage -> boosting (launch)'),
+        status((20, 100), (20, 0)),  # 100 B behind
+        status((22, 0), (20, 0)),  # two blocks behind
+        'a torn line',  # not a record: skipped
+        status((30, 0), (10, 0)),  # 20 blocks = 80 KiB, above 64 KiB
+        line(3, 'sequencer :: stage -> done (stationary 1.0g)'),
+        status((40, 0), (1, 0))])  # after DONE, left out
+    assert partition_ab.backlog(recorder) == [100, 2 * 4096, 20 * 4096], partition_ab.backlog(recorder)
+    entry = partition_ab.row('taster', host, recorder)
+    assert entry['layout'] == 'one_partition' and entry['session'] == '000696' and entry['outcome'] == 'done'
+    assert entry['missed_pct'] == 1.0 and entry['write_max_ms'] == 315.7 and entry['unsaved_s'] == 22.6, entry
+    assert entry['backlog_peak_kb'] == 80.0 and entry['backlog_over_64kb_s'] == 1, entry
+    second = dict(entry, layout='two_partitions', missed_pct=0.5)
+    text = partition_ab.table([entry, second, dict(second, missed_pct=1.5)])
+    assert '| missed_pct | 1 [1] | 1 [1.5] |' in text, text  # the mean, the worst in brackets
+    assert text.splitlines()[0] == '| | one_partition (1 runs) | two_partitions (2 runs) |', text.splitlines()[0]
+    # negatives: no SESSION is no run; a run with no flight has no backlog (-1, never a zero that reads as good)
+    try:
+        partition_ab.host_figures('DONE')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a log with no SESSION was read as a run')
+    assert partition_ab.row('taster', host, status((2, 0), (1, 0)))['backlog_peak_kb'] == -1.0
+
+
+test_partition_ab_reads_a_run_and_its_backlog_over_the_flight_only()
