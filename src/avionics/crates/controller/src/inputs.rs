@@ -289,7 +289,7 @@ mod tests {
         let topology: &'static _ = Box::leak(Box::new(topology));
         let mut writer = topology.vector("rate").unwrap().writer("imu").unwrap();
         writer.push([10.0, -20.0, -30.0], 1_000);
-        let mut quantities = FlightQuantities::new(topology);
+        let quantities = FlightQuantities::new(topology);
         let step = quantities.step(1_500, Stage::Gliding, true, None, None, [0.0; 2]);
         assert_eq!(step.rate, Some([10.0, 20.0, 30.0]), "roll right, pitch up, yaw right: all positive");
         // NEGATIVE: a stale rate is none at all, never a mapped zero (the PIDs then differentiate the error)
