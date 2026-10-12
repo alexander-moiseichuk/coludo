@@ -1069,9 +1069,14 @@ document.getElementById('actpreview').addEventListener('click', async () => {
       }
       if (!reply.ok) {
         const why = await reply.text();
-        if (!asked || reply.status !== 404) line.textContent = previewBoard + ': ' + (why.includes('error') ? JSON.parse(why).error : why);
+        // the camera stopped under the preview (video stop elsewhere, a reboot): the last picture is not live
+        image.style.opacity = '0.35';
+        if (!asked || reply.status !== 404 || image.style.display === '') {
+          line.textContent = previewBoard + ': ' + (why.includes('error') ? JSON.parse(why).error : why) + ' (not live)';
+        }
         return;
       }
+      image.style.opacity = '';
       const old = image.src;
       image.src = URL.createObjectURL(await reply.blob());
       if (old.startsWith('blob:')) URL.revokeObjectURL(old);
