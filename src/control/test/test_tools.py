@@ -38,6 +38,7 @@ import glide_polar  # noqa: E402
 import hitl_compare  # noqa: E402
 import hitl_host  # noqa: E402
 import hitl_matrix_compare  # noqa: E402
+import recorder_console  # noqa: E402
 import recorder_flight  # noqa: E402
 import recorder_wire  # noqa: E402
 import stack_compare  # noqa: E402
@@ -2131,3 +2132,36 @@ def test_stack_compare_reads_both_stacks_rows_and_their_cadence():
 
 
 test_stack_compare_reads_both_stacks_rows_and_their_cadence()
+
+
+def test_recorder_console_reads_its_replies_past_the_log():
+    """
+    The flight recorder's console replies interleave with its log and status lines: the reader keeps a reply's own
+    lines, a `get` is checked by its size and CRC-32, and a cut or damaged one is refused.
+    """
+    import base64
+    import binascii
+    status = 'I (5000) flight_recorder: recorder :: 10 bytes, 1 lines good'
+    text = '\r\n'.join(['ls 000670/', status, 'ls beacon.csv;279628', 'ls :: 2 entries', 'df 1 2', ''])
+    lines = recorder_console.reply_lines(text, 'ls')
+    assert recorder_console.parse_ls(lines) == [('000670/', None), ('beacon.csv', 279628)], lines
+    assert recorder_console.reply_lines(text, 'df') == ['df 1 2']
+    assert recorder_console.reply_lines('ls a/\r\nls b;1\r\n', 'ls') == []  # not ended yet
+    assert recorder_console.reply_lines("err rm: / is the card's root\n", 'rm') == ["err rm: / is the card's root"]
+    files = recorder_console.parse_files(['file 000670/recordings/a;b.csv;12;0000abcd', 'files :: 1 files, 12 bytes'])
+    assert files == [('000670/recordings/a;b.csv', 12, 0xabcd)], files
+    data = bytes(range(256)) * 20
+    chunks = [base64.b64encode(data[at:at + 3072]).decode() for at in range(0, len(data), 3072)]
+    reply = ['get %d' % len(data)] + chunks[:1] + [status] + chunks[1:] + ['get :: %08x' % binascii.crc32(data)]
+    assert recorder_console.decode_get(recorder_console.reply_lines('\n'.join(reply) + '\n', 'get')) == data
+    # negatives: a chunk lost, a damaged CRC, a refusal, a reply cut before its end
+    for broken in (reply[:1] + reply[3:], reply[:-1] + ['get :: 00000000'], ['err get: /sd/x: No such file'],
+                   reply[:-1]):
+        try:
+            recorder_console.decode_get(broken)
+        except ValueError:
+            continue
+        raise AssertionError('a broken get was read: %r' % broken[:2])
+
+
+test_recorder_console_reads_its_replies_past_the_log()

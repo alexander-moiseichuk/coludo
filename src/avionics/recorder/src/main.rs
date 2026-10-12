@@ -18,8 +18,7 @@
 //! - Lines gather in memory and go to the card once a second: per file, open for append, write, close (FatFs syncs
 //!   at close), so a power cut costs at most the last second.
 //! - Every 5 s one status line on the USB console: bytes and lines in, good and damaged, sessions, card errors. The
-//!   console takes `files [dir]` (every file with its size and CRC-32, to compare with the P4's own card) and `read
-//!   <path> <offset> <length>` (a file's bytes, to find where two copies part).
+//!   console (crate::console, tools/recorder_console.py) lists, measures, removes and pulls the card's files.
 //! - A card that does not answer is no stop: the link is read and counted all the same (lines then go unfiled,
 //!   counted), and the mount is tried again every 10 s. The first try traces the card's init on the console, each SPI
 //!   command and the card's answer.
@@ -28,6 +27,7 @@
 //! - The remote beacon (crate::remote): the glider's beacon.csv report sets an access point `<BOARD>_beacon` and its
 //!   page, the glider's own; the last report on the card is replayed after a restart.
 
+mod console;
 mod remote;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -46,7 +46,6 @@ use esp_idf_svc::hal::sd::{SdCardConfiguration, SdCardDriver};
 use esp_idf_svc::hal::spi::SPI2;
 use esp_idf_svc::hal::spi::config::DriverConfig;
 use esp_idf_svc::hal::spi::{Dma, SpiDriver};
-use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::hal::uart::{UartConfig, UartRxDriver};
 use esp_idf_svc::hal::units::Hertz;
 use esp_idf_svc::io::vfs::MountedFatfs;
@@ -99,19 +98,10 @@ const TRACE_TAGS: [(&CStr, esp_log_level_t); 5] = [
 /// The root's entries the read-back lists by name.
 const LISTED: usize = 16;
 
-/// How often the console thread looks for typed bytes.
-const CONSOLE_POLL: Duration = Duration::from_millis(100);
-
-/// The console thread's stack: a command and its directory walk.
-const CONSOLE_STACK: usize = 8 << 10;
-
 /// The link's loop's priority (the main task's, raised from IDF's 1): above the console's, so a `files` walk runs
 /// only while the loop waits for bytes. With the console above it (pthread's default, 5), walking 5 MB starved the
 /// UART reader: its buffer overflowed, lines were lost and damaged (2026-10-11).
 const LINK_PRIORITY: u32 = 3;
-
-/// The console thread's priority: below the link's loop.
-const CONSOLE_PRIORITY: u8 = 2;
 
 /// The routing of the session index's lines, and their file in a session's recordings.
 const SESSION_INDEX: &str = "session.csv";
@@ -240,6 +230,9 @@ impl Filer {
         {
             self.session = session.to_string();
             self.sessions.insert(self.session.clone());
+            if let Ok(mut filing) = console::FILING.lock() {
+                filing.clone_from(&self.session);
+            }
         }
         let name = name.replace(['/', '\\'], "_");
         let path = format!("{ROOT}/{}/recordings/{name}", self.session);
@@ -508,130 +501,6 @@ fn read_back() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The USB console's commands, on their own thread so the link is read meanwhile; the console has no driver, so its
-/// reads never wait and the thread looks again every [`CONSOLE_POLL`].
-///
-/// - `files [dir]`: every file under `/sd` (or `/sd/<dir>`), one `file <path>;<size>;<crc32>` line each (zlib's
-///   CRC-32 in hex, as Python's `binascii.crc32`), then `files :: <count> files, <bytes> bytes`. A file being filed
-///   is read up to where it ends at that moment, so its line describes that prefix.
-fn spawn_console() -> anyhow::Result<()> {
-    // below the link's loop ([`LINK_PRIORITY`]): a walk over a session's files must never hold the UART reader
-    ThreadSpawnConfiguration {
-        name: Some(c"console"),
-        priority: CONSOLE_PRIORITY,
-        ..Default::default()
-    }
-    .set()?;
-    let spawned = std::thread::Builder::new().stack_size(CONSOLE_STACK).spawn(|| {
-        let mut held = Vec::new();
-        let mut chunk = [0u8; 64];
-        loop {
-            match std::io::stdin().read(&mut chunk) {
-                Ok(count) if count > 0 => held.extend_from_slice(&chunk[..count]),
-                _ => std::thread::sleep(CONSOLE_POLL),
-            }
-            while let Some(end) = held.iter().position(|&byte| byte == b'\n') {
-                let line: Vec<u8> = held.drain(..=end).collect();
-                let line = String::from_utf8_lossy(&line);
-                let mut words = line.split_whitespace();
-                let command = words.next();
-                let arguments: Vec<&str> = words.collect();
-                match (command, arguments.as_slice()) {
-                    (Some("files"), []) => files(None),
-                    (Some("files"), [directory]) => files(Some(directory)),
-                    (Some("read"), [path, offset, length]) => read(path, offset, length),
-                    (None, _) => {}
-                    (Some(other), _) => {
-                        println!("err {other}: the commands are `files [dir]` and `read <path> <offset> <length>`")
-                    }
-                }
-            }
-        }
-    });
-    ThreadSpawnConfiguration::default().set()?;
-    spawned?;
-    Ok(())
-}
-
-/// The console's `files [dir]` (see [`spawn_console`]).
-fn files(directory: Option<&str>) {
-    let start = match directory {
-        Some(directory) => format!("{ROOT}/{}", directory.trim_matches('/')),
-        None => ROOT.to_string(),
-    };
-    let mut pending = vec![std::path::PathBuf::from(&start)];
-    let (mut count, mut total) = (0u64, 0u64);
-    let mut buffer = vec![0u8; 4096];
-    while let Some(directory) = pending.pop() {
-        let entries = match std::fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) => {
-                println!("err {}: {error}", directory.display());
-                continue;
-            }
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                pending.push(path);
-                continue;
-            }
-            let summed = std::fs::File::open(&path).and_then(|mut file| {
-                let (mut size, mut crc) = (0u64, 0u32);
-                loop {
-                    let read = file.read(&mut buffer)?;
-                    if read == 0 {
-                        return Ok((size, crc));
-                    }
-                    size += read as u64;
-                    crc = recorder_wire::crc32(crc, &buffer[..read]);
-                }
-            });
-            let shown = path.strip_prefix(ROOT).unwrap_or(&path).display().to_string();
-            match summed {
-                Ok((size, crc)) => {
-                    println!("file {shown};{size};{crc:08x}");
-                    count += 1;
-                    total += size;
-                }
-                Err(error) => println!("err {shown}: {error}"),
-            }
-        }
-    }
-    println!("files :: {count} files, {total} bytes");
-}
-
-/// The console's `read <path> <offset> <length>`: that part of a file under `/sd` (at most 4 KB), one line
-/// `read <offset> <length> <hex>`: the console's text is not byte-exact (it turns `\n` into `\r\n`), hex is, so a
-/// comparison with the P4's card finds the line where two copies part.
-fn read(path: &str, offset: &str, length: &str) {
-    let (Ok(offset), Ok(length)) = (offset.parse::<u64>(), length.parse::<usize>()) else {
-        println!("err read: <offset> and <length> are numbers");
-        return;
-    };
-    let path = format!("{ROOT}/{}", path.trim_start_matches('/'));
-    let mut bytes = vec![0u8; length.min(4096)];
-    let got = std::fs::File::open(&path).and_then(|mut file| {
-        file.seek(SeekFrom::Start(offset))?;
-        let mut got = 0;
-        while got < bytes.len() {
-            let count = file.read(&mut bytes[got..])?;
-            if count == 0 {
-                break;
-            }
-            got += count;
-        }
-        Ok(got)
-    });
-    match got {
-        Ok(got) => {
-            let hex: String = bytes[..got].iter().map(|byte| format!("{byte:02x}")).collect();
-            println!("read {offset} {got} {hex}");
-        }
-        Err(error) => println!("err {path}: {error}"),
-    }
-}
-
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -676,7 +545,7 @@ fn main() -> anyhow::Result<()> {
         &UartConfig::default().baudrate(Hertz(BAUD)).rx_fifo_size(RX_BYTES),
     )?;
     log::info!("recorder :: the P4's lines on GPIO17 at {BAUD} baud");
-    spawn_console()?;
+    console::spawn()?;
     let mut filer = Filer::new();
     filer.mounted = card.is_some();
     let mut held: Vec<u8> = Vec::new();
@@ -698,6 +567,11 @@ fn main() -> anyhow::Result<()> {
         if held.len() > LINE_LIMIT {
             held.clear();
             filer.counts.overlong += 1;
+        }
+        if console::FORGET.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            // the console removed files: what the filer knew of the card's directories and files may be gone
+            filer.made.clear();
+            filer.known.clear();
         }
         if flushed.elapsed() >= FLUSH_EVERY {
             flushed = Instant::now();
