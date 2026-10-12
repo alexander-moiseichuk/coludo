@@ -239,9 +239,30 @@ pub fn crash<'name>(table: &Table, names: impl IntoIterator<Item = Option<&'name
     }
 }
 
+/// The OV5647's SCCB address on i2c:0 (fixed by the board's CSI wiring, board_config `Camera`).
+const CAMERA_SCCB_ADDRESS: u8 = 0x36;
+
+/// Whether the camera's sensor answers its SCCB on i2c:0. The camera runs natively (its stream starts with a
+/// recording), so without this its entry read up with no camera fitted (TMS-7F, M5: with the ribbon unplugged the
+/// boot scan loses 0x36).
+///
+/// Errors: why it does not: nothing answers, the bus is unreadable, or no i2c:0 came up.
+fn camera_answers(ports: &mut [(owner::Parked, I2cPort)]) -> Result<(), String> {
+    let Some((_, port)) = ports.iter_mut().find(|(_, port)| port.id() == 0) else {
+        return Err("no i2c:0 to reach its SCCB".to_string());
+    };
+    match port.probe(CAMERA_SCCB_ADDRESS) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(format!(
+            "no camera: nothing answers 0x{CAMERA_SCCB_ADDRESS:02x} (the OV5647's SCCB) on i2c:0 -- its ribbon?"
+        )),
+        Err(error) => Err(format!("its SCCB unreadable on i2c:0: {error}")),
+    }
+}
+
 /// Brings every enabled entry of `document` (the post-layout config) up, in config order, on the ports main holds on
 /// loan (`ports`), and logs plan B's lines and the topology. `recording` is whether the recorder opened: its entry
-/// is up only then.
+/// is up only then; the camera's only when its sensor answers ([`camera_answers`]).
 pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)], recording: bool) -> Devices {
     let started = Instant::now();
     let entries = board_config::directory(document);
@@ -263,6 +284,8 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let mut servos = Vec::new();
     let mut flight = None;
     let spi_bus = open_spi(document, &entries);
+    // the camera's sensor, asked once while the ports are still the bring-up's own
+    let camera = board_config::camera(document).map(|_| camera_answers(ports));
     let mut set_up = set_up_ports(document, &entries, attempts, ports, &mut members);
     let mut outcomes = Vec::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
@@ -270,15 +293,16 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
         let sleep = |ms: u32| std::thread::sleep(Duration::from_millis(u64::from(ms)));
         let outcome = match sensors::classify(entry) {
             Kind::Native => {
-                let answer = |_, _| {
-                    if entry.implementation != "recorder" || recording {
-                        Attempt::Up
-                    } else {
-                        Attempt::Raised {
-                            error: "not recording this boot".to_string(),
-                            diagnosis: None,
-                        }
-                    }
+                let answer = |_, _| match (entry.implementation, &camera) {
+                    ("recorder", _) if !recording => Attempt::Raised {
+                        error: "not recording this boot".to_string(),
+                        diagnosis: None,
+                    },
+                    ("ov5647", Some(Err(why))) => Attempt::Raised {
+                        error: why.clone(),
+                        diagnosis: None,
+                    },
+                    _ => Attempt::Up,
                 };
                 controller::set_up(entry.name, entry.implementation, 1, answer, sleep, log)
             }

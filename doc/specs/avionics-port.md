@@ -549,8 +549,10 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   and schematic). It is on 7F's Arducam module: with the CSI ribbon unplugged, the boot scan and `detect` lose 0x0c
   together with 0x36. Most likely a lens-motor (VCM) driver, 0x0c being the VCM address, although the module is sold
   as fixed-focus. None of these addresses is a layout vote or the anchor. The same test showed that the camera's
-  entry comes up "up" with no camera fitted: the bring-up runs the camera natively and never asks the sensor (open,
-  with the video work).
+  entry comes up "up" with no camera fitted: the bring-up runs the camera natively and never asks the sensor. Fixed
+  2026-10-12: the bring-up probes 0x36 on i2c:0 first, and the entry fails "no camera: nothing answers 0x36 (the
+  OV5647's SCCB) on i2c:0" without it (so `verify` names it and `arm` refuses, as for any failed part: a flight
+  without a camera disables its entry). Proven up on the taster and 7F; the unplugged case is owed (the ribbon).
 - The bring-up, on the taster and on TMS-7F (2026-10-07):
   - every fitted part comes up in config order: the LSM6DSO32 (SPI2, CS 50), the ICP-10111, BMI323, BMM350, BMP581,
     SDP810, VL53L1X and INA226. Bring-up takes 1056 ms on the taster and 761 ms on 7F;
