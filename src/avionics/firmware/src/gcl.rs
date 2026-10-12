@@ -113,6 +113,8 @@ pub enum Origin {
     Console,
     /// The CC hub, over Wi-Fi.
     Hub,
+    /// The card's entry file at boot (M21, crate entry): never a console-only command (the hub can pull the card).
+    Entry,
 }
 
 /// What a command does with its validated arguments; it answers one CC line.

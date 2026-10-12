@@ -9,7 +9,7 @@ starts from an empty card (the operator, 2026-10-11). What it removes is gone fo
   tools/board_clean.py <board>    # the board's id on the hub; the board must be in SETTING
 
 Kept: the running session (the board refuses it anyway), `videos/` itself (on a two-partition card the videos
-partition's mount point), and the global index `sessions.csv`. tools/hitl_host.py --clean runs the same after its
+partition's mount point), the global index `sessions.csv` and the entry file `entry.gcl`. tools/hitl_host.py --clean runs the same after its
 reboot, so the run's own session is the one kept.
 """
 import argparse
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from contract import transports  # noqa: E402
 
 _VIDEOS: str = 'videos'
-_KEPT: tuple = ('sessions.csv',)
+_KEPT: tuple = ('sessions.csv', 'entry.gcl')  # the global index, the entry file (M21)
 
 
 def doomed(entries: list, session: str, under: str = '') -> list:

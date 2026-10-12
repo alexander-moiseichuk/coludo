@@ -71,6 +71,10 @@ fn applied(request: Request) -> Result<Flight, Fault> {
 /// refused then under `stage` alone.
 pub fn arm(_message: &Message, context: &mut Context) -> Reply {
     let mut problems = standing_problems(context);
+    // a bench mode never rides into a flight (M21)
+    if let Some(problem) = crate::entry::problem() {
+        problems.insert("entry-file", problem);
+    }
     if FLIGHT.load().stage.change_refused(false).is_none() {
         // the probes sweep the fins: only in SETTING
         if let Some(problem) = super::diagnostics::probe_mission(context) {

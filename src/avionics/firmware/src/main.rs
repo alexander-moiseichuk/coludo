@@ -20,6 +20,7 @@ mod console;
 mod control;
 mod devices;
 mod diagnostics;
+mod entry;
 mod files;
 mod fins;
 mod flight;
@@ -350,6 +351,7 @@ fn main() -> anyhow::Result<()> {
     link::register_commands();
     if sd_mounted {
         firmware::sd::register_commands(board.session.clone());
+        entry::register_commands();
         // the camera's one owner: the flight recording by the flight word, and `video start`/`stop` through its
         // mailbox
         if let Some(camera) = camera
@@ -381,6 +383,10 @@ fn main() -> anyhow::Result<()> {
         console.serve(executor.clone())?;
     }
     log::info!("{}", board.banner());
+    // the card's entry file (M21): its lines through the executor, once bring-up is done
+    if sd_mounted && let Err(error) = entry::start(executor.clone()) {
+        log::error!("entry :: the runner did not start, the entry file is not run: {error}");
+    }
     // the recovery beacons at DONE (M11b, M20): the battery's capacity from the INA226 entry, when the config gives one
     let battery_mah = board_config::directory(&loaded.document)
         .iter()

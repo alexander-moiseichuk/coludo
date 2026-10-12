@@ -211,6 +211,10 @@ pub fn verify(_message: &Message, context: &mut Context) -> Reply {
     if let Some(problem) = flight.stage_problem() {
         problems.insert("stage", problem.to_string());
     }
+    // a bench mode never rides into a flight (M21)
+    if let Some(problem) = crate::entry::problem() {
+        problems.insert("entry-file", problem);
+    }
     match flight.stage.change_refused(false) {
         Some(airborne) => {
             problems.insert("probe", format!("not run: {airborne} (the probes sweep the fins)"));
