@@ -109,10 +109,11 @@ envelope + landing-zone numbers re-derive from the TMS-8 masses/geometry (`colud
 - **The same servos as TMS-7:** left and right surfaces and a yaw servo, MG90S.
 - **Planning figures for the sim:** L/D 8 at a 12 m/s trim (`sim_model.AIRFRAMES['tms8']`), F15 at 235 and 285 g.
   Everything else is assumed the same as TMS-7 (the operator): the stall (9 m/s), the booster, the servos, the
-  boost dynamics. The boost drag is an estimate, Cd ~0.5 on ~100 cm^2 plus the surfaces = 0.0065 m^2,
-  about 6.4x TMS-7's folded stack.
-- **First number (the sim, an F15 vertical climb at 430 g, no wind):** apogee **164 m against TMS-7's 329 m**, top
-  speed 47 m/s against 72 m/s. The flat body halves the height; the better glide has to buy the time back.
+  boost dynamics. The boost drag is an estimate: ~5 x 5 cm of body around the ring plus the 2 cm-high tips and
+  wing across the ~20 cm span, ~55 cm^2 behind a pointed front, Cd ~0.35: 0.0020 m^2, about 2x TMS-7's stack.
+- **First number (the sim, an F15 vertical climb at 430 g, no wind):** apogee **266 m against TMS-7's 329 m**, top
+  speed 65 m/s against 72 m/s: the open frame costs ~19 % of the height, and the better glide (L/D 8 vs 5.5) buys
+  more than that back in time aloft.
 - **Open:** the full pre-flight report (F15 x {235, 285 g} x 10 scenarios x 3 runs, HITL and SITL with
   `--airframe tms8`), with the boost drag swept, since it decides the apogee.
 

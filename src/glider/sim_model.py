@@ -103,14 +103,14 @@ numbers above are TMS-7's and stay the default, so every study before 2026-10-11
    FIXED (no folding wings: they stressed the frame and changed the mass between stages). L/D 8 at a 12 m/s trim
    are the operator's planning figures, not a measurement; everything else is TMS-7's ("all params the same as
    now", the operator), the 1-g stall included (9 m/s).
-   Its boost drag is the flat body's: up to 20 cm wide and ~5 cm deep around the 43 mm obturation ring, with the
-   tips and tail riding the boost open -- Cd ~0.5 on ~100 cm^2, plus ~15 cm^2 for the surfaces: 0.0065 m^2, about
-   6.4x TMS-7's. An estimate, which the v8 study sweeps.
+   Its boost drag is the frame's front: ~5 x 5 cm of body around the 43 mm obturation ring (~25 cm^2) and the
+   2 cm-high tips and wing across the rest of the ~20 cm span (~30 cm^2), ~55 cm^2 behind a pointed triangle
+   front, Cd ~0.35: ~0.0019 m^2, taken as 0.0020, about 2x TMS-7's. An estimate, which the v8 study sweeps.
 Each entry: air_quality (L/D), trim_ms, stall_ms (1-g), boost_cda (Cd x frontal area, m^2).
 """
 AIRFRAMES: dict = {
     'tms7': {'air_quality': AIR_QUALITY, 'trim_ms': TRIM_SPEED_MS, 'stall_ms': _V_STALL_1G, 'boost_cda': _CDA},
-    'tms8': {'air_quality': 8.0, 'trim_ms': 12.0, 'stall_ms': _V_STALL_1G, 'boost_cda': 0.0065},
+    'tms8': {'air_quality': 8.0, 'trim_ms': 12.0, 'stall_ms': _V_STALL_1G, 'boost_cda': 0.0020},
 }
 
 # average thrust (N), burn (s) per motor -- from the coludo.md flight envelope

@@ -182,7 +182,7 @@ def test_airframes():
     eight.begin_glide()
     assert eight.speed == 12.0  # separation hands over at the airframe's own trim
     seven_apogee, eight_apogee = _apogee('tms7'), _apogee('tms8')
-    assert eight_apogee < 0.8 * seven_apogee, (seven_apogee, eight_apogee)  # 6.4x the boost drag costs height
+    assert 0.5 * seven_apogee < eight_apogee < 0.9 * seven_apogee, (seven_apogee, eight_apogee)  # 2x the drag
     # NEGATIVE: an unknown airframe is refused by name, never silently TMS-7
     try:
         sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0, airframe='tms9')
