@@ -230,21 +230,30 @@ pub enum Event {
     Rearm,
 }
 
-/// The backup barometer's read pairs that disagreed (drivers::bmp581 / bmp280 `Outcome::Torn`; the BMP581 on v1.x, the
-/// BMP280 on v0.1, never both fitted): mostly a conversion landing between the two bursts (about 1 read in 80), the
-/// rest the bus garbage the double read exists for (M9).
-static BACKUP_TORN: AtomicU32 = AtomicU32::new(0);
-/// Its agreeing pairs outside the part's operating range (`Outcome::Implausible`): bus garbage read twice alike.
-static BACKUP_IMPLAUSIBLE: AtomicU32 = AtomicU32::new(0);
+/// A backup barometer, the index of its guard counters: the BMP581 (the SEN0697's, v1.x) and the BMP280 (the
+/// SEN0253's, v0.1). A bench board can carry both (the taster does), so each has its own.
+#[derive(Clone, Copy)]
+pub enum Backup {
+    /// The SEN0697's BMP581.
+    Bmp581 = 0,
+    /// The SEN0253's BMP280.
+    Bmp280 = 1,
+}
+
+/// Each backup barometer's read pairs that disagreed (drivers::bmp581 / bmp280 `Outcome::Torn`): mostly a conversion
+/// landing between the two bursts (about 1 read in 80), the rest the bus garbage the double read exists for (M9).
+static BACKUP_TORN: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+/// Each one's agreeing pairs outside the part's operating range (`Outcome::Implausible`): bus garbage read twice alike.
+static BACKUP_IMPLAUSIBLE: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
 /// How many backup-barometer reads in a row may go unjudged (torn or implausible) before the part is unhealthy: 60 ms, three
 /// conversion periods, as its stale rule.
 const UNJUDGED_LIMIT: u32 = 6;
 
-/// What `inspect` shows of the backup barometer's guard (BMP581 or BMP280): its torn pairs and its implausible reads since boot.
-pub fn backup_barometer_inspection() -> (u32, u32) {
+/// What `inspect` shows of a backup barometer's guard: its torn pairs and its implausible reads since boot.
+pub fn backup_barometer_inspection(part: Backup) -> (u32, u32) {
     (
-        BACKUP_TORN.load(Ordering::Relaxed),
-        BACKUP_IMPLAUSIBLE.load(Ordering::Relaxed),
+        BACKUP_TORN[part as usize].load(Ordering::Relaxed),
+        BACKUP_IMPLAUSIBLE[part as usize].load(Ordering::Relaxed),
     )
 }
 
@@ -912,7 +921,8 @@ impl Absolute {
             bno055::Fusion::Stalled => {
                 log::warn!("{name} :: fusion STALLED (frozen euler while the part rotates) -- attitude withheld")
             }
-            bno055::Fusion::StillStalled => {}
+            // the fusion's first samples after a switch into NDOF read zero: no attitude yet
+            bno055::Fusion::StillStalled | bno055::Fusion::Starting => {}
         }
         let accel = self.axes.apply(sample.accel);
         if let Some(writer) = &mut self.accel {
@@ -1734,11 +1744,11 @@ impl Part {
                         false
                     }
                     Ok(bmp280::Outcome::Torn) => {
-                        BACKUP_TORN.fetch_add(1, Ordering::Relaxed);
+                        BACKUP_TORN[Backup::Bmp280 as usize].fetch_add(1, Ordering::Relaxed);
                         true
                     }
                     Ok(bmp280::Outcome::Implausible(_)) => {
-                        BACKUP_IMPLAUSIBLE.fetch_add(1, Ordering::Relaxed);
+                        BACKUP_IMPLAUSIBLE[Backup::Bmp280 as usize].fetch_add(1, Ordering::Relaxed);
                         true
                     }
                     Err(fault) => {
@@ -1766,11 +1776,11 @@ impl Part {
                         false
                     }
                     Ok(bmp581::Outcome::Torn) => {
-                        BACKUP_TORN.fetch_add(1, Ordering::Relaxed);
+                        BACKUP_TORN[Backup::Bmp581 as usize].fetch_add(1, Ordering::Relaxed);
                         true
                     }
                     Ok(bmp581::Outcome::Implausible(_)) => {
-                        BACKUP_IMPLAUSIBLE.fetch_add(1, Ordering::Relaxed);
+                        BACKUP_IMPLAUSIBLE[Backup::Bmp581 as usize].fetch_add(1, Ordering::Relaxed);
                         true
                     }
                     Err(fault) => {
@@ -1810,7 +1820,7 @@ impl Part {
     }
 
     /// Whether the part is an IMU, whose run goes first in each owner wake (D13 of the M9 plan): the lowest latency
-    /// for the backup IMU, the BMI323 on v1.x, the BNO055 on v0.1 (never both fitted).
+    /// for the backup IMUs, the BMI323 (v1.x) and the BNO055 (v0.1; a bench board can carry both).
     pub fn first(&self) -> bool {
         matches!(self, Part::Bmi323(_) | Part::Bno055(_))
     }

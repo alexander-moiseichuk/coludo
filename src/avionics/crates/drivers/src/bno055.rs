@@ -15,6 +15,11 @@
 //! Euler latch the stall, the firmware withholds `attitude` (it goes stale, the databoard moves on) and keeps `accel`
 //! (that half still works), and the first Euler that moves clears it.
 //!
+//! THE RESTART (measured on the taster, 2026-10-12). After every switch into NDOF (the bring-up, a re-arm, the
+//! profile's read and write) the fusion reads an all-zero Euler for 60-80 ms before its first real one: a level
+//! attitude that is no measurement. [`Bno055::judge`] answers [`Fusion::Starting`] for those, until the first non-zero
+//! triple.
+//!
 //! CALIBRATION (plan B's latch and profile). NDOF does not converge without motion, and the magnetometer is the gate:
 //! the operator's figure-8 takes CALIB_STAT's mag field to 3. The register is the chip's confidence in RECENT data and
 //! falls back to 2 within a minute of sitting still while the learned offsets stay, so convergence is a LATCH
@@ -188,6 +193,8 @@ pub enum Fusion {
     Stalled,
     /// Still stalled: keep withholding.
     StillStalled,
+    /// The fusion restarted (a switch into NDOF) and its Euler still reads all zero: withhold the attitude.
+    Starting,
 }
 
 /// One BNO055 on an I2C bus.
@@ -201,6 +208,8 @@ pub struct Bno055 {
     strikes: u32,
     /// The stall latch.
     stalled: bool,
+    /// The fusion restarted and has not yet read a non-zero Euler.
+    starting: bool,
     /// The last CALIB_STAT read, None until the first.
     state: Option<CalibrationState>,
     /// The convergence latch: mag reached [`MAG_CALIBRATED`] once, or a profile was restored.
@@ -219,6 +228,7 @@ impl Bno055 {
             last_euler: None,
             strikes: 0,
             stalled: false,
+            starting: false,
             state: None,
             converged: false,
             restored: false,
@@ -249,6 +259,12 @@ impl Bno055 {
     /// Judge a sample's fusion (bno055._fusion_alive; see the module notes): a moved Euler clears the stall, a frozen
     /// one counts a strike only while the part's own gyro says it rotates, [`STALL_SAMPLES`] strikes latch it.
     pub fn judge(&mut self, sample: &Sample) -> Fusion {
+        if self.starting {
+            if sample.euler_raw == [0; 3] {
+                return Fusion::Starting;
+            }
+            self.starting = false;
+        }
         if self.last_euler != Some(sample.euler_raw) {
             self.last_euler = Some(sample.euler_raw);
             self.strikes = 0;
@@ -380,7 +396,14 @@ impl Bno055 {
     }
 
     /// Switch the operating mode and wait it out.
-    fn set_mode<Bus: I2c>(&self, bus: &mut Bus, delay: &mut dyn DelayNs, mode: u8) -> Result<(), Fault<Bus::Error>> {
+    fn set_mode<Bus: I2c>(
+        &mut self,
+        bus: &mut Bus,
+        delay: &mut dyn DelayNs,
+        mode: u8,
+    ) -> Result<(), Fault<Bus::Error>> {
+        // a fusion restarting reads zeros first: judged Starting from here (a failed write may have switched it too)
+        self.starting |= mode == MODE_NDOF;
         bus.write(self.address, &[OPR_MODE, mode]).map_err(Fault::Bus)?;
         delay.delay_ms(MODE_SETTLE_MS);
         Ok(())

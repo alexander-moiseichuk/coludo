@@ -264,3 +264,28 @@ fn the_sample_read_is_the_block() {
     mock.done();
     assert_eq!(sample.euler, [1.0, 2.0, 3.0]);
 }
+
+#[test]
+fn a_restarted_fusion_s_zero_euler_is_withheld_until_the_first_real_one() {
+    let mock = MockBus::new();
+    mock.expect_write_read(ADDRESS, &[CHIP_ID], &[IDENTITY])
+        .expect_write(ADDRESS, &[OPR_MODE, MODE_CONFIG])
+        .expect_delay_ms(MODE_SETTLE_MS)
+        .expect_write(ADDRESS, &[PWR_MODE, POWER_NORMAL])
+        .expect_write(ADDRESS, &[OPR_MODE, MODE_NDOF])
+        .expect_delay_ms(MODE_SETTLE_MS);
+    let mut bus = mock.clone();
+    let mut delay = mock.delay();
+    let mut part = Bno055::new(ADDRESS);
+    part.setup(&mut bus, &mut delay).unwrap();
+    mock.done();
+    let zero = Sample::decode(&block([0, 0, 981], [0, 0, 0], [0, 0, 0]));
+    let level = Sample::decode(&block([0, 0, 981], [0, 0, 0], [0, -37, -124]));
+    assert_eq!(part.judge(&zero), Fusion::Starting);
+    assert_eq!(part.judge(&zero), Fusion::Starting, "until the first real Euler");
+    assert_eq!(part.judge(&level), Fusion::Live);
+    // NEGATIVE: once started, a zero Euler is an attitude like any other (a level part pointing north)
+    assert_eq!(part.judge(&zero), Fusion::Live);
+    // a fresh driver never restarted the fusion: nothing to withhold
+    assert_eq!(Bno055::new(ADDRESS).judge(&zero), Fusion::Live);
+}
