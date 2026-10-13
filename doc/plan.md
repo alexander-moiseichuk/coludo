@@ -70,9 +70,13 @@ Required hardware and the phased development roadmap. Architecture lives in
     flights, 72 of 72 SITL). Also firmware OTA over the console, the separate C6 flight recorder with its own
     beacon ([`flight_recorder.md`](flight_recorder.md)), and the entry file. Both boards (the taster, TMS-7F) run
     it; `tools/cc_contract.py <board> --milestone M21` answers 0 violations.
-  - **Open:** M16 (the NEO-M8N's UBX, waits for the part); Q19's step 2 of the warm start (drop the age and
-    power-on refusals), which waits for the golden tag to move; the 7C proofs (a rail power cycle restoring the
-    BNO055 profile, a hand rotation on the BNO055 alone); the field-day checks
+  - **Done since:** M16 (the NEO-M8N on UBX, 10-12); Q19's step 2 of the warm start (10-13: no age or power-on
+    refusal, the golden tag moved to `micropython_plan_B_3`); the fins' 3-degree grid as every servo's default and
+    the endgame's turn kept across the heading wrap (10-13, `doc/sims/TMS-7-servo_step`, `TMS-7-rust_hitl_m14` §3g);
+    `runtime.csv` (internal/DMA RAM, per-core load, control timing).
+  - **Open:** BC4/BC5 (boost control on the board, then the operator's call); the MG90S on the bench; the TMS-8
+    launch config (drafted; the airframe's trims, IMU axes and GNSS remain); the 7C proofs (a rail power cycle
+    restoring the BNO055 profile, a hand rotation on the BNO055 alone); the field-day checks
     ([`field_checks.md`](field_checks.md): a real GNSS fix, the beacons' range, the batteries' time).
 - **Firmware / toolchain — the board runs `v1.29.0` OFFICIAL** (moved off `preview.414.g533a154c8a`
   on 2026-09-04; the full board suite is **57/57** on it, no delta). The repo `mpy-cross` is still
