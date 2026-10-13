@@ -1842,7 +1842,7 @@ append, so the rest of boot goes on and the producers queue in PSRAM meanwhile:
    table** (6144 entries in PSRAM) that the three tasks share through atomics.
 2. **No valid block anywhere** means an unformatted ring:
    - `degraded: ring-unformatted`;
-   - the eraser erases the foreign blocks ahead of the writer (~15 ms each, about 90 s for 24 MiB);
+   - the eraser erases the foreign blocks ahead of the writer (15-22 ms each and an equal rest: ~3 min for 20 MiB);
    - the writer starts as soon as one block is erased.
 3. **Writer:** the first erased block after the newest valid one, with `block_sequence = max + 1`.
 4. **Saver:** at the `saver_position` hint when it names a valid block and the mounted card is the one the
@@ -1867,7 +1867,15 @@ open a block rather than give a number twice.
 ### 3.7 The ring_eraser and newest wins
 
 - **Thread:** core 0, priority 3, the only task that erases the `log` partition. It erases one 4 KiB block per
-  call (13-17 ms); a 64 KiB erase is never issued.
+  call (13-22 ms); a 64 KiB erase is never issued.
+- **It sleeps through the erase** (components/flash_wait, 2026-10-13). The P4's flash controller holds an erase open
+  as one command until the chip's busy bit clears (auto wait idle), and IDF's host driver waits for that command in
+  a bare register loop: ~22 ms of spin per erase. At the taster's pad rate (33 KB/s, ~8 blocks a second) that was
+  17.8 % of core 0, and 28 % with video. The component swaps the main chip's host driver for a copy whose command
+  poll, in a registered task, spins 100 us and then sleeps a tick at a time; a flash operation holds only a mutex
+  here (XIP from PSRAM: the cache stays on), so sleeping inside one is legal. Measured on the taster: 1.8 % of
+  core 0, the ring unchanged (no loss, reserve kept). A NOR chip runs one erase at a time, so batching sectors saves
+  no wait: a 64 KiB block erase is about half the chip time per byte, but holds the flash 95-107 ms.
 - **Normal rule:** erase each block 100–200 ms after the saver has passed it (`block_sequence` behind
   `saver_position`), and keep about 1 % of the ring (~61 blocks, ~245 KB, about 15 s at the flight rate) erased
   ahead of the writer.

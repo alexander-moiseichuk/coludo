@@ -144,9 +144,10 @@ const ERASER_STACK: usize = 6 << 10;
 const ERASER_IDLE: Duration = Duration::from_millis(100);
 
 /// The least the eraser rests after an erase: one tick. It rests as long as the erase took, at least this, so
-/// back-to-back erases (a first boot formatting an unformatted ring: 5120 x ~15 ms) hold core 0 at most half the time
-/// and main, the link and the idle task (which the task watchdog watches) go on; that still frees ~30 blocks a
-/// second, where the flight rate takes ~4.
+/// back-to-back erases (a first boot formatting an unformatted ring: 5120 x ~22 ms) keep the chip free half the time
+/// for the writer, and, should an erase spin (components/flash_wait not installed), hold core 0 at most half the time
+/// so main, the link and the idle task (which the task watchdog watches) go on; that still frees ~20 blocks a second,
+/// where the pad takes ~8 (the taster, 2026-10-13).
 const ERASER_PAUSE: Duration = Duration::from_millis(1);
 
 /// How often the writer position is written to the `cfg` NVS when it moved: about once a second (spec "Positions").
@@ -506,6 +507,12 @@ pub fn start(settings: EspCustomNvsPartition, card: Option<Card>, config_id: &st
         .get()
         .ok_or_else(|| anyhow::anyhow!("the recorder did not open"))?;
     recording.recorder.bind_config_id(config_id);
+    // the ring's threads sleep through the flash chip's busy waits (components/flash_wait), from before they start
+    // SAFETY: swaps the main chip's OS function table for a copy; no flash call races it at boot, and one that did
+    // would see either table, whose start and end are the same
+    if let Err(error) = sys::esp!(unsafe { sys::flash_wait_install() }) {
+        log::warn!("ring :: the flash waits stay spins: {error}");
+    }
     let config_id = config_id.to_string();
     spawn(
         c"ring_writer",
@@ -806,6 +813,11 @@ static ERASER_RUNNING: AtomicBool = AtomicBool::new(false);
 /// tasks, can wait without harm (the erased reserve lasts ~15 s at the flight rate).
 fn erase(mut eraser: Eraser<'static, Partition>, recorder: &'static Recorder, store: Option<RecorderStore>) {
     ERASER_RUNNING.store(true, Ordering::Release);
+    // an erase sleeps while the chip works (~22 ms), where it spun: 18-28 % of core 0 on the pad (2026-10-13)
+    // SAFETY: registers the calling task in components/flash_wait, nothing else
+    if let Err(error) = sys::esp!(unsafe { sys::flash_wait_sleep() }) {
+        log::warn!("ring :: the eraser's flash waits stay spins: {error}");
+    }
     let _attachment = recorder
         .attach(Producer::Eraser as usize)
         .inspect_err(|error| log::warn!("ring :: the eraser shares the misc ring: {error:?}"))
@@ -1402,7 +1414,8 @@ impl Flash for Partition {
         Ok(())
     }
 
-    /// Erases the one 4 KiB sector at `offset` (13-17 ms; a 64 KiB erase is never issued).
+    /// Erases the one 4 KiB sector at `offset` (~22 ms on the taster, slept through by the ring_eraser:
+    /// components/flash_wait; a 64 KiB erase is never issued).
     fn erase_sector(&mut self, offset: u32) -> Result<(), Self::Error> {
         // SAFETY: the range is checked against the partition and its erase size.
         sys::esp!(unsafe { sys::esp_partition_erase_range(self.0, offset as usize, BLOCK_BYTES as usize) })

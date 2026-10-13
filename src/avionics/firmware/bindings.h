@@ -8,4 +8,5 @@
 #include "log_hook.h"
 #include "panic_capture.h"
 #include "safe_restart.h"
+#include "flash_wait.h"
 #include "esp_heap_task_info.h"

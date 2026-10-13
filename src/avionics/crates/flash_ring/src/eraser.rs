@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The ring_eraser's side of the ring (doc/specs/avionics-port.md, "The ring_eraser and newest wins"): the only
-//! task that erases the `log` partition, one 4 KiB block per [`Eraser::erase_step`] (13-17 ms; a 64 KiB erase is
+//! task that erases the `log` partition, one 4 KiB block per [`Eraser::erase_step`] (13-22 ms; a 64 KiB erase is
 //! never issued). Its thread (core 0, priority 3) calls the step again and again, paced by the saver's progress
 //! and the erased reserve, on the pad and in flight alike.
 //!

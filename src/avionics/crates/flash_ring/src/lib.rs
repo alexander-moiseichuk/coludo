@@ -50,7 +50,7 @@ pub use ring::Ring;
 pub use scan::{HINT_REACH, Hints, Scan, classify, scan};
 pub use table::{BlockTable, Figures, Slot};
 
-/// A block: one NOR erase sector. The eraser erases one per step, because a 4 KiB erase (13-17 ms) fits the
+/// A block: one NOR erase sector. The eraser erases one per step, because a 4 KiB erase (13-22 ms) fits the
 /// writer's power-cut bound and a 64 KiB one (95-107 ms) does not.
 ///
 /// **Frozen across builds, with the block header** ([`header`]). Every build reads a block header at each 4 KiB
