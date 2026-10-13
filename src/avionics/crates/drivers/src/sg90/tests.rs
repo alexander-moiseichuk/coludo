@@ -30,7 +30,8 @@ fn neutral_at_setup_is_the_mid_pulse() {
 
 #[test]
 fn compare_and_set_writes_only_a_change() {
-    let mut yaw = fin(json!({}));
+    // step 1: plan B's compare-and-set, any change written
+    let mut yaw = fin(json!({"step_deg": 1}));
     assert_eq!(yaw.set_angle(45.0).map(|command| command.pulse_us), Some(1000));
     assert_eq!(yaw.set_angle(45.0), None, "a held fin costs nothing");
     assert_eq!(yaw.set_angle(45.4), None, "it rounds to the same whole degree");
@@ -80,10 +81,14 @@ fn the_step_holds_the_fin_on_its_grid() {
     // step 0: every command goes out, an unchanged one too
     let mut all = fin(json!({"step_deg": 0}));
     assert!(all.set_angle(90.0).is_some() && all.set_angle(90.0).is_some());
-    // NEGATIVE: the default is plan B's any-change, and a negative step reads as 0
+    // the default is the 3-degree grid (the operator, 2026-10-13); step 1 is plan B's any change
     let mut plain = fin(json!({}));
-    assert_eq!(plain.set_angle(91.0).map(|command| command.angle), Some(91));
-    assert_eq!(plain.set_angle(91.0), None);
+    assert_eq!(plain.set_angle(91.0), None, "the default grid holds a degree's move");
+    assert_eq!(plain.set_angle(93.0).map(|command| command.angle), Some(93));
+    let mut plan_b = fin(json!({"step_deg": 1}));
+    assert_eq!(plan_b.set_angle(91.0).map(|command| command.angle), Some(91));
+    assert_eq!(plan_b.set_angle(91.0), None);
+    // NEGATIVE: a negative step reads as 0
     let mut negative = fin(json!({"step_deg": -4}));
     assert!(
         negative.set_angle(90.0).is_some(),
@@ -223,10 +228,11 @@ fn a_move_estimates_from_where_the_horn_was() {
 fn the_mixer_drives_the_fins_through_compare_and_set() {
     use control::mixer::{Fin, Mixer};
     let mut mixer = Mixer::default();
+    // step 1, plan B's compare-and-set: the mixer's whole degrees reach the fins as they are
     let mut fins = [
-        Some(fin(json!({}))),
-        Some(fin(json!({"trim": 9}))),
-        Some(fin(json!({}))),
+        Some(fin(json!({"step_deg": 1}))),
+        Some(fin(json!({"trim": 9, "step_deg": 1}))),
+        Some(fin(json!({"step_deg": 1}))),
     ];
     mixer.actuate(&mut fins, 0.0, 10.0, 0.0);
     let angles: Vec<Option<i32>> = fins.iter().map(|servo| servo.as_ref().and_then(Fin::angle)).collect();
@@ -246,7 +252,7 @@ fn the_mixer_drives_the_fins_through_compare_and_set() {
     let after: Vec<Command> = fins.iter().map(|servo| servo.as_ref().unwrap().command()).collect();
     assert_eq!(before, after);
     // and a missing fin is skipped while the bound ones still drive
-    let mut partial: [Option<Servo>; 3] = [None, Some(fin(json!({}))), None];
+    let mut partial: [Option<Servo>; 3] = [None, Some(fin(json!({"step_deg": 1}))), None];
     mixer.actuate(&mut partial, 10.0, 0.0, 0.0);
     assert_eq!(partial[1].as_ref().and_then(Fin::angle), Some(100));
 }

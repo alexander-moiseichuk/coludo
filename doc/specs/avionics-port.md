@@ -3103,10 +3103,12 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 - **The servo's `step_deg`** (operator, 2026-10-13; Rust-only): over 1, the flight loop holds a fin on a grid of
   that many whole degrees each way from the neutral (5 over 45-135: 19 positions) and moves it off its grid point
   only once the command is more than half a step and a degree away (hysteresis, so noise at a boundary cannot
-  toggle it). The default 1 is plan B's any-change compare-and-set; 0 writes every command. A first cut was a
-  deadband (move once the command is a step away, then straight to it); the SITL sweep
-  (doc/sims/TMS-7-servo_step) found it lets a fin rest up to a step off its command and lands worse, where the grid
-  with hysteresis saves the same energy and lands no worse than step 1.
+  toggle it). **The default is 3** (the operator, 2026-10-13: on the taster's SG90s half the moves and ~20 % less
+  servo energy than step 1, landing no worse over the SITL). 1 is plan B's any-change compare-and-set, the fallback
+  by config (`step_deg: 1` on the servo entries, no reflash); 0 writes every command. A first cut was a deadband
+  (move once the command is a step away, then straight to it); the SITL sweep (doc/sims/TMS-7-servo_step) found it
+  lets a fin rest up to a step off its command and lands worse, where the grid with hysteresis lands no worse than
+  step 1.
 - **The flight entry's `turn_wrap_band_deg`** (operator, 2026-10-13; Rust-only, ON by default at 45): when the
   last heading error and the new one both lie within that many degrees of 180 on opposite sides of the wrap, the
   steering keeps the turn in progress (as ±180) instead of plan B's shortest turn, which let noise flip the bank

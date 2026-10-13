@@ -44,8 +44,9 @@ pub const DEFAULT_MIN_DEGREES: i32 = 0;
 /// The default command range's high end, degrees.
 pub const DEFAULT_MAX_DEGREES: i32 = 180;
 
-/// The default step of the flight loop's command, whole degrees (`step_deg`): 1, any change written, as plan B.
-pub const DEFAULT_STEP_DEGREES: i32 = 1;
+/// The default step of the flight loop's command, whole degrees (`step_deg`; the operator, 2026-10-13): a 3-degree
+/// grid. Plan B wrote any change, which is `step_deg: 1`.
+pub const DEFAULT_STEP_DEGREES: i32 = 3;
 
 /// The probe's settle before it takes the resting power baseline, ms (only with a fresh INA226).
 pub const PROBE_SETTLE_MS: u32 = 300;
@@ -380,9 +381,10 @@ impl Servo {
     /// (`step_deg`) over 1 puts the fin on a grid of that many degrees each way from the neutral (5 over 45-135: 19
     /// positions) and moves it off its grid point only once the command is more than half a step and a degree away,
     /// so noise at a grid boundary does not toggle it. A small command then rests at the exact neutral and a held fin
-    /// is never more than about half a step off its command (doc/sims/TMS-7-servo_step: a 3-degree grid costs ~40 %
-    /// less servo energy than step 1 in the SITL, and lands no worse). With the default step of 1 that is any
-    /// change, plan B's; 0 writes every command, unchanged ones too. None when nothing was written.
+    /// is never more than about half a step off its command (doc/sims/TMS-7-servo_step: on the taster's SG90s a
+    /// 3-degree grid writes half the moves of step 1 and draws ~20 % less servo energy, and over the SITL it lands
+    /// no worse). A step of 1 is any change, plan B's; 0 writes every command, unchanged ones too. None when nothing
+    /// was written.
     pub fn set_angle(&mut self, degrees: f64) -> Option<Command> {
         let mut angle = self.clamp(degrees);
         if self.step_degrees > 1 {

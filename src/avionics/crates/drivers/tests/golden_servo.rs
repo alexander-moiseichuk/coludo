@@ -108,7 +108,12 @@ fn every_step_matches_plan_b() {
     for scenario in section["cases"].as_array().unwrap() {
         let name = scenario["name"].as_str().unwrap();
         let kind = servo_type(scenario["init"]["type"].as_str().unwrap());
-        let mut fin = Servo::new(kind, &Settings::from_config(&scenario["init"]["config"], kind));
+        // plan B wrote any change: its fixtures replay at step 1, the default now being the 3-degree grid
+        let mut config = scenario["init"]["config"].clone();
+        if let Some(fields) = config.as_object_mut() {
+            fields.entry("step_deg").or_insert(json!(1));
+        }
+        let mut fin = Servo::new(kind, &Settings::from_config(&config, kind));
         compare
             .check(&format!("{name} setup"), &scenario["setup"], &state(&fin))
             .unwrap_or_else(|failure| panic!("{failure}"));
