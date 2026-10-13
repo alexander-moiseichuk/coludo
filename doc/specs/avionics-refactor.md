@@ -304,6 +304,17 @@ with an f64 (no 64-bit atomic: RV32 has none). The stage moves them to i32/u32/f
 R6 is the one stage that changes behaviour, as rounding: its proof is the HITL matrix against plan B's bands
 (`tools/hitl_matrix_compare.py`), not seed for seed. The SITL's golden runs are regenerated after it.
 
+**Measured before R6 (2026-10-12, the R5 build).** On RV32 a 64-bit add, compare or shift is a few instructions;
+only division and modulo are library calls (`__divdi3`, `__moddi3` ..., ~100 cycles), and f64 arithmetic is
+software. On the control tick's path the build makes about 20 such calls per 10 ms tick: 9 `__moddi3` in
+`ControlCore::tick` (the antimeridian wrap of `navigation::offset`, inlined), the clock's `now_us / 1000`, one per
+fin (`sg90` `floor_divide`, `fins::write`'s duty), the BMM350's read and the BMP280's datasheet compensation. That
+is 2-4 k cycles, 6-11 µs per tick, about 0.1% of core 1, whose tick works ~100 µs. The f64 left is the JSON boundary
+(D18) and set-up code (`FlightLaw::new`, `from_json`); no 64-bit atomic exists (the seqlocks). The timebase
+migration's gain is that 0.1%; its cost is ~600 sites that must all wrap correctly at 71.6 minutes of uptime, a
+pad wait the boards can reach. Open: the operator's call between the full migration and only the hot path's
+divisions (a branch for the antimeridian wrap, u32 where the operands fit).
+
 **Crates this needs:** possibly `enum_dispatch` (R2, compile-time only), if it takes the generic part trait.
 Everything else is already in the workspace: `embedded-hal`, `serde`/`serde_json`, `crates/controller`,
 `crates/databoard` and `crates/recorder`.
