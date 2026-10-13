@@ -1485,6 +1485,7 @@ dependencies = [
  "board_config",
  "control",
  "controller",
+ "drivers",
  "log",
  "mission",
  "recorder",

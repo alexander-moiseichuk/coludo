@@ -8,9 +8,10 @@
 //! frame published into it as the `hitl` source (`HitlWriters`), and the board's control tick itself
 //! (crates/controller `ControlCore`: the attitude filter, the stage machine and the flight law, in the board's order,
 //! R3 of doc/specs/avionics-refactor.md), with the mission from the launch payload the host sends a board. The SITL is
-//! the board's code path minus the platform, never a copy of it. What the host has none of is not here: the servos (a
-//! FINS answer carries the law's angles, as a board's centred fins at its start), the separation switch, the
-//! checkpoint and the warm start, the GNSS drift calibration (no drift), the recorder (no rows).
+//! the board's code path minus the platform, never a copy of it. The fins are the board's servos with no PWM behind
+//! them (crates/drivers `Servo`, each from its config entry: its clamp and its step, `step_deg`), so a FINS answer
+//! carries the angles they hold, as a board's does. What the host has none of is not here: the separation switch,
+//! the checkpoint and the warm start, the GNSS drift calibration (no drift), the recorder (no rows).
 //!
 //! Lockstep: the clock is the frame's physics time (`sim_time_ms`, after a 10 s boot as the golden shims'), never the
 //! wall's. Each frame first runs the control ticks due before it on what the earlier frames left, then is published,
@@ -24,6 +25,7 @@ use control::flight::FlightLaw;
 use control::guidance::Landing;
 use control::navigation::Position;
 use controller::{ControlCore, FilterSetup, FlightSetup, HitlWriters, Hooks, SequencerSetup, Topology};
+use drivers::sg90::{Servo, Settings};
 use mission::Mission;
 use recorder::Rows;
 use sequencer::{FlightWord, Request, Stage};
@@ -84,6 +86,19 @@ struct Host {
     landing: Option<Landing>,
     /// The mission's set launch point.
     launch: Option<Position>,
+    /// The fins by the law's surfaces (None for a surface no servo entry drives), as the board's fins thread holds
+    /// them.
+    servos: Vec<Option<Fin>>,
+}
+
+/// One fin: its servo and what the flight loop made it do.
+struct Fin {
+    /// The servo, its clamp and step from the fin's config entry.
+    servo: Servo,
+    /// The commands it wrote.
+    writes: u32,
+    /// The degrees those commands moved it.
+    degrees: u32,
 }
 
 impl Hooks for Host {
@@ -109,7 +124,18 @@ impl Hooks for Host {
 
     fn attitude(&mut self, _row: [i32; 6], _seeded: bool, _blind: bool) {}
 
-    fn fins(&mut self, _angles: &[i32]) {}
+    fn fins(&mut self, angles: &[i32]) {
+        for (&angle, fin) in angles.iter().zip(&mut self.servos) {
+            let Some(fin) = fin else {
+                continue;
+            };
+            let held = fin.servo.angle();
+            if let Some(command) = fin.servo.set_angle(f64::from(angle)) {
+                fin.writes += 1;
+                fin.degrees += command.angle.abs_diff(held);
+            }
+        }
+    }
 
     fn vitals(&mut self, _law: &FlightLaw) {}
 }
@@ -174,17 +200,57 @@ fn control_core(document: &'static Value, topology: &'static Topology, tick_us: 
     ))
 }
 
-/// The FINS answer's fins: the law's angles, whole degrees, by the frame's surfaces; None unless it drives all three.
-fn fins(law: Option<&FlightLaw>) -> Option<[i16; 3]> {
-    let law = law?;
-    let surfaces = law.mixer().surfaces();
-    let angles = law.angles();
+/// The fins of `law`'s surfaces, each from its servo entry in `entries` (sg90 or mg90s, as the board's bring-up
+/// reads it); None for a surface with none.
+fn servos(entries: &[board_config::Entry<'_>], law: Option<&FlightLaw>) -> Vec<Option<Fin>> {
+    let Some(law) = law else {
+        return Vec::new();
+    };
+    let fin = |name: &str| {
+        let entry = entries.iter().find(|entry| entry.name == name)?;
+        let servo_type = match entry.implementation {
+            "sg90" => drivers::sg90::SG90,
+            "mg90s" => drivers::mg90s::MG90S,
+            _ => return None,
+        };
+        let settings = Settings::from_config(&Value::Object(entry.fields.clone()), &servo_type);
+        Some(Fin {
+            servo: Servo::new(&servo_type, &settings),
+            writes: 0,
+            degrees: 0,
+        })
+    };
+    law.mixer()
+        .surfaces()
+        .iter()
+        .map(|surface| fin(&surface.name))
+        .collect()
+}
+
+/// The FINS answer's fins: the angles the servos hold, whole degrees, by the frame's surfaces; None unless the law
+/// drives all three.
+fn fins(law: Option<&FlightLaw>, servos: &[Option<Fin>]) -> Option<[i16; 3]> {
+    let surfaces = law?.mixer().surfaces();
     let mut fins = [0i16; 3];
     for (fin, name) in fins.iter_mut().zip(SURFACES) {
         let index = surfaces.iter().position(|surface| surface.name == name)?;
-        *fin = *angles.get(index)? as i16;
+        *fin = servos.get(index)?.as_ref()?.servo.angle() as i16;
     }
     Some(fins)
+}
+
+/// The fins' tally at DONE, one line: each fin's writes and the degrees they moved it.
+fn tally(law: Option<&FlightLaw>, servos: &[Option<Fin>]) -> String {
+    let surfaces = law.map(|law| law.mixer().surfaces()).unwrap_or_default();
+    let fins: Vec<String> = surfaces
+        .iter()
+        .zip(servos)
+        .filter_map(|(surface, fin)| {
+            let fin = fin.as_ref()?;
+            Some(format!("{}={}/{}", surface.name, fin.writes, fin.degrees))
+        })
+        .collect();
+    format!("sitl :: servos (writes/degrees) {}", fins.join(" "))
 }
 
 /// The attitude filter's implementation name in the config (its entry's `activity`).
@@ -234,6 +300,7 @@ fn main() -> Result<(), String> {
             .zone
             .map(|zone| Landing::new(zone.top_left, zone.bottom_right, mission.endgame_heading())),
         launch: mission.launch_point(None),
+        servos: Vec::new(),
     };
     let word = FlightWord::default();
     let mut writer = word.writer().ok_or("the flight word's writer is taken")?;
@@ -242,10 +309,12 @@ fn main() -> Result<(), String> {
     let mut writers = HitlWriters::new(topology, source);
     let tick_us = 1_000_000 / u64::from(board_config::schedule_hz(document).max(1));
     let mut core = control_core(document, topology, tick_us)?;
+    host.servos = servos(&entries, core.law());
     let socket = UdpSocket::bind(("0.0.0.0", arguments.port)).map_err(|error| error.to_string())?;
     eprintln!("sitl :: sim-link on udp:{}, a tick every {tick_us} us", arguments.port);
     let mut last_seq: Option<u32> = None;
     let mut next_tick_us = BOOT_US;
+    let mut tallied = false;
     let mut datagram = [0u8; DATAGRAM_BYTES];
     loop {
         let (length, sender) = socket.recv_from(&mut datagram).map_err(|error| error.to_string())?;
@@ -274,13 +343,17 @@ fn main() -> Result<(), String> {
             stage: state.stage as u8,
             armed: state.armed,
             launched: state.launched,
-            fins: fins(core.law()),
+            fins: fins(core.law(), &host.servos),
         };
         socket
             .send_to(&answer.encode(), sender)
             .map_err(|error| error.to_string())?;
         if state.stage == Stage::Done {
             eprintln!("sitl :: done at {} ms", now_us / 1000);
+            if !tallied {
+                eprintln!("{}", tally(core.law(), &host.servos));
+                tallied = true;
+            }
         }
     }
 }
