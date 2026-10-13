@@ -43,7 +43,7 @@ Each stage is committed on its own proof. The firmware changes only from BC3 on.
 | stage | what | proof |
 |---|---|---|
 | BC1 | a 6-DoF boost in the simulator, the measured F15, per-airframe stack parameters (as built: below) | done |
-| BC2 | the passive envelope: where an uncontrolled stack departs (margin x asymmetry x wind x rod exit speed) | a SITL sweep, published in `doc/sims` |
+| BC2 | the passive envelope: where an uncontrolled stack departs (margin x asymmetry x wind x rod exit speed) | done: `doc/sims/TMS-7-boost_envelope` |
 | BC3 | the boost law for vertical flight: the lean of the body axis + roll damping, the gyro-integrated attitude, the rod gate | host tests; the SITL sweep with control |
 | BC4 | HITL on the taster, servos moving: the full matrix with metrics and plotly pictures | `doc/sims/TMS-7-boost_control/` |
 | BC5 | turn it on: BOOSTING a control stage in the flight configs | the operator's decision, on BC2-BC4 |
@@ -111,6 +111,12 @@ hands sim_model's glide the stack's position (the default stays `--boost vertica
 
 The hold as it stands already saves a near-neutral stack. It does not save a sub-neutral one, whose divergence
 begins before the hold engages (15 m/s) and outruns it. BC2 maps where the line falls; BC3 is the law that moves it.
+
+**BC2 as built** ([TMS-7-boost_envelope](../sims/TMS-7-boost_envelope/), `tools/boost_sweep.py`, 96 SITL flights): on
+7D's stack against the folded wings, passive, no loop from 1.0 caliber at 4.5 m/s and 1.5 at 6 m/s. The existing
+hold moves that edge ~0.3 calibers (0.8 at 4.5 m/s; at 6 m/s and 1.5 cal the path minimum 28 -> 57°), saves no stack
+at 0.5 calibers or less in 4.5 m/s or more, and costs 2-5° of path in calm air: the Euler roll it holds degenerates
+near vertical. `hitl_host.py` prints the burn's figures as a `BOOST` line and takes `--stack-margin`.
 
 ### BC3: the law, for vertical flight
 

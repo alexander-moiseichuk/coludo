@@ -223,10 +223,15 @@ class _Sim:
         # body where it is, so the glide takes over from there; its dorsal side faces the wind's direction by default
         # (the 10-03 replays: the crosswind against the folded wings)
         self.stack = None
+        # the burn as the BOOST line reports it: its path minimum, the most the nose leaned off vertical, whether the
+        # nose went below the horizon with the motor burning (a loop), the speed at burnout
+        self.burn = {'path_min': 90.0, 'tilt_max': 0.0, 'looped': False, 'burnout_ms': None}
         if getattr(args, 'boost', 'vertical') == '6dof':
             facing = args.wind_dir if args.stack_azimuth is None else args.stack_azimuth
-            self.stack = stack_dynamics.Stack(stack_dynamics.STACKS[args.stack], self.body.wind_e, self.body.wind_n,
-                                              facing)
+            profile = dict(stack_dynamics.STACKS[args.stack])
+            if args.stack_margin is not None:  # a sweep's margin, both planes (the y plane 0.15 cal stiffer, as fitted)
+                profile['margin_cal'] = (args.stack_margin, args.stack_margin + 0.15)
+            self.stack = stack_dynamics.Stack(profile, self.body.wind_e, self.body.wind_n, facing)
         self.apogee = 0.0  # the highest the body got (publish), for the study's LANDED line
         self.args = args
         self.axis = {'x': 0, 'y': 1, 'z': 2}[args.boost_axis]
@@ -301,6 +306,13 @@ class _Sim:
         if self.stack is not None:
             self.stack.step(fixed, fins)
             self.stack.hand_over(self.body)
+            burnout = stack_dynamics.F15[-1][0]
+            if 0.4 < self.stack.seconds < burnout and not self.stack.on_rod:
+                self.burn['path_min'] = min(self.burn['path_min'], self.stack.path_angle())
+                self.burn['tilt_max'] = max(self.burn['tilt_max'], 90.0 - self.stack.nose_elevation())
+                self.burn['looped'] = self.burn['looped'] or self.stack.nose_elevation() < 0.0
+            if self.burn['burnout_ms'] is None and self.stack.seconds >= burnout:
+                self.burn['burnout_ms'] = math.sqrt(sum(component * component for component in self.stack.velocity))
             return
         roll, pitch, _yaw = fins
         thrust = self.thrust if self.sim_time < self.burn_s else 0.0
@@ -561,6 +573,8 @@ def _arguments() -> argparse.Namespace:
                              'doc/specs/boost-control.md BC1)')
     parser.add_argument('--stack', default='tms7d', choices=sorted(stack_dynamics.STACKS),
                         help='--boost 6dof: the stack (tools/stack_dynamics.STACKS)')
+    parser.add_argument('--stack-margin', type=float, help='--boost 6dof: the stack\'s static margin in calibers '
+                        '(its profile\'s otherwise; a sweep)')
     parser.add_argument('--stack-azimuth', type=float, help='--boost 6dof: the compass direction the stack\'s '
                         'dorsal side faces on the rod (default: the wind\'s, against the folded wings)')
     parser.add_argument('--laser-range-m', type=float, default=4.0)
@@ -638,6 +652,11 @@ def _sitl(args: argparse.Namespace) -> int:
         miss, inside = landing(sim.body.position(), scenario['zone'])
         print('LANDED miss=%.1f inside=%s aloft=%.1f apogee=%.0f' % (miss, inside, sim.sim_time - _SITL_PAD_S,
                                                                       sim.apogee))
+        if sim.stack is not None:
+            burn = sim.burn
+            print('BOOST path_min=%.1f tilt_max=%.1f looped=%s burnout=%.1f' % (
+                burn['path_min'], burn['tilt_max'], burn['looped'],
+                burn['burnout_ms'] if burn['burnout_ms'] is not None else -1.0))
         print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
             '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
         if args.record:
