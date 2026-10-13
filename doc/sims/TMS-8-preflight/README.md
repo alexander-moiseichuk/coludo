@@ -86,9 +86,9 @@ Re-run: `tools/sitl_matrix.py --config <a board's saved config> -o <dir>` (the s
 **How it was flown.** The taster (Rust firmware, realtime HITL, real SG90s on the INA226 rail) flew TMS-8 as the
 SITL study picked it: F15, **285 g**, `--airframe tms8`, the firmware's defaults of the day (the 3-degree fin grid,
 the endgame's turn kept across the heading wrap). Three independent runs of the ten scenarios (r1-r3), then the
-operator's **video run** (`hitl_host --video`: the ten again with the camera recording through the flight; 9 of 10,
-corner_stress's pull hit a full host disk) and one random scenario per plain run flown again with video (the
-pairs). 42 flights. r1 and r2 flew `69a4496`, r3 and the video flights `15cb17f` (the same flight law, plus the
+operator's **video run** (`hitl_host --video`: the ten again with the camera recording through the flight; its
+corner_stress pulled from the card again after a full host disk) and one random scenario per plain run flown again with video (the
+pairs). 43 flights. r1 and r2 flew `69a4496`, r3 and the video flights `15cb17f` (the same flight law, plus the
 `runtime.csv` stream). The SITL reference is the same law at HEAD, 20 seeds a scenario (`board/sitl_head_*.csv`).
 
 Charts as the Python preflight's (`doc/sims/TMS-7-preflight`), now that its tools read a Rust cut
@@ -126,29 +126,29 @@ every panel quantity across r1-r3).
 
 ### What video costs the board
 
-The twelve video flights (the video run and the three pairs) against the thirty plain ones:
+The thirteen video flights (the video run and the three pairs) against the thirty plain ones:
 
 | | plain (median, range) | video (median, range) |
 |---|---|---|
-| control tick's longest work | 0.49 ms (0.45-0.58) | **1.04 ms** (0.91-1.56) |
-| control tick's worst lateness | 13 us (9-22) | 54 us (39-81) |
+| control tick's longest work | 0.49 ms (0.45-0.58) | **1.05 ms** (0.91-1.56) |
+| control tick's worst lateness | 13 us (9-22) | 55 us (39-81) |
 | control overruns | 0 | 0 |
 | core 0 mean load | 48 % | **60 %** |
 | heap free, lowest | 23.1 MB | **9.6 MB** (the camera's buffers) |
-| board temperature, highest | 37.3 °C | **43.8 °C** |
+| board temperature, highest | 37.3 °C | **44.3 °C** |
 | flash-to-SD saver lag | 0.7 s (max 24 s) | 0.5 s (**max 63 s**) |
 | SD busy | -- | 43 % |
 | video | -- | ~3,060 frames a flight (25 fps), 1.7 % missed (max 2.7 %), 0 dropped |
-| in the zone | 19 / 30 | 9 / 12 |
+| in the zone | 19 / 30 | 9 / 13 |
 
-- **The flight is unaffected:** no overrun in 42 flights, the landing as without video. The control tick's longest
+- **The flight is unaffected:** no overrun in 43 flights, the landing as without video. The control tick's longest
   work doubles and still takes about a tenth of the 10 ms tick.
 - **Core 1 has room:** `runtime.csv` (r3 and the video flights) shows core 1, the control loop and the buses, at
   1-4 % through a video flight, core 0 at 42-91 %. Moving the recorder's threads to core 1 below the control
   priorities is the lever if core 0 ever runs short (static affinity, from a per-thread `load` profile first).
 - **Watch the saver on a long flight:** the 63 s backlog is well inside the 20 MiB flash ring, but it is the camera
   and the saver sharing the card.
-- **Open: the servo rail reads 15-20 J lower with video** (60 against 76 J). The fins move the same degrees (r3: 27.9k
+- **Open: the servo rail reads 15-20 J lower with video** (61 against 76 J). The fins move the same degrees (r3: 27.9k
   against 27.5k) and the rail's voltage is the same (4.68-4.71 V in flight); the INA226 averages 9 ms of every 100,
   so the camera's load may shift its sampling phase against the 100 Hz fin moves. A 1 kHz bench capture settles it;
   until then it is no finding.
