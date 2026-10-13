@@ -475,7 +475,8 @@ def write_html(trajectory, series, out, pio, plotlyjs=True):
 
 def main():
     parser = argparse.ArgumentParser(description='Render a Coludo flight capture as an interactive HTML report.')
-    parser.add_argument('capture', help='recorder capture (the UART stream saved by the Luckfox)')
+    parser.add_argument('capture', help='recorder capture (the UART stream saved by the Luckfox), or a Rust '
+                        "board's flight cut (a folder, tools/recorder_flight.py's)")
     parser.add_argument('-o', '--out', default='flight.html', help='output HTML (default flight.html)')
     parser.add_argument('--cdn', action='store_true', help='load plotly.js from the CDN (tiny file, needs net)')
     parser.add_argument('--motor', choices=sorted(_MOTOR_BURN_S), help='shade the motor burn inside BOOSTING')
@@ -491,7 +492,8 @@ def main():
         # two boots appended into one file -- the plot would draw them as one flight; see flight_kpi
         print('!! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
         print('!! the report below spans BOTH boots and its timeline is not one flight')
-    print('capture lines: %s' % flight_telemetry.line_summary())  # what the integrity checks kept
+    if not os.path.isdir(args.capture):  # a Rust cut (a folder) has no wire lines to judge
+        print('capture lines: %s' % flight_telemetry.line_summary())  # what the integrity checks kept
     trajectory, series = build(streams, logs, go, make_subplots, args.motor)
     write_html(trajectory, series, args.out, pio, 'cdn' if args.cdn else True)
     print('wrote %s (%d streams, %d log lines)' % (args.out, len(streams), len(logs)))

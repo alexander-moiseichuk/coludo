@@ -10,6 +10,7 @@ Stdlib only (no plotly). Run by `make test`.
 
 import os
 import sys
+import tempfile
 import zlib
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -456,6 +457,50 @@ def test_duplicates_are_dropped_before_any_verdict():
     assert len(streams['accel.csv'].rows) == 6 and '5 duplicates' not in flight_telemetry.line_summary()
 
 
+def test_a_rust_cut_reads_as_a_capture():
+    """A Rust board's flight cut (a folder of per-stream CSVs, t_s from ignition) loads as a capture does."""
+    files = {
+        'sequencer.csv': 't_s;stage;reason;uptime_us\n-2.000000;setting;external;1000000\n'
+                         '0.000000;boosting;launch;3000000\n7.000000;gliding;apogee 119m;10000000\n',
+        'attitude.csv': 't_s;heading_cd;roll_cd;pitch_cd;free;uptime_us\n1.000000;2853;-150;8010;0;4000000\n',
+        'servo_eleron_left.csv': 't_s;angle;pulse_us;done;uptime_us\n0.5;93;1533;0;3500000\n',
+        'servo_yaw.csv': 't_s;angle;pulse_us;done;uptime_us\n1.5;87;1467;0;4500000\n',
+        'health.csv': 't_s;temp;mem_free;load;oom_s;uptime_us\n2.0;37.3;23157407;60;None;5000000\n',
+    }
+    with tempfile.TemporaryDirectory() as root:
+        cut = os.path.join(root, 'flight')
+        os.mkdir(cut)
+        for name, text in files.items():
+            with open(os.path.join(cut, name), 'w') as handle:
+                handle.write(text)
+        streams, logs = flight_telemetry.load(root)  # the -o folder above the cut, as hitl_collect_host's
+        again, again_logs = flight_telemetry.load_cut(cut)
+        # repr: a text cell (sequencer.csv's stage, reason) reads as nan, as a capture's does, and nan != nan
+        assert logs == again_logs and repr({name: (stream.fields, stream.rows) for name, stream in streams.items()}) \
+            == repr({name: (stream.fields, stream.rows) for name, stream in again.items()})
+        # the clocks are the stamp (t_s, microseconds from ignition), never fields; 'None' is a blank cell
+        assert streams['health.csv'].fields == ['temp', 'mem_free', 'load', 'oom_s']
+        assert streams['health.csv'].rows == [[2000000.0, 37.3, 23157407.0, 60.0, '']]
+        # the filter's centidegrees in plan B's names: heading in degrees, roll and pitch the fixnums
+        attitude = streams['attitude.csv']
+        assert attitude.fields[:3] == ['heading', 'roll', 'pitch']
+        assert attitude.rows[0][1:4] == [28.53, -150.0, 8010.0]
+        assert flight_telemetry.find_stream(streams, 'roll', 'pitch') is attitude
+        # the per-servo streams fuse into fins.csv, each fin held until its next write
+        assert streams['fins.csv'].fields == ['eleron_left', 'yaw']
+        assert streams['fins.csv'].rows == [[500000.0, 93.0, ''], [1500000.0, 93.0, 87.0]]
+        # the stage changes are the log lines the renderers mark
+        assert logs == [(-2000000, 'sequencer :: stage -> setting'), (0, 'sequencer :: stage -> boosting'),
+                        (7000000, 'sequencer :: stage -> gliding')]
+        # NEGATIVE: a folder with no cut in it is refused, not read as an empty flight
+        try:
+            flight_telemetry.load_cut(os.path.join(root, 'nothing'))
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError('a folder with no sequencer.csv loaded')
+
+
 test_fixture()
 test_synthetic_flight()
 test_wire_vectors()
@@ -469,9 +514,10 @@ test_the_session_index_reads_as_rows()
 test_an_unwrapped_line_in_a_wrapped_capture_is_rejected()
 test_load_reads_the_bytes_the_board_sent()
 test_duplicates_are_dropped_before_any_verdict()
+test_a_rust_cut_reads_as_a_capture()
 print('ok: flight telemetry parser — streams + logs from fixture and synthetic flight; wrapped captures: '
       'wire vectors, legacy twin, salvage/reject per damage kind, recovered rows placed by time (across a '
       'wrap too; two boots rejected, log lines merged back, a junk row by its stream span, nothing by a '
       'sparse stream past a wrap it missed), the session '
       'index (boot/anchor rows, a clock never set, a label "session"), unwrapped lines in a wrapped '
-      'capture, load() on damaged bytes, duplicates dropped before any verdict')
+      'capture, load() on damaged bytes, duplicates dropped before any verdict, a Rust flight cut')
