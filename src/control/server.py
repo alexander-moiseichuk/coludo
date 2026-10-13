@@ -29,6 +29,12 @@ HEARTBEAT_S: float = 2.0  # poll an idle board this often to prove it is alive
 _MISSED_BEATS: int = 3
 BROADCAST: str = 'all'  # the one broadcast target -- a clean token for scripting (no '*')
 """
+A connection still counts as live this long after its last reply: a newcomer under its id from another address is
+then a second board claiming it, not the same board reconnecting. Past this the old link is the silence a dropped
+board leaves, and a reconnect takes the id over as before. Three heartbeats, as the offline mark.
+"""
+_LIVE_S: float = _MISSED_BEATS * HEARTBEAT_S
+"""
 CLOCK SYNC ON CONNECT (doc/specs/recorder-wire.md, "Clock and the session index"). A cold board's RTC
 reads 2000-01-01, so it reports 946684800 plus its uptime. Its files are named by boot id, and the
 session.csv rows it writes carry an empty utc until the clock is set, so a sync is what ties the boot to
@@ -64,6 +70,28 @@ def _render(resp) -> str:
     parts.extend('%s=%s' % (key, cc.encode(value)) for key, value in resp.named.items())
     return ' '.join(parts)
 
+
+
+def claims_a_live_id(existing: board.Board, newcomer: board.Board) -> bool:
+    """
+    Whether `newcomer` is a second board claiming the id `existing` holds, rather than the same board reconnecting.
+
+    A reconnect comes from the board's own address (its DHCP lease), or follows a link that has gone silent; a board
+    from another address while the registered one still answers is another board whose config carries the same
+    id. Letting it in silently reroutes every command for that id to it.
+
+    Args:
+        existing - the connection registered under the id.
+        newcomer - the connection that just identified with the same id.
+
+    Returns:
+        True when `existing` is live (online, a reply within _LIVE_S) and `newcomer` comes from another address.
+    """
+    def host(connection: board.Board) -> str:
+        return connection.peer.rsplit(':', 1)[0]  # the peer's address, its port dropped
+
+    live = existing.online and time.monotonic() - existing.last_seen < _LIVE_S and existing.peer != '<gone>'
+    return live and host(existing) != host(newcomer)
 
 class Server:
     """
@@ -265,7 +293,15 @@ class Server:
             if not board_id:
                 self.log('whoami failed from %s' % client.peer)
                 return
-            if board_id in self.boards and self.boards[board_id] is not client:
+            existing = self.boards.get(board_id)
+            if existing is not None and existing is not client:
+                if claims_a_live_id(existing, client):
+                    # 2026-10-13: a board whose config carried another board's id took it over mid-HITL, and the
+                    # run's commands (set-config, arm) went to the wrong board. Refuse it; the live one stays.
+                    self.log('REFUSED %s from %s: %s is online from %s -- two boards share the id; give one of them '
+                             'its own board.id' % (board_id, client.peer, board_id, existing.peer))
+                    client.id = None  # the live board's entry is not this connection's to clean up
+                    return
                 self.log('%s reconnected -- replacing the previous connection' % board_id)
             self.boards[board_id] = client
             self._roster_seen(board_id, client.peer)

@@ -866,6 +866,31 @@ async def _heartbeat():
     assert dead.sent == [], dead.sent
 
 
+def _duplicate_ids():
+    """
+    A second board under a live board's id is refused, a reconnect is not (server.claims_a_live_id).
+
+    2026-10-13: 7C came up with the taster's id while the taster flew a HITL run, the hub replaced the taster's
+    connection, and the run's set-config and arm went to 7C. NEGATIVE: the same address, or an old link gone silent,
+    is the same board reconnecting, and takes the id over as before.
+    """
+    import time
+    import types
+
+    def connection(peer, online=True, silent_s=0.0):
+        return types.SimpleNamespace(peer=peer, online=online, last_seen=time.monotonic() - silent_s)
+
+    live = connection('192.168.102.152:60384')
+    assert server.claims_a_live_id(live, connection('192.168.102.163:51000')), 'another board, live id: refused'
+    assert not server.claims_a_live_id(live, connection('192.168.102.152:60999')), 'the same board reconnecting'
+    silent = connection('192.168.102.152:60384', silent_s=server._LIVE_S + 1.0)
+    assert not server.claims_a_live_id(silent, connection('192.168.102.163:51000')), 'the old link is dead'
+    offline = connection('192.168.102.152:60384', online=False)
+    assert not server.claims_a_live_id(offline, connection('192.168.102.163:51000'))
+    gone = connection('<gone>')
+    assert not server.claims_a_live_id(gone, connection('192.168.102.163:51000')), 'a torn-down socket is no owner'
+
+
 async def main():
     await _heartbeat()
     await _loopback()
@@ -878,6 +903,7 @@ async def main():
     await _clock_sync()
     _gps_device_resolve()
     _glider_roster()
+    _duplicate_ids()
     _log_drops_are_reported()
     _render_keeps_named_params()
     print('ok: server heartbeat polls health on health age + stops on a dead link '
@@ -885,7 +911,7 @@ async def main():
           '+ glider roster (persist, same-name-new-ip, absent hint) '
           '+ gps assist/compare + log streaming + gps auto-detect + oversized reply '
           '+ clock sync on connect (unset + SETTING + CC clock valid; refused/garbled keep the board, silent drops it) '
-          '+ replies keep their named params')
+          '+ replies keep their named params + a live id refused to a second board')
 
 
 asyncio.run(main())
