@@ -345,9 +345,7 @@ fn main() -> Result<(), String> {
             launched: state.launched,
             fins: fins(core.law(), &host.servos),
         };
-        socket
-            .send_to(&answer.encode(), sender)
-            .map_err(|error| error.to_string())?;
+        // logged before the answer: the host stops the binary once it reads DONE
         if state.stage == Stage::Done {
             eprintln!("sitl :: done at {} ms", now_us / 1000);
             if !tallied {
@@ -355,6 +353,9 @@ fn main() -> Result<(), String> {
                 tallied = true;
             }
         }
+        socket
+            .send_to(&answer.encode(), sender)
+            .map_err(|error| error.to_string())?;
     }
 }
 
