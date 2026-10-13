@@ -387,6 +387,10 @@ fn time_micros(hertz: u64, mut body: impl FnMut()) -> f32 {
 }
 
 /// esp-dsp's P4 kernels (PIE SIMD + hardware loops, `_arp4`) against its portable C (`_ansi`) and plain Rust.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a benchmark: one measurement after another, each printed as it is taken"
+)]
 fn dsp(hertz: u64) {
     const LENGTH: usize = 1024;
     let first: Vec<f32> = (0..LENGTH).map(|index| (index as f32 * 0.01).sin()).collect();

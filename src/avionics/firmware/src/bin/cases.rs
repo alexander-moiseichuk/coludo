@@ -395,10 +395,13 @@ impl Fin for FakeFin {
     }
 }
 
-/// mixer.Mixer after bind(): (fin, base, roll gain, pitch gain, yaw gain) per surface
+/// A surface after mixer.Mixer bind(): (fin, base, roll gain, pitch gain, yaw gain).
+type Surface = (Box<dyn Fin>, i32, i32, i32, i32);
+
+/// mixer.Mixer after bind(): one [`Surface`] per fin
 struct Mixer {
     limit: i32,
-    fins: Vec<(Box<dyn Fin>, i32, i32, i32, i32)>,
+    fins: Vec<Surface>,
 }
 
 impl Mixer {
@@ -604,10 +607,11 @@ fn wrap(record: &[u8], line: &mut [u8], table: &[u32; 256]) -> Option<usize> {
         return None;
     }
     let mut payload = 0;
-    if end > 0 && record[0] == b'@' {
-        if let Some(close) = record[1..end].iter().position(|byte| *byte == b'@') {
-            payload = close + 2;
-        }
+    if end > 0
+        && record[0] == b'@'
+        && let Some(close) = record[1..end].iter().position(|byte| *byte == b'@')
+    {
+        payload = close + 2;
     }
     let covered = if payload > 0 { 1 } else { 0 };
     let mut crc = u32::MAX;

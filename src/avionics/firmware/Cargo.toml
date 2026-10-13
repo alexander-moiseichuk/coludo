@@ -48,6 +48,11 @@ serde_json.workspace = true
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(esp_idf_spiram_xip_from_psram)", "cfg(esp_idf_heap_task_tracking)"] }
 
+# a function over clippy.toml's 80 lines is split, or allowed where it stands with its reason
+# (doc/specs/avionics-refactor.md R5; tools/function_lengths.py measures the same in `make lengths`)
+[lints.clippy]
+too_many_lines = "warn"
+
 [build-dependencies]
 embuild = "0.33"
 

@@ -194,7 +194,7 @@ Each stage keeps the behaviour. Its proof:
 | R2 | `crates/parts` with `Published<T>`, the parts' published state and its inspect keys, `parts::KNOWN`, the registry; `inspection::device` and the parts' statics removed (as built: below) | done |
 | R3 | `ControlCore` in `crates/controller`; `control/` split by subsystem; the SITL on `ControlCore` (as built: below) | done |
 | R4 | the `boot` phases; `devices` from tables; the remaining long functions (as built: below) | done |
-| R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test | none |
+| R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test (as built: below) | done |
 | R6 | the hardware's own types (operator, 2026-10-12): see below | medium: the numbers change |
 
 **R2 as built.** `crates/parts` holds every I2C part's run, generic over embedded-hal and host-tested on the
@@ -254,8 +254,9 @@ needs and gives: `storage`, `media`, `ports`, `layout`, `recorder`, `board`, the
 - `inspection::component`, the IMU's `tick`, `record_last_boot`, `step_sweep`, `set_up_spi` and `pace` lost their
   largest arms to named functions.
 
-Measured: functions over 80 lines 17 to 0, over 60 lines 35 to 21 (`tools/function_lengths.py`); the largest is
-`gnss::run` at 80.
+Measured: functions over 80 lines 18 to 1, over 60 lines 37 to 23 (`tools/function_lengths.py`). The commit said
+17 to 0: the tool then missed every function with a `;` in its signature (a `[T; 2]` parameter), `set_up_i2c` at
+102 lines among them. R5 fixed the tool and split `set_up_i2c`.
 
 The stage's first build overflowed the control thread's 8 KB stack on `probe imu_lsm6dso32`, five boots in a row, in
 the probe line's float formatting (1.2 KB). `Thread::new`, inlined, kept the bring-up's temporaries and the
@@ -271,6 +272,21 @@ instead, every boot, until the core was boxed.
 The proof added the stack check above. On the boards: the contract at 0 violations on both, identical inspect shapes
 on 7F, boot lines equal but for the log targets of the lines that moved to `boot`. One HITL flight (miss 91.25 m,
 plan B's band 87.2 to 103.6 m, late max 7 µs, 0 overruns) and a soak.
+
+**R5 as built.** Two gates, one limit:
+- `make lengths` (in `make check`): `tools/function_lengths.py --check` fails on a firmware function over 80 lines
+  that `tools/function_lengths.allow` does not name, and on an allowed one no longer over 80. It needs no build, so
+  it runs where the esp toolchain does not. The allow-list is empty, so the file does not exist yet; an entry is
+  `<path under src/avionics>::<function>  # why`.
+- clippy's `too_many_lines` at 80 on the firmware crate (`[lints.clippy]` in its Cargo.toml, `clippy.toml` beside
+  it). Clippy also reads the bench binaries, which the tool skips: their four long measurement lists carry an
+  `#[expect]` with the reason.
+
+The firmware's clippy now passes `-D warnings`. The stage cleared the warnings left in the bench binaries
+(`is_multiple_of`, a type alias, a collapsed `if`, a `black_box` for a formatted literal) and two `thread_local`
+initializers that are already `const`: clippy on the esp target reads them as not, so the expectation is scoped to
+that target. The tool's fix found 19 functions it had missed; `set_up_i2c` (102 lines) split into `i2c_binding` and
+`i2c_member`. Proof: the taster's contract at 0 violations, the stacks as R4's within run-to-run noise.
 
 **R6, the 32-bit types.** The P4 is RV32 with a single-precision FPU: a u64 or i64 takes two registers, and its
 division is a library call. An f64 is all software. The tree has 480 lines with a u64, 235 with an i64 and 166

@@ -292,6 +292,12 @@ struct Request {
 
 std::thread_local! {
     /// When the line the executor runs now arrived; None before its first. The executor's own: set before each line.
+    // clippy on the esp target reads this `const` initializer as none (its thread_local expansion); on the host it
+    // passes
+    #[cfg_attr(
+        target_os = "espidf",
+        expect(clippy::missing_const_for_thread_local, reason = "already const: a clippy false positive on the esp target")
+    )]
     static ARRIVED: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 

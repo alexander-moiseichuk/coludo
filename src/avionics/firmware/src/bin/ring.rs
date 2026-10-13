@@ -60,7 +60,7 @@ fn frames(partition: *const sys::esp_partition_t) {
         let length = FRAME_BYTES.0 + (next(&mut seed) as usize % (FRAME_BYTES.1 - FRAME_BYTES.0 + 1));
         let pattern = next(&mut seed);
         let frame = fill(length, pattern);
-        if offset % 256 != 0 {
+        if !offset.is_multiple_of(256) {
             pages_touched_twice += 1; // this program lands in a page an earlier one already programmed
         }
         let start = micros();

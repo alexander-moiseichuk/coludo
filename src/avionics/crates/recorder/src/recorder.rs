@@ -176,6 +176,12 @@ struct Binding {
 
 std::thread_local! {
     /// This thread's ring, set by [`Recorder::attach`] and cleared when its [`Attachment`] drops.
+    // clippy on the esp target reads this `const` initializer as none (its thread_local expansion); on the host it
+    // passes
+    #[cfg_attr(
+        target_os = "espidf",
+        expect(clippy::missing_const_for_thread_local, reason = "already const: a clippy false positive on the esp target")
+    )]
     static ATTACHED: LocalCell<Option<Binding>> = const { LocalCell::new(None) };
 }
 

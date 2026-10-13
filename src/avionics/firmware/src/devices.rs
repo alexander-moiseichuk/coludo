@@ -1036,10 +1036,7 @@ fn set_up_i2c(
     members: &mut [Vec<Member>; 2],
     delay: &mut Delay,
 ) -> Result<(), String> {
-    let (port_id, address) = match controller::binding(entry, "i2c", parts::default_address(entry.implementation)) {
-        Binding::I2c { id, address } => (id.parse::<u8>().ok(), address),
-        Binding::Spi { .. } | Binding::Unbound => (None, None),
-    };
+    let (port_id, address) = i2c_binding(entry);
     // the port only when the config defines its bus: port 0 runs on the stock pins without one (the camera's), and
     // plan B had no bus for its parts then
     let mut port = port_id
@@ -1104,31 +1101,44 @@ fn set_up_i2c(
         owner::record(id, entry.name, calls, &rearmed);
     }
     if let (Some(part), Some(id)) = (came_up, port_id) {
-        let member = Member::new(
-            entry.name,
-            part,
-            // Part::build refused a malformed key, so the part up has a good one
-            parts::imu_axes(entry).unwrap_or_default(),
-            // the INA226's ALERT is its interrupt line (plan B `alert_pin`), every other part's INT1 `int_pin`
-            board_config::pin(
-                document,
-                entry,
-                if entry.implementation == "ina226" {
-                    "alert_pin"
-                } else {
-                    "int_pin"
-                },
-            ),
-            entry
-                .fields
-                .get("period_ms")
-                .and_then(Value::as_u64)
-                .map(|period| period.clamp(1, u64::from(u32::MAX)) as u32),
-        );
+        let member = i2c_member(document, entry, part);
         sensors::register(&member);
         members[usize::from(id)].push(member);
     }
     outcome
+}
+
+/// The I2C port id and the address `entry` binds: its `addr`, else the part's datasheet address (both None off I2C).
+fn i2c_binding(entry: &Entry<'static>) -> (Option<u8>, Option<u8>) {
+    match controller::binding(entry, "i2c", parts::default_address(entry.implementation)) {
+        Binding::I2c { id, address } => (id.parse::<u8>().ok(), address),
+        Binding::Spi { .. } | Binding::Unbound => (None, None),
+    }
+}
+
+/// The member for `entry`'s part that came up: its axes, its interrupt line and its read period from the entry.
+fn i2c_member(document: &Value, entry: &Entry<'static>, part: Part) -> Member {
+    Member::new(
+        entry.name,
+        part,
+        // Part::build refused a malformed key, so the part up has a good one
+        parts::imu_axes(entry).unwrap_or_default(),
+        // the INA226's ALERT is its interrupt line (plan B `alert_pin`), every other part's INT1 `int_pin`
+        board_config::pin(
+            document,
+            entry,
+            if entry.implementation == "ina226" {
+                "alert_pin"
+            } else {
+                "int_pin"
+            },
+        ),
+        entry
+            .fields
+            .get("period_ms")
+            .and_then(Value::as_u64)
+            .map(|period| period.clamp(1, u64::from(u32::MAX)) as u32),
+    )
 }
 
 /// Plan B's diagnose text for a part whose transport was never built: the I2C drivers' (bmp581.py:211, ...), and the

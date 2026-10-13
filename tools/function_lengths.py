@@ -51,6 +51,32 @@ def _closing(code: str, start: int) -> int:
     return len(code)
 
 
+def _body(code: str, start: int) -> int:
+    """
+    The index of a function's body brace: the first `{` after its signature, outside the signature's brackets.
+
+    Args:
+        code - blanked source text.
+        start - the index just past the function's name.
+
+    Returns:
+        The brace's index; -1 when a `;` ends the signature first (a trait's declaration), the brackets' `;` aside (a
+        parameter `[T; 2]`).
+    """
+    depth = 0
+    for index in range(start, len(code)):
+        character = code[index]
+        if character in '([':
+            depth += 1
+        elif character in ')]':
+            depth -= 1
+        elif depth == 0 and character == '{':
+            return index
+        elif depth == 0 and character == ';':
+            return -1
+    return -1
+
+
 def functions(text: str) -> list:
     """
     Every function in one Rust source file, test modules left out.
@@ -67,10 +93,8 @@ def functions(text: str) -> list:
     for match in _FN.finditer(code):
         if any(begin <= match.start() <= end for begin, end in skipped):
             continue
-        # the body's brace: the first `{` after the signature, unless a `;` ends it first (a trait's declaration)
-        body = code.find('{', match.end())
-        semicolon = code.find(';', match.end())
-        if body < 0 or 0 <= semicolon < body:
+        body = _body(code, match.end())
+        if body < 0:
             continue
         end = _closing(code, body)
         first = code.count('\n', 0, match.start()) + 1
@@ -131,7 +155,10 @@ def main() -> int:
         stale = allow - {f'{path}::{name}' for path, name, _, length in measured if length > LIMIT}
         for entry in sorted(stale):
             print(f'{entry}: allowed but no longer over {LIMIT} lines -- drop it from {os.path.basename(ALLOW)}')
-        return 1 if long or stale else 0
+        if long or stale:
+            return 1
+        print(f'{len(measured)} functions, none over {LIMIT} lines but the {len(allow)} allowed')
+        return 0
     over = [item for item in measured if item[3] > arguments.over]
     for path, name, first, length in over:
         print(f'{length:4d}  {path}:{first} {name}')

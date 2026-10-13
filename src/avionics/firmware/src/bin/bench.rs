@@ -132,7 +132,11 @@ fn cpu(hertz: u64) {
         let _ = write!(
             row,
             "{uptime};{};{};{};{};{}",
-            1013.25f32, -12.5f32, 4_500i32, 1, "boosting"
+            1013.25f32,
+            -12.5f32,
+            4_500i32,
+            1,
+            black_box("boosting")
         );
         for field in 0..14 {
             let _ = write!(row, ";{:.2}", black_box(field as f32 * 1.37));
@@ -155,6 +159,10 @@ fn cpu(hertz: u64) {
 
 /// B2: f32 (hardware) vs f64 (software) vs i32 fixed-point, per operation. The f64 here exists only to price the
 /// rule "no f64 anywhere in the firmware" -- the core has no double-precision unit.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a benchmark: one measurement after another, each printed as it is taken"
+)]
 fn fpu(hertz: u64) {
     const COUNT: u32 = 10_000;
     let (mut a32, b32) = (1.000_1f32, 0.999_9f32);
@@ -288,6 +296,10 @@ impl Drop for Buffer {
 }
 
 /// B3: copy and fill bandwidth between internal RAM and PSRAM, and the cost of a cache miss.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a benchmark: one measurement after another, each printed as it is taken"
+)]
 fn memory(hertz: u64) {
     let internal = sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_8BIT;
     let psram = sys::MALLOC_CAP_SPIRAM | sys::MALLOC_CAP_8BIT;

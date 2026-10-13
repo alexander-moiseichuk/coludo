@@ -7,6 +7,7 @@
 #   make test-host    the control-hub tests (CPython, no hardware)
 #   make docs         regenerate the derived docs (pin map, architecture, telemetry schema)
 #   make docs-check   fail if a derived doc is stale
+#   make lengths      fail on a firmware function over 80 lines the allow-list does not name (Rust avionics)
 #   make test-board   the on-board suite (needs the board on PORT; slow, not part of `check`)
 #
 # `check` deliberately excludes test-board: it needs hardware and takes minutes. Run it before a flight.
@@ -15,9 +16,9 @@ PORT ?= /dev/ttyACM0
 MPYX := tools/mpy-cross.v1.29.0
 MARCH := -march=rv32imc
 
-.PHONY: check lint compile preflight test-host docs docs-check test-board clean
+.PHONY: check lint compile preflight test-host docs docs-check lengths test-board clean
 
-check: lint compile preflight docs-check test-host
+check: lint compile preflight docs-check lengths test-host
 	@echo ""
 	@echo "  ALL LOCAL GATES PASSED  (board suite is separate: make test-board)"
 
@@ -63,6 +64,10 @@ docs-check:
 	@python3 tools/gen_schema.py --check
 	@python3 tools/gen_docs.py --check
 	@python3 tools/gen_avionics_docs.py --check
+
+lengths:
+	@echo "== avionics function lengths =="
+	@python3 tools/function_lengths.py --check
 
 test-board:
 	@$(MAKE) -C src/glider/test test PORT=$(PORT)

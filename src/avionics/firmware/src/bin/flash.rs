@@ -257,6 +257,10 @@ unsafe extern "C" fn tick(argument: *mut core::ffi::c_void) {
 }
 
 /// The stall test: a 1 kHz paced loop on core 1, with or without core 0 writing flash meanwhile.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a benchmark: one measurement after another, each printed as it is taken"
+)]
 fn stall(partition: Partition, writing: bool) {
     let label = if writing { "flash_busy" } else { "flash_idle" };
     let running = Arc::new(AtomicBool::new(true));
