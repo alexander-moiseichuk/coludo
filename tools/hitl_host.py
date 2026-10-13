@@ -57,6 +57,7 @@ import board_clean  # noqa: E402
 import cc_protocol as cc  # noqa: E402
 import config_hitl  # noqa: E402
 import sim_model  # noqa: E402
+import stack_dynamics  # noqa: E402
 from contract import transports  # noqa: E402
 from sim_link_codec import decode_fins, decode_sensors, encode_fins, encode_sensors  # noqa: E402,F401
 
@@ -218,6 +219,14 @@ class _Sim:
         self.body.gnss_drift_n = args.gnss_drift * math.cos(math.radians(args.gnss_drift_dir))
         if getattr(args, 'boost_cda', None) is not None:
             self.body.boost_cda = args.boost_cda  # a drag sweep: the airframe's boost CdA overridden
+        # the 6-DoF boost (--boost 6dof, doc/specs/boost-control.md BC1): it flies ignition to separation and keeps the
+        # body where it is, so the glide takes over from there; its dorsal side faces the wind's direction by default
+        # (the 10-03 replays: the crosswind against the folded wings)
+        self.stack = None
+        if getattr(args, 'boost', 'vertical') == '6dof':
+            facing = args.wind_dir if args.stack_azimuth is None else args.stack_azimuth
+            self.stack = stack_dynamics.Stack(stack_dynamics.STACKS[args.stack], self.body.wind_e, self.body.wind_n,
+                                              facing)
         self.apogee = 0.0  # the highest the body got (publish), for the study's LANDED line
         self.args = args
         self.axis = {'x': 0, 'y': 1, 'z': 2}[args.boost_axis]
@@ -284,6 +293,19 @@ class _Sim:
         left, right, yaw = fins
         return (left - right) / 2.0, (left + right) / 2.0 - _SERVO_NEUTRAL_DEG, yaw - _SERVO_NEUTRAL_DEG
 
+    def boost(self, fixed: float, fins: tuple) -> None:
+        """
+        One boost step of `fixed` seconds under the board's `fins` (roll, pitch, yaw): the 6-DoF stack's, which then
+        puts the body where it is, or sim_model's vertical climb.
+        """
+        if self.stack is not None:
+            self.stack.step(fixed, fins)
+            self.stack.hand_over(self.body)
+            return
+        roll, pitch, _yaw = fins
+        thrust = self.thrust if self.sim_time < self.burn_s else 0.0
+        self.body.boost_step(fixed, thrust, pitch, roll)
+
     def run(self) -> None:
         """Plan B hitl.py's run loop on the host clock: the pad hold, then the fixed-step accumulator."""
         inject_hz = self.args.inject_hz or self.args.sim_hz
@@ -315,8 +337,7 @@ class _Sim:
                 self.body.begin_glide()  # BOOSTING -> GLIDING: deploy and glide
             while accumulator >= fixed:
                 if boosting:
-                    thrust = self.thrust if self.sim_time < self.burn_s else 0.0
-                    self.body.boost_step(fixed, thrust, pitch, roll)
+                    self.boost(fixed, (roll, pitch, yaw))
                 else:
                     spiked = roll * 2.0 if (self.args.spike and random.random() < fixed / 3.0) else roll
                     self.body.glide_step(fixed, spiked, pitch, yaw)
@@ -343,16 +364,25 @@ class _Sim:
         heading = noisy(body.heading % 360.0, noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
         roll = noisy(body.roll, noise, -180.0, 180.0)
         pitch = noisy(body.pitch, noise, -180.0, 180.0)
+        # the marks frame too, by the right-hand rule: about y left the nose goes DOWN, about z up it goes LEFT
+        # (crates/control attitude::rate_from_marks maps it back to roll, pitch, yaw)
+        rates = [body.roll_rate, -body.pitch_rate, -body.yaw_rate]
+        stack = self.stack if self.stack is not None and not body.gliding else None
+        if stack is not None:
+            # the 6-DoF's own: the specific force and the body rates are the marks frame already; the Euler angles
+            # degenerate near a vertical nose as the board's do
+            accel = [noisy(component / stack_dynamics.G, noise, -200.0, 200.0) for component in stack.specific]
+            rates = [math.degrees(rate) for rate in stack.rates]
+            heading, roll, pitch = stack.euler()
+            heading = noisy(heading, noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
+            roll, pitch = noisy(roll, noise, -180.0, 180.0), noisy(pitch, noise, -180.0, 180.0)
         baro_noise = noise * _BARO_NOISE_SCALE
         altitude = noisy(body.elev0 + body.alt, baro_noise, -100.0, 10000.0)
         elevation = noisy(body.alt, baro_noise, -100.0, 10000.0)
         agl_clean = max(0.0, body.alt)
         fields = {
             'accel': self.faults.apply('accel', accel, t),
-            # the marks frame too, by the right-hand rule: about y left the nose goes DOWN, about z up it goes LEFT
-            # (crates/control attitude::rate_from_marks maps it back to roll, pitch, yaw)
-            'rate': [noisy(body.roll_rate, noise, -2000.0, 2000.0), -noisy(body.pitch_rate, noise, -2000.0, 2000.0),
-                     -noisy(body.yaw_rate, noise, -2000.0, 2000.0)],
+            'rate': [noisy(rate, noise, -2000.0, 2000.0) for rate in rates],
             'attitude': None if self.drop_attitude else self.faults.apply('attitude', [heading, roll, pitch], t),
             'altitude': self.faults.apply('baro', altitude, t),
             'elevation': self.faults.apply('baro', elevation, t),
@@ -368,7 +398,15 @@ class _Sim:
             fields['position'] = [round(latitude * 1e7), round(longitude * 1e7)]
             fields['speed'] = noisy(body.ground_speed(), noise, 0.0, 200.0)
             fields['course'] = noisy(body.track(), noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
+            if stack is not None:  # the stack moves over the ground: its velocity plus the receiver's drift
+                east, north = stack.velocity[0] + body.gnss_drift_e, stack.velocity[1] + body.gnss_drift_n
+                fields['speed'] = noisy(math.hypot(east, north), noise, 0.0, 200.0)
+                fields['course'] = noisy(math.degrees(math.atan2(east, north)) % 360.0, noise, 0.0, 360.0,
+                                         sim_model.HEADING_NOISE_REF)
         pitot = min((body.speed * body.speed + body.vu * body.vu) ** 0.5, _PITOT_RAIL_MS)
+        if stack is not None:  # the stack's speed through the air
+            air = [stack.velocity[index] - stack.wind[index] for index in range(3)]
+            pitot = min(math.sqrt(sum(component * component for component in air)), _PITOT_RAIL_MS)
         pitot = self.faults.apply('pitot', noisy(pitot, noise, 0.0, _PITOT_RAIL_MS), t)
         if pitot is not None:
             fields['airspeed'] = pitot
@@ -434,8 +472,7 @@ class _Sim:
                 if not boosting and not self.body.gliding:
                     self.body.begin_glide()
                 if boosting:
-                    thrust = self.thrust if self.sim_time < self.burn_s else 0.0
-                    self.body.boost_step(fixed, thrust, pitch, roll)
+                    self.boost(fixed, (roll, pitch, yaw))
                 else:
                     spiked = roll * 2.0 if (self.args.spike and random.random() < fixed / 3.0) else roll
                     self.body.glide_step(fixed, spiked, pitch, yaw)
@@ -519,6 +556,13 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--sim-hz', type=int, default=50)
     parser.add_argument('--inject-hz', type=int, default=0, help='the publish rate; 0 = sim_hz')
     parser.add_argument('--boost-axis', default='z', choices=('x', 'y', 'z'))
+    parser.add_argument('--boost', default='vertical', choices=('vertical', '6dof'),
+                        help="the boost's physics: sim_model's vertical climb, or the 6-DoF stack (F15 only; "
+                             'doc/specs/boost-control.md BC1)')
+    parser.add_argument('--stack', default='tms7d', choices=sorted(stack_dynamics.STACKS),
+                        help='--boost 6dof: the stack (tools/stack_dynamics.STACKS)')
+    parser.add_argument('--stack-azimuth', type=float, help='--boost 6dof: the compass direction the stack\'s '
+                        'dorsal side faces on the rod (default: the wind\'s, against the folded wings)')
     parser.add_argument('--laser-range-m', type=float, default=4.0)
     parser.add_argument('--pad-dwell-s', type=float, default=0.0)
     parser.add_argument('--gnss-drift', type=float, default=0.0)
@@ -608,6 +652,8 @@ def _sitl(args: argparse.Namespace) -> int:
 def main() -> int:
     """One scenario; 0 on DONE, 1 otherwise."""
     args = _arguments()
+    if args.boost == '6dof' and args.motor != 'F15':
+        raise SystemExit('--boost 6dof flies the measured F15 only (tools/stack_dynamics.F15)')
     if args.seed is not None:
         random.seed(args.seed)
     if args.sitl:

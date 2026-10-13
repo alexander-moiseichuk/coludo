@@ -42,7 +42,7 @@ Each stage is committed on its own proof. The firmware changes only from BC3 on.
 
 | stage | what | proof |
 |---|---|---|
-| BC1 | a 6-DoF boost in the simulator, the measured F15, per-airframe stack parameters | host tests: 7C, 7D and TMS-7 replays (below) |
+| BC1 | a 6-DoF boost in the simulator, the measured F15, per-airframe stack parameters (as built: below) | done |
 | BC2 | the passive envelope: where an uncontrolled stack departs (margin x asymmetry x wind x rod exit speed) | a SITL sweep, published in `doc/sims` |
 | BC3 | the boost law for vertical flight: the lean of the body axis + roll damping, the gyro-integrated attitude, the rod gate | host tests; the SITL sweep with control |
 | BC4 | HITL on the taster, servos moving: the full matrix with metrics and plotly pictures | `doc/sims/TMS-7-boost_control/` |
@@ -63,13 +63,13 @@ A rigid body from ignition to separation, beside the existing glide model (which
 - **Motor:** the measured F15: a 32-33 N spike at ~0.1-0.25 s, 42-43 N·s, burnout 2.5-2.7 s (TMS-7 and 7D).
 - **Wind:** steady plus the existing gusts, with a surface profile as an option.
 - **Sensors:** body rates and specific force in the board's marks frame (the gyro, both accelerometers), the Euler
-  attitude the sim publishes, baro altitude, and the pitot's flight span (0.51-0.59 of q at low angle of attack,
-  topping out at 546 Pa) so the governor sees what the board sees.
+  attitude the sim publishes, baro altitude, the GNSS's ground velocity, and the pitot's true airspeed (its flight
+  span, 0.51-0.59 of q measured on 10-03, is a calibration the airframe gets, not a model: not simulated).
 - **Integration:** fixed sub-steps of ≤ 1 ms inside the host's step (1600 °/s spins).
 
-Parameters live in airframe profiles (`AIRFRAMES`, as TMS-8's do), one per stack: 7C, 7D, TMS-7. The old
-1-DoF boost stays the default until BC1's proof, so every published study reproduces; then the 6-DoF becomes the
-default and the plan B bands are re-measured once.
+Parameters live in stack profiles, one per stack: 7C, 7D, TMS-7 (`tools/stack_dynamics.STACKS`; sim_model's
+`AIRFRAMES` keep the glide). The old 1-DoF boost stays the default, so every published study reproduces; making
+the 6-DoF the default, with the plan B bands re-measured once, is the operator's call after BC4.
 
 **Replay regressions (the acceptance, from the launch README):**
 - 7C (+0.24 cal, ~1° cant, calm): clean on the rod, departs within 1.3 s, the nose past horizontal under thrust;
@@ -79,6 +79,38 @@ default and the plan B bands are re-measured once.
 
 The fits are coarse by design: the data is 1.3 s (7C) and 6.4 s (7D) of one flight each. A regression passes on
 the event and the order of magnitude, not on a curve fit.
+
+**BC1 as built.** `tools/stack_dynamics.py` (host-only: sim_model is imported on the board by plan B's HITL task)
+holds the 6-DoF stack and the measured F15 (41 N s, burnout 2.68 s), with three stacks in `STACKS`. 7C and 7D
+share one aerodynamic set, fitted to both flights' events in the ~4.5 m/s crosswind against the folded wings:
+- a normal-force slope of 12/rad;
+- crossflow 80 (z) and 40 (y), centred 2 calibers ahead of the liftoff CG;
+- the CG moving forward 0.25 m x the burnt propellant's share.
+
+`tools/stack_replay.py` flies the replays; `src/control/test/test_stack_dynamics.py` checks them with the frames,
+the fin signs, the rod and the motor:
+
+| replay | model | measured |
+|---|---|---|
+| 7C (+0.24 cal, nominal) | nose past horizontal at 1.2 s under thrust, 10.5 g side load, roll -311 deg/s at 0.5 s | 1.06 s, 9.3 g, -372 deg/s at 0.47 s |
+| 7D (+0.84 cal, fitted) | angle of attack 14.7 deg early, 2.0 by 2.2-2.6 s; path minimum 36 deg; burnout 55 m/s, 67 m up, 48 m out; apogee 108 m, 153 m out; coast roll 20.7 deg/s per m/s | 17-19, 2; 32; 53.5, 54, 48; 91-98, ~145; ~20 |
+| TMS-7 (2 cal) | apogee 460 m, burnout 120 m/s, ~9 deg of tilt | 464-479, 125, ~12 |
+
+7D's nominal 0.71 cal loops in this model; the edge lies between 0.71 and 0.84, the launch analysis's "near
+neutral early". `tools/hitl_host.py --boost 6dof --stack <name>` flies the stack until the board's separation, then
+hands sim_model's glide the stack's position (the default stays `--boost vertical`).
+
+**A first look (SITL, the taster's flight config, 4.5 m/s against the folded wings, seed 1):**
+
+| stack | BOOSTING | apogee | aloft | landed |
+|---|---|---|---|---|
+| 7D | passive | 108 m | 48.6 s | 70.5 m out |
+| 7D | the existing hold | 170 m | 71.4 s | 56.7 m, in the zone |
+| 7C | passive | 31 m: loops | 9.6 s | crashes |
+| 7C | the existing hold | 38 m: loops | 8.4 s | crashes |
+
+The hold as it stands already saves a near-neutral stack. It does not save a sub-neutral one, whose divergence
+begins before the hold engages (15 m/s) and outruns it. BC2 maps where the line falls; BC3 is the law that moves it.
 
 ### BC3: the law, for vertical flight
 
