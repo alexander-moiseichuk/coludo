@@ -476,7 +476,8 @@ def _render_keeps_named_params() -> None:
     line = server._render(reply)
     assert line.startswith('ok control schedule_hz=100 lapses='), line
     again = cc.parse(line)
-    assert again.args == ['control'] and again.named == {'schedule_hz': '100', 'lapses': 'imu.accel:0,imu.rate:2'}, again
+    assert again.args == ['control'], again
+    assert again.named == {'schedule_hz': '100', 'lapses': 'imu.accel:0,imu.rate:2'}, again
     spaced = server._render(cc.parse(cc.build('ok', ['video', 'stats'], {'note': 'two words', 'empty': ''})))
     assert cc.parse(spaced).named == {'note': 'two words', 'empty': ''}, spaced
     # a reply with no named params renders as before; JSON args stay plain

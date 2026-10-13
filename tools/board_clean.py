@@ -9,8 +9,8 @@ starts from an empty card (the operator, 2026-10-11). What it removes is gone fo
   tools/board_clean.py <board>    # the board's id on the hub; the board must be in SETTING
 
 Kept: the running session (the board refuses it anyway), `videos/` itself (on a two-partition card the videos
-partition's mount point), the global index `sessions.csv` and the entry file `entry.gcl`. tools/hitl_host.py --clean runs the same after its
-reboot, so the run's own session is the one kept.
+partition's mount point), the global index `sessions.csv` and the entry file `entry.gcl`. tools/hitl_host.py --clean
+runs the same after its reboot, so the run's own session is the one kept.
 """
 import argparse
 import os

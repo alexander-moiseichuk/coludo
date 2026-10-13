@@ -131,7 +131,9 @@ def _drift(speed: float, course: float, count: int, stage: str = 'setting', arme
 
 
 def _seeded(generator: random.Random, index: int) -> dict:
-    """A seeded scenario: a walk disarmed, the arm, a jittered drift with dropouts, then the launch and a while after."""
+    """
+    A seeded scenario: a walk disarmed, the arm, a jittered drift with dropouts, then the launch and a while after.
+    """
     steps = [_pass('setting', False, _fresh(generator.uniform(0.5, 2.0), generator.uniform(0, 360)))
              for _ in range(generator.randint(0, 6))]
     speed, course = generator.uniform(0.0, 0.6), generator.uniform(0.0, 360.0)
