@@ -195,7 +195,7 @@ Each stage keeps the behaviour. Its proof:
 | R3 | `ControlCore` in `crates/controller`; `control/` split by subsystem; the SITL on `ControlCore` (as built: below) | done |
 | R4 | the `boot` phases; `devices` from tables; the remaining long functions (as built: below) | done |
 | R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test (as built: below) | done |
-| R6 | the hardware's own types (operator, 2026-10-12): see below | medium: the numbers change |
+| R6 | the hardware's own types (operator, 2026-10-12): see below | dropped (operator, 2026-10-12): measured, not worth it |
 
 **R2 as built.** `crates/parts` holds every I2C part's run, generic over embedded-hal and host-tested on the
 drivers' mock bus:
@@ -312,8 +312,11 @@ fin (`sg90` `floor_divide`, `fins::write`'s duty), the BMM350's read and the BMP
 is 2-4 k cycles, 6-11 µs per tick, about 0.1% of core 1, whose tick works ~100 µs. The f64 left is the JSON boundary
 (D18) and set-up code (`FlightLaw::new`, `from_json`); no 64-bit atomic exists (the seqlocks). The timebase
 migration's gain is that 0.1%; its cost is ~600 sites that must all wrap correctly at 71.6 minutes of uptime, a
-pad wait the boards can reach. Open: the operator's call between the full migration and only the hot path's
-divisions (a branch for the antimeridian wrap, u32 where the operands fit).
+pad wait the boards can reach.
+
+**R6 dropped (operator, 2026-10-12):** "64-bit integers not an issue at all"; a u64 `%` is nothing at 0.1% of a
+core. The u64 timebase stays, as does f32 for the maths (D18). Optimizations come later, from profiling, and core
+placement stays static: each thread pinned to a core chosen from a measured load profile, no migration by load.
 
 **Crates this needs:** possibly `enum_dispatch` (R2, compile-time only), if it takes the generic part trait.
 Everything else is already in the workspace: `embedded-hal`, `serde`/`serde_json`, `crates/controller`,
