@@ -53,6 +53,28 @@ pub struct Step {
     pub drift: [f32; 2],
 }
 
+/// BOOSTING's law (the flight entry's `boost_law`; doc/specs/boost-control.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoostLaw {
+    /// Plan B's hold (`hold`, the default): the Euler roll and pitch captured at entry. Near a vertical nose the roll
+    /// is noise and the pitch cannot tell which way the stack leans (doc/sims/TMS-7-boost_envelope: ~0.3 calibers).
+    Hold,
+    /// The lean of the body axis from the vertical (`lean`, BC3): the elevons steer the lean in their plane, the yaw
+    /// fin the lean in its, and the roll loop only damps the roll rate.
+    Lean,
+}
+
+impl BoostLaw {
+    /// The law a `boost_law` value names: `lean`, else plan B's hold.
+    fn of(value: &Value) -> BoostLaw {
+        if value.as_str() == Some("lean") {
+            BoostLaw::Lean
+        } else {
+            BoostLaw::Hold
+        }
+    }
+}
+
 /// The flight law's state.
 #[derive(Clone, Debug)]
 pub struct FlightLaw {
@@ -90,6 +112,8 @@ pub struct FlightLaw {
     inputs: Inputs,
     /// The nominal L/D for the reach estimate (`glide_ratio`).
     glide_ratio: f32,
+    /// BOOSTING's law (`boost_law`).
+    boost_law: BoostLaw,
 }
 
 impl FlightLaw {
@@ -143,6 +167,7 @@ impl FlightLaw {
             wind_stamp: None,
             inputs: Inputs::default(),
             glide_ratio: number("glide_ratio").unwrap_or(5.5),
+            boost_law: BoostLaw::of(&flight["boost_law"]),
         }
     }
 
@@ -192,7 +217,11 @@ impl FlightLaw {
             self.neutral(); // the boost still on the rod: no q to bite
             return true;
         }
-        self.run_pids(roll, pitch, elapsed, input.rate);
+        if input.stage == Stage::Boosting && self.boost_law == BoostLaw::Lean {
+            self.run_lean(roll, pitch, elapsed, input.rate);
+        } else {
+            self.run_pids(roll, pitch, elapsed, input.rate);
+        }
         self.steps += 1;
         if input.ground_stamp.is_some() && input.ground_stamp != self.wind_stamp {
             self.wind_stamp = input.ground_stamp;
@@ -248,7 +277,34 @@ impl FlightLaw {
         let roll_command = roll_pid.step(self.guidance.roll_setpoint() - roll, elapsed, roll_rate);
         let pitch_command = pitch_pid.step(self.guidance.pitch_setpoint() - pitch, elapsed, pitch_rate);
         let yaw_command = yaw_pid.step(self.guidance.heading_error() as f32, elapsed, yaw_rate);
-        self.commands = [roll_command, pitch_command, yaw_command].map(|command| command.floor() as i32);
+        self.actuate([roll_command, pitch_command, yaw_command]);
+    }
+
+    /// BOOSTING's lean law (doc/specs/boost-control.md BC3), the PIDs on the lean of the body axis from the
+    /// vertical. In the marks frame (x the nose, y the left wing, z dorsal) the vertical is (sin pitch,
+    /// sin roll cos pitch, cos roll cos pitch): continuous where the Euler roll and heading degenerate near a vertical
+    /// nose, and naming which way the stack leans. The elevons (pitch) steer the lean toward the dorsal side, the yaw
+    /// fin the lean toward the left wing (a positive yaw turns the nose right, away from it), each against its rate.
+    /// The roll loop's error is 0: near vertical a roll angle is noise, so it only damps the roll rate (its D term).
+    fn run_lean(&mut self, roll: f32, pitch: f32, elapsed: f32, rate: Option<[f32; 3]>) {
+        let cap = self.mixer.limit();
+        for pid in &mut self.pids {
+            pid.set_limit(cap);
+        }
+        let (roll, pitch) = (roll.to_radians(), pitch.to_radians());
+        let toward_left = (roll.sin() * pitch.cos()).clamp(-1.0, 1.0).asin().to_degrees();
+        let toward_dorsal = (roll.cos() * pitch.cos()).clamp(-1.0, 1.0).asin().to_degrees();
+        let [roll_rate, pitch_rate, yaw_rate] = rate.map_or([None; 3], |rate| rate.map(Some));
+        let [roll_pid, pitch_pid, yaw_pid] = &mut self.pids;
+        let roll_command = roll_pid.step(0.0, elapsed, roll_rate);
+        let pitch_command = pitch_pid.step(toward_dorsal, elapsed, pitch_rate);
+        let yaw_command = yaw_pid.step(-toward_left, elapsed, yaw_rate);
+        self.actuate([roll_command, pitch_command, yaw_command]);
+    }
+
+    /// The per-axis demands floored to whole degrees (flight.csv's), then the mixer's fin angles (plan B `_actuate`).
+    fn actuate(&mut self, demands: [f32; 3]) {
+        self.commands = demands.map(|command| command.floor() as i32);
         let [roll, pitch, yaw] = self.commands.map(|command| command as f32);
         self.angles.copy_from_slice(self.mixer.mix(roll, pitch, yaw));
     }
@@ -318,5 +374,97 @@ impl FlightLaw {
     /// Control steps run.
     pub fn steps(&self) -> u32 {
         self.steps
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A law with unit gains (P 1, D 0.1, no I), BOOSTING and GLIDING control stages, the boost engaged at any speed.
+    fn law(boost_law: &str) -> FlightLaw {
+        let gains = json!({"kp": 1.0, "ki": 0.0, "kd": 0.1});
+        let flight = json!({
+            "gains": {"roll": gains, "pitch": gains, "yaw": gains},
+            "schedule_hz": 100,
+            "stages": {"boosting": {}, "gliding": {}},
+            "boost_engage_speed": 0.0,
+            "boost_law": boost_law,
+        });
+        FlightLaw::new(&flight, &json!({"mixer": {}}))
+    }
+
+    /// One boosting step at `attitude` [heading, roll, pitch] with the gyro at `rate`; the demands [roll, pitch, yaw].
+    fn boost(law: &mut FlightLaw, now_us: u64, attitude: [f32; 3], rate: [f32; 3]) -> [i32; 3] {
+        let step = Step {
+            stage: Stage::Boosting,
+            armed: true,
+            now_us,
+            attitude: Some(attitude),
+            rate: Some(rate),
+            readings: Readings::default(),
+            guidance: Inputs::default(),
+            ground: None,
+            ground_stamp: None,
+            drift: [0.0; 2],
+        };
+        assert!(law.step(&step));
+        law.commands()
+    }
+
+    #[test]
+    fn the_lean_law_steers_each_plane_by_its_own_fins() {
+        // straight up: nothing to correct, whatever the roll angle reads near vertical
+        let mut lean = law("lean");
+        assert_eq!(boost(&mut lean, 10_000, [0.0, 137.0, 90.0], [0.0; 3]), [0, 0, 0]);
+        // 10 deg off vertical toward the dorsal side's opposite (pitch 80, roll 0): the elevons raise the nose
+        let mut lean = law("lean");
+        let [roll, pitch, yaw] = boost(&mut lean, 10_000, [0.0, 0.0, 80.0], [0.0; 3]);
+        assert!(pitch >= 9 && roll == 0 && yaw == 0, "{roll} {pitch} {yaw}");
+        // the same lean with the stack rolled 90 deg: now it leans in the yaw fin's plane, and only the yaw fin acts
+        // (the elevons within the floor's one degree: f32's cos 90 deg is -4e-8, and plan B floors the demand)
+        let mut lean = law("lean");
+        let [roll, pitch, yaw] = boost(&mut lean, 10_000, [0.0, 90.0, 80.0], [0.0; 3]);
+        assert!(yaw <= -9 && pitch.abs() <= 1 && roll == 0, "{roll} {pitch} {yaw}");
+    }
+
+    #[test]
+    fn the_lean_law_only_damps_the_roll() {
+        let mut lean = law("lean");
+        let [roll, ..] = boost(&mut lean, 10_000, [0.0, 0.0, 90.0], [-300.0, 0.0, 0.0]);
+        assert!(roll > 0, "a negative spin is met by a positive roll demand: {roll}");
+        let mut lean = law("lean");
+        let [roll, ..] = boost(&mut lean, 10_000, [0.0, 45.0, 89.0], [0.0; 3]);
+        assert_eq!(roll, 0, "a roll angle near vertical is not an error");
+    }
+
+    #[test]
+    fn plan_b_s_hold_stays_the_default() {
+        // NEGATIVE: the hold, rolled 90 deg with the same lean, still pushes the elevons, which is what BC3 fixes
+        for name in ["hold", "", "anything"] {
+            let mut hold = law(name);
+            boost(&mut hold, 10_000, [0.0, 90.0, 90.0], [0.0; 3]); // enters, capturing roll 90, pitch 90
+            let [_, pitch, _] = boost(&mut hold, 20_000, [0.0, 90.0, 80.0], [0.0; 3]);
+            assert!(pitch >= 9, "{name:?}: {pitch}");
+        }
+        // and the glide is the glide whatever the boost law
+        let step = |law: &mut FlightLaw| {
+            let step = Step {
+                stage: Stage::Gliding,
+                armed: true,
+                now_us: 10_000,
+                attitude: Some([0.0, 10.0, -6.0]),
+                rate: Some([0.0; 3]),
+                readings: Readings::default(),
+                guidance: Inputs::default(),
+                ground: None,
+                ground_stamp: None,
+                drift: [0.0; 2],
+            };
+            law.step(&step);
+            law.commands()
+        };
+        assert_eq!(step(&mut law("lean")), step(&mut law("hold")));
     }
 }

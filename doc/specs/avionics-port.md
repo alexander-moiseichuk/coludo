@@ -3104,6 +3104,9 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
   that many whole degrees from where the fin stands, then straight to the command (a deadband, so noise at a step's
   edge cannot chatter). The default 1 is plan B's any-change compare-and-set; 0 writes every command. The operator's
   question is what 0, 1, 3 and 5 cost in energy, moves and accuracy.
+- **The flight entry's `boost_law`** (Rust-only, doc/specs/boost-control.md BC3): `lean` steers BOOSTING by the lean
+  of the body axis (the elevons the lean toward the dorsal side, the yaw fin the lean toward the left wing, the roll
+  loop rate damping only); `hold`, the default, is plan B's captured-attitude hold.
 
 **Unchanged** (contract): the CC grammar and replies, the routing and CRC wrapper, the session.csv columns, the
 stream names and field lists, the config JSON schema and `config_id` algorithm, the NVS namespace `coludo` and
