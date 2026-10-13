@@ -136,8 +136,9 @@ pub struct Settings {
     pub engine_min_mw: i32,
     /// The probe's HIGH-draw flag, mW (`engine_max_mw`, default the type's).
     pub engine_max_mw: i32,
-    /// The least move the flight loop writes, whole degrees (`step_deg`, [`DEFAULT_STEP_DEGREES`]; operator
-    /// 2026-10-13): a fin moves only once its command is this far from where it stands. 0 writes every command.
+    /// The flight loop's grid, whole degrees (`step_deg`, [`DEFAULT_STEP_DEGREES`]; operator 2026-10-13): over 1,
+    /// a fin stands on the neutral plus whole steps and leaves its point only once its command is more than half a
+    /// step and a degree away ([`Servo::set_angle`]). 1 writes any change, 0 every command.
     pub step_degrees: i32,
 }
 
@@ -264,7 +265,7 @@ pub struct Servo {
     engine_min_mw: i32,
     /// The probe's HIGH-draw flag, mW.
     engine_max_mw: i32,
-    /// The least move the flight loop writes, whole degrees (0: every command).
+    /// The flight loop's grid, whole degrees (1: any change, 0: every command).
     step_degrees: i32,
     /// The last command written.
     command: Command,
@@ -375,14 +376,32 @@ impl Servo {
         self.write(angle)
     }
 
-    /// The 100 Hz flight-loop command, compare-and-set (sg90.set_angle): clamp, then write ONLY once the angle is
-    /// the servo's step (`step_deg`) or more from the one held, so a held fin costs nothing and a fin does not chase
-    /// every degree. With the default step of 1 that is any change, plan B's; 0 writes every command, unchanged
-    /// ones too. None when nothing was written.
+    /// The 100 Hz flight-loop command, compare-and-set (sg90.set_angle): clamp, then write ONLY a change. A step
+    /// (`step_deg`) over 1 puts the fin on a grid of that many degrees each way from the neutral (5 over 45-135: 19
+    /// positions) and moves it off its grid point only once the command is more than half a step and a degree away,
+    /// so noise at a grid boundary does not toggle it. A small command then rests at the exact neutral and a held fin
+    /// is never more than about half a step off its command (doc/sims/TMS-7-servo_step: a 3-degree grid costs ~40 %
+    /// less servo energy than step 1 in the SITL, and lands no worse). With the default step of 1 that is any
+    /// change, plan B's; 0 writes every command, unchanged ones too. None when nothing was written.
     pub fn set_angle(&mut self, degrees: f64) -> Option<Command> {
-        let angle = self.clamp(degrees);
-        let moved = (angle - self.command.angle).saturating_abs();
-        (self.step_degrees == 0 || (moved > 0 && moved >= self.step_degrees)).then(|| self.write(angle))
+        let mut angle = self.clamp(degrees);
+        if self.step_degrees > 1 {
+            if 2 * (angle - self.command.angle).saturating_abs() < self.step_degrees + 2 {
+                return None;
+            }
+            angle = self.on_grid(angle);
+        }
+        (self.step_degrees == 0 || angle != self.command.angle).then(|| self.write(angle))
+    }
+
+    /// `angle`'s nearest point of the step's grid about the neutral (a half step rounds away from it), within the
+    /// range.
+    fn on_grid(&self, angle: i32) -> i32 {
+        let step = self.step_degrees;
+        let offset = angle - self.neutral;
+        let steps = (offset.saturating_abs() + step / 2) / step;
+        let grid = self.neutral + offset.signum() * steps * step;
+        clamp_int(self.min_degrees, grid, self.max_degrees)
     }
 
     /// How long a move of `degrees` occupies the horn, ms (sg90.travel_ms): the type's rated slew, plus the settle

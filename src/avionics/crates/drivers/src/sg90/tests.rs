@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! Unit tests of the servo logic beyond its golden fixture (tests/golden_servo.rs): the probe verdict, the
-//! compare-and-set and its step, the floored pulse map below the range, and the refusals.
+//! compare-and-set and its step's grid, the floored pulse map below the range, and the refusals.
 
 use super::{Command, ProbeVerdict, Refusal, SG90, Servo, Settings, round_half_even};
 use serde_json::json;
@@ -39,22 +39,44 @@ fn compare_and_set_writes_only_a_change() {
 }
 
 #[test]
-fn the_step_writes_a_move_only_once_it_is_that_far() {
-    // step 3: a fin at 90 holds through 91-92, moves at 93, then holds within 2 of 93 either way
-    let mut yaw = fin(json!({"step_deg": 3}));
-    assert_eq!(yaw.set_angle(92.0), None, "2 deg is under the step");
-    assert_eq!(yaw.set_angle(93.0).map(|command| command.angle), Some(93));
-    assert_eq!(yaw.set_angle(91.0), None, "back 2: held at 93, no chatter");
+fn the_step_holds_the_fin_on_its_grid() {
+    // step 5 about the neutral 90: the fin leaves a grid point only past half a step and a degree (4 here)
+    let mut yaw = fin(json!({"step_deg": 5}));
+    assert_eq!(yaw.set_angle(93.0), None, "3 deg is within the hysteresis");
     assert_eq!(
-        yaw.set_angle(90.0).map(|command| command.angle),
+        yaw.set_angle(94.0).map(|command| command.angle),
+        Some(95),
+        "4 deg: onto the grid point nearest the command"
+    );
+    assert_eq!(
+        yaw.set_angle(92.0),
+        None,
+        "a boundary's noise (92-93) does not toggle it back"
+    );
+    assert_eq!(yaw.set_angle(98.0), None, "nor forward");
+    assert_eq!(
+        yaw.set_angle(91.0).map(|command| command.angle),
         Some(90),
-        "back 3: written"
+        "4 back: home to the exact neutral"
     );
     assert_eq!(
-        yaw.set_angle(140.0).map(|command| command.angle),
-        Some(140),
-        "a big move goes straight there"
+        yaw.set_angle(122.0).map(|command| command.angle),
+        Some(120),
+        "a big move goes to its grid point"
     );
+    assert_eq!(
+        yaw.set_angle(57.0).map(|command| command.angle),
+        Some(55),
+        "below the neutral too: symmetric"
+    );
+    // a grid point past the range stands at the range's end
+    let mut narrow = fin(json!({"step_deg": 10, "min_deg": 45, "max_deg": 135}));
+    assert_eq!(
+        narrow.set_angle(140.0).map(|command| command.angle),
+        Some(135),
+        "135 rounds to the point 140, past the range"
+    );
+    assert_eq!(narrow.set_angle(133.0), None, "within the hysteresis of the end");
     // step 0: every command goes out, an unchanged one too
     let mut all = fin(json!({"step_deg": 0}));
     assert!(all.set_angle(90.0).is_some() && all.set_angle(90.0).is_some());
