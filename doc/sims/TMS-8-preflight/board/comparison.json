@@ -174,12 +174,12 @@
    "scenario": "corner_spike",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -473,12 +473,12 @@
    "scenario": "corner_stress",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -772,12 +772,12 @@
    "scenario": "noise05",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -1071,12 +1071,12 @@
    "scenario": "noise10",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -1370,12 +1370,12 @@
    "scenario": "noise25",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -1669,12 +1669,12 @@
    "scenario": "wind00",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -1968,12 +1968,12 @@
    "scenario": "wind00_video",
    "panel": "agl min",
    "values": [
+    0.0,
     null,
-    null,
-    null
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -2267,12 +2267,12 @@
    "scenario": "wind03",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -2566,12 +2566,12 @@
    "scenario": "wind06",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -2865,12 +2865,12 @@
    "scenario": "wind09",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -3164,12 +3164,12 @@
    "scenario": "wind12",
    "panel": "agl min",
    "values": [
-    null,
-    null,
-    null
+    0.0,
+    0.0,
+    0.0
    ],
-   "low": null,
-   "high": null,
+   "low": 0.0,
+   "high": 0.0,
    "spread": null
   },
   {
@@ -3367,6 +3367,12 @@
    "motor": "F15",
    "scenario": "wind00_video",
    "panel": "health rescues",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "agl min",
    "kind": "channel present in r1,r3, absent in r2"
   },
   {

@@ -46,7 +46,7 @@ _PANELS: tuple = (
     ('health load max',       ('load',), None, 'load', 'max'),
     ('health mem_free min',   ('load',), None, 'mem_free', 'min'),
     ('health rescues',        ('load',), None, 'rescues', 'max'),
-    ('agl min',               ('agl',), None, 'agl', 'min'),
+    ('agl min',               ('agl',), 'laser', 'agl', 'min'),  # the laser's, not a Rust beacon.csv's agl
     ('engine power peak',     ('power_mw',), None, 'power_mw', 'max'),
     ('engine mA peak',        ('power_mw',), None, 'current_ma', 'max'),
     ('gyro gx range',         ('gx', 'gy', 'gz'), 'lsm', 'gx', 'range'),

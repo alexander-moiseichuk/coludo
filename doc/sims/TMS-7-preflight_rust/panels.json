@@ -123,8 +123,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -330,8 +330,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -537,8 +537,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -744,8 +744,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -951,8 +951,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -1158,8 +1158,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -1365,8 +1365,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -1572,8 +1572,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -1779,8 +1779,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -1986,8 +1986,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "e16_full",
@@ -2193,8 +2193,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -2400,8 +2400,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -2607,8 +2607,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -2814,8 +2814,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -3021,8 +3021,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -3228,8 +3228,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -3435,8 +3435,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -3642,8 +3642,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -3849,8 +3849,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -4056,8 +4056,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_full",
@@ -4263,8 +4263,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -4470,8 +4470,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -4677,8 +4677,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -4884,8 +4884,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -5091,8 +5091,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -5298,8 +5298,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -5505,8 +5505,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -5712,8 +5712,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -5919,8 +5919,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",
@@ -6126,8 +6126,8 @@
    "panel": "agl min",
    "planb_low": 0.0,
    "planb_high": 0.0,
-   "rust": null,
-   "verdict": "n/a"
+   "rust": 0.0,
+   "verdict": "inside"
   },
   {
    "combo": "f15_half",

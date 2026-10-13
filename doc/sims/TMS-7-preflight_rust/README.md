@@ -48,6 +48,7 @@ Per panel quantity, Rust over the middle of plan B's three-run range, the median
 | | gyro gx / gz range | 1.06 / 1.01 | 12 / 14 |
 | | accel peak / mean | 1.01 / 0.99 | 15 / 10 |
 | | servo rail peak mA / power | 0.93 / 0.96 | 6 / 8 |
+| | laser agl, lowest | (~0 m both) | 30 |
 | **stack** | heap free, lowest | **3.00** | 0 |
 | | rescues | **0** | 9 |
 | | load max | 1.39 | 0 |
@@ -60,8 +61,8 @@ Per panel quantity, Rust over the middle of plan B's three-run range, the median
 - **The stack is where the two differ, by design:** the Rust heap stays flat (3x plan B's lowest free; plan B's
   garbage collector sawed it) and needs no rescue collection; Rust records about twice the rows (more streams, its
   own rates); its load is the busiest core with the recorder's threads in it (plan B's was its one interpreter
-  thread); a Rust cut also keeps more of the pad. `agl min` is not compared: the Rust cut's laser reads nothing in
-  range on these flights.
+  thread); a Rust cut also keeps more of the pad. `agl min` sits inside plan B's range in all 30 (both touch down at
+  ~0 m, so no ratio is drawn).
 
 ## Caveats
 

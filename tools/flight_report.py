@@ -190,7 +190,7 @@ def build(streams, logs, go, make_subplots, motor=None):
     accel = find_stream(streams, 'ax', 'ay', 'az', prefer='adxl')  # high-g, not the IMU's low-g accel
     attitude = find_stream(streams, 'roll', 'pitch', prefer='bno')  # BNO055 emits heading/roll/pitch
     baro = find_stream(streams, 'elevation', prefer='icp') or find_stream(streams, 'altitude')
-    laser = find_stream(streams, 'agl')
+    laser = find_stream(streams, 'agl', prefer='laser')  # a Rust cut's beacon.csv carries an agl column too
     gnss = find_stream(streams, 'lat', 'lon')
     fins = find_stream(streams, 'eleron_left', 'eleron_right', 'yaw')  # commanded servo angles (sim/board)
     health = find_stream(streams, 'load')  # board_health.csv: temp (C), mem_free (bytes), load (%)
