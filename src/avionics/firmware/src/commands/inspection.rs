@@ -182,10 +182,6 @@ fn device<'a>(context: &Context, name: &'a str) -> Option<Snapshot<'a>> {
 /// for the SPI IMU when the control thread does not hold it.
 fn component(context: &Context, implementation: &str, name: &str, now_us: u64) -> Option<Own> {
     let topology = context.topology;
-    let scalar = |quantity: &str| {
-        let parameter = topology.scalar(quantity)?;
-        parameter.channel(name)?.recent(parameter.window_us(), now_us)
-    };
     let vector = |quantity: &str| {
         let parameter = topology.vector(quantity)?;
         parameter.channel(name)?.recent(parameter.window_us(), now_us)
@@ -200,29 +196,7 @@ fn component(context: &Context, implementation: &str, name: &str, now_us: u64) -
                 rate_dps: vector("rate"),
             }
         }
-        "neo6mv2" | "atgm336h" | "neom8n" => match crate::gnss::inspection() {
-            Some(state) => Own::Gnss {
-                fix: state.fix,
-                satellites: state.satellites,
-                hdop: state.hdop,
-                fix_quality: state.fix_quality,
-                position: topology
-                    .position("position")
-                    .and_then(|parameter| parameter.channel(name)?.recent(parameter.window_us(), now_us))
-                    .map(|[latitude, longitude]| [f64::from(latitude) * 1e-7, f64::from(longitude) * 1e-7]),
-                altitude_m: scalar("altitude"),
-                elevation_m: scalar("elevation"),
-                speed_ms: scalar("speed"),
-                in_view: state.sky[0],
-                used: state.sky[1],
-                mode: state.sky[2],
-                cn0: [state.sky[3], state.sky[4], state.sky[5], state.sky[6]],
-                cn0_mean: state.sky[3..7].iter().sum::<i32>() as f32 / 4.0,
-                antenna: state.antenna,
-                lines: state.lines,
-            },
-            None => Own::None {},
-        },
+        "neo6mv2" | "atgm336h" | "neom8n" => gnss(topology, name, now_us),
         "gnss_calib" => match crate::gnss::calibration_inspection() {
             Some(([east, north], samples, frozen)) => Own::GnssCalib {
                 drift_e: (east * 1000.0).round() / 1000.0,
@@ -232,24 +206,7 @@ fn component(context: &Context, implementation: &str, name: &str, now_us: u64) -
             },
             None => Own::None {},
         },
-        "hitl" => match crate::sim_link::inspection() {
-            Some(state) => Own::Hitl {
-                port: state.port,
-                bound: state.bound,
-                frames: state.applied,
-                refused: state
-                    .refused
-                    .iter()
-                    .map(|(reason, count)| (reason.to_string(), Value::from(*count)))
-                    .collect(),
-                stale: state.stale,
-                last_seq: state.last.map(|(seq, _)| seq),
-                sim_time_ms: state.last.map(|(_, sim_time_ms)| sim_time_ms),
-                age_ms: state.age_ms,
-                sender: state.sender,
-            },
-            None => Own::None {},
-        },
+        "hitl" => hitl(),
         "sg90" | "mg90s" => match crate::fins::inspection(name) {
             Some([angle, pulse_us, trim]) => Own::Servo {
                 angle,
@@ -279,6 +236,61 @@ fn component(context: &Context, implementation: &str, name: &str, now_us: u64) -
         },
         _ => Own::None {},
     })
+}
+
+/// The GNSS's own keys: its fix, sky and line figures, and its latest position, altitude, elevation and speed while
+/// inside their windows; no keys before its thread runs.
+fn gnss(topology: &crate::devices::Topology, name: &str, now_us: u64) -> Own {
+    let scalar = |quantity: &str| {
+        let parameter = topology.scalar(quantity)?;
+        parameter.channel(name)?.recent(parameter.window_us(), now_us)
+    };
+    match crate::gnss::inspection() {
+        Some(state) => Own::Gnss {
+            fix: state.fix,
+            satellites: state.satellites,
+            hdop: state.hdop,
+            fix_quality: state.fix_quality,
+            position: topology
+                .position("position")
+                .and_then(|parameter| parameter.channel(name)?.recent(parameter.window_us(), now_us))
+                .map(|[latitude, longitude]| [f64::from(latitude) * 1e-7, f64::from(longitude) * 1e-7]),
+            altitude_m: scalar("altitude"),
+            elevation_m: scalar("elevation"),
+            speed_ms: scalar("speed"),
+            in_view: state.sky[0],
+            used: state.sky[1],
+            mode: state.sky[2],
+            cn0: [state.sky[3], state.sky[4], state.sky[5], state.sky[6]],
+            cn0_mean: state.sky[3..7].iter().sum::<i32>() as f32 / 4.0,
+            antenna: state.antenna,
+            lines: state.lines,
+        },
+        None => Own::None {},
+    }
+}
+
+/// The sim-link's own keys: its port, the frames applied, refused (per reason) and stale, the last frame; no keys
+/// before its thread runs.
+fn hitl() -> Own {
+    match crate::sim_link::inspection() {
+        Some(state) => Own::Hitl {
+            port: state.port,
+            bound: state.bound,
+            frames: state.applied,
+            refused: state
+                .refused
+                .iter()
+                .map(|(reason, count)| (reason.to_string(), Value::from(*count)))
+                .collect(),
+            stale: state.stale,
+            last_seq: state.last.map(|(seq, _)| seq),
+            sim_time_ms: state.last.map(|(_, sim_time_ms)| sim_time_ms),
+            age_ms: state.age_ms,
+            sender: state.sender,
+        },
+        None => Own::None {},
+    }
 }
 
 /// `inspect <object>`: its property snapshot.

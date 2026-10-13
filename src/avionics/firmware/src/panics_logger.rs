@@ -217,44 +217,55 @@ fn record_last_boot(boot_id: u32) -> bool {
         text.extend_from_slice(TAIL_HEADING.as_bytes());
         text.extend_from_slice(tail);
     }
+    let tags = tags(captured.then_some(&capture), reset, boot_id);
+    let (seq, clear) = append(&tags, &text, captured);
+    log_record(&tags, &seq, captured, panic_text, tail.len());
+    clear
+}
+
+/// The tags of the last boot's panic record: what the capture names (nothing without one), the cause, and this boot
+/// (`boot_id`) as the one that records it.
+fn tags(capture: Option<&sys::panic_capture_t>, reset: &'static str, boot_id: u32) -> Tags {
     // the cause: the reset, unless a capture says a panic began it and another reset came before its record
-    let cause = if !captured || PANIC_RESETS.contains(&reset) {
-        reset
-    } else {
-        "panic"
+    let cause = match capture {
+        Some(_) if !PANIC_RESETS.contains(&reset) => "panic",
+        _ => reset,
     };
-    let tags = Tags {
+    let Some(capture) = capture else {
+        return Tags {
+            fatal: true,
+            cause: cause.to_string(),
+            recorded: boot_id,
+            ..Tags::default()
+        };
+    };
+    Tags {
         fatal: true,
         cause: cause.to_string(),
-        boot: if captured { capture.boot_id } else { 0 },
-        session: if captured {
-            field(&capture.session)
-        } else {
-            String::new()
-        },
-        uptime_ms: if captured { capture.uptime_ms } else { 0 },
-        firmware: if captured {
-            field(&capture.firmware)
-        } else {
-            String::new()
-        },
-        config: if captured {
-            field(&capture.config)
-        } else {
-            String::new()
-        },
+        boot: capture.boot_id,
+        session: field(&capture.session),
+        uptime_ms: capture.uptime_ms,
+        firmware: field(&capture.firmware),
+        config: field(&capture.config),
         recorded: boot_id,
-        intact: captured && capture.intact,
+        intact: capture.intact,
         ..Tags::default()
-    };
+    }
+}
+
+/// Appends the record (`tags`, `text`) to the panic log, unless a boot reset after writing it but before clearing the
+/// capture had appended it already (only a record from a capture, `captured`, can be told again).
+///
+/// Returns the record's seq as text ("already recorded", "-" when not written) and whether the capture may be
+/// cleared: a flash error keeps it for the next boot, a record that can never fit, or no log, does not.
+fn append(tags: &Tags, text: &[u8], captured: bool) -> (String, bool) {
     let mut log = log();
-    // a boot reset after writing the record but before clearing the capture: the record is there already
     let recorded_before = log.as_ref().and_then(|log| log.newest()).is_some_and(|newest| {
         captured && newest.fatal && newest.boot == tags.boot && newest.uptime_ms == tags.uptime_ms
     });
-    let (seq, clear) = match log.as_mut() {
+    match log.as_mut() {
         _ if recorded_before => ("already recorded".to_string(), true),
-        Some(log) => match log.append(tags.clone(), &text) {
+        Some(log) => match log.append(tags.clone(), text) {
             Ok(written) => (written.seq.to_string(), true),
             Err(error) => {
                 log::error!("panic :: the record was not written ({error:?}); its text follows here only");
@@ -263,18 +274,21 @@ fn record_last_boot(boot_id: u32) -> bool {
             }
         },
         None => ("-".to_string(), true),
-    };
-    drop(log);
+    }
+}
+
+/// Logs the last boot's panic record (`seq`): the boot, the cause and the sizes, then the capture's first
+/// [`LOGGED_LINES`] lines. `captured` tells a record from a capture, `tail_bytes` the log it kept before the panic.
+fn log_record(tags: &Tags, seq: &str, captured: bool, panic_text: &[u8], tail_bytes: usize) {
     let boot = if tags.boot == 0 {
         "an unknown boot".to_string()
     } else {
         format!("boot {:06}", tags.boot)
     };
     log::error!(
-        "panic :: {boot} ended in a {} (panic record {seq}, {} bytes captured, {} of log before it{})",
+        "panic :: {boot} ended in a {} (panic record {seq}, {} bytes captured, {tail_bytes} of log before it{})",
         tags.cause,
         panic_text.len(),
-        tail.len(),
         if captured && !tags.intact { ", not intact" } else { "" }
     );
     for line in String::from_utf8_lossy(panic_text)
@@ -284,7 +298,6 @@ fn record_last_boot(boot_id: u32) -> bool {
     {
         log::error!("panic :: | {line}");
     }
-    clear
 }
 
 /// The Rust panic hook: the message and its place into the capture, before abort() reaches the panic handler (whose

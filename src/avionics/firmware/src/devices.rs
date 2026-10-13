@@ -249,101 +249,34 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     let started = Instant::now();
     let entries = board_config::directory(document);
     let attempts = board_config::setup_retries(document);
-    let mut delay = Delay::new_default();
     let mut members: [Vec<Member>; 2] = [Vec::new(), Vec::new()];
-    let mut spi = Vec::new();
-    let mut separation = None;
-    let mut sequencer = None;
-    let mut attitude = None;
-    let mut checkpoint = None;
-    let mut first_checkpoint = None;
-    let mut watchdog = None;
-    let mut first_watchdog = None;
-    let mut gnss = None;
-    let mut gnss_calib = None;
-    let mut field = None;
-    let mut hitl = None;
-    let mut servos = Vec::new();
-    let mut flight = None;
     let spi_bus = open_spi(document, &entries);
     // the camera's sensor, asked once while the ports are still the bring-up's own
     let camera = board_config::camera(document).map(|_| camera_answers(ports));
     let mut set_up = set_up_ports(document, &entries, attempts, ports, &mut members);
-    let mut outcomes = Vec::with_capacity(entries.len());
-    for (index, entry) in entries.iter().enumerate() {
-        let log = |line: String| log::info!("{line}");
-        let sleep = |ms: u32| std::thread::sleep(Duration::from_millis(u64::from(ms)));
-        let outcome = match parts::classify(entry) {
-            Kind::Native => {
-                let answer = |_, _| match (entry.implementation, &camera) {
-                    ("recorder", _) if !recording => Attempt::Raised {
-                        error: "not recording this boot".to_string(),
-                        diagnosis: None,
-                    },
-                    ("ov5647", Some(Err(why))) => Attempt::Raised {
-                        error: why.clone(),
-                        diagnosis: None,
-                    },
-                    _ => Attempt::Up,
-                };
-                controller::set_up(entry.name, entry.implementation, 1, answer, sleep, log)
-            }
-            Kind::NotPorted => controller::set_up(
-                entry.name,
-                entry.implementation,
-                1,
-                |_, _| Attempt::NoDriver,
-                sleep,
-                log,
-            )
-            .map_err(|_| parts::NOT_PORTED_YET.to_string()),
-            Kind::Unknown => controller::set_up(
-                entry.name,
-                entry.implementation,
-                1,
-                |_, _| Attempt::NoDriver,
-                sleep,
-                log,
-            ),
-            // set up on its port's thread, or here when that thread did not run (or the entry is on no lent port)
-            Kind::I2c => set_up
-                .remove(&index)
-                .unwrap_or_else(|| set_up_i2c(document, entry, attempts, ports, &mut members, &mut delay)),
-            Kind::Spi => set_up_spi(document, entry, attempts, spi_bus.as_ref(), &mut spi, &mut delay),
-            Kind::Separation => set_up_separation(document, entry, attempts, &mut separation),
-            Kind::Sequencer => set_up_sequencer(entry, &mut sequencer),
-            Kind::Attitude => set_up_attitude(entry, &mut attitude),
-            Kind::Gnss => set_up_gnss(document, entry, &mut gnss),
-            Kind::GnssCalib => set_up_gnss_calib(entry, &mut gnss_calib),
-            Kind::Field => set_up_field(entry, &mut field),
-            Kind::Hitl => set_up_hitl(document, entry, &mut hitl),
-            Kind::Servo => set_up_servo(document, entry, &mut servos),
-            Kind::Flight => set_up_flight(document, entry, &mut flight),
-            Kind::Checkpoint => {
-                let (outcome, came_up) =
-                    set_up_supervised(entry, &mut first_checkpoint, board_config::checkpoint(document));
-                if let Some(checkpoint_s) = came_up {
-                    checkpoint = Some(CheckpointMember {
-                        name: entry.name,
-                        checkpoint_s,
-                    });
-                }
-                outcome
-            }
-            Kind::Watchdog => {
-                let (outcome, came_up) =
-                    set_up_supervised(entry, &mut first_watchdog, board_config::watchdog(document));
-                if let Some(settings) = came_up {
-                    watchdog = Some(WatchdogMember {
-                        name: entry.name,
-                        settings,
-                    });
-                }
-                outcome
-            }
-        };
-        outcomes.push((controller::candidate(document, entry), outcome));
-    }
+    let mut bringing = Bringing {
+        document,
+        attempts,
+        recording,
+        camera,
+        ports,
+        delay: Delay::new_default(),
+        first_checkpoint: None,
+        first_watchdog: None,
+        devices: Gathered {
+            members,
+            spi_bus,
+            ..Gathered::default()
+        },
+    };
+    let outcomes = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let outcome = bringing.entry(entry, set_up.remove(&index));
+            (controller::candidate(document, entry), outcome)
+        })
+        .collect();
     let table: &'static Table<'static> = Box::leak(Box::new(Table::new(outcomes)));
     for line in table.bring_up_lines() {
         log::info!("{line}");
@@ -356,25 +289,174 @@ pub fn bring_up(document: &'static Value, ports: &mut [(owner::Parked, I2cPort)]
     for line in topology.describe() {
         log::info!("{line}");
     }
-    let topology: &'static Topology = Box::leak(Box::new(topology));
-    Devices {
-        table,
-        topology,
-        members,
-        spi,
-        spi_bus,
-        separation,
-        sequencer,
-        attitude,
-        checkpoint,
-        watchdog,
-        gnss,
-        gnss_calib,
-        field,
-        hitl,
-        servos,
-        flight,
+    bringing.devices.into_devices(table, Box::leak(Box::new(topology)))
+}
+
+/// What the bring-up gathers entry by entry, before the table and the topology exist ([`Devices`] without them).
+#[derive(Default)]
+struct Gathered {
+    members: [Vec<Member>; 2],
+    spi: Vec<SpiMember>,
+    spi_bus: Option<SpiBus>,
+    separation: Option<SeparationMember>,
+    sequencer: Option<SequencerMember>,
+    attitude: Option<AttitudeMember>,
+    checkpoint: Option<CheckpointMember>,
+    watchdog: Option<WatchdogMember>,
+    gnss: Option<GnssMember>,
+    gnss_calib: Option<GnssCalibMember>,
+    field: Option<FieldMember>,
+    hitl: Option<HitlMember>,
+    servos: Vec<ServoMember>,
+    flight: Option<FlightMember>,
+}
+
+impl Gathered {
+    /// The devices, with their `table` and `topology`.
+    fn into_devices(self, table: &'static Table<'static>, topology: &'static Topology) -> Devices {
+        Devices {
+            table,
+            topology,
+            members: self.members,
+            spi: self.spi,
+            spi_bus: self.spi_bus,
+            separation: self.separation,
+            sequencer: self.sequencer,
+            attitude: self.attitude,
+            checkpoint: self.checkpoint,
+            watchdog: self.watchdog,
+            gnss: self.gnss,
+            gnss_calib: self.gnss_calib,
+            field: self.field,
+            hitl: self.hitl,
+            servos: self.servos,
+            flight: self.flight,
+        }
     }
+}
+
+/// The bring-up under way: what it brings up with, and what came up.
+struct Bringing<'p> {
+    /// The post-layout config.
+    document: &'static Value,
+    /// Each entry's setup attempts (`setup_retries`).
+    attempts: u32,
+    /// Whether the recorder opened.
+    recording: bool,
+    /// The camera's SCCB answer, when the config has a camera.
+    camera: Option<Result<(), String>>,
+    /// The lent I2C ports.
+    ports: &'p mut [(owner::Parked, I2cPort)],
+    /// The setups' waits.
+    delay: Delay,
+    /// The first checkpoint entry's name: a second one fails.
+    first_checkpoint: Option<&'static str>,
+    /// The first watchdog entry's name: a second one fails.
+    first_watchdog: Option<&'static str>,
+    /// What came up so far.
+    devices: Gathered,
+}
+
+impl Bringing<'_> {
+    /// `entry`'s bring-up, by its kind: an I2C part's outcome as its port's thread had it (`on_port`), or set up here
+    /// when that thread did not run (or the entry is on no lent port).
+    fn entry(&mut self, entry: &Entry<'static>, on_port: Option<Result<(), String>>) -> Result<(), String> {
+        let document = self.document;
+        let devices = &mut self.devices;
+        match parts::classify(entry) {
+            Kind::Native => self.native(entry),
+            Kind::NotPorted => no_driver(entry).map_err(|_| parts::NOT_PORTED_YET.to_string()),
+            Kind::Unknown => no_driver(entry),
+            Kind::I2c => on_port.unwrap_or_else(|| {
+                set_up_i2c(
+                    document,
+                    entry,
+                    self.attempts,
+                    self.ports,
+                    &mut devices.members,
+                    &mut self.delay,
+                )
+            }),
+            Kind::Spi => set_up_spi(
+                document,
+                entry,
+                self.attempts,
+                devices.spi_bus.as_ref(),
+                &mut devices.spi,
+                &mut self.delay,
+            ),
+            Kind::Separation => set_up_separation(document, entry, self.attempts, &mut devices.separation),
+            Kind::Sequencer => set_up_sequencer(entry, &mut devices.sequencer),
+            Kind::Attitude => set_up_attitude(entry, &mut devices.attitude),
+            Kind::Gnss => set_up_gnss(document, entry, &mut devices.gnss),
+            Kind::GnssCalib => set_up_gnss_calib(entry, &mut devices.gnss_calib),
+            Kind::Field => set_up_field(entry, &mut devices.field),
+            Kind::Hitl => set_up_hitl(document, entry, &mut devices.hitl),
+            Kind::Servo => set_up_servo(document, entry, &mut devices.servos),
+            Kind::Flight => set_up_flight(document, entry, &mut devices.flight),
+            Kind::Checkpoint => {
+                let (outcome, came_up) =
+                    set_up_supervised(entry, &mut self.first_checkpoint, board_config::checkpoint(document));
+                if let Some(checkpoint_s) = came_up {
+                    devices.checkpoint = Some(CheckpointMember {
+                        name: entry.name,
+                        checkpoint_s,
+                    });
+                }
+                outcome
+            }
+            Kind::Watchdog => {
+                let (outcome, came_up) =
+                    set_up_supervised(entry, &mut self.first_watchdog, board_config::watchdog(document));
+                if let Some(settings) = came_up {
+                    devices.watchdog = Some(WatchdogMember {
+                        name: entry.name,
+                        settings,
+                    });
+                }
+                outcome
+            }
+        }
+    }
+
+    /// A native implementation's bring-up: up, but the recorder when it did not open and the camera when its sensor
+    /// did not answer.
+    fn native(&self, entry: &Entry<'static>) -> Result<(), String> {
+        let answer = |_, _| match (entry.implementation, &self.camera) {
+            ("recorder", _) if !self.recording => Attempt::Raised {
+                error: "not recording this boot".to_string(),
+                diagnosis: None,
+            },
+            ("ov5647", Some(Err(why))) => Attempt::Raised {
+                error: why.clone(),
+                diagnosis: None,
+            },
+            _ => Attempt::Up,
+        };
+        controller::set_up(entry.name, entry.implementation, 1, answer, sleep_ms, log_line)
+    }
+}
+
+/// An entry no driver runs: one failed attempt, plan B's `no driver/activity`.
+fn no_driver(entry: &Entry<'static>) -> Result<(), String> {
+    controller::set_up(
+        entry.name,
+        entry.implementation,
+        1,
+        |_, _| Attempt::NoDriver,
+        sleep_ms,
+        log_line,
+    )
+}
+
+/// The setups' wait between attempts.
+fn sleep_ms(ms: u32) {
+    std::thread::sleep(Duration::from_millis(u64::from(ms)));
+}
+
+/// The setups' log lines.
+fn log_line(line: String) {
+    log::info!("{line}");
 }
 
 /// A port's setup thread's stack (internal, freed with the thread at bring-up's end): main runs the same setups in
@@ -1079,18 +1161,7 @@ fn set_up_spi(
     members: &mut Vec<SpiMember>,
     delay: &mut Delay,
 ) -> Result<(), String> {
-    let bound = matches!(
-        controller::binding(entry, "spi", Some(drivers::lsm6dso32::ADDRESS)),
-        Binding::Spi { id } if id == "1"
-    );
-    let chip_select = board_config::pin(document, entry, "cs_pin");
-    let mut handle = match (bound, bus, chip_select) {
-        (true, Some(bus), Some(chip_select)) => bus
-            .handle(chip_select)
-            .inspect_err(|error| log::warn!("spi:1 {} :: CS GPIO{chip_select} not on the bus: {error}", entry.name))
-            .ok(),
-        _ => None,
-    };
+    let mut handle = spi_handle(document, entry, bus);
     let interrupt = board_config::pin(document, entry, "int_pin");
     let interrupt_wired = interrupt.is_some();
     let axes = parts::imu_axes(entry);
@@ -1128,29 +1199,58 @@ fn set_up_spi(
         |ms| std::thread::sleep(Duration::from_millis(u64::from(ms))),
         |line| log::info!("{line}"),
     );
-    if let (Some(part), Some(mut handle)) = (came_up, handle) {
-        // the part's own ODR: one slower than the tick reads stale now and then, one faster skips conversions
-        match part.frequency_fine(&mut handle) {
-            Ok(fine) => log::info!(
-                "{} :: ODR {:.2} Hz (INTERNAL_FREQ_FINE {fine})",
-                entry.name,
-                drivers::lsm6dso32::odr_hz(fine)
-            ),
-            Err(fault) => log::warn!("{} :: ODR unknown: INTERNAL_FREQ_FINE {fault}", entry.name),
-        }
-        let period_ms = entry
-            .fields
-            .get("period_ms")
-            .and_then(Value::as_u64)
-            .map_or(IMU_PERIOD_MS, |period| period.clamp(1, u64::from(u32::MAX)) as u32);
-        members.push(SpiMember {
-            name: entry.name,
-            handle,
-            part,
-            interrupt,
-            period_ms,
-            axes: axes.unwrap_or_default(),
-        });
+    if let (Some(part), Some(handle)) = (came_up, handle) {
+        members.push(spi_member(entry, part, handle, interrupt, axes.unwrap_or_default()));
     }
     outcome
+}
+
+/// The LSM6DSO32's handle on SPI2 at its chip select: None when the entry is not bound to `spi:1`, there is no bus,
+/// its `cs_pin` is unwired, or the bus refuses the pin (logged).
+fn spi_handle(document: &Value, entry: &Entry<'static>, bus: Option<&SpiBus>) -> Option<SpiHandle> {
+    let bound = matches!(
+        controller::binding(entry, "spi", Some(drivers::lsm6dso32::ADDRESS)),
+        Binding::Spi { id } if id == "1"
+    );
+    let chip_select = board_config::pin(document, entry, "cs_pin");
+    match (bound, bus, chip_select) {
+        (true, Some(bus), Some(chip_select)) => bus
+            .handle(chip_select)
+            .inspect_err(|error| log::warn!("spi:1 {} :: CS GPIO{chip_select} not on the bus: {error}", entry.name))
+            .ok(),
+        _ => None,
+    }
+}
+
+/// The control thread's member for the LSM6DSO32 that came up: its ODR logged, its read period the entry's
+/// `period_ms` (default [`IMU_PERIOD_MS`]).
+fn spi_member(
+    entry: &Entry<'static>,
+    part: Lsm6dso32<OverSpi>,
+    mut handle: SpiHandle,
+    interrupt: Option<u8>,
+    axes: Axes,
+) -> SpiMember {
+    // the part's own ODR: one slower than the tick reads stale now and then, one faster skips conversions
+    match part.frequency_fine(&mut handle) {
+        Ok(fine) => log::info!(
+            "{} :: ODR {:.2} Hz (INTERNAL_FREQ_FINE {fine})",
+            entry.name,
+            drivers::lsm6dso32::odr_hz(fine)
+        ),
+        Err(fault) => log::warn!("{} :: ODR unknown: INTERNAL_FREQ_FINE {fault}", entry.name),
+    }
+    let period_ms = entry
+        .fields
+        .get("period_ms")
+        .and_then(Value::as_u64)
+        .map_or(IMU_PERIOD_MS, |period| period.clamp(1, u64::from(u32::MAX)) as u32);
+    SpiMember {
+        name: entry.name,
+        handle,
+        part,
+        interrupt,
+        period_ms,
+        axes,
+    }
 }

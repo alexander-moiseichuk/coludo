@@ -317,27 +317,28 @@ unsafe extern "C" fn tick(task: *mut core::ffi::c_void) {
     };
 }
 
-/// A 1 kHz loop on core 1 for `seconds`, woken by `source`: how late each tick woke, as one CC line.
-pub fn pace(seconds: u64, source: Source) -> String {
-    const PERIOD_MICROSECONDS: u64 = 1000;
-    let ticks = (seconds * 1_000_000 / PERIOD_MICROSECONDS) as usize;
-    ThreadSpawnConfiguration {
-        pin_to_core: Some(Core::Core1),
-        priority: 20,
-        ..Default::default()
-    }
-    .set()
-    .ok();
-    let paced = std::thread::spawn(move || {
-        let task = unsafe { sys::xTaskGetCurrentTaskHandle() } as *mut core::ffi::c_void;
-        let mut lateness = Vec::with_capacity(ticks);
-        // SAFETY: a timer owned by this thread, notifying this thread, torn down before returning; created here,
-        // on core 1, so a gptimer's interrupt is allocated on core 1.
+/// The paced loop's period, us: 1 kHz.
+const PERIOD_MICROSECONDS: u64 = 1000;
+
+/// A started timer pacing the loop: it notifies the paced thread every [`PERIOD_MICROSECONDS`].
+enum Pacer {
+    /// An esp_timer, periodic.
+    EspTimer(sys::esp_timer_handle_t),
+    /// A gptimer, its alarm auto-reloading.
+    Gptimer(sys::gptimer_handle_t),
+}
+
+impl Pacer {
+    /// Starts `source` notifying `task`; None when the driver refuses it. Called on core 1, so a gptimer's interrupt
+    /// is allocated there.
+    ///
+    /// SAFETY: `task` is the calling thread's handle, and the thread stops the timer ([`Pacer::stop`]) before it ends.
+    unsafe fn start(source: Source, task: *mut core::ffi::c_void) -> Option<Self> {
+        // SAFETY: the caller's (see above); the handles are the drivers' own until stop.
         unsafe {
-            let mut esp_timer: sys::esp_timer_handle_t = core::ptr::null_mut();
-            let mut gptimer: sys::gptimer_handle_t = core::ptr::null_mut();
             match source {
                 Source::EspTimer => {
+                    let mut esp_timer: sys::esp_timer_handle_t = core::ptr::null_mut();
                     let arguments = sys::esp_timer_create_args_t {
                         callback: Some(tick),
                         arg: task,
@@ -346,11 +347,13 @@ pub fn pace(seconds: u64, source: Source) -> String {
                         skip_unhandled_events: false,
                     };
                     if sys::esp_timer_create(&arguments, &mut esp_timer) != sys::ESP_OK {
-                        return lateness;
+                        return None;
                     }
                     sys::esp_timer_start_periodic(esp_timer, PERIOD_MICROSECONDS);
+                    Some(Self::EspTimer(esp_timer))
                 }
                 Source::Gptimer => {
+                    let mut gptimer: sys::gptimer_handle_t = core::ptr::null_mut();
                     let config = sys::gptimer_config_t {
                         clk_src: sys::soc_periph_gptimer_clk_src_t_GPTIMER_CLK_SRC_DEFAULT,
                         direction: sys::gptimer_count_direction_t_GPTIMER_COUNT_UP,
@@ -369,39 +372,72 @@ pub fn pace(seconds: u64, source: Source) -> String {
                         || sys::gptimer_enable(gptimer) != sys::ESP_OK
                         || sys::gptimer_start(gptimer) != sys::ESP_OK
                     {
-                        return lateness;
+                        return None;
                     }
+                    Some(Self::Gptimer(gptimer))
                 }
             }
-            // lateness against an ideal grid anchored at the first tick (both sources share the crystal)
-            let mut first = 0i64;
-            let mut tick = 0i64;
-            while lateness.len() < ticks {
-                let pending = sys::ulTaskGenericNotifyTake(0, 1, u32::MAX) as i64;
-                let now = uptime_us() as i64;
-                for _ in 0..pending {
-                    if tick == 0 {
-                        first = now;
-                    }
-                    let late = now - first - tick * PERIOD_MICROSECONDS as i64;
-                    lateness.push(late.max(0) as u32);
-                    tick += 1;
-                }
-            }
-            match source {
-                Source::EspTimer => {
+        }
+    }
+
+    /// Stops the timer and hands it back to its driver.
+    fn stop(self) {
+        // SAFETY: a timer [`Pacer::start`] started, stopped once.
+        unsafe {
+            match self {
+                Self::EspTimer(esp_timer) => {
                     sys::esp_timer_stop(esp_timer);
                     sys::esp_timer_delete(esp_timer);
                 }
-                Source::Gptimer => {
+                Self::Gptimer(gptimer) => {
                     sys::gptimer_stop(gptimer);
                     sys::gptimer_disable(gptimer);
                     sys::gptimer_del_timer(gptimer);
                 }
             }
         }
-        lateness
-    });
+    }
+}
+
+/// The paced thread: `ticks` ticks woken by `source`, each one's lateness (us) against an ideal grid anchored at the
+/// first tick (both sources share the crystal); empty when the timer would not start.
+fn paced(ticks: usize, source: Source) -> Vec<u32> {
+    let task = unsafe { sys::xTaskGetCurrentTaskHandle() } as *mut core::ffi::c_void;
+    let mut lateness = Vec::with_capacity(ticks);
+    // SAFETY: this thread's own handle; the timer is stopped below, before the thread returns.
+    let Some(pacer) = (unsafe { Pacer::start(source, task) }) else {
+        return lateness;
+    };
+    let mut first = 0i64;
+    let mut tick = 0i64;
+    while lateness.len() < ticks {
+        // SAFETY: takes this thread's own notifications.
+        let pending = unsafe { sys::ulTaskGenericNotifyTake(0, 1, u32::MAX) } as i64;
+        let now = uptime_us() as i64;
+        for _ in 0..pending {
+            if tick == 0 {
+                first = now;
+            }
+            let late = now - first - tick * PERIOD_MICROSECONDS as i64;
+            lateness.push(late.max(0) as u32);
+            tick += 1;
+        }
+    }
+    pacer.stop();
+    lateness
+}
+
+/// A 1 kHz loop on core 1 for `seconds`, woken by `source`: how late each tick woke, as one CC line.
+pub fn pace(seconds: u64, source: Source) -> String {
+    let ticks = (seconds * 1_000_000 / PERIOD_MICROSECONDS) as usize;
+    ThreadSpawnConfiguration {
+        pin_to_core: Some(Core::Core1),
+        priority: 20,
+        ..Default::default()
+    }
+    .set()
+    .ok();
+    let paced = std::thread::spawn(move || paced(ticks, source));
     ThreadSpawnConfiguration::default().set().ok();
     let mut lateness = paced.join().unwrap_or_default();
     if lateness.is_empty() {
@@ -435,97 +471,117 @@ pub fn pace(seconds: u64, source: Source) -> String {
 /// The diagnostics' console commands (the Glider Command Language), registered at boot.
 pub fn register_commands() {
     firmware::gcl::register(vec![
-        Command {
-            owner: "diagnostics",
-            words: "interrupts",
-            about: "IDF's interrupt table, printed on the USB console: each allocated interrupt's core, level, source \
-                    and whether it is IRAM-safe (esp_intr_dump): where the tick's, the GPIO's and the buses' ISRs run",
-            gate: Gate::Open,
-            reach: Reach::Console,
-            parameters: &[],
-            bare_words: &[],
-            run: Box::new(|_| {
-                // SAFETY: a null stream is stdout (intr_alloc.c:1017-1019), the USB console's UART.
-                match unsafe { sys::esp_intr_dump(core::ptr::null_mut()) } {
-                    sys::ESP_OK => cc_protocol::build("ok", &["interrupts", "printed on the console"], &[]),
-                    code => cc_protocol::build("err", &["interrupts", &format!("esp_intr_dump {code:#x}")], &[]),
-                }
-            }),
-        },
-        Command {
-            owner: "diagnostics",
-            words: "heap",
-            about: "where the RAM is: free, largest block and lowest-ever free of internal, DMA-capable, RTC, SPM and \
-                    PSRAM heaps",
-            gate: Gate::Open,
-            reach: Reach::Everywhere,
-            parameters: &[],
-            bare_words: &[
-                firmware::gcl::Word {
-                    name: "stacks",
-                    about: "each task's stack: never-used bytes / where it lives (i internal, p PSRAM, r RTC, s SPM) : \
-                            core",
-                },
-                firmware::gcl::Word {
-                    name: "tasks",
-                    about: "each task's internal/PSRAM heap use (an investigation build with CONFIG_HEAP_TASK_TRACKING \
-                            only)",
-                },
-            ],
-            run: Box::new(|arguments| {
-                if arguments.word("stacks") {
-                    heap_stacks()
-                } else if arguments.word("tasks") {
-                    heap_tasks()
-                } else {
-                    heap()
-                }
-            }),
-        },
-        Command {
-            owner: "diagnostics",
-            words: "load",
-            about: "each core's CPU load and the busiest tasks over a window",
-            gate: Gate::Setting,
-            reach: Reach::Everywhere,
-            parameters: &[Parameter {
+        interrupts_command(),
+        heap_command(),
+        load_command(),
+        pace_command(),
+    ]);
+}
+
+/// `interrupts` (the Glider Command Language).
+fn interrupts_command() -> Command {
+    Command {
+        owner: "diagnostics",
+        words: "interrupts",
+        about: "IDF's interrupt table, printed on the USB console: each allocated interrupt's core, level, source \
+            and whether it is IRAM-safe (esp_intr_dump): where the tick's, the GPIO's and the buses' ISRs run",
+        gate: Gate::Open,
+        reach: Reach::Console,
+        parameters: &[],
+        bare_words: &[],
+        run: Box::new(|_| {
+            // SAFETY: a null stream is stdout (intr_alloc.c:1017-1019), the USB console's UART.
+            match unsafe { sys::esp_intr_dump(core::ptr::null_mut()) } {
+                sys::ESP_OK => cc_protocol::build("ok", &["interrupts", "printed on the console"], &[]),
+                code => cc_protocol::build("err", &["interrupts", &format!("esp_intr_dump {code:#x}")], &[]),
+            }
+        }),
+    }
+}
+
+/// `heap` (the Glider Command Language).
+fn heap_command() -> Command {
+    Command {
+        owner: "diagnostics",
+        words: "heap",
+        about: "where the RAM is: free, largest block and lowest-ever free of internal, DMA-capable, RTC, SPM and \
+            PSRAM heaps",
+        gate: Gate::Open,
+        reach: Reach::Everywhere,
+        parameters: &[],
+        bare_words: &[
+            firmware::gcl::Word {
+                name: "stacks",
+                about: "each task's stack: never-used bytes / where it lives (i internal, p PSRAM, r RTC, s SPM) : \
+                    core",
+            },
+            firmware::gcl::Word {
+                name: "tasks",
+                about: "each task's internal/PSRAM heap use (an investigation build with CONFIG_HEAP_TASK_TRACKING \
+                    only)",
+            },
+        ],
+        run: Box::new(|arguments| {
+            if arguments.word("stacks") {
+                heap_stacks()
+            } else if arguments.word("tasks") {
+                heap_tasks()
+            } else {
+                heap()
+            }
+        }),
+    }
+}
+
+/// `load` (the Glider Command Language).
+fn load_command() -> Command {
+    Command {
+        owner: "diagnostics",
+        words: "load",
+        about: "each core's CPU load and the busiest tasks over a window",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[Parameter {
+            name: "seconds",
+            kind: Kind::Integer { low: 1, high: 600 },
+            default: Some("5"),
+            about: "the window (through the hub keep it under ~25 s: its exchange times out at 30)",
+        }],
+        bare_words: &[],
+        run: Box::new(|arguments| load(arguments.integer("seconds") as u64)),
+    }
+}
+
+/// `pace` (the Glider Command Language).
+fn pace_command() -> Command {
+    Command {
+        owner: "diagnostics",
+        words: "pace",
+        about: "a 1 kHz loop on core 1 at the flight thread's priority, and how late each tick wakes",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[
+            Parameter {
                 name: "seconds",
                 kind: Kind::Integer { low: 1, high: 600 },
-                default: Some("5"),
-                about: "the window (through the hub keep it under ~25 s: its exchange times out at 30)",
-            }],
-            bare_words: &[],
-            run: Box::new(|arguments| load(arguments.integer("seconds") as u64)),
-        },
-        Command {
-            owner: "diagnostics",
-            words: "pace",
-            about: "a 1 kHz loop on core 1 at the flight thread's priority, and how late each tick wakes",
-            gate: Gate::Setting,
-            reach: Reach::Everywhere,
-            parameters: &[
-                Parameter {
-                    name: "seconds",
-                    kind: Kind::Integer { low: 1, high: 600 },
-                    default: Some("10"),
-                    about: "how long (through the hub keep it under ~25 s: its exchange times out at 30)",
-                },
-                Parameter {
-                    name: "source",
-                    kind: Kind::Choice(&["gptimer", "esptimer"]),
-                    default: Some("gptimer"),
-                    about: "what wakes the loop: a core-1 gptimer interrupt (the flight design) or an esp_timer",
-                },
-            ],
-            bare_words: &[],
-            run: Box::new(|arguments| {
-                let source = if arguments.text("source") == "esptimer" {
-                    Source::EspTimer
-                } else {
-                    Source::Gptimer
-                };
-                pace(arguments.integer("seconds") as u64, source)
-            }),
-        },
-    ]);
+                default: Some("10"),
+                about: "how long (through the hub keep it under ~25 s: its exchange times out at 30)",
+            },
+            Parameter {
+                name: "source",
+                kind: Kind::Choice(&["gptimer", "esptimer"]),
+                default: Some("gptimer"),
+                about: "what wakes the loop: a core-1 gptimer interrupt (the flight design) or an esp_timer",
+            },
+        ],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let source = if arguments.text("source") == "esptimer" {
+                Source::EspTimer
+            } else {
+                Source::Gptimer
+            };
+            pace(arguments.integer("seconds") as u64, source)
+        }),
+    }
 }

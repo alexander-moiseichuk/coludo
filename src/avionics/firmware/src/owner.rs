@@ -373,42 +373,13 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
             address,
             register,
             times,
-        } => {
-            port.restart_run();
-            let results = (0..times)
-                .map(|_| {
-                    let mut byte = [0u8];
-                    match port.write_read(address, &[register], &mut byte) {
-                        Ok(()) => format!("ok:{:#04x}", byte[0]),
-                        Err(I2cError::NotAcknowledged) => "nak".to_string(),
-                        Err(I2cError::BusBusy) => "busy".to_string(),
-                        Err(I2cError::Driver(code)) => format!("error:{code:#x}"),
-                    }
-                })
-                .collect();
-            Answer::Touch {
-                results,
-                figures: port.figures(),
-            }
-        }
+        } => touch(port, address, register, times),
         Request::Read {
             address,
             register,
             length,
             times,
-        } => {
-            let start_us = uptime_us();
-            let reads = (0..times)
-                .map(|_| {
-                    let mut bytes = vec![0u8; usize::from(length)];
-                    port.write_read(address, &[register], &mut bytes).map(|()| bytes)
-                })
-                .collect();
-            Answer::Read {
-                reads,
-                elapsed_us: uptime_us() - start_us,
-            }
-        }
+        } => read(port, address, register, length, times),
         Request::Scan => Answer::Scan(port.scan()),
         Request::Probe { name } => {
             let named = |member: &&mut Member| name.as_deref().is_none_or(|name| member.name == name);
@@ -448,34 +419,74 @@ fn serve(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, request:
                 .find(|member| member.name == name)
                 .map(|member| Calibrated::Done(member.apply_calibration(&blob))),
         ),
-        Request::GeneralCall { rearm } => {
-            let acknowledged = port.general_call_reset().is_ok();
-            let _ = port.take_general_call();
-            std::thread::sleep(GENERAL_CALL_SETTLE);
-            let rearmed = if rearm {
-                self::rearm(port, members, "console", delay)
-            } else {
-                Vec::new()
-            };
-            // the operator's call is always on record, re-armed or not: it is what the measurement is about
-            let text = format!(
-                "i2c:{} general call by console (acknowledged: {acknowledged}): {}",
-                port.id(),
-                if rearm {
-                    format!("re-armed {}", walk(&rearmed))
-                } else {
-                    "no re-arm".to_string()
-                }
-            );
-            log::warn!("{text}");
-            crate::panics_logger::oops("i2c-general-call", &text);
-            Answer::GeneralCalled {
-                acknowledged,
-                rearmed,
-                probed: probe(port, members, delay),
-                figures: port.figures(),
+        Request::GeneralCall { rearm } => general_call(port, members, delay, rearm),
+    }
+}
+
+/// `i2c touch`: `times` one-byte reads of `register` at `address`, each `ok:<byte>`, `nak`, `busy` or a driver error,
+/// the port's run of figures restarted first.
+fn touch(port: &mut I2cPort, address: u8, register: u8, times: u8) -> Answer {
+    port.restart_run();
+    let results = (0..times)
+        .map(|_| {
+            let mut byte = [0u8];
+            match port.write_read(address, &[register], &mut byte) {
+                Ok(()) => format!("ok:{:#04x}", byte[0]),
+                Err(I2cError::NotAcknowledged) => "nak".to_string(),
+                Err(I2cError::BusBusy) => "busy".to_string(),
+                Err(I2cError::Driver(code)) => format!("error:{code:#x}"),
             }
+        })
+        .collect();
+    Answer::Touch {
+        results,
+        figures: port.figures(),
+    }
+}
+
+/// `i2c read`: `times` reads of `length` bytes from `register` at `address`, and the time they took.
+fn read(port: &mut I2cPort, address: u8, register: u8, length: u8, times: u8) -> Answer {
+    let start_us = uptime_us();
+    let reads = (0..times)
+        .map(|_| {
+            let mut bytes = vec![0u8; usize::from(length)];
+            port.write_read(address, &[register], &mut bytes).map(|()| bytes)
+        })
+        .collect();
+    Answer::Read {
+        reads,
+        elapsed_us: uptime_us() - start_us,
+    }
+}
+
+/// `i2c general-call`: the general call reset, the bus left to settle, the port's parts re-armed when `rearm` asks,
+/// the call kept on record (log and oops) whatever came of it, then every part probed.
+fn general_call(port: &mut I2cPort, members: &mut [Member], delay: &mut Delay, rearm: bool) -> Answer {
+    let acknowledged = port.general_call_reset().is_ok();
+    let _ = port.take_general_call();
+    std::thread::sleep(GENERAL_CALL_SETTLE);
+    let rearmed = if rearm {
+        self::rearm(port, members, "console", delay)
+    } else {
+        Vec::new()
+    };
+    // the operator's call is always on record, re-armed or not: it is what the measurement is about
+    let text = format!(
+        "i2c:{} general call by console (acknowledged: {acknowledged}): {}",
+        port.id(),
+        if rearm {
+            format!("re-armed {}", walk(&rearmed))
+        } else {
+            "no re-arm".to_string()
         }
+    );
+    log::warn!("{text}");
+    crate::panics_logger::oops("i2c-general-call", &text);
+    Answer::GeneralCalled {
+        acknowledged,
+        rearmed,
+        probed: probe(port, members, delay),
+        figures: port.figures(),
     }
 }
 

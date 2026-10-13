@@ -389,7 +389,6 @@ impl Fins {
         power: Option<f32>,
         may_move: bool,
     ) -> Option<Vec<Swept>> {
-        let sample_us = u64::from(PROBE_SAMPLE_MS) * 1000;
         while let Some(&index) = sweep.order.get(sweep.position) {
             let swept = &mut sweep.swept[sweep.position];
             match sweep.phase {
@@ -425,50 +424,62 @@ impl Fins {
                         next_us: now_us,
                     };
                 }
-                Phase::Stop { stop, samples, next_us } => {
-                    if now_us < next_us {
-                        return None;
-                    }
-                    if samples == 0 {
-                        let command = self.fins[index].servo.apply(f64::from(swept.stops[stop].1));
-                        self.write(index, command, false);
-                    }
-                    if swept.watching
-                        && let Some(power) = power
-                    {
-                        swept.sampled += 1;
-                        swept.peak_rise_mw = swept.peak_rise_mw.max(power as i32 - swept.baseline_mw);
-                    }
-                    let samples = samples + 1;
-                    if samples < PROBE_SAMPLES {
-                        sweep.phase = Phase::Stop {
-                            stop,
-                            samples,
-                            next_us: next_us + sample_us,
-                        };
-                        return None;
-                    }
-                    swept.reached = stop + 1;
-                    if stop + 1 < swept.stops.len() {
-                        sweep.phase = Phase::Stop {
-                            stop: stop + 1,
-                            samples: 0,
-                            next_us: next_us + sample_us,
-                        };
-                        return None;
-                    }
-                    swept.verdict = Some(self.fins[index].servo.probe_verdict(
-                        swept.watching,
-                        swept.sampled,
-                        swept.peak_rise_mw,
-                    ));
-                    sweep.position += 1;
-                    sweep.phase = Phase::Start;
-                    return None; // the next fin starts at the next tick
+                Phase::Stop { .. } => {
+                    self.step_stop(sweep, index, now_us, power);
+                    return None;
                 }
             }
         }
         Some(std::mem::take(&mut sweep.swept))
+    }
+
+    /// `sweep`'s tick at a stop of fin `index` (Phase::Stop): its command at the stop's first sample, then
+    /// [`PROBE_SAMPLES`] samples of `power` a [`PROBE_SAMPLE_MS`] apart; then the next stop, or after the last the
+    /// fin's verdict and the next fin, at the next tick.
+    fn step_stop(&mut self, sweep: &mut Sweep, index: usize, now_us: u64, power: Option<f32>) {
+        let Phase::Stop { stop, samples, next_us } = sweep.phase else {
+            return;
+        };
+        let sample_us = u64::from(PROBE_SAMPLE_MS) * 1000;
+        let swept = &mut sweep.swept[sweep.position];
+        if now_us < next_us {
+            return;
+        }
+        if samples == 0 {
+            let command = self.fins[index].servo.apply(f64::from(swept.stops[stop].1));
+            self.write(index, command, false);
+        }
+        if swept.watching
+            && let Some(power) = power
+        {
+            swept.sampled += 1;
+            swept.peak_rise_mw = swept.peak_rise_mw.max(power as i32 - swept.baseline_mw);
+        }
+        let samples = samples + 1;
+        if samples < PROBE_SAMPLES {
+            sweep.phase = Phase::Stop {
+                stop,
+                samples,
+                next_us: next_us + sample_us,
+            };
+            return;
+        }
+        swept.reached = stop + 1;
+        if stop + 1 < swept.stops.len() {
+            sweep.phase = Phase::Stop {
+                stop: stop + 1,
+                samples: 0,
+                next_us: next_us + sample_us,
+            };
+            return;
+        }
+        swept.verdict = Some(
+            self.fins[index]
+                .servo
+                .probe_verdict(swept.watching, swept.sampled, swept.peak_rise_mw),
+        );
+        sweep.position += 1;
+        sweep.phase = Phase::Start; // the next fin starts at the next tick
     }
 }
 

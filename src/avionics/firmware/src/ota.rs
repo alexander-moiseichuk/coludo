@@ -530,153 +530,183 @@ pub fn register_commands() {
         BOOT.store(boot_slot().cast_mut(), Ordering::Release);
     }
     gcl::register(vec![
-        Command {
-            owner: "ota",
-            words: "ota status",
-            about: "the app slots (running, boot, next), the running build, the transfer running, the image received",
-            gate: Gate::Open,
-            reach: Reach::Everywhere,
-            parameters: &[],
-            bare_words: &[],
-            run: Box::new(|_| {
-                let (running, boot) = (RUNNING.load(Ordering::Acquire), BOOT.load(Ordering::Acquire));
-                // SAFETY: the partition table only: the app slot after the running one.
-                let next = unsafe { sys::esp_ota_get_next_update_partition(std::ptr::null()) };
-                let transfer = match UPLOAD.lock().as_deref() {
-                    Ok(Some(upload)) => format!("{}/{}", upload.written, upload.length),
-                    _ => "none".into(),
-                };
-                let received = match RECEIVED.lock().as_deref() {
-                    Ok(Some(Ok(received))) => format!("{}:{}", label(received.slot), received.build),
-                    Ok(Some(Err(error))) => format!("failed:{error}"),
-                    _ => "none".into(),
-                };
-                let named = [
-                    ("running", label(running)),
-                    ("boot", label(boot)),
-                    ("next", label(next)),
-                    ("build", running_build()),
-                    ("transfer", transfer),
-                    ("received", received),
-                ];
-                let named: Vec<(&str, &str)> = named.iter().map(|(key, value)| (*key, value.as_str())).collect();
-                cc_protocol::build("ok", &["ota"], &named)
-            }),
-        },
-        Command {
-            owner: "ota",
-            words: "ota begin",
-            about: "start receiving an image into the next slot (the console's transfer: tools/ota.py --console)",
-            gate: Gate::Setting,
-            reach: Reach::Everywhere,
-            parameters: &[
-                Parameter {
-                    name: "size",
-                    kind: Kind::Integer {
-                        low: 1,
-                        high: SLOT_BYTES as i64,
-                    },
-                    default: None,
-                    about: "the image's bytes",
-                },
-                Parameter {
-                    name: "sha256",
-                    kind: Kind::Text,
-                    default: None,
-                    about: "the image's SHA-256, 64 hex digits",
-                },
-            ],
-            bare_words: &[],
-            run: Box::new(|arguments| {
-                let opened = begin(arguments.integer("size") as usize, arguments.text("sha256"));
-                answer(opened.map(|slot| format!("into {slot}")))
-            }),
-        },
-        Command {
-            owner: "ota",
-            words: "ota write",
-            about: "the image's next bytes: a damaged line (CRC, offset) writes nothing, send it again",
-            gate: Gate::Setting,
-            reach: Reach::Everywhere,
-            parameters: &[
-                Parameter {
-                    name: "offset",
-                    kind: Kind::Integer {
-                        low: 0,
-                        high: SLOT_BYTES as i64,
-                    },
-                    default: None,
-                    about: "where these bytes start in the image",
-                },
-                Parameter {
-                    name: "crc",
-                    kind: Kind::Text,
-                    default: None,
-                    about: "the bytes' CRC-32 (zlib's), hex",
-                },
-                Parameter {
-                    name: "data",
-                    kind: Kind::Text,
-                    default: None,
-                    about: "the bytes, base64url with no padding (a plain token)",
-                },
-            ],
-            bare_words: &[],
-            run: Box::new(|arguments| {
-                let outcome = URL_SAFE_NO_PAD
-                    .decode(arguments.text("data"))
-                    .map_err(|error| format!("data is no base64url ({error}): nothing written"))
-                    .and_then(|bytes| {
-                        let crc = format!("{:08x}", recorder_wire::crc32(0, &bytes));
-                        if crc == arguments.text("crc").to_ascii_lowercase() {
-                            Ok(bytes)
-                        } else {
-                            Err(format!(
-                                "crc {crc}, the line's {}: nothing written",
-                                arguments.text("crc")
-                            ))
-                        }
-                    })
-                    .and_then(|bytes| write(bytes, Some(arguments.integer("offset") as usize)))
-                    .map(|written| written.to_string());
-                answer(outcome)
-            }),
-        },
-        Command {
-            owner: "ota",
-            words: "ota end",
-            about: "close the transfer: every byte, the SHA-256 and the image checked",
-            gate: Gate::Setting,
-            reach: Reach::Everywhere,
-            parameters: &[],
-            bare_words: &[],
-            run: Box::new(|_| answer(end())),
-        },
-        Command {
-            owner: "ota",
-            words: "ota abort",
-            about: "drop the transfer running; the slot stays unselected",
-            gate: Gate::Open,
-            reach: Reach::Everywhere,
-            parameters: &[],
-            bare_words: &[],
-            run: Box::new(|_| {
-                answer(if abort() {
-                    Ok("aborted".into())
-                } else {
-                    Err("no transfer running".into())
-                })
-            }),
-        },
-        Command {
-            owner: "ota",
-            words: "ota commit",
-            about: "make the received image the one the next boot runs (then reboot); disarmed only",
-            gate: Gate::Setting,
-            reach: Reach::Everywhere,
-            parameters: &[],
-            bare_words: &[gcl::CONFIRM],
-            run: Box::new(|_| answer(commit())),
-        },
+        status_command(),
+        begin_command(),
+        write_command(),
+        end_command(),
+        abort_command(),
+        commit_command(),
     ]);
+}
+
+/// `ota status` (the Glider Command Language).
+fn status_command() -> Command {
+    Command {
+        owner: "ota",
+        words: "ota status",
+        about: "the app slots (running, boot, next), the running build, the transfer running, the image received",
+        gate: Gate::Open,
+        reach: Reach::Everywhere,
+        parameters: &[],
+        bare_words: &[],
+        run: Box::new(|_| {
+            let (running, boot) = (RUNNING.load(Ordering::Acquire), BOOT.load(Ordering::Acquire));
+            // SAFETY: the partition table only: the app slot after the running one.
+            let next = unsafe { sys::esp_ota_get_next_update_partition(std::ptr::null()) };
+            let transfer = match UPLOAD.lock().as_deref() {
+                Ok(Some(upload)) => format!("{}/{}", upload.written, upload.length),
+                _ => "none".into(),
+            };
+            let received = match RECEIVED.lock().as_deref() {
+                Ok(Some(Ok(received))) => format!("{}:{}", label(received.slot), received.build),
+                Ok(Some(Err(error))) => format!("failed:{error}"),
+                _ => "none".into(),
+            };
+            let named = [
+                ("running", label(running)),
+                ("boot", label(boot)),
+                ("next", label(next)),
+                ("build", running_build()),
+                ("transfer", transfer),
+                ("received", received),
+            ];
+            let named: Vec<(&str, &str)> = named.iter().map(|(key, value)| (*key, value.as_str())).collect();
+            cc_protocol::build("ok", &["ota"], &named)
+        }),
+    }
+}
+
+/// `ota begin` (the Glider Command Language).
+fn begin_command() -> Command {
+    Command {
+        owner: "ota",
+        words: "ota begin",
+        about: "start receiving an image into the next slot (the console's transfer: tools/ota.py --console)",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[
+            Parameter {
+                name: "size",
+                kind: Kind::Integer {
+                    low: 1,
+                    high: SLOT_BYTES as i64,
+                },
+                default: None,
+                about: "the image's bytes",
+            },
+            Parameter {
+                name: "sha256",
+                kind: Kind::Text,
+                default: None,
+                about: "the image's SHA-256, 64 hex digits",
+            },
+        ],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let opened = begin(arguments.integer("size") as usize, arguments.text("sha256"));
+            answer(opened.map(|slot| format!("into {slot}")))
+        }),
+    }
+}
+
+/// `ota write` (the Glider Command Language).
+fn write_command() -> Command {
+    Command {
+        owner: "ota",
+        words: "ota write",
+        about: "the image's next bytes: a damaged line (CRC, offset) writes nothing, send it again",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[
+            Parameter {
+                name: "offset",
+                kind: Kind::Integer {
+                    low: 0,
+                    high: SLOT_BYTES as i64,
+                },
+                default: None,
+                about: "where these bytes start in the image",
+            },
+            Parameter {
+                name: "crc",
+                kind: Kind::Text,
+                default: None,
+                about: "the bytes' CRC-32 (zlib's), hex",
+            },
+            Parameter {
+                name: "data",
+                kind: Kind::Text,
+                default: None,
+                about: "the bytes, base64url with no padding (a plain token)",
+            },
+        ],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let outcome = URL_SAFE_NO_PAD
+                .decode(arguments.text("data"))
+                .map_err(|error| format!("data is no base64url ({error}): nothing written"))
+                .and_then(|bytes| {
+                    let crc = format!("{:08x}", recorder_wire::crc32(0, &bytes));
+                    if crc == arguments.text("crc").to_ascii_lowercase() {
+                        Ok(bytes)
+                    } else {
+                        Err(format!(
+                            "crc {crc}, the line's {}: nothing written",
+                            arguments.text("crc")
+                        ))
+                    }
+                })
+                .and_then(|bytes| write(bytes, Some(arguments.integer("offset") as usize)))
+                .map(|written| written.to_string());
+            answer(outcome)
+        }),
+    }
+}
+
+/// `ota end` (the Glider Command Language).
+fn end_command() -> Command {
+    Command {
+        owner: "ota",
+        words: "ota end",
+        about: "close the transfer: every byte, the SHA-256 and the image checked",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[],
+        bare_words: &[],
+        run: Box::new(|_| answer(end())),
+    }
+}
+
+/// `ota abort` (the Glider Command Language).
+fn abort_command() -> Command {
+    Command {
+        owner: "ota",
+        words: "ota abort",
+        about: "drop the transfer running; the slot stays unselected",
+        gate: Gate::Open,
+        reach: Reach::Everywhere,
+        parameters: &[],
+        bare_words: &[],
+        run: Box::new(|_| {
+            answer(if abort() {
+                Ok("aborted".into())
+            } else {
+                Err("no transfer running".into())
+            })
+        }),
+    }
+}
+
+/// `ota commit` (the Glider Command Language).
+fn commit_command() -> Command {
+    Command {
+        owner: "ota",
+        words: "ota commit",
+        about: "make the received image the one the next boot runs (then reboot); disarmed only",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[],
+        bare_words: &[gcl::CONFIRM],
+        run: Box::new(|_| answer(commit())),
+    }
 }

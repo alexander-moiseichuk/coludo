@@ -183,7 +183,9 @@ Each stage keeps the behaviour. Its proof:
   per board before R2, diffed after each stage);
 - one clean HITL flight;
 - for the parts and control stages, also the SITL matrix seed for seed identical to before, and a 10-minute soak
-  for the owner tick's lateness and the lapses.
+  for the owner tick's lateness and the lapses;
+- from R4 on, every thread's never-used stack (`heap stacks`) after the contract, against the stage before: a
+  split moves locals between frames, and the 8 KB control stack has the least to spare.
 
 | stage | what | risk |
 |---|---|---|
@@ -191,7 +193,7 @@ Each stage keeps the behaviour. Its proof:
 | R1 | the utilities: `uptime_us`, `threads::spawn`, `Rows`/`LogOnce` (`8939dab`) | done |
 | R2 | `crates/parts` with `Published<T>`, the parts' published state and its inspect keys, `parts::KNOWN`, the registry; `inspection::device` and the parts' statics removed (as built: below) | done |
 | R3 | `ControlCore` in `crates/controller`; `control/` split by subsystem; the SITL on `ControlCore` (as built: below) | done |
-| R4 | the `boot` phases; `devices` from tables; the remaining long functions | low to medium |
+| R4 | the `boot` phases; `devices` from tables; the remaining long functions (as built: below) | done |
 | R5 | the guard: `too_many_lines` at 80 with the allow-list, and the length test | none |
 | R6 | the hardware's own types (operator, 2026-10-12): see below | medium: the numbers change |
 
@@ -235,6 +237,40 @@ the board's: it stepped the stage machine on a 10 ms phase no board runs (0, 30,
 
 On the boards, as every stage: identical inspect shapes, boot lines equal but for the log targets, the contract at 0
 violations, one HITL flight, a soak.
+
+**R4 as built.** `main` is the list of phases (73 lines, from 369), each a `boot` function documented with what it
+needs and gives: `storage`, `media`, `ports`, `layout`, `recorder`, `board`, then `devices::bring_up`, `recovery`,
+`flight`, `operator` and `radio`. No `Boot` struct: each phase returns what the next ones take (`Storage`, `Media`,
+`Recovered`), and `main` hands it on. The rest split by state, request kind or route:
+- `devices::bring_up` dispatches each entry on its `parts::classify` kind (`Bringing::entry`), gathering the members
+  (`Gathered`); each kind's `set_up_*` stays its entry;
+- the control thread is a `Thread` (`new`, then `tick` with `clock`, `rest` and `sweep`);
+- `files::serve` is one handler per route, and the `register_commands` of `ota`, `sd` and `diagnostics` list named
+  `*_command()` constructors;
+- `link::run` is `start` and a `Link` state (`look`, `link_parked`, `beacon`, `join_next`); `owner::serve` is
+  `touch`, `read` and `general_call`;
+- `recorder::write` is `log_partition`, `scan_ring`, `SaverStart::judge`, `record_session_start` and `run_writer`;
+  `recorder::open` gains `device_streams`;
+- `inspection::component`, the IMU's `tick`, `record_last_boot`, `step_sweep`, `set_up_spi` and `pace` lost their
+  largest arms to named functions.
+
+Measured: functions over 80 lines 17 to 0, over 60 lines 35 to 21 (`tools/function_lengths.py`); the largest is
+`gnss::run` at 80.
+
+The stage's first build overflowed the control thread's 8 KB stack on `probe imu_lsm6dso32`, five boots in a row, in
+the probe line's float formatting (1.2 KB). `Thread::new`, inlined, kept the bring-up's temporaries and the
+`ControlCore` (~1.1 KB, once per move) in the thread's frame under every tick, 5.8 KB of it. The fix boxes the core
+(one allocation at the bring-up) and never inlines `new`:
+- the thread's frame is now 1376 bytes, against 2960 before the stage;
+- after the contract, `heap stacks` reads 2312 bytes never used on the control thread, against 1336 before;
+- every other thread is within 600 bytes of before.
+
+Never inlining `new` alone was not enough: its 3.5 KB frame on top of the thread's 3.5 KB overflowed at the bring-up
+instead, every boot, until the core was boxed.
+
+The proof added the stack check above. On the boards: the contract at 0 violations on both, identical inspect shapes
+on 7F, boot lines equal but for the log targets of the lines that moved to `boot`. One HITL flight (miss 91.25 m,
+plan B's band 87.2 to 103.6 m, late max 7 µs, 0 overruns) and a soak.
 
 **R6, the 32-bit types.** The P4 is RV32 with a single-precision FPU: a u64 or i64 takes two registers, and its
 division is a library call. An f64 is all software. The tree has 480 lines with a u64, 235 with an i64 and 166

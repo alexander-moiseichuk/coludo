@@ -333,108 +333,123 @@ const RM_CONFIRM: Word = Word {
 /// Args:
 /// * `session` - this boot's session, which `rm` refuses.
 pub fn register_commands(session: String) {
-    gcl::register(vec![
-        Command {
-            owner: "sd",
-            words: "ls",
-            about: "a directory of the card: [name, bytes] per file, [name/, null] per directory",
-            gate: Gate::Open,
-            reach: Reach::Everywhere,
-            parameters: &[Parameter {
-                name: "path",
-                kind: Kind::Text,
-                default: Some("/"),
-                about: "the directory from the card's root: <session>/recordings, videos/<session>",
-            }],
-            bare_words: &[],
-            run: Box::new(|arguments| {
-                let path = arguments.text("path");
-                match list(path).and_then(|entries| {
-                    serde_json::to_string(&serde_json::json!({"path": path, "entries": entries}))
-                        .map_err(|error| error.to_string())
-                }) {
-                    Ok(json) => cc_protocol::build("ok", &[&json], &[]),
-                    Err(error) => cc_protocol::build("err", &["ls", &error], &[]),
+    gcl::register(vec![ls_command(), df_command(), rm_command(session), sdtest_command()]);
+}
+
+/// `ls` (the Glider Command Language).
+fn ls_command() -> Command {
+    Command {
+        owner: "sd",
+        words: "ls",
+        about: "a directory of the card: [name, bytes] per file, [name/, null] per directory",
+        gate: Gate::Open,
+        reach: Reach::Everywhere,
+        parameters: &[Parameter {
+            name: "path",
+            kind: Kind::Text,
+            default: Some("/"),
+            about: "the directory from the card's root: <session>/recordings, videos/<session>",
+        }],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let path = arguments.text("path");
+            match list(path).and_then(|entries| {
+                serde_json::to_string(&serde_json::json!({"path": path, "entries": entries}))
+                    .map_err(|error| error.to_string())
+            }) {
+                Ok(json) => cc_protocol::build("ok", &[&json], &[]),
+                Err(error) => cc_protocol::build("err", &["ls", &error], &[]),
+            }
+        }),
+    }
+}
+
+/// `df` (the Glider Command Language).
+fn df_command() -> Command {
+    Command {
+        owner: "sd",
+        words: "df",
+        about: "the card's size and free space per volume (recordings; videos on a two-partition card), and the \
+        transfers bounced for their memory",
+        gate: Gate::Open,
+        reach: Reach::Everywhere,
+        parameters: &[],
+        bare_words: &[],
+        run: Box::new(|_| {
+            let volumes = measure_free();
+            let mut named = vec![("layout", layout().map_or("none", Layout::name).replace(' ', "_"))];
+            for (name, space) in [("recordings", volumes.recordings), ("videos", volumes.videos)] {
+                if let Some(space) = space {
+                    named.push((name, format!("{}/{}", space.free_megabytes, space.total_megabytes)));
                 }
-            }),
-        },
-        Command {
-            owner: "sd",
-            words: "df",
-            about: "the card's size and free space per volume (recordings; videos on a two-partition card), and the \
-                transfers bounced for their memory",
-            gate: Gate::Open,
-            reach: Reach::Everywhere,
-            parameters: &[],
-            bare_words: &[],
-            run: Box::new(|_| {
-                let volumes = measure_free();
-                let mut named = vec![("layout", layout().map_or("none", Layout::name).replace(' ', "_"))];
-                for (name, space) in [("recordings", volumes.recordings), ("videos", volumes.videos)] {
-                    if let Some(space) = space {
-                        named.push((name, format!("{}/{}", space.free_megabytes, space.total_megabytes)));
-                    }
-                }
-                // SAFETY: a plain read of a counter the card lock's holder writes.
-                named.push(("bounced", unsafe { sys::sd_card_bounced() }.to_string()));
-                let named: Vec<(&str, &str)> = named.iter().map(|(name, value)| (*name, value.as_str())).collect();
-                cc_protocol::build("ok", &["df"], &named)
-            }),
-        },
-        Command {
-            owner: "sd",
-            words: "rm",
-            about: "remove a file, or a directory with all it holds; never this session's own directories",
-            gate: Gate::Setting,
-            reach: Reach::Everywhere,
-            parameters: &[Parameter {
-                name: "path",
-                kind: Kind::Text,
-                default: None,
-                about: "the path from the card's root: <session>, videos/<session>, a file",
-            }],
-            bare_words: &[RM_CONFIRM],
-            run: Box::new(move |arguments| match remove(arguments.text("path"), &session) {
-                Ok(path) => cc_protocol::build("ok", &["rm"], &[("path", &path)]),
-                Err(error) => cc_protocol::build("err", &["rm", &error], &[]),
-            }),
-        },
-        Command {
-            owner: "sd",
-            words: "sdtest",
-            about: "write to the card and report the sustained rate and the worst single write (the ring sizes this)",
-            gate: Gate::Setting,
-            reach: Reach::Everywhere,
-            parameters: &[
-                Parameter {
-                    name: "megabytes",
-                    kind: Kind::Integer { low: 1, high: 1024 },
-                    default: Some("16"),
-                    about: "how much to write",
-                },
-                Parameter {
-                    name: "rate",
-                    kind: Kind::Integer { low: 0, high: 100_000 },
-                    default: Some("0"),
-                    about: "pace the writes at this many KB/s (the video case is ~1000 at 8 Mbit/s); 0 writes flat out",
-                },
-            ],
-            bare_words: &[],
-            run: Box::new(|arguments| {
-                let rate = arguments.integer("rate");
-                let pace = (rate > 0).then_some(rate as u32);
-                match write_test(arguments.integer("megabytes") as usize, pace) {
-                    Ok(test) => cc_protocol::build(
-                        "ok",
-                        &["sdtest"],
-                        &[
-                            ("rate_mbs", &format!("{:.2}", test.rate)),
-                            ("worst_ms", &format!("{:.1}", test.worst_write_ms)),
-                        ],
-                    ),
-                    Err(error) => cc_protocol::build("err", &["sdtest", &error.to_string()], &[]),
-                }
-            }),
-        },
-    ]);
+            }
+            // SAFETY: a plain read of a counter the card lock's holder writes.
+            named.push(("bounced", unsafe { sys::sd_card_bounced() }.to_string()));
+            let named: Vec<(&str, &str)> = named.iter().map(|(name, value)| (*name, value.as_str())).collect();
+            cc_protocol::build("ok", &["df"], &named)
+        }),
+    }
+}
+
+/// `rm` (the Glider Command Language): never `session`'s own directories.
+fn rm_command(session: String) -> Command {
+    Command {
+        owner: "sd",
+        words: "rm",
+        about: "remove a file, or a directory with all it holds; never this session's own directories",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[Parameter {
+            name: "path",
+            kind: Kind::Text,
+            default: None,
+            about: "the path from the card's root: <session>, videos/<session>, a file",
+        }],
+        bare_words: &[RM_CONFIRM],
+        run: Box::new(move |arguments| match remove(arguments.text("path"), &session) {
+            Ok(path) => cc_protocol::build("ok", &["rm"], &[("path", &path)]),
+            Err(error) => cc_protocol::build("err", &["rm", &error], &[]),
+        }),
+    }
+}
+
+/// `sdtest` (the Glider Command Language).
+fn sdtest_command() -> Command {
+    Command {
+        owner: "sd",
+        words: "sdtest",
+        about: "write to the card and report the sustained rate and the worst single write (the ring sizes this)",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[
+            Parameter {
+                name: "megabytes",
+                kind: Kind::Integer { low: 1, high: 1024 },
+                default: Some("16"),
+                about: "how much to write",
+            },
+            Parameter {
+                name: "rate",
+                kind: Kind::Integer { low: 0, high: 100_000 },
+                default: Some("0"),
+                about: "pace the writes at this many KB/s (the video case is ~1000 at 8 Mbit/s); 0 writes flat out",
+            },
+        ],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let rate = arguments.integer("rate");
+            let pace = (rate > 0).then_some(rate as u32);
+            match write_test(arguments.integer("megabytes") as usize, pace) {
+                Ok(test) => cc_protocol::build(
+                    "ok",
+                    &["sdtest"],
+                    &[
+                        ("rate_mbs", &format!("{:.2}", test.rate)),
+                        ("worst_ms", &format!("{:.1}", test.worst_write_ms)),
+                    ],
+                ),
+                Err(error) => cc_protocol::build("err", &["sdtest", &error.to_string()], &[]),
+            }
+        }),
+    }
 }

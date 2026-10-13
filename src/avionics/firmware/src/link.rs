@@ -21,8 +21,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use board_config::{Hub, Network, Wifi};
-use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::eventloop::{EspSubscription, EspSystemEventLoop, System};
 use esp_idf_svc::hal::modem::Modem;
+use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, WifiEvent};
 
@@ -59,7 +60,8 @@ pub fn stack_up() -> bool {
     STACK_UP.load(Ordering::Acquire)
 }
 
-/// Join, dial, serve -- forever.
+/// Join, dial, serve -- forever: the driver started ([`start`]), the file server once the TCP/IP stack is up, then
+/// a look every [`TICK`] ([`Link::look`]).
 pub fn run(
     modem: Modem<'static>,
     event_loop: EspSystemEventLoop,
@@ -69,33 +71,7 @@ pub fn run(
     executor: &Executor,
     beacon: crate::beacon::Beacon,
 ) -> ! {
-    let events = event_loop.clone();
-    let mut driver = match EspWifi::new(modem, event_loop.clone(), Some(partition))
-        .and_then(|wifi| BlockingWifi::wrap(wifi, event_loop))
-    {
-        Ok(driver) => driver,
-        Err(error) => without_driver(error),
-    };
-    // the C6 must not keep the networks: wipe what earlier boots stored in its own NVS (SSID and password in
-    // clear) and hold the configuration in RAM from now on, as MicroPython does (network_wlan.c)
-    // SAFETY: plain driver calls on the initialised (not started) Wi-Fi, remoted to the C6.
-    unsafe {
-        let _ = esp_idf_svc::sys::esp!(esp_idf_svc::sys::esp_wifi_restore())
-            .inspect_err(|error| log::warn!("link :: wifi restore: {error}"));
-        let _ = esp_idf_svc::sys::esp!(esp_idf_svc::sys::esp_wifi_set_storage(
-            esp_idf_svc::sys::wifi_storage_t_WIFI_STORAGE_RAM
-        ))
-        .inspect_err(|error| log::warn!("link :: wifi storage: {error}"));
-    }
-    // the station's drops, for join(): the subscription lives as long as this loop, forever
-    let _disconnects = events
-        .subscribe::<WifiEvent, _>(|event| {
-            if let WifiEvent::StaDisconnected(info) = event {
-                DISCONNECTED.store(u32::from(info.reason()).max(1), Ordering::Release);
-            }
-        })
-        .inspect_err(|error| log::warn!("link :: no disconnect events, a dropped join waits its timeout: {error}"))
-        .ok();
+    let (mut driver, _disconnects) = start(modem, event_loop, partition);
     STACK_UP.store(true, Ordering::Release);
     // the microSD over HTTP (recordings, logs) -- only now: the Wi-Fi driver brought up the TCP/IP stack it needs
     let _files = crate::files::serve(beacon.clone())
@@ -107,87 +83,101 @@ pub fn run(
             std::thread::sleep(Duration::from_secs(3600));
         }
     }
-    let mut rotation = Rotation::new(wifi.networks.len());
-    let mut parked = false;
-    // the recovery beacon once DONE (M11b): the access point and its page server, kept until power-off or a reset
-    let mut beaconing = None;
-    let mut beacon_failed = false;
-    let mut gave_up = false;
+    let mut link = Link {
+        rotation: Rotation::new(wifi.networks.len()),
+        parked: false,
+        beaconing: None,
+        beacon_failed: false,
+        gave_up: false,
+    };
     let mut first = true;
     loop {
         // the first look at once, the boot's join not a tick later
         if !std::mem::take(&mut first) {
             std::thread::sleep(TICK);
         }
-        // SAFETY: reads the flag hosted_no_reboot sets when it parks the failed C6 transport.
-        if unsafe { esp_idf_svc::sys::hosted_link_down() } {
-            // every Wi-Fi call would now wait out a 5 s RPC timeout, for nothing: the link is gone until the next
-            // boot (a reboot restores it; on the ground the operator runs `reboot` on the console)
-            if !parked {
-                log::error!("link :: the C6 link is parked -- Wi-Fi is off until the next boot");
-                crate::panics_logger::oops(
-                    "c6-link-parked",
-                    "esp_hosted asked for a host restart (an SDIO command to the C6 failed); hosted_no_reboot parked \
-                     the transport instead. Wi-Fi is off until the next boot; the flight goes on.",
-                );
-                parked = true;
+        link.look(&mut driver, &wifi, &credentials, executor, &beacon);
+    }
+}
+
+/// The station's disconnect events, subscribed for as long as the link runs.
+type Disconnects = Option<EspSubscription<'static, System>>;
+
+/// The C6's Wi-Fi driver on `modem`, its networks wiped from the C6's own NVS and held in RAM from now on (as
+/// MicroPython does, network_wlan.c: the C6 must not keep SSIDs and passwords in clear), and the station's drops
+/// subscribed for [`join`]. A driver that will not start parks the link for good ([`without_driver`]).
+fn start(
+    modem: Modem<'static>,
+    event_loop: EspSystemEventLoop,
+    partition: EspDefaultNvsPartition,
+) -> (BlockingWifi<EspWifi<'static>>, Disconnects) {
+    let events = event_loop.clone();
+    let driver = match EspWifi::new(modem, event_loop.clone(), Some(partition))
+        .and_then(|wifi| BlockingWifi::wrap(wifi, event_loop))
+    {
+        Ok(driver) => driver,
+        Err(error) => without_driver(error),
+    };
+    // SAFETY: plain driver calls on the initialised (not started) Wi-Fi, remoted to the C6.
+    unsafe {
+        let _ = esp_idf_svc::sys::esp!(esp_idf_svc::sys::esp_wifi_restore())
+            .inspect_err(|error| log::warn!("link :: wifi restore: {error}"));
+        let _ = esp_idf_svc::sys::esp!(esp_idf_svc::sys::esp_wifi_set_storage(
+            esp_idf_svc::sys::wifi_storage_t_WIFI_STORAGE_RAM
+        ))
+        .inspect_err(|error| log::warn!("link :: wifi storage: {error}"));
+    }
+    let disconnects = events
+        .subscribe::<WifiEvent, _>(|event| {
+            if let WifiEvent::StaDisconnected(info) = event {
+                DISCONNECTED.store(u32::from(info.reason()).max(1), Ordering::Release);
             }
-            continue;
-        }
-        if beaconing.is_some() {
-            continue; // the beacon holds the radio until power-off or a reset
-        }
-        if beacon_due() {
-            match beacon.start(&mut driver) {
-                Ok(server) => beaconing = Some(server),
-                Err(error) if !beacon_failed => {
-                    log::error!("beacon :: did not start, tried again each second: {error}");
-                    beacon_failed = true;
-                }
-                Err(_) => {}
-            }
-            continue;
-        }
-        if !reconnect_allowed(&mut gave_up) {
-            continue; // launched: no hunt, no join, no dial
+        })
+        .inspect_err(|error| log::warn!("link :: no disconnect events, a dropped join waits its timeout: {error}"))
+        .ok();
+    (driver, disconnects)
+}
+
+/// The link's state between looks.
+struct Link {
+    /// The networks' turns and retry clocks.
+    rotation: Rotation,
+    /// The C6 link's parking was logged.
+    parked: bool,
+    /// The recovery beacon once DONE (M11b): the access point and its page server, kept until power-off or a reset.
+    beaconing: Option<EspHttpServer<'static>>,
+    /// The beacon's start failed and was logged.
+    beacon_failed: bool,
+    /// The launch's end of reconnects was logged ([`reconnect_allowed`]).
+    gave_up: bool,
+}
+
+impl Link {
+    /// One look: nothing while the C6 link is parked or the beacon holds the radio, nor after the launch; else the
+    /// next network joined when the station is down, and the hub dialled and served until it drops.
+    fn look(
+        &mut self,
+        driver: &mut BlockingWifi<EspWifi<'static>>,
+        wifi: &Wifi,
+        credentials: &Credentials,
+        executor: &Executor,
+        beacon: &crate::beacon::Beacon,
+    ) {
+        if self.link_parked() || self.beacon(driver, beacon) || !reconnect_allowed(&mut self.gave_up) {
+            return; // launched: no hunt, no join, no dial
         }
         // joined = associated AND holding an address (plan B's isconnected() follows the lease): an AP that
         // associates but never leases must not pin the board -- join() disconnects it and the rotation moves on
-        if !driver.is_up().unwrap_or(false) {
-            let Some(index) = rotation.next(&wifi, Instant::now()) else {
-                continue; // every network is inside its own retry window
-            };
-            let network = &wifi.networks[index];
-            let password = credentials
-                .password(&network.ssid)
-                .unwrap_or_else(|| network.password.clone());
-            if let Err(error) = join(&mut driver, network, &password) {
-                log::warn!("link :: join {} failed: {error}", network.ssid);
-                continue;
-            }
-            log::info!("link :: joined {}", network.ssid);
+        if !driver.is_up().unwrap_or(false) && !self.join_next(driver, wifi, credentials) {
+            return;
         }
-        let address = match driver.wifi().sta_netif().get_ip_info() {
-            Ok(info) if !info.ip.is_unspecified() => info.ip,
-            Ok(_) => continue, // no lease (plan B _network_host: no hub for 0.0.0.0)
-            Err(error) => {
-                log::warn!("link :: no address: {error}");
-                continue;
-            }
+        let Some((address, host)) = hub(driver, wifi) else {
+            return;
         };
-        let host = match &wifi.hub {
-            Hub::Off => continue, // standalone: stay joined, never dial
-            // plan B cc_link._network_host: the `.1` of the board's own subnet is the AP, the hub by convention
-            Hub::Gateway => {
-                let [first, second, third, _] = address.octets();
-                format!("{first}.{second}.{third}.1")
-            }
-            Hub::Host(host) => host.clone(),
-        };
-        if !reconnect_allowed(&mut gave_up) {
+        if !reconnect_allowed(&mut self.gave_up) {
             // the launch came while the join waited for its address (up to 15 s, never cancelled: plan B abandons
             // that wait and clears the attempt, drivers/wifi.py connect): no dial
-            continue;
+            return;
         }
         log::info!("link :: {address} -> hub {host}:{}", wifi.hub_port);
         match dial(&host, wifi.hub_port).and_then(|stream| serve(stream, executor)) {
@@ -195,6 +185,92 @@ pub fn run(
             Err(error) => log::warn!("link :: {error}"),
         }
     }
+
+    /// Whether the C6 link is parked: every Wi-Fi call would now wait out a 5 s RPC timeout, for nothing, so the link
+    /// is gone until the next boot (a reboot restores it; on the ground the operator runs `reboot` on the console).
+    /// Logged and kept as an oops once.
+    fn link_parked(&mut self) -> bool {
+        // SAFETY: reads the flag hosted_no_reboot sets when it parks the failed C6 transport.
+        if !unsafe { esp_idf_svc::sys::hosted_link_down() } {
+            return false;
+        }
+        if !self.parked {
+            log::error!("link :: the C6 link is parked -- Wi-Fi is off until the next boot");
+            crate::panics_logger::oops(
+                "c6-link-parked",
+                "esp_hosted asked for a host restart (an SDIO command to the C6 failed); hosted_no_reboot parked the \
+                 transport instead. Wi-Fi is off until the next boot; the flight goes on.",
+            );
+            self.parked = true;
+        }
+        true
+    }
+
+    /// Whether the recovery beacon holds the radio: once DONE it is started (a failure logged once, tried again each
+    /// look) and kept until power-off or a reset.
+    fn beacon(&mut self, driver: &mut BlockingWifi<EspWifi<'static>>, beacon: &crate::beacon::Beacon) -> bool {
+        if self.beaconing.is_some() {
+            return true;
+        }
+        if !beacon_due() {
+            return false;
+        }
+        match beacon.start(driver) {
+            Ok(server) => self.beaconing = Some(server),
+            Err(error) if !self.beacon_failed => {
+                log::error!("beacon :: did not start, tried again each second: {error}");
+                self.beacon_failed = true;
+            }
+            Err(_) => {}
+        }
+        true
+    }
+
+    /// The next network whose retry clock has run out, joined with the credentials' password (else the config's):
+    /// whether it joined.
+    fn join_next(
+        &mut self,
+        driver: &mut BlockingWifi<EspWifi<'static>>,
+        wifi: &Wifi,
+        credentials: &Credentials,
+    ) -> bool {
+        let Some(index) = self.rotation.next(wifi, Instant::now()) else {
+            return false; // every network is inside its own retry window
+        };
+        let network = &wifi.networks[index];
+        let password = credentials
+            .password(&network.ssid)
+            .unwrap_or_else(|| network.password.clone());
+        if let Err(error) = join(driver, network, &password) {
+            log::warn!("link :: join {} failed: {error}", network.ssid);
+            return false;
+        }
+        log::info!("link :: joined {}", network.ssid);
+        true
+    }
+}
+
+/// The station's address and the hub's host, None without a lease (plan B _network_host: no hub for 0.0.0.0) or
+/// with the hub off (standalone: stay joined, never dial). The hub is the config's `cc_host`, else the `.1` of the
+/// board's own subnet: the AP, the hub by convention (plan B cc_link._network_host).
+fn hub(driver: &BlockingWifi<EspWifi<'static>>, wifi: &Wifi) -> Option<(std::net::Ipv4Addr, String)> {
+    let address = match driver.wifi().sta_netif().get_ip_info() {
+        Ok(info) if !info.ip.is_unspecified() => info.ip,
+        Ok(_) => return None,
+        Err(error) => {
+            log::warn!("link :: no address: {error}");
+            return None;
+        }
+    };
+    let host = match &wifi.hub {
+        Hub::Off => return None,
+        Hub::Gateway => {
+            let [first, second, third, _] = address.octets();
+            format!("{first}.{second}.{third}.1")
+        }
+        Hub::Host(host) => host.clone(),
+    };
+    Some((address, host))
 }
 
 /// No Wi-Fi driver: the C6 never answered at boot (a reset left its SDIO link wedged, 7F 2026-10-12, or the C6 is

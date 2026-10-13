@@ -75,7 +75,7 @@ use firmware::gcl::{self, Command, Gate, Kind, Parameter, Reach};
 use firmware::sd;
 use flash_ring::header::Session;
 use flash_ring::{
-    BLOCK_BYTES, BacklogTrend, BlockTable, Eraser, Erasure, Figures, Flash, Geometry, Hints, Position, Ring,
+    BLOCK_BYTES, BacklogTrend, BlockTable, Eraser, Erasure, Figures, Flash, Geometry, Hints, Position, Ring, Scan,
 };
 use recorder::{
     BATCH_BLOCKS, BEHIND_BLOCKS, Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, Relay, Rows, SaveError,
@@ -369,45 +369,7 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool)
     let health = registry
         .add(supervisor::HEALTH_FILE, &supervisor::HEALTH_FIELDS, 0, false)
         .map_err(|error| anyhow::anyhow!("{}: {error:?}", supervisor::HEALTH_FILE))?;
-    // the devices' streams, from every entry of the saved config, enabled or not: the layout moves no name but may
-    // enable a part (a fitted SEN0253), and the registry is fixed from here; a part that never comes up never writes
-    // its header, so a stream registered for it costs nothing
-    let mut devices = Vec::new();
-    for entry in board_config::entries(document) {
-        let Some(stream) = controller::stream(&entry) else {
-            continue;
-        };
-        match registry.add(&stream.file, stream.fields, stream.decimate_us, stream.durable) {
-            Ok(id) => devices.push((entry.name.to_string(), id)),
-            Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", stream.file),
-        }
-        // the GNSS also writes its GGA, sky and events streams (M11), each under its own device key
-        for (key, companion) in controller::companions(&entry) {
-            match registry.add(
-                &companion.file,
-                companion.fields,
-                companion.decimate_us,
-                companion.durable,
-            ) {
-                Ok(id) => devices.push((key, id)),
-                Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", companion.file),
-            }
-        }
-        // the stage machine's entry also writes the veto episodes (M9), once whatever the entries
-        if let Some(vetoes) = controller::vetoes(&entry)
-            && !devices.iter().any(|(name, _)| name == VETOES)
-        {
-            match registry.add(&vetoes.file, vetoes.fields, vetoes.decimate_us, vetoes.durable) {
-                Ok(id) => devices.push((VETOES.to_string(), id)),
-                Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", vetoes.file),
-            }
-        }
-    }
-    // the recovery beacon's report for the remote recorder (M20, crate::beacon), every few seconds, whatever the board
-    match registry.add(::beacon::FILE, &::beacon::FIELDS, -1, false) {
-        Ok(id) => devices.push((crate::beacon::STREAM.to_string(), id)),
-        Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", ::beacon::FILE),
-    }
+    let devices = device_streams(document, &mut registry);
     let buffers = Buffers {
         producers: PRODUCER_BYTES
             .iter()
@@ -444,6 +406,60 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool)
         .set(recording)
         .map_err(|_| anyhow::anyhow!("the recorder opened twice"))?;
     let recorder = get().ok_or_else(|| anyhow::anyhow!("the recorder did not publish"))?;
+    log_ignored_session(document);
+    register_commands(recorder);
+    Ok(())
+}
+
+/// Registers the devices' streams: every entry's own, the GNSS's companions, the stage machine's veto episodes once,
+/// and the recovery beacon's report. A stream the registry refuses is logged and not recorded.
+///
+/// Returns each stream's device key and id, for [`device_stream`].
+fn device_streams(document: &Value, registry: &mut Registry) -> Vec<(String, StreamId)> {
+    let mut devices = Vec::new();
+    // the devices' streams, from every entry of the saved config, enabled or not: the layout moves no name but may
+    // enable a part (a fitted SEN0253), and the registry is fixed from here; a part that never comes up never writes
+    // its header, so a stream registered for it costs nothing
+    for entry in board_config::entries(document) {
+        let Some(stream) = controller::stream(&entry) else {
+            continue;
+        };
+        match registry.add(&stream.file, stream.fields, stream.decimate_us, stream.durable) {
+            Ok(id) => devices.push((entry.name.to_string(), id)),
+            Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", stream.file),
+        }
+        // the GNSS also writes its GGA, sky and events streams (M11), each under its own device key
+        for (key, companion) in controller::companions(&entry) {
+            match registry.add(
+                &companion.file,
+                companion.fields,
+                companion.decimate_us,
+                companion.durable,
+            ) {
+                Ok(id) => devices.push((key, id)),
+                Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", companion.file),
+            }
+        }
+        // the stage machine's entry also writes the veto episodes (M9), once whatever the entries
+        if let Some(vetoes) = controller::vetoes(&entry)
+            && !devices.iter().any(|(name, _)| name == VETOES)
+        {
+            match registry.add(&vetoes.file, vetoes.fields, vetoes.decimate_us, vetoes.durable) {
+                Ok(id) => devices.push((VETOES.to_string(), id)),
+                Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", vetoes.file),
+            }
+        }
+    }
+    // the recovery beacon's report for the remote recorder (M20, crate::beacon), every few seconds, whatever the board
+    match registry.add(::beacon::FILE, &::beacon::FIELDS, -1, false) {
+        Ok(id) => devices.push((crate::beacon::STREAM.to_string(), id)),
+        Err(error) => log::warn!("Recorder :: {} not recorded: {error:?}", ::beacon::FILE),
+    }
+    devices
+}
+
+/// Logs a `recorder.session` label [`session_prefix`] ignored: not a label, or one the card's layout reserves.
+fn log_ignored_session(document: &Value) {
     let configured = document["recorder"]["session"].as_str().unwrap_or_default();
     match recorder_wire::session_label(configured) {
         recorder_wire::SessionLabel::Ignored(label) => log::warn!(
@@ -456,8 +472,6 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool)
         ),
         _ => {}
     }
-    register_commands(recorder);
-    Ok(())
 }
 
 /// Spawns the ring_writer (core 0, priority 7). Its bring-up routine, run at the main task's priority, scans the `log`
@@ -504,6 +518,45 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
     let hints = store.as_ref().map_or_else(Hints::default, RecorderStore::hints);
     // the card the previous boot's record names: its saver hint is that card's (read before this boot's record)
     let previous_card = store.as_ref().and_then(RecorderStore::previous_card);
+    let partition = log_partition();
+    let scan = scan_ring(&partition, hints);
+    let table: &'static BlockTable = Box::leak(Box::new(scan.table));
+    let saver = SaverStart::judge(card, previous_card.as_deref(), hints, table, store.as_ref());
+    // spec "Bring-up", step 6: what a fast start needs, written once per boot
+    let first = Position {
+        block_sequence: scan.next_sequence,
+        offset: 0,
+    };
+    record_session_start(store.as_ref(), recording, config_id, card, first, saver.start);
+    let _ = RING.set(RingView {
+        partition,
+        table,
+        first_sequence: scan.next_sequence,
+        unformatted: scan.unformatted,
+        card,
+        saver_start: saver.start,
+        same_card: saver.same_card,
+    });
+    // the uart_saver's start (M19): where its UART had got, else this boot's first block (only what is new)
+    let relay_start = store
+        .as_ref()
+        .and_then(|store| store.position(RELAY_KEY))
+        .map_or(first, |hint| table.saver_start(Some(hint)));
+    // the store goes to the eraser, which keeps the writer position hint from here on, and the saver and the
+    // uart_saver open their own for their hints: this thread never touches the NVS again
+    start_eraser(partition, table, recorder, store, saver.saved);
+    if let Some(start) = saver.start {
+        start_saver(partition, table, recorder, settings.clone(), start);
+    }
+    if let Some(&port) = UART_PORT.get() {
+        start_relay(partition, table, recorder, settings, relay_start, port);
+    }
+    run_writer(recording, partition, table, scan.next_sequence);
+}
+
+/// The `log` partition, checked against this firmware's ring; parks the thread, logged, when the table has none or
+/// it is another layout's.
+fn log_partition() -> Partition {
     let Some(partition) = Partition::by_label(c"log") else {
         log::error!("ring :: no `log` partition in the partition table: nothing reaches flash this boot");
         park();
@@ -519,17 +572,22 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
         );
         park();
     }
+    partition
+}
+
+/// The bring-up scan of `partition` from the NVS `hints` (spec "Bring-up", steps 1 to 3), tried [`SCAN_ATTEMPTS`]
+/// times, its figures logged; parks the thread, logged, when every attempt fails.
+fn scan_ring(partition: &Partition, hints: Hints) -> Scan {
     let started_us = uptime_us();
     let Some(scan) = (1..=SCAN_ATTEMPTS).find_map(|attempt| {
-        flash_ring::scan(&partition, Geometry::BOARD, hints)
+        flash_ring::scan(partition, Geometry::BOARD, hints)
             .inspect_err(|error| log::warn!("ring :: bring-up scan {attempt}/{SCAN_ATTEMPTS} failed: {error:?}"))
             .ok()
     }) else {
         log::error!("ring :: the bring-up scan keeps failing: nothing reaches flash this boot");
         park();
     };
-    let table: &'static BlockTable = Box::leak(Box::new(scan.table));
-    let figures = table.figures(None);
+    let figures = scan.table.figures(None);
     log::info!(
         "ring :: scanned {} blocks in {} ms: {} erased, {} closed, {} of another version, {} foreign; this boot opens \
          block {}{}",
@@ -546,27 +604,69 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
             ""
         },
     );
-    // spec "Bring-up", steps 4 and 5: the saver hint is this card's only when the previous boot named this card
-    let same_card =
-        card.is_some_and(|card| card.serial.is_some() && previous_card.as_deref() == Some(card.name().as_str()));
-    let saver_start = card.map(|_| table.saver_start(hints.saver.filter(|_| same_card)));
-    // as Eraser::new judges it too: a hint that names no block in flash passes nothing off as saved
-    let saved = hints
-        .saver
-        .filter(|&hint| (card.is_none() || same_card) && table.saver_start(Some(hint)) == hint);
-    log_saver_start(card, previous_card.as_deref(), same_card, saver_start, saved);
-    // the new card's start becomes the hint before the record names the new card (see the module notes)
-    if let (Some(store), Some(start)) = (&store, saver_start)
-        && hints.saver != Some(start)
-        && let Err(error) = store.publish(SAVER_KEY, start)
-    {
-        log::warn!("ring :: the saver's start was not written to the cfg NVS: {error}");
+    scan
+}
+
+/// Where the ring_saver starts, and which blocks count as saved: spec "Bring-up", steps 4 and 5.
+struct SaverStart {
+    /// The mounted card is the one the previous boot's session-start record names.
+    same_card: bool,
+    /// Where the saver starts; None without a card.
+    start: Option<Position>,
+    /// The hint the eraser trusts, the blocks before it saved; None when it trusts none.
+    saved: Option<Position>,
+}
+
+impl SaverStart {
+    /// Judges the saver's start: the NVS hint is this card's only when the previous boot named this card. Logs the
+    /// judgement, and keeps a new start as the hint (`store`), before the session-start record names the new card
+    /// (see the module notes).
+    ///
+    /// Args:
+    /// * `card` - the mounted card; None without one.
+    /// * `previous` - the card the previous boot's session-start record names; None when it names none.
+    /// * `hints` - the NVS positions.
+    /// * `table` - the scanned block table.
+    /// * `store` - the `cfg` NVS; None when it would not open.
+    fn judge(
+        card: Option<Card>,
+        previous: Option<&str>,
+        hints: Hints,
+        table: &BlockTable,
+        store: Option<&RecorderStore>,
+    ) -> Self {
+        let same_card = card.is_some_and(|card| card.serial.is_some() && previous == Some(card.name().as_str()));
+        let start = card.map(|_| table.saver_start(hints.saver.filter(|_| same_card)));
+        // as Eraser::new judges it too: a hint that names no block in flash passes nothing off as saved
+        let saved = hints
+            .saver
+            .filter(|&hint| (card.is_none() || same_card) && table.saver_start(Some(hint)) == hint);
+        log_saver_start(card, previous, same_card, start, saved);
+        if let (Some(store), Some(start)) = (store, start)
+            && hints.saver != Some(start)
+            && let Err(error) = store.publish(SAVER_KEY, start)
+        {
+            log::warn!("ring :: the saver's start was not written to the cfg NVS: {error}");
+        }
+        Self {
+            same_card,
+            start,
+            saved,
+        }
     }
-    // spec "Bring-up", step 6: what a fast start needs, written once per boot
-    let first = Position {
-        block_sequence: scan.next_sequence,
-        offset: 0,
-    };
+}
+
+/// Writes this boot's session-start record into the `cfg` NVS (spec "Bring-up", step 6): the boot, the session, the
+/// config id, the reset cause, the card, the writer's first position and the saver's start. A failed write is
+/// logged; without the NVS there is no record.
+fn record_session_start(
+    store: Option<&RecorderStore>,
+    recording: &Recording,
+    config_id: &str,
+    card: Option<Card>,
+    first: Position,
+    saver_start: Option<Position>,
+) {
     let record = json!({
         "boot": recording.boot_id,
         "session": recording.session.as_str(),
@@ -576,38 +676,25 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
         "writer": [first.block_sequence, first.offset],
         "saver": saver_start.map(pair),
     });
-    if let Some(store) = &store
+    if let Some(store) = store
         && let Err(error) = store.record_start(&record)
     {
         log::warn!("ring :: the session-start record was not written: {error}");
     }
-    let _ = RING.set(RingView {
-        partition,
-        table,
-        first_sequence: scan.next_sequence,
-        unformatted: scan.unformatted,
-        card,
-        saver_start,
-        same_card,
-    });
-    // the uart_saver's start (M19): where its UART had got, else this boot's first block (only what is new)
-    let relay_start = store
-        .as_ref()
-        .and_then(|store| store.position(RELAY_KEY))
-        .map_or(first, |hint| table.saver_start(Some(hint)));
-    // the store goes to the eraser, which keeps the writer position hint from here on, and the saver and the
-    // uart_saver open their own for their hints: this thread never touches the NVS again
-    start_eraser(partition, table, recorder, store, saved);
-    if let Some(start) = saver_start {
-        start_saver(partition, table, recorder, settings.clone(), start);
-    }
-    if let Some(&port) = UART_PORT.get() {
-        start_relay(partition, table, recorder, settings, relay_start, port);
-    }
+}
+
+/// Opens the ring at `next_sequence` and steps the writer at its own priority, forever: on every tick, or sooner when
+/// a producer queued a durable record (`wake`). Parks the thread, logged, when the ring or the writer would not open.
+fn run_writer(
+    recording: &'static Recording,
+    partition: Partition,
+    table: &'static BlockTable,
+    next_sequence: u32,
+) -> ! {
     let ring = match Ring::new(
         partition,
         table,
-        scan.next_sequence,
+        next_sequence,
         recording.boot_id.unwrap_or(0),
         recording.session,
         false, // the writer takes the Recorder's flight flag (Writer::new)
@@ -618,7 +705,7 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
             park();
         }
     };
-    let Some(mut writer) = Writer::new(recorder, ring) else {
+    let Some(mut writer) = Writer::new(recording.recorder, ring) else {
         log::error!("ring :: another writer took the recorder");
         park();
     };
@@ -626,7 +713,6 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
     unsafe { sys::vTaskPrioritySet(ptr::null_mut(), WRITER_PRIORITY.into()) };
     let tick = TickType::new_millis(TICK_US / 1000).ticks();
     loop {
-        // the tick, or sooner: a producer that queued a durable record notifies this task (`wake`)
         task::wait_notification(tick);
         let now_us = uptime_us();
         writer.step(now_us, clock::epoch());

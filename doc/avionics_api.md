@@ -8274,16 +8274,19 @@ What the avionics binary and the on-board benches share.
 
 ## `firmware`
 
-Avionics bring-up (doc/specs/avionics-port.md "Bring-up order"): start the clock, count the boot and load the
-board config, which name this boot's records; open the recorder before anything else logs, so every later line is
-kept, in flight when NVS holds a crumb in BOOSTING..LANDING; mount the card (one FAT volume, or two: the recordings
-and the videos); create the I2C ports and decide the layout by their scan, which rewrites the config and so names
-its id; start the ring tasks (the writer, the eraser, and the saver that copies the flash to the card); then the
-board, the devices in config order on the lent ports, and the warm start's restore, which may commit a flight
-through the flight word's writer and rebase the barometers while main still holds both; then each port goes back to
-its owner with the parts that came up, and the control thread takes the writer; the supervisor (health and the
-checkpoint and the watchdog), the CC executor and the UART console, and finally join Wi-Fi through the C6 and serve
-the CC hub forever. A panic anywhere prints its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
+Avionics bring-up (doc/specs/avionics-port.md "Bring-up order"): the clock, the console's UART, then the boot's
+phases (crate::boot: storage, media, ports, layout, the recorder's threads, the board, the devices, the warm
+start's recovery, the flight's threads, the operator's side) in order, and the radio forever. A panic anywhere
+prints its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
+
+### `pub fn register_system_commands()`
+
+The system's own console command (the Glider Command Language): `panic kind=... confirm`, which proves a panic
+reboots the board, warm-starting a flight in the air (crate::warm), and lands in the panic log
+(crate::panics_logger); and that the supervisor's watchdog resets a board whose supervisor stops feeding the task
+watchdog (`twdt`) or whose control thread stalls (`stall`). Open in every stage, for the console alone: it is the
+one hands-free reset in GLIDING and at DONE (`reboot` runs only in SETTING), and never one the hub can send. `twdt`
+and `stall` are refused when nothing would reset the board: a stalled control thread could not even be disarmed.
 
 ## `firmware::allocator`
 
@@ -8501,6 +8504,109 @@ record carry it.
 ### Constants
 
 - `const FIRMWARE_VERSION: &str = concat!("avionics-", env!("CARGO_PKG_VERSION"))` — The firmware's name on the wire: the hub shows it as the board's version.
+
+## `firmware::boot`
+
+The bring-up's phases (doc/specs/avionics-port.md "Bring-up order"; doc/specs/avionics-refactor.md R4), in the
+order `main` runs them, each documented with what it needs and what it gives:
+
+1. [`storage`]: the boot count and the board config, which name this boot's records; the recorder opened before
+   anything else logs, in flight when NVS holds a crumb in BOOSTING..LANDING; the last boot's panic filed;
+2. [`media`]: the card (one FAT volume, or two: the recordings and the videos), the camera encoder's internal block
+   reserved before anything else splits it, the oops thread;
+3. [`ports`]: the I2C ports, each created by its owner thread on core 1 and lent to main;
+4. [`layout`]: the board's revision by the ports' scan, which rewrites the config and so names its id; the HITL
+   mask; the ports at the rewritten config's clocks;
+5. [`recorder`]: the ring tasks (the writer, the eraser, the saver that copies the flash to the card) and the
+   uart_saver;
+6. [`board`]: the board's identity and the provenance line;
+7. `devices::bring_up`: the devices in config order on the lent ports;
+8. [`recovery`]: the warm start's restore, which may commit a flight through the flight word's writer and rebase the
+   barometers while main still holds both; the calibrations; each port back to its owner with its parts;
+9. [`flight`]: the fins, the control thread (which takes the writer), the supervisor, the sim-link, the GNSS;
+10. [`operator`]: the commands, the camera's thread, the CC executor, the UART console, the card's entry file;
+11. [`radio`]: the beacons, then Wi-Fi through the C6 and the CC hub, forever.
+
+### `pub type Lent = Vec<(owner::Parked, I2cPort)>`
+
+The ports main lends the bring-up: each one's parked owner and the port.
+
+### `pub struct Storage`
+
+What [`storage`] gives the boot.
+
+### `pub struct Media`
+
+What [`media`] gives the boot.
+
+### `pub struct Recovered`
+
+What [`recovery`] gives the boot.
+
+### `pub fn storage(partition: EspDefaultNvsPartition) -> anyhow::Result<(Storage, board_config::Loaded)>`
+
+The boot count, the board config and the recorder, needing only NVS (`partition`): every fin pin held low, the
+recorder opened (every line and row kept from here, queued in PSRAM until the ring_writer runs), the config's
+lines, and the last boot's panic filed before anything here can panic again.
+
+Gives the boot's storage, and the board config as it loaded, which the layout rewrites before the run freezes it.
+
+Errors: NVS would not count the boot, or the settings partition would not open.
+
+### `pub fn media(document: &serde_json::Value, temp_sensor: TempSensor<'static>) -> Media`
+
+The die's thermometer (`temp_sensor`), the card, and the camera of `document`: the encoder's ~138 KB internal block
+reserved before the ring threads' stacks and buffers split it (no camera or no card: no recording, no
+reservation); then the oops thread, before the bring-up records a general call as an oops.
+
+### `pub fn ports(document: &serde_json::Value) -> Lent`
+
+The I2C ports of `document`, each created by its owner thread on core 1 and lent here: port 0 always (the camera's
+SCCB is wired to it), port 1 when the config defines it. A port that will not come up is logged and left out.
+
+### `pub fn layout(document: &mut serde_json::Value, lent: &mut Lent) -> layout::Resolved`
+
+Which board this is, by the scan of the `lent` ports, before anything reads `document` for its devices (plan B
+main.py:91-104): the config is rewritten in place, and from here on it is the one this boot runs. Then the HITL
+mask, and the ports at the rewritten config's clocks. Gives the layout's verdict.
+
+### `pub fn recorder(document: &serde_json::Value, uart1: UART1<'static>, settings: EspCustomNvsPartition, card: Option<recorder::Card>, config_id: &str)`
+
+The recorder's threads for `document` under `config_id`: the uart_saver (M19: the wire lines to a receiver on
+`uart1`, before the saver that feeds it starts), then the ring_writer, which scans the `log` partition in its own
+thread and starts the ring_eraser and, with a `card`, the ring_saver -- all after the encoder's reservation. Boot
+goes on, and the producers queue meanwhile.
+
+### `pub fn board(storage: &Storage, loaded: &board_config::Loaded, config_id: &str, thermometer: Option<Thermometer>, sd_mounted: bool) -> Arc<board::Board>`
+
+The board of `storage` running `loaded` under `config_id`, with the media's thermometer and card, and the
+provenance line (plan B main): the build and the config this capture comes from, stamped into the capture itself;
+the saved config's id last, the one `set-config board` answered.
+
+### `pub fn recovery(storage: &Storage, document: &serde_json::Value, devices: &mut devices::Devices, lent: Lent) -> Recovered`
+
+The warm start, while the parts and the flight word's one writer are still main's and nothing else runs: a reset
+in flight resumes the crumb's stage, its barometers rebased to the pad and the mission's launch point and zone
+restored (doc/specs/avionics-port.md "Bring-up order"; crate::warm). Then the parts' calibrations from NVS, as plan
+B's setups restored them, and each `lent` port back to its owner with the parts of `devices` that came up on it.
+
+### `pub fn flight(document: &'static serde_json::Value, devices: devices::Devices, storage: &Storage, board: Arc<board::Board>, writer: FlightWriter<'static>, seed: Option<warmstart::Identity>, uart2: UART2<'static>, topology: &'static devices::Topology, table: &'static controller::Table<'static>)`
+
+### `pub fn operator(context: commands::Context, credentials: &config::Credentials, console: Option<crate::console::Console>, camera: Option<firmware::video::Camera>, sd_mounted: bool) -> anyhow::Result<commands::Executor>`
+
+The operator's side: each component's commands (the Glider Command Language: each registers its own as it
+activates, so `help` lists exactly what this board runs), the card's commands and the camera's one owner thread
+when the card mounted, the CC executor over `context`, the UART `console` (it drains the UART before taking it
+over, so the lines above survive), the banner, and the card's entry file (M21) once bring-up is done. Gives the
+executor.
+
+Errors: the executor or the console would not start.
+
+### `pub fn radio(document: &serde_json::Value, board: &board::Board, topology: &'static devices::Topology, modem: Modem<'static>, event_loop: EspSystemEventLoop, partition: EspDefaultNvsPartition, credentials: config::Credentials, executor: &commands::Executor) -> !`
+
+The radio, forever: the recovery beacons (M11b, M20: the battery's capacity from the INA226 entry of `document`,
+when the config gives one; the remote recorder's report to beacon.csv every few seconds, its radio off until
+DONE), then Wi-Fi through the C6 and the CC hub (crate::link).
 
 ## `firmware::buses::i2c`
 
@@ -9819,7 +9925,8 @@ Whether the TCP/IP stack is up, so a socket can be opened (it may not hold an ad
 
 ### `pub fn run(modem: Modem<'static>, event_loop: EspSystemEventLoop, partition: EspDefaultNvsPartition, wifi: Wifi, credentials: Credentials, executor: &Executor, beacon: crate::beacon::Beacon) -> !`
 
-Join, dial, serve -- forever.
+Join, dial, serve -- forever: the driver started ([`start`]), the file server once the TCP/IP stack is up, then
+a look every [`TICK`] ([`Link::look`]).
 
 ### `pub fn register_commands()`
 

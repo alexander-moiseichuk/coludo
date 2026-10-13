@@ -3,6 +3,7 @@
 //! The primary IMU on SPI2 (M6): its read on each tick, its INT1 edges, its probe, its clock rung and its mute.
 
 use super::*;
+use drivers::lsm6dso32::{Fresh, Sample};
 
 /// INT1 edges since the tick last took them: the GPIO interrupt counts, the tick swaps the count out.
 pub(super) static INTERRUPT_EDGES: AtomicU32 = AtomicU32::new(0);
@@ -181,29 +182,8 @@ impl Imu {
         }
         // the next read a period on, or a period from now when the reads fell behind
         self.next_due_us = (self.next_due_us + self.period_us).max(now_us + self.period_us - slack_us);
-        if self.muted_until_us != 0 {
-            // a mute is a bench diagnostic: arming or leaving SETTING ends it at once
-            let flight = FLIGHT.load();
-            let ended_by_flight = flight.armed || flight.stage != Stage::Setting;
-            if now_us < self.muted_until_us && !ended_by_flight {
-                // a declared outage: unhealthy from its first read (no lapse is counted against a part known out),
-                // the INT1 edges taken but not judged (a muted part's latched line goes quiet by design)
-                IMU_MUTED.fetch_add(1, Ordering::Relaxed);
-                INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
-                self.stale_run = STALE_LIMIT;
-                if self.set_healthy(false) {
-                    log::warn!("lsm6dso32 :: muted -- unhealthy");
-                }
-                return;
-            }
-            self.muted_until_us = 0;
-            // the first read after the mute is judged by its flags alone
-            self.part.forget();
-            if ended_by_flight {
-                log::warn!("{} :: mute ended by arm or a stage change: reading again", self.name);
-            } else {
-                log::info!("{} :: mute over: reading again", self.name);
-            }
+        if self.muted_until_us != 0 && self.muted(now_us) {
+            return;
         }
         let runs = INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
         IRQ_RUNS_LAST.store(runs, Ordering::Relaxed);
@@ -228,17 +208,7 @@ impl Imu {
         };
         self.failing = false;
         IMU_READS.fetch_add(1, Ordering::Relaxed);
-        for (half, raced, identical) in [
-            (0, fresh.accel_raced, fresh.accel_identical),
-            (1, fresh.rate_raced, fresh.rate_identical),
-        ] {
-            if raced {
-                IMU_RACED[half].fetch_add(1, Ordering::Relaxed);
-            }
-            if identical {
-                IMU_IDENTICAL[half].fetch_add(1, Ordering::Relaxed);
-            }
-        }
+        count(&fresh);
         if !fresh.accel && !fresh.rate {
             IMU_STALE.fetch_add(1, Ordering::Relaxed);
             self.stale_run = self.stale_run.saturating_add(1);
@@ -249,6 +219,40 @@ impl Imu {
         }
         self.stale_run = 0;
         self.set_healthy(true);
+        self.publish(now_us, &fresh, &sample, runs);
+    }
+
+    /// While a mute lasts (`imu mute`): counts the read muted and takes the INT1 edges unjudged, true. When it is over
+    /// (its time, an arm, or a stage change), ends it: false, the read goes on.
+    fn muted(&mut self, now_us: u64) -> bool {
+        // a mute is a bench diagnostic: arming or leaving SETTING ends it at once
+        let flight = FLIGHT.load();
+        let ended_by_flight = flight.armed || flight.stage != Stage::Setting;
+        if now_us < self.muted_until_us && !ended_by_flight {
+            // a declared outage: unhealthy from its first read (no lapse is counted against a part known out),
+            // the INT1 edges taken but not judged (a muted part's latched line goes quiet by design)
+            IMU_MUTED.fetch_add(1, Ordering::Relaxed);
+            INTERRUPT_EDGES.swap(0, Ordering::Relaxed);
+            self.stale_run = STALE_LIMIT;
+            if self.set_healthy(false) {
+                log::warn!("lsm6dso32 :: muted -- unhealthy");
+            }
+            return true;
+        }
+        self.muted_until_us = 0;
+        // the first read after the mute is judged by its flags alone
+        self.part.forget();
+        if ended_by_flight {
+            log::warn!("{} :: mute ended by arm or a stage change: reading again", self.name);
+        } else {
+            log::info!("{} :: mute over: reading again", self.name);
+        }
+        false
+    }
+
+    /// Publishes a fresh read: each new half to its databoard channel, and the row (every fresh sample, never
+    /// decimated: measured -> reported, the operator, M9). `runs` is the INT1 edges since the last read.
+    fn publish(&mut self, now_us: u64, fresh: &Fresh, sample: &Sample, runs: u32) {
         // the airframe's axes, on converted values (drivers::axes): the push and the row alike
         let accel = self.axes.apply(sample.accel_g());
         if let (true, Some(writer)) = (fresh.accel, &mut self.accel) {
@@ -272,6 +276,21 @@ impl Imu {
             Cell::I32(runs as i32),
         ];
         self.rows.push(now_us, &row);
+    }
+}
+
+/// Counts a read's raced and identical halves (accel, rate), for the `control` command.
+fn count(fresh: &Fresh) {
+    for (half, raced, identical) in [
+        (0, fresh.accel_raced, fresh.accel_identical),
+        (1, fresh.rate_raced, fresh.rate_identical),
+    ] {
+        if raced {
+            IMU_RACED[half].fetch_add(1, Ordering::Relaxed);
+        }
+        if identical {
+            IMU_IDENTICAL[half].fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
