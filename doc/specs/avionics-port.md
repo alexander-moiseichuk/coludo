@@ -2697,6 +2697,31 @@ pin that function in IRAM with a linker fragment, or stop the camera around OTA.
 nothing is written to flash from the panic handler, so moving the SPI1 flash driver out of IRAM (~8.3 KB) stays
 possible.
 
+**Measured 2026-10-13, after M21: internal RAM is spent.** The boot logs `boot :: after <phase>: internal N free,
+DMA-capable M free` once a phase (`boot::checkpoint`), and `link :: joined` adds the Wi-Fi's. On the taster:
+
+| phase | internal RAM it took | what |
+|---|---|---|
+| media | 165.5 KB | the encoder's 138 KB block, the card, the camera (as on 10-06) |
+| ports | 16.8 KB | the two I2C owners' stacks (M9) |
+| recorder | 9.3 KB at once, ~35 KB more within 0.2 s | the ring_writer, then the eraser and saver it spawns (stacks, buffers), the uart_saver (M19) |
+| devices | ~43 KB net of the ring threads | the parts ~10 KB, the flight law 8.4 KB (17 blocks of 408 B), the topology 7.6 KB (18 parameters of 424 B, internal by design), the table |
+| flight | 9.2 KB | the control thread's stack, the fins, the supervisor |
+| operator | 8.2 KB | |
+| the Wi-Fi join | 24.1 KB | esp_hosted and lwIP |
+
+That leaves ~40 KB internal and ~20 KB DMA-capable at idle (7F, with fewer parts: ~49 / 21 KB), against ~57 KB of
+DMA-capable memory on 10-06. No one feature took it: M7-M21 each paid a few KB, the bring-up's because `main` runs on
+an internal stack, so the global allocator gives its allocations internal RAM. With the video recording on the pad
+and the flight-rate ring load, the DMA-capable heap then falls to 0.2-0.3 KB (10-minute soaks on both boards); the
+same stress plus four downloads ran it out, and `pace`'s thread spawn panicked (now an `err` answer). Moving what
+the flight does not need in internal RAM (the bring-up's allocations, the recorder's slow core-0 threads) is open,
+the operator's call on what stays internal.
+
+The heap tracing investigation that found it: `CONFIG_HEAP_TRACING_STANDALONE` in leak mode around the bring-up,
+its records walked with `heap_trace_get` from Rust. `heap_trace_dump` itself trips core 0's interrupt watchdog, and
+RISC-V records no call stacks without frame pointers: the sizes and the cycle counts placed the blocks.
+
 ### 4.8 Panic log
 
 The operator's design (2026-10-07), after Linux's mtdoops (which Richard Purdie wrote at the operator's request):

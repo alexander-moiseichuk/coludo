@@ -48,6 +48,16 @@ const PORT0_STOCK: board_config::I2cSpecification = board_config::I2cSpecificati
 /// The ports main lends the bring-up: each one's parked owner and the port.
 pub type Lent = Vec<(owner::Parked, I2cPort)>;
 
+/// Logs the internal RAM left after the boot phase `phase`: free, and the DMA-capable part of it. One line a phase,
+/// so each feature's price in internal RAM shows in the boot log where it was paid (doc/specs/avionics-port.md §4.7).
+pub fn checkpoint(phase: &str) {
+    log::info!(
+        "boot :: after {phase}: internal {} free, DMA-capable {} free",
+        board::heap_free(esp_idf_svc::sys::MALLOC_CAP_INTERNAL),
+        board::heap_free(esp_idf_svc::sys::MALLOC_CAP_INTERNAL | esp_idf_svc::sys::MALLOC_CAP_DMA)
+    );
+}
+
 /// What [`storage`] gives the boot.
 pub struct Storage {
     /// The NVS partition.
@@ -106,6 +116,7 @@ pub fn storage(partition: EspDefaultNvsPartition) -> anyhow::Result<(Storage, bo
         session,
         in_flight,
     };
+    checkpoint("storage");
     Ok((storage, loaded))
 }
 
@@ -159,6 +170,7 @@ pub fn media(document: &serde_json::Value, temp_sensor: TempSensor<'static>) -> 
     if let Err(error) = panics_logger::start_oops() {
         log::error!("panic :: the oops thread did not start, oopses are dropped: {error}");
     }
+    checkpoint("media");
     Media {
         thermometer,
         sd_mounted,
@@ -180,6 +192,7 @@ pub fn ports(document: &serde_json::Value) -> Lent {
             Err(error) => log::error!("i2c:{id} :: no bus: {error}"),
         }
     }
+    checkpoint("ports");
     lent
 }
 
@@ -222,6 +235,7 @@ pub fn layout(document: &mut serde_json::Value, lent: &mut Lent) -> layout::Reso
             log::warn!("i2c:{id} :: not at the config's {clock_hz} Hz: {error}");
         }
     }
+    checkpoint("layout");
     resolved
 }
 
@@ -254,6 +268,7 @@ pub fn recorder(
     if let Err(error) = recorder::start(settings, card, config_id) {
         log::error!("Recorder :: the ring_writer did not start: {error}");
     }
+    checkpoint("recorder");
 }
 
 /// The board of `storage` running `loaded` under `config_id`, with the media's thermometer and card, and the
@@ -286,6 +301,7 @@ pub fn board(
         board.session,
         storage.saved_config_id,
     );
+    checkpoint("board");
     board
 }
 
@@ -309,6 +325,7 @@ pub fn recovery(
     devices: &mut devices::Devices,
     lent: Lent,
 ) -> Recovered {
+    checkpoint("devices");
     let (table, topology) = (devices.table, devices.topology);
     let members = &mut std::mem::take(&mut devices.members);
     // HITL simulates no separation switch (doc/specs/sim-link.md): its glide counts as separated, as plan B's
@@ -346,6 +363,7 @@ pub fn recovery(
             log::error!("i2c:{id} :: {error}");
         }
     }
+    checkpoint("recovery");
     Recovered { writer, mission, seed }
 }
 
@@ -430,6 +448,7 @@ pub fn flight(
             devices::crash(table, [Some(name)], &error.to_string());
         }
     }
+    checkpoint("flight");
 }
 
 /// The fin servos of `document` on their LEDC channels, None without any; a timer or channel that will not configure
@@ -535,6 +554,7 @@ pub fn operator(
     if sd_mounted && let Err(error) = entry::start(executor.clone()) {
         log::error!("entry :: the runner did not start, the entry file is not run: {error}");
     }
+    checkpoint("operator");
     Ok(executor)
 }
 

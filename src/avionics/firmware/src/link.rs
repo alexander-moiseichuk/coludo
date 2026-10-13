@@ -246,6 +246,7 @@ impl Link {
             return false;
         }
         log::info!("link :: joined {}", network.ssid);
+        crate::boot::checkpoint("the join");
         true
     }
 }

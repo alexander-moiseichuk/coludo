@@ -437,8 +437,14 @@ pub fn pace(seconds: u64, source: Source) -> String {
     }
     .set()
     .ok();
-    let paced = std::thread::spawn(move || paced(ticks, source));
+    // a stack the heap cannot give is an answer, not a panic (std::thread::spawn's): under a heavy load internal RAM
+    // runs short, and a bench diagnostic must not reboot the board
+    let paced = std::thread::Builder::new().spawn(move || paced(ticks, source));
     ThreadSpawnConfiguration::default().set().ok();
+    let paced = match paced {
+        Ok(paced) => paced,
+        Err(error) => return cc_protocol::build("err", &["pace", "no thread", &error.to_string()], &[]),
+    };
     let mut lateness = paced.join().unwrap_or_default();
     if lateness.is_empty() {
         return cc_protocol::build("err", &["pace", "no timer"], &[]);
