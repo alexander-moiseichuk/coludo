@@ -8543,6 +8543,11 @@ What [`media`] gives the boot.
 
 What [`recovery`] gives the boot.
 
+### `pub fn checkpoint(phase: &str)`
+
+Logs the internal RAM left after the boot phase `phase`: free, and the DMA-capable part of it. One line a phase,
+so each feature's price in internal RAM shows in the boot log where it was paid (doc/specs/avionics-port.md §4.7).
+
 ### `pub fn storage(partition: EspDefaultNvsPartition) -> anyhow::Result<(Storage, board_config::Loaded)>`
 
 The boot count, the board config and the recorder, needing only NVS (`partition`): every fin pin held low, the
@@ -9058,7 +9063,8 @@ reboot -- restart the board (src/glider cc_client `_register_system`).
 
 ### `pub fn reboot(_message: &Message, _context: &mut Context) -> Reply`
 
-`reboot`: replies `ok`, then restarts (components/safe_restart).
+`reboot`: replies `ok`, then restarts (components/safe_restart). When internal RAM cannot give the delayed restart
+a stack, it restarts at once: the reply is lost, the reboot asked for is not.
 
 ## `firmware::config`
 
@@ -10369,8 +10375,9 @@ Spawns the ring_writer (core 0, priority 7). Its bring-up routine, run at the ma
 partition, writes the session-start record and spawns the ring_eraser and, with a card, the ring_saver; then the
 writer steps forever. Boot goes on meanwhile.
 
-Call it after the camera's encoder has reserved its internal RAM (video::reserve): the three ring threads'
-stacks and buffers come from the same heap, and would split the encoder's ~138 KB block.
+The three ring threads run on PSRAM stacks, so their buffers are PSRAM too (crate's global allocator): their flash
+reads and programs go through [`BOUNCE`], and their card writes through the SD driver's own bounce. Internal RAM is
+the camera's and the flight's (2026-10-13: the flight load had taken the DMA-capable heap to ~0.3 KB).
 
 Args:
 * `settings` - the `cfg` partition: the ring positions and the session-start record live there.
