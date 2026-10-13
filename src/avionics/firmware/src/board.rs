@@ -107,6 +107,12 @@ pub fn heap_free(capabilities: u32) -> usize {
     unsafe { sys::heap_caps_get_free_size(capabilities) }
 }
 
+/// The low-water mark of free heap bytes with the given capabilities since boot.
+pub fn heap_minimum(capabilities: u32) -> usize {
+    // SAFETY: a plain query of the heap allocator.
+    unsafe { sys::heap_caps_get_minimum_free_size(capabilities) }
+}
+
 /// The running CPU clock in MHz.
 fn cpu_mhz() -> u32 {
     // SAFETY: a plain read of the ROM's clock bookkeeping.

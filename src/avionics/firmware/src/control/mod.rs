@@ -127,6 +127,10 @@ static LATE_OVER_BUDGET: AtomicU32 = AtomicU32::new(0);
 static WORK_LAST_US: AtomicU32 = AtomicU32::new(0);
 /// The longest tick's work so far, microseconds.
 static WORK_MAX_US: AtomicU32 = AtomicU32::new(0);
+/// The largest lateness since the supervisor's last runtime row, microseconds ([`window`]).
+static LATE_WINDOW_US: AtomicU32 = AtomicU32::new(0);
+/// The longest tick's work since the supervisor's last runtime row, microseconds ([`window`]).
+static WORK_WINDOW_US: AtomicU32 = AtomicU32::new(0);
 
 /// Set as the thread enters its tick loop, never cleared: until then, and for good when the thread or its timer did
 /// not start, nothing serves the request slot, and nothing commits to the flight word.
@@ -496,6 +500,7 @@ impl Thread {
         let work = (uptime_us() as i64 - now_us).clamp(0, i64::from(u32::MAX)) as u32;
         WORK_LAST_US.store(work, Ordering::Relaxed);
         WORK_MAX_US.fetch_max(work, Ordering::Relaxed);
+        WORK_WINDOW_US.fetch_max(work, Ordering::Relaxed);
     }
 
     /// The clock's figures for a wake at `now_us` that took `pending` notifications: the overruns (any beyond one),
@@ -516,6 +521,7 @@ impl Thread {
         let late = (now_us - first - (self.ticks - 1) * self.period_us).clamp(0, i64::from(u32::MAX)) as u32;
         LATE_LAST_US.store(late, Ordering::Relaxed);
         LATE_MAX_US.fetch_max(late, Ordering::Relaxed);
+        LATE_WINDOW_US.fetch_max(late, Ordering::Relaxed);
         if late > LATENESS_BUDGET_US {
             LATE_OVER_BUDGET.fetch_add(1, Ordering::Relaxed);
         }
@@ -758,4 +764,14 @@ fn pair(counters: &[AtomicU32; 2]) -> String {
         counters[0].load(Ordering::Relaxed),
         counters[1].load(Ordering::Relaxed)
     )
+}
+
+/// The control tick's figures for one runtime row (the supervisor's `runtime.csv`): the overruns so far, and the
+/// largest lateness and the longest work since the last call, microseconds, those two then cleared.
+pub fn window() -> [u32; 3] {
+    [
+        OVERRUNS.load(Ordering::Relaxed),
+        LATE_WINDOW_US.swap(0, Ordering::Relaxed),
+        WORK_WINDOW_US.swap(0, Ordering::Relaxed),
+    ]
 }

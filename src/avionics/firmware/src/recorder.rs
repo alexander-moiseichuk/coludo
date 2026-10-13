@@ -217,6 +217,8 @@ struct Recording {
     recorder: &'static Recorder,
     /// The supervisor's health.csv stream.
     health: StreamId,
+    /// The supervisor's runtime.csv stream.
+    runtime: StreamId,
     /// Each recorded device's stream, by entry name (controller::stream).
     devices: Vec<(String, StreamId)>,
     /// This boot's NVS count; None when uncounted (block headers then carry 0).
@@ -291,6 +293,11 @@ pub fn get() -> Option<&'static Recorder> {
 /// The health.csv stream; None without a recorder.
 pub fn health_stream() -> Option<StreamId> {
     RECORDING.get().map(|recording| recording.health)
+}
+
+/// The runtime.csv stream; None without a recorder.
+pub fn runtime_stream() -> Option<StreamId> {
+    RECORDING.get().map(|recording| recording.runtime)
 }
 
 /// The stream of device `name` (controller::stream); None without a recorder, or for a device that writes none.
@@ -369,6 +376,9 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool)
     let health = registry
         .add(supervisor::HEALTH_FILE, &supervisor::HEALTH_FIELDS, 0, false)
         .map_err(|error| anyhow::anyhow!("{}: {error:?}", supervisor::HEALTH_FILE))?;
+    let runtime = registry
+        .add(supervisor::RUNTIME_FILE, &supervisor::RUNTIME_FIELDS, 0, false)
+        .map_err(|error| anyhow::anyhow!("{}: {error:?}", supervisor::RUNTIME_FILE))?;
     let devices = device_streams(document, &mut registry);
     let buffers = Buffers {
         producers: PRODUCER_BYTES
@@ -398,6 +408,7 @@ pub fn open(document: &Value, boot_id: Option<i32>, session: &str, flight: bool)
     let recording = Recording {
         recorder: Box::leak(Box::new(recorder)),
         health,
+        runtime,
         devices,
         boot_id,
         session,

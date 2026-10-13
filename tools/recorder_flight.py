@@ -101,6 +101,10 @@ _FIELDS: dict = {
     'laser_agl': ('agl', 'irq_runs'),
     'laser_agl_l1x': ('agl', 'irq_runs'),  # the VL53L1X alternate of the same socket (the Rust port records both)
     'health': ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps', 'rescues', 'rescue_ms'),
+    # the Rust port's own (firmware/src/supervisor.rs RUNTIME_FIELDS): internal and DMA RAM, per-core load, the
+    # control tick's overruns and its per-row lateness and work maxima
+    'runtime': ('internal_free', 'internal_min', 'dma_free', 'dma_min', 'load_core0', 'load_core1', 'overruns',
+                'late_max_us', 'work_max_us'),
     'gnss': ('lat', 'lon', 'speed_kn', 'course'),
     'gnss_gga': ('altitude_m', 'elevation_m', 'quality', 'satellites', 'hdop_cd'),
     'gnss_sky': ('in_view', 'used', 'mode', 'cn0_1', 'cn0_2', 'cn0_3', 'cn0_4', 'antenna'),

@@ -76,6 +76,28 @@ pub const HEALTH_FIELDS: [&str; 8] = [
     "rescue_ms",
 ];
 
+/// The runtime stream's file: `<session>_runtime.csv` on the SD (Rust-only; plan B has no counterpart).
+pub const RUNTIME_FILE: &str = "runtime.csv";
+
+/// The runtime stream's columns after `uptime`, a row a second beside health.csv's (the operator, 2026-10-13: the
+/// board's own figures, which health.csv's plan B columns do not carry):
+/// * `internal_free`, `internal_min` - free internal 8-bit RAM now and its low-water mark since boot, bytes;
+/// * `dma_free`, `dma_min` - the same for DMA-capable internal RAM, the scarce kind (the camera, the SD, Wi-Fi);
+/// * `load_core0`, `load_core1` - each core's CPU load since the last row, whole percent;
+/// * `overruns` - the control tick's overruns since boot;
+/// * `late_max_us`, `work_max_us` - its largest lateness and longest work since the last row, µs.
+pub const RUNTIME_FIELDS: [&str; 9] = [
+    "internal_free",
+    "internal_min",
+    "dma_free",
+    "dma_min",
+    "load_core0",
+    "load_core1",
+    "overruns",
+    "late_max_us",
+    "work_max_us",
+];
+
 /// The base tick in ms: every duty runs on a whole number of them, its period rounded up.
 const BASE_TICK_MS: u64 = 100;
 
@@ -447,7 +469,7 @@ pub fn inspect() -> Inspection {
     }
 }
 
-/// health.csv: the vitals it samples and its stream.
+/// health.csv and runtime.csv: the vitals they sample and their streams.
 struct Health {
     /// The board's vitals (the die temperature).
     board: Arc<Board>,
@@ -455,33 +477,44 @@ struct Health {
     load: Load,
     /// health.csv: a refused row logged once a run (recorder::Rows).
     rows: Rows<'static>,
+    /// runtime.csv, the same way.
+    runtime: Rows<'static>,
 }
 
 impl Health {
-    /// The stream of `board`'s vitals, counting the load from now.
+    /// The streams of `board`'s vitals, counting the load from now.
     fn new(board: Arc<Board>) -> Health {
+        let stream = |stream: Option<_>| {
+            crate::recorder::get()
+                .zip(stream)
+                .and_then(|(recorder, stream)| Telemetry::new(recorder, stream))
+        };
         Health {
             board,
             load: Load::new(),
             rows: Rows::new(
                 "supervisor",
                 "health.csv row:",
-                crate::recorder::get()
-                    .zip(crate::recorder::health_stream())
-                    .and_then(|(recorder, stream)| Telemetry::new(recorder, stream)),
+                stream(crate::recorder::health_stream()),
+            ),
+            runtime: Rows::new(
+                "supervisor",
+                "runtime.csv row:",
+                stream(crate::recorder::runtime_stream()),
             ),
         }
     }
 
-    /// One row at `now_us`, with a recorder.
+    /// One row of each stream at `now_us`, with a recorder; one load sample serves both.
     fn row(&mut self, now_us: u64) {
         if !self.rows.recording() {
             return;
         }
+        let load = self.load.per_core_percent(now_us);
         let row = [
             self.board.celsius().map_or(Cell::None, Cell::F32),
             Cell::I64(board::heap_free(sys::MALLOC_CAP_8BIT) as i64),
-            Cell::I32(self.load.busiest_percent(now_us)),
+            Cell::I32(load[0].max(load[1])),
             Cell::None,   // oom_s
             Cell::None,   // land_s
             Cell::I32(0), // leak_kbps
@@ -491,6 +524,21 @@ impl Health {
         // telemetry raises (the error policy): the recorder counts the row in tlm.dropped, and the first of a run of
         // refusals is logged
         self.rows.push(now_us, &row);
+        let internal = sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_8BIT;
+        let dma = sys::MALLOC_CAP_INTERNAL | sys::MALLOC_CAP_DMA;
+        let [overruns, late_max_us, work_max_us] = crate::control::window();
+        let runtime = [
+            Cell::I64(board::heap_free(internal) as i64),
+            Cell::I64(board::heap_minimum(internal) as i64),
+            Cell::I64(board::heap_free(dma) as i64),
+            Cell::I64(board::heap_minimum(dma) as i64),
+            Cell::I32(load[0]),
+            Cell::I32(load[1]),
+            Cell::I64(i64::from(overruns)),
+            Cell::I64(i64::from(late_max_us)),
+            Cell::I64(i64::from(work_max_us)),
+        ];
+        self.runtime.push(now_us, &runtime);
     }
 }
 
@@ -512,20 +560,17 @@ impl Load {
         }
     }
 
-    /// The busiest core's load since the last call, in whole percent (0 for a core whose idle task ran throughout).
-    fn busiest_percent(&mut self, now_us: u64) -> i32 {
+    /// Each core's load since the last call, in whole percent (0 for a core whose idle task ran throughout).
+    fn per_core_percent(&mut self, now_us: u64) -> [i32; 2] {
         let idle = idle_times();
         let elapsed_us = now_us.saturating_sub(self.sampled_us).max(1);
-        let busiest = (0..2)
-            .map(|core| {
-                let idle_us = idle[core].saturating_sub(self.idle[core]).min(elapsed_us);
-                100 - (idle_us * 100 / elapsed_us) as i32
-            })
-            .max()
-            .unwrap_or(0);
+        let load = [0, 1].map(|core| {
+            let idle_us = idle[core].saturating_sub(self.idle[core]).min(elapsed_us);
+            100 - (idle_us * 100 / elapsed_us) as i32
+        });
         self.idle = idle;
         self.sampled_us = now_us;
-        busiest
+        load
     }
 }
 
