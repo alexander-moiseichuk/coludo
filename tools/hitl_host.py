@@ -22,7 +22,9 @@ The run, one scenario:
 
 It prints the lines tools/hitl_collect.sh parses from plan B's hitl_run: `SESSION <session> <motor> noise <n> wind
 <w>`, `STAGE <id> <name>` per change, a trace every 5 s of glide, `DONE` or `TIMEOUT <stage>`, `FINS <n> of <answers>
-...` (how many answers carried fins, and each fin's angle range), `RUN_END`.
+...` (how many answers carried fins, and each fin's angle range), `RUN_END`; and the physics' score, as the SITL
+prints it: `LANDED miss=<m> inside=<bool> aloft=<s> apogee=<m>`, and with --boost 6dof `BOOST path_min=<deg>
+tilt_max=<deg> looped=<bool> burnout=<m/s>` (tools/boost_sweep.py parses both).
 
   tools/hitl_host.py --ip 192.168.102.152 --hub taster                  # the taster, F15, clean
   tools/hitl_host.py --ip 192.168.102.162 --hub TMS-7F --noise 0.05 --wind 6 --wind-dir 210
@@ -109,6 +111,18 @@ def hitl_config(saved: dict, not_ported: set, args: argparse.Namespace) -> dict:
         raise ValueError('%d flight entries in the config: HITL flies exactly one' % len(flights))
     flights[0]['enabled'] = True
     flights[0]['gains'] = _plan_b_gains()
+    # BOOSTING's law (doc/specs/boost-control.md): passive leaves BOOSTING out of the control stages, hold is plan B's
+    # entry-attitude hold, lean the BC3 law; `config` flies whatever the board's config says
+    law = getattr(args, 'boost_law', 'config')
+    if law != 'config':
+        stages = flights[0].setdefault('stages', {})
+        flights[0].pop('boost_law', None)
+        if law == 'passive':
+            stages.pop('boosting', None)
+        else:
+            stages.setdefault('boosting', {})
+            if law == 'lean':
+                flights[0]['boost_law'] = 'lean'
     # the law plans with the airframe the physics flies: its reach (glide_ratio) and the endgame's stall floor
     frame = sim_model.AIRFRAMES[getattr(args, 'airframe', 'tms7')]
     flights[0]['glide_ratio'] = frame['air_quality']
@@ -580,6 +594,9 @@ def _arguments() -> argparse.Namespace:
                         help='--boost 6dof: the stack (tools/stack_dynamics.STACKS)')
     parser.add_argument('--stack-margin', type=float, help='--boost 6dof: the stack\'s static margin in calibers '
                         '(its profile\'s otherwise; a sweep)')
+    parser.add_argument('--boost-law', default='config', choices=('config', 'passive', 'hold', 'lean'),
+                        help="BOOSTING's law over the board's config: passive (not a control stage), hold (plan B's), "
+                             "lean (BC3); config (default) flies the config's")
     parser.add_argument('--stack-azimuth', type=float, help='--boost 6dof: the compass direction the stack\'s '
                         'dorsal side faces on the rod (default: the wind\'s, against the folded wings)')
     parser.add_argument('--laser-range-m', type=float, default=4.0)
@@ -798,6 +815,14 @@ def main() -> int:
               % (sim.sim_time, wall, wall - sim.sim_time, sim.seq, sim.answers))
         print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
             '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
+        # the physics' score, as the SITL prints it: realtime, the sim's clock runs from ignition and stops at DONE
+        miss, inside = landing(sim.body.position(), scenario['zone'])
+        print('LANDED miss=%.1f inside=%s aloft=%.1f apogee=%.0f' % (miss, inside, sim.sim_time, sim.apogee))
+        if sim.stack is not None:
+            burn = sim.burn
+            print('BOOST path_min=%.1f tilt_max=%.1f looped=%s burnout=%.1f' % (
+                burn['path_min'], burn['tilt_max'], burn['looped'],
+                burn['burnout_ms'] if burn['burnout_ms'] is not None else -1.0))
         # the control tick's figures over the flight (its counters live until the restore's reboot below): rate,
         # overruns, the largest lateness and work -- how fast the board reacts; and the card's: the video writer's,
         # the ring_saver's and the free space (the partition A/B, avionics-port.md "SD and flash file layout")

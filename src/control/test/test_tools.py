@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(_ROOT, 'tools'))
 import airspeed_calibrate  # noqa: E402
 import assemble_capture  # noqa: E402
 import board_clean  # noqa: E402
+import boost_sweep  # noqa: E402
 import cc  # noqa: E402
 import flight_campaign  # noqa: E402
 import flight_kpi  # noqa: E402
@@ -1972,6 +1973,63 @@ def test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains():
             raise AssertionError('accepted %d flight entries' % len(components))
 
 
+def test_hitl_host_sets_boostings_law_over_the_boards_config():
+    """
+    --boost-law sets BOOSTING's law over the board's own flight entry (doc/specs/boost-control.md BC4): passive takes
+    BOOSTING out of the control stages, hold puts it in with plan B's hold, lean with `boost_law: lean`; the other
+    stages stay the board's. NEGATIVE: `config` (the default, and a Namespace without the attribute) changes nothing,
+    a hold over a lean config drops the lean, and the saved config itself is never touched.
+    """
+    args = argparse.Namespace(motor='F15', glider_g=285, sim_hz=50, noise=0.0, spike=False, wind=0.0,
+                              wind_dir=0.0, boost_axis='z', gnss_drift=0.0, gnss_drift_dir=0.0, pad_dwell_s=0.0,
+                              inject_hz=0)
+    saved = {'components': [{'name': 'flight', 'activity': 'flight', 'boost_law': 'lean',
+                             'stages': {'boosting': {}, 'gliding': {'pitch': -6}}}]}
+    def flown(law):
+        """The flight entry hitl_config installs under `law` (None: no --boost-law attribute at all)."""
+        namespace = args if law is None else argparse.Namespace(**dict(vars(args), boost_law=law))
+        return hitl_host.hitl_config(saved, set(), namespace)['components'][0]
+    passive, hold, lean = flown('passive'), flown('hold'), flown('lean')
+    assert passive['stages'] == {'gliding': {'pitch': -6}} and 'boost_law' not in passive, passive
+    assert hold['stages'] == {'boosting': {}, 'gliding': {'pitch': -6}} and 'boost_law' not in hold, hold
+    assert lean['stages'] == hold['stages'] and lean['boost_law'] == 'lean', lean
+    for unchanged in (flown('config'), flown(None)):
+        assert unchanged['stages'] == saved['components'][0]['stages'] and unchanged['boost_law'] == 'lean'
+    bare = {'components': [{'name': 'flight', 'activity': 'flight'}]}
+    held = hitl_host.hitl_config(bare, set(), argparse.Namespace(**dict(vars(args), boost_law='hold')))
+    assert held['components'][0]['stages'] == {'boosting': {}}, 'a config with no stages gets BOOSTING'
+    assert saved['components'][0]['stages'] == {'boosting': {}, 'gliding': {'pitch': -6}}, 'the saved one untouched'
+
+
+def test_boost_sweep_scores_a_flight_and_keeps_the_matrix_out_of_the_grid():
+    """
+    boost_sweep scores a flight from hitl_host.py's BOOST and LANDED lines, the SITL's and a board's alike (BC4), and
+    the grid's summary takes the grid's flights only: the matrix's scenarios (the stack's own margin, -1) go to
+    matrix_summary, which counts done flights only. NEGATIVE: an output with no lines scores -1, not looped, outcome
+    none; a TIMEOUT scores timeout.
+    """
+    out = ('SESSION 001 F15\nDONE\nLANDED miss=12.5 inside=True aloft=98.0 apogee=171\n'
+           'BOOST path_min=74.0 tilt_max=21.5 looped=False burnout=48.2\n')
+    score = boost_sweep._score(out)
+    assert score == {'outcome': 'done', 'path_min_deg': 74.0, 'tilt_max_deg': 21.5, 'looped': False,
+                     'burnout_ms': 48.2, 'apogee_m': 171, 'aloft_s': 98.0, 'miss_m': 12.5, 'inside': True}, score
+    empty = boost_sweep._score('')
+    assert (empty['outcome'], empty['path_min_deg'], empty['looped'], empty['apogee_m']) == ('none', -1.0, False, -1)
+    assert boost_sweep._score('TIMEOUT 3\n')['outcome'] == 'timeout'
+    looped = boost_sweep._score(out.replace('looped=False', 'looped=True'))
+    grid = [dict(score, law='lean', margin_cal=0.5, wind_ms=3.0, run=run, board='taster', scenario='m0.5_w3_r%d' % run)
+            for run in (1, 2)] + [dict(looped, law='lean', margin_cal=0.5, wind_ms=6.0, run=1, board='TMS-7F',
+                                       scenario='m0.5_w6_r1')]
+    matrix = [dict(score, law='lean', margin_cal=-1.0, wind_ms=0.0, run=1, board='taster', scenario='noise05'),
+              dict(empty, law='lean', margin_cal=-1.0, wind_ms=0.0, run=1, board='taster', scenario='noise10')]
+    lines = boost_sweep.summary(grid + matrix)
+    assert [(line['margin_cal'], line['wind_ms'], line['flights'], line['loops']) for line in lines] == [
+        (0.5, 3.0, 2, 0), (0.5, 6.0, 1, 1)], lines
+    assert boost_sweep.matrix_summary(grid + matrix) == [
+        {'law': 'lean', 'flights': 1, 'loops': 0, 'median_path_min_deg': 74.0, 'median_miss_m': 12.5, 'in_zone': 1,
+         'median_apogee_m': 171}]
+
+
 def test_flight_pull_takes_a_session_not_a_junk_name():
     """
     flight_pull.sh with no session pulls the newest one: the session whose second-newest file is the newest.
@@ -2074,6 +2132,8 @@ test_hitl_host_frames_are_the_boards_bytes()
 test_recorder_flight_anchors_a_weak_boost_on_the_stage_machine()
 test_the_sim_link_codec_round_trips_both_ways()
 test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains()
+test_hitl_host_sets_boostings_law_over_the_boards_config()
+test_boost_sweep_scores_a_flight_and_keeps_the_matrix_out_of_the_grid()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
       'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '
       'airspeed calibration fit, parser edge cases, session-tag eras (boot id included), '
