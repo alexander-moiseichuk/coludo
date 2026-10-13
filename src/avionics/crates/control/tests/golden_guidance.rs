@@ -71,7 +71,11 @@ fn config(input: &Value) -> GuidanceConfig {
     let window = input["position_window_ms"]
         .as_u64()
         .map_or(1000, |window| window as u32);
-    GuidanceConfig::from_json(&input["config"], window)
+    // plan B has no wrap latch (turn_wrap_band_deg is Rust-only): its fixtures replay with it off
+    GuidanceConfig {
+        turn_wrap_band: 0,
+        ..GuidanceConfig::from_json(&input["config"], window)
+    }
 }
 
 /// What a step's inputs hand the law: its readings, the zone's landing geometry and the launch point.
@@ -112,7 +116,10 @@ fn replay(fixture: &Grouped, case: &Value) -> Vec<String> {
     let name = case["name"].as_str().unwrap();
     let init = &case["init"];
     let zone = landing(&init["zone"], &init["endgame_heading"]);
-    let mut guidance = Guidance::new(GuidanceConfig::from_json(&init["config"], 1000));
+    let mut guidance = Guidance::new(GuidanceConfig {
+        turn_wrap_band: 0, // plan B's shortest turn, as config() says
+        ..GuidanceConfig::from_json(&init["config"], 1000)
+    });
     let mut failures = Vec::new();
     let steps = case["steps"].as_array().expect("a scenario has steps");
     assert!(!steps.is_empty(), "{name}: no steps");

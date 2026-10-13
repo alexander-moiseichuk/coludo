@@ -26,7 +26,7 @@
 //! irrelevant to a servo, it is an integer column of the telemetry contract (flight.csv `heading_error`, the
 //! health vitals), and its smoothing filter's rounding rule is part of the law (see [`SteeringFilter`]).
 //!
-//! Deliberate differences from plan B (none changes a flight with a valid config):
+//! Deliberate differences from plan B (all but the last leave a flight with a valid config as plan B's):
 //!  * `compute` takes no setpoint argument: plan B passes the stage's setpoint dict through to every law, and no
 //!    law reads it.
 //!  * a law that needs the stage's configured setpoints and finds none answers with zeros; plan B raises
@@ -41,6 +41,9 @@
 //!    Plan B's config validate() refuses a non-number for eight of the knobs before a flight.
 //!  * before the first [`Guidance::enter`] the captured heading is north (0); plan B's is None and raises where
 //!    it is used. The flight task enters before it computes.
+//!  * a BEHAVIOUR difference, on by default: near the half turn the steering keeps the turn in progress across
+//!    the ±180 wrap (`turn_wrap_band_deg`, 45; [`keep_turn`]), where plan B's shortest turn let noise flip the
+//!    bank from side to side. 0 flies plan B's, and the golden fixtures replay with it.
 
 use crate::commons::between;
 use crate::navigation::{self, Position};
@@ -197,6 +200,10 @@ pub struct GuidanceConfig {
     /// The steering noise filter's EMA divisor power (`steer_filter_shift`, 3: alpha 1/8, tau ~80 ms at 100 Hz).
     /// It kills the bank flapping that wobbled the endgame spiral at >= 25 % sensor noise; 0 disables it.
     pub steer_filter_shift: u32,
+    /// Within this many degrees of 180 the heading error keeps the turn in progress across the wrap
+    /// (`turn_wrap_band_deg`, 45; Rust-only, see [`keep_turn`]). 0 is plan B's shortest turn every step. 45 from
+    /// the SITL matrix's seeds (doc/sims/TMS-7-rust_hitl_m14 §3g): 15 still flips, 45 and 60 land alike.
+    pub turn_wrap_band: i32,
     /// The target heading is recomputed at most this often, microseconds (`nav_period_ms`, 100 ms): the GNSS
     /// fixes at ~10 Hz, so recomputing every 100 Hz tick buys nothing. Signed, as plan B's tick difference is.
     pub navigation_period_us: i64,
@@ -248,6 +255,7 @@ impl GuidanceConfig {
             final_intercept: number("final_intercept_deg", 45.0),
             boost_engage_speed: number("boost_engage_speed", 15.0),
             steer_filter_shift: filter_shift(config.get("steer_filter_shift")),
+            turn_wrap_band: number("turn_wrap_band_deg", 45.0).clamp(0.0, 180.0) as i32,
             navigation_period_us: config
                 .get("nav_period_ms")
                 .and_then(Value::as_f64)
@@ -556,6 +564,22 @@ pub fn heading_error(target: f32, current: f32) -> i32 {
     wrapped as i32
 }
 
+/// The heading `error` with the turn in progress kept across the ±180 wrap (Rust-only; the 2026-10-13 r4 board
+/// matrix). When the `previous` error and this one both lie within `band` degrees of 180 on opposite sides, the
+/// target is behind the glider either way, and noise flips the shortest turn from one side to the other and back:
+/// in an endgame orbit that cost one flight 60 m. The turn goes on instead, as ±180 (the telemetry column's range).
+/// Continuing it carries the raw error across the wrap to the same side within the band, and a target that really
+/// moved across (the 'ov' pattern's leg ends) costs at most twice the band of extra turn. A band of 0 is plan B's
+/// shortest turn every step.
+fn keep_turn(previous: i32, error: i32, band: i32) -> i32 {
+    let near_wrap = |value: i32| value.abs() >= 180 - band;
+    if band > 0 && near_wrap(previous) && near_wrap(error) && previous.signum() != error.signum() {
+        180 * previous.signum()
+    } else {
+        error
+    }
+}
+
 /// The roll to hold for a heading error (commons.bank_demand): proportional, with a symmetric hard clamp. A
 /// banked turn is tight (~v^2/(g tan(bank))) where a flat rudder skid is wide and weak, so the glider does not
 /// over-range a small zone and the overshoot loop becomes an altitude-bleeding orbit.
@@ -594,6 +618,9 @@ pub struct Guidance {
     pitch_setpoint: f32,
     /// The (filtered) heading error, whole degrees: what the yaw PID nulls.
     heading_error: i32,
+    /// The last steered heading error, whole degrees: the turn in progress [`keep_turn`] carries across the wrap;
+    /// 0 on a control entry.
+    steered_error: i32,
     /// Whether the last navigation pass flew on dead reckoning (telemetry reads it).
     reckoning: bool,
     /// The heading captured on entering control: the blind fallback and the hold law's heading.
@@ -631,6 +658,7 @@ impl Guidance {
             roll_setpoint: 0.0,
             pitch_setpoint: 0.0,
             heading_error: 0,
+            steered_error: 0,
             reckoning: false,
             heading_hold: 0.0,
             roll_hold: 0.0,
@@ -787,6 +815,7 @@ impl Guidance {
         self.pitch_hold = pitch;
         self.target_heading = None;
         self.filter.reset();
+        self.steered_error = 0; // no turn in progress for keep_turn to carry over
         self.lobe = Lobe::GateB; // the 'oo' endgame starts fresh: a stale near-latch would drop a crossing
         self.was_near = false;
     }
@@ -838,7 +867,9 @@ impl Guidance {
             .filter(|elevation| config.endgame_altitude_m != 0.0 && *elevation < config.endgame_altitude_m)
             .map(|elevation| (elevation / config.endgame_altitude_m).max(0.0));
         let target = self.target(heading, final_approach, now_us, endgame, inputs);
-        self.heading_error = self.filter.filter(heading_error(target, heading));
+        let error = self.filter.filter(heading_error(target, heading));
+        self.heading_error = keep_turn(self.steered_error, error, self.config.turn_wrap_band);
+        self.steered_error = self.heading_error;
         let config = &self.config;
         let setpoint = config.stage_setpoint(stage).unwrap_or_default();
         self.pitch_setpoint = setpoint.pitch;

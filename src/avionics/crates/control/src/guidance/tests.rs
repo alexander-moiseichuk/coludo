@@ -6,7 +6,9 @@
 //! the turn physics and reachability. The golden fixture (tests/golden_guidance.rs) holds the numbers to plan B;
 //! these hold the rules, each with what must NOT happen.
 
-use super::{Fix, Guidance, GuidanceConfig, Heading, Inputs, Landing, Setpoint, SteeringFilter, heading_error};
+use super::{
+    Fix, Guidance, GuidanceConfig, Heading, Inputs, Landing, Setpoint, SteeringFilter, heading_error, keep_turn,
+};
 use crate::navigation::{self, Position};
 use sequencer::Stage;
 use serde_json::{Value, json};
@@ -453,6 +455,58 @@ fn gliding_banks_to_turn_and_landing_takes_the_full_authority() {
     flat.enter(0.5, 0.0, 0.0);
     flat.compute(Stage::Gliding, 0.5, 0, &fixed_at(west_of_strip()));
     assert_eq!(flat.roll_setpoint(), 2.0);
+}
+
+#[test]
+fn a_turn_near_the_half_turn_keeps_its_direction_across_the_wrap() {
+    // both within 30 of 180, on opposite sides: the turn in progress goes on, as +-180
+    assert_eq!(keep_turn(179, -178, 30), 180);
+    assert_eq!(keep_turn(-170, 165, 30), -180);
+    assert_eq!(keep_turn(180, -180, 30), 180);
+    // NEGATIVE: one side out of the band, or the same side, is the error itself
+    assert_eq!(keep_turn(149, -178, 30), -178, "the last error was no half turn");
+    assert_eq!(keep_turn(179, -149, 30), -149, "this one is no half turn");
+    assert_eq!(keep_turn(170, 160, 30), 160);
+    assert_eq!(keep_turn(0, -180, 30), -180);
+    assert_eq!(keep_turn(179, -178, 0), -178, "a band of 0 is plan B's shortest turn");
+    assert_eq!(
+        GuidanceConfig::from_json(&json!({}), 1000).turn_wrap_band,
+        45,
+        "on by default"
+    );
+    // through the law (the steering filter off: what is under test is the latch after it): the zone behind the
+    // glider, its heading wobbling across the wrap
+    let config = json!({"nav_bank_gain": 1.5, "bank_limit": 30, "steer_filter_shift": 0, "stages": {"gliding": {}}});
+    let mut guidance = law(config);
+    guidance.enter(0.5, 0.0, 0.0);
+    guidance.compute(Stage::Gliding, 0.5, 0, &fixed_at(west_of_strip()));
+    let target = guidance.target_heading().unwrap();
+    let right = (target + 181.5).rem_euclid(360.0); // 178-179 degrees to the right
+    let left = (target + 177.5).rem_euclid(360.0); // 177-178 degrees to the left
+    guidance.compute(Stage::Gliding, right, 0, &fixed_at(west_of_strip()));
+    assert!(guidance.heading_error() >= 150 && guidance.roll_setpoint() == 30.0);
+    guidance.compute(Stage::Gliding, left, 0, &fixed_at(west_of_strip()));
+    assert_eq!(
+        (guidance.heading_error(), guidance.roll_setpoint()),
+        (180, 30.0),
+        "the wobble does not flip the bank"
+    );
+    // NEGATIVE: out of the band the latch is gone, and the same wobble then turns left
+    let quarter = (target - 120.0).rem_euclid(360.0);
+    guidance.compute(Stage::Gliding, quarter, 0, &fixed_at(west_of_strip()));
+    guidance.compute(Stage::Gliding, left, 0, &fixed_at(west_of_strip()));
+    assert!(guidance.heading_error() <= -150 && guidance.roll_setpoint() == -30.0);
+    // and a control entry carries no turn over
+    guidance.enter(0.5, 0.0, 0.0);
+    guidance.compute(Stage::Gliding, right, 0, &fixed_at(west_of_strip()));
+    assert_eq!(guidance.roll_setpoint(), 30.0);
+    // NEGATIVE: turn_wrap_band_deg 0 flies plan B's flip
+    let mut plan_b = law(json!({"nav_bank_gain": 1.5, "bank_limit": 30, "steer_filter_shift": 0,
+                                "turn_wrap_band_deg": 0, "stages": {"gliding": {}}}));
+    plan_b.enter(0.5, 0.0, 0.0);
+    plan_b.compute(Stage::Gliding, right, 0, &fixed_at(west_of_strip()));
+    plan_b.compute(Stage::Gliding, left, 0, &fixed_at(west_of_strip()));
+    assert!(plan_b.heading_error() <= -150 && plan_b.roll_setpoint() == -30.0);
 }
 
 #[test]

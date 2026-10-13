@@ -3107,6 +3107,12 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
   deadband (move once the command is a step away, then straight to it); the SITL sweep
   (doc/sims/TMS-7-servo_step) found it lets a fin rest up to a step off its command and lands worse, where the grid
   with hysteresis saves the same energy and lands no worse than step 1.
+- **The flight entry's `turn_wrap_band_deg`** (operator, 2026-10-13; Rust-only, ON by default at 45): when the
+  last heading error and the new one both lie within that many degrees of 180 on opposite sides of the wrap, the
+  steering keeps the turn in progress (as ±180) instead of plan B's shortest turn, which let noise flip the bank
+  from side to side behind the glider (the r4 board matrix's E16 noise10, 145 m). Over the SITL's 320 seeded
+  flights it took the in-zone landings 22 -> 36 and the mean miss -10 m on both motors (doc/sims/TMS-7-rust_hitl_m14
+  §3g). 0 flies plan B's; the golden fixtures replay at 0.
 - **The flight entry's `boost_law`** (Rust-only, doc/specs/boost-control.md BC3): `lean` steers BOOSTING by the lean
   of the body axis (the elevons the lean toward the dorsal side, the yaw fin the lean toward the left wing, the roll
   loop rate damping only); `hold`, the default, is plan B's captured-attitude hold.
