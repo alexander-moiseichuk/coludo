@@ -43,6 +43,7 @@ import json
 import math
 import os
 import random
+import re
 import socket
 import subprocess
 import sys
@@ -78,6 +79,7 @@ _LOCKSTEP_WAIT_S: float = 2.0  # how long a lockstep frame waits for its answer 
 _GATE_S: float = 120.0  # how long the board gets to join Wi-Fi and answer a frame
 _QUIET_S: float = 3.0  # after an answer that is no reply: the board finishes a long one (get-config, ~0.8 s)
 _OFF: tuple = ('separation', 'watchdog', 'bluetooth', 'field')  # plan B's _OFF less the radios the link rides
+_SERVO_DRIVERS: tuple = ('sg90', 'mg90s')  # the fins' drivers (firmware/src/fins.rs SERVO_DRIVERS)
 
 
 def _plan_b_gains() -> dict:
@@ -122,6 +124,9 @@ def hitl_config(saved: dict, not_ported: set, args: argparse.Namespace) -> dict:
             # commanded and recorded (degrees, steps), but with no power reading arm's probe passes open-loop
             if getattr(args, 'no_power', False) and entry.get('driver') == 'ina226':
                 entry['enabled'] = False
+            # the fins' step (tools/servo_step_sweep.py): every fin's grid, its own setting otherwise
+            if getattr(args, 'servo_step', None) is not None and entry.get('driver') in _SERVO_DRIVERS:
+                entry['step_deg'] = args.servo_step
             kept.append(entry)
         if key in hitl:
             hitl[key] = kept
@@ -600,6 +605,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--sitl-port', type=int, default=SIM_PORT + 10, help='--sitl: its UDP port on localhost')
     parser.add_argument('--seed', type=int, help='seed the noise and the spikes (a lockstep run then repeats)')
     parser.add_argument('--record', help='--sitl: write the flown streams here as a Rust cut (<dir>/flight/)')
+    parser.add_argument('--servo-step', type=int, help="every fin's step_deg, whole degrees: a grid about the neutral "
+                        '(over 1), any change (1), every command (0); the config\'s own when not given')
     return parser.parse_args()
 
 
@@ -659,6 +666,11 @@ def _sitl(args: argparse.Namespace) -> int:
                 burn['burnout_ms'] if burn['burnout_ms'] is not None else -1.0))
         print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
             '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
+        # the SITL's own tally at DONE (logged before its DONE answer): each fin's writes and the degrees they moved it
+        with open(os.path.join(folder, 'sitl.log')) as handle:
+            tally = re.search(r'sitl :: servos \(writes/degrees\) (.*)$', handle.read(), re.M)
+        if tally:
+            print('SERVOS %s' % tally.group(1))
         if args.record:
             sim.write_record(args.record)
         print('RUN_END')
