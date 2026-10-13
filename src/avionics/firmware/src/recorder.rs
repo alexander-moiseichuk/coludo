@@ -530,11 +530,6 @@ fn write(recording: &'static Recording, settings: EspCustomNvsPartition, card: O
     if let Some(current) = task::current() {
         WRITER_TASK.store(current, Ordering::Release);
     }
-    // a page program sleeps while the chip works (~0.7 ms, a tick at most), where it spun: 9.6 % of core 0 on the pad
-    // SAFETY: registers the calling task in components/flash_wait, nothing else
-    if let Err(error) = sys::esp!(unsafe { sys::flash_wait_sleep() }) {
-        log::warn!("ring :: the writer's flash waits stay spins: {error}");
-    }
     let recorder = recording.recorder;
     let store = RecorderStore::open(settings.clone())
         .inspect_err(|error| log::warn!("ring :: the cfg NVS would not open, no positions kept: {error}"))
