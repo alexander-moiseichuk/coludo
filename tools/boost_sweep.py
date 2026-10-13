@@ -17,7 +17,8 @@ present (hold), `boost_law` set (lean).
 
 On boards (BC4): `--boards taster=192.168.102.152:/dev/ttyACM0 TMS-7F=192.168.102.162:/dev/ttyACM1:no-power` flies
 the same grid in realtime HITL, each board taking the next flight from one queue, the laws by name (`--laws passive
-hold lean`: hitl_host.py `--boost-law` over each board's own config); every flight goes through
+hold lean`: hitl_host.py `--boost-law` over each board's own config; `lean@10` adds a 10-degree boost ceiling,
+`--boost-limit`); every flight goes through
 tools/hitl_collect_host.sh (pulled, cut) into <outdir>/flights/<law>_m<margin>_w<wind>_r<run>/, plots deferred
 (plotting during another board's realtime flight would load the host). `no-power` is a board whose servo rail is
 off (hitl_host.py --no-power). `--scenarios` adds the 12-scenario matrix (tools/hitl_matrix_host.sh's table) at the
@@ -76,7 +77,10 @@ def fly_board(board: tuple, job: dict, stack: str, glider_g: int, out: str) -> d
     its row (`_COLUMNS`), scored from the flight's host.log. A flight that never flew reads -1, outcome none.
     """
     name, ip, console, no_power = board
-    flags = ['--boost', '6dof', '--stack', stack, '--seed', str(job['run']), '--boost-law', job['law']]
+    law, _, limit = job['law'].partition('@')  # lean@10: the lean law under a 10-degree boost ceiling
+    flags = ['--boost', '6dof', '--stack', stack, '--seed', str(job['run']), '--boost-law', law]
+    if limit:
+        flags += ['--boost-limit', limit]
     if job['margin_cal'] is not None:
         flags += ['--stack-margin', str(job['margin_cal'])]
     if no_power:

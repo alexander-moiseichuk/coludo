@@ -156,6 +156,11 @@ pub struct Governor {
     interval: f32,
     /// The seconds since the last estimator update: the integration interval of the next one.
     accumulated: f32,
+    /// A stage's own ceiling on the cap, whole degrees (BOOSTING's `boost_limit_deg`, the operator's +/-10 of
+    /// 2026-06-25): the cap written is the lower of the two. None: the cap alone, plan B's.
+    ceiling: Option<i32>,
+    /// The cap the last update derived, before the ceiling; None before the first.
+    derived: Option<i32>,
 }
 
 impl Governor {
@@ -169,7 +174,33 @@ impl Governor {
             estimator: AirspeedEstimator::default(),
             interval,
             accumulated: 0.0,
+            ceiling: None,
+            derived: None,
         }
+    }
+
+    /// Set the stage's ceiling on the cap (None lifts it), the mixer re-capped AT ONCE when it changes and a cap was
+    /// derived: a glide must not start under the boost's ceiling until the throttled next update. Before the first
+    /// update the ceiling waits for it.
+    pub fn set_ceiling(&mut self, mixer: &mut Mixer, ceiling: Option<i32>) {
+        if ceiling == self.ceiling {
+            return;
+        }
+        self.ceiling = ceiling;
+        if let Some(cap) = self.derived {
+            mixer.set_limit(self.ceiled(cap));
+        }
+    }
+
+    /// The cap under the ceiling, if any.
+    fn ceiled(&self, cap: i32) -> i32 {
+        self.ceiling.map_or(cap, |ceiling| cap.min(ceiling))
+    }
+
+    /// Write a derived cap into the mixer, under the ceiling, and keep it for a ceiling change.
+    fn write_cap(&mut self, mixer: &mut Mixer, cap: i32) {
+        self.derived = Some(cap);
+        mixer.set_limit(self.ceiled(cap));
     }
 
     /// The current airspeed estimate in m/s: the boost rod gate, the telemetry and the warm-start crumb read it.
@@ -201,7 +232,7 @@ impl Governor {
     /// unsafe direction, kept because it is plan B's behaviour; the warm-start gate is what keeps garbage out.
     pub fn seed_airspeed(&mut self, mixer: &mut Mixer, airspeed: f32) {
         self.estimator.seed(airspeed);
-        mixer.set_limit(self.cap(self.estimator.value()));
+        self.write_cap(mixer, self.cap(self.estimator.value()));
     }
 
     /// One control slice (governor.Governor.step): accumulate `elapsed` seconds and, when due, update the estimator
@@ -261,7 +292,7 @@ impl Governor {
         } else {
             self.config.unconfident_speed
         };
-        mixer.set_limit(self.cap(cap_speed));
+        self.write_cap(mixer, self.cap(cap_speed));
     }
 }
 
@@ -305,6 +336,31 @@ mod tests {
         let (mut tiny, mut tiny_mixer) = governor(Value::Null, 0.01);
         tiny.seed_airspeed(&mut tiny_mixer, 50.0);
         assert_eq!(tiny_mixer.limit(), 1, "never below one degree");
+    }
+
+    #[test]
+    fn a_stage_ceiling_caps_the_cap_and_lifts_at_once() {
+        let (mut unit, mut mixer) = governor(Value::Null, 1.0);
+        // before any update the ceiling waits: the mixer keeps its config limit
+        unit.set_ceiling(&mut mixer, Some(10));
+        assert_eq!(mixer.limit(), 45);
+        unit.seed_airspeed(&mut mixer, 0.0);
+        assert_eq!(mixer.limit(), 10, "0 m/s derives 45; the ceiling writes 10");
+        unit.seed_airspeed(&mut mixer, 40.0);
+        assert_eq!(mixer.limit(), 8, "a cap under the ceiling stands");
+        unit.seed_airspeed(&mut mixer, 0.0);
+        unit.set_ceiling(&mut mixer, None);
+        assert_eq!(mixer.limit(), 45, "lifted at once, not at the next update");
+        // NEGATIVE: no ceiling is plan B's cap, and setting the same ceiling again writes nothing
+        let (mut plain, mut plain_mixer) = governor(Value::Null, 1.0);
+        plain.seed_airspeed(&mut plain_mixer, 0.0);
+        assert_eq!(plain_mixer.limit(), 45);
+        plain.set_ceiling(&mut plain_mixer, None);
+        assert_eq!(plain_mixer.limit(), 45);
+        unit.set_ceiling(&mut mixer, Some(10));
+        assert_eq!(mixer.limit(), 10);
+        unit.set_ceiling(&mut mixer, Some(10));
+        assert_eq!(mixer.limit(), 10);
     }
 
     #[test]

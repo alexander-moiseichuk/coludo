@@ -114,6 +114,10 @@ pub struct FlightLaw {
     glide_ratio: f32,
     /// BOOSTING's law (`boost_law`).
     boost_law: BoostLaw,
+    /// BOOSTING's own ceiling on the fin cap, whole degrees (`boost_limit_deg`; absent or not positive: none, plan
+    /// B's governor cap alone). The operator's +/-10 of 2026-06-25: at the rod gate's 15 m/s the governor still
+    /// allows 45 degrees, under thrust (doc/specs/boost-control.md BC4).
+    boost_limit: Option<i32>,
 }
 
 impl FlightLaw {
@@ -168,6 +172,9 @@ impl FlightLaw {
             inputs: Inputs::default(),
             glide_ratio: number("glide_ratio").unwrap_or(5.5),
             boost_law: BoostLaw::of(&flight["boost_law"]),
+            boost_limit: number("boost_limit_deg")
+                .filter(|limit| *limit >= 1.0)
+                .map(|limit| limit as i32),
         }
     }
 
@@ -177,6 +184,12 @@ impl FlightLaw {
     /// fin command on the pad stands (plan B returns before `_actuate`).
     pub fn step(&mut self, input: &Step) -> bool {
         let elapsed = self.slice(input.now_us);
+        let ceiling = if input.stage == Stage::Boosting {
+            self.boost_limit
+        } else {
+            None
+        };
+        self.governor.set_ceiling(&mut self.mixer, ceiling);
         self.governor.step(
             &mut self.mixer,
             elapsed,
@@ -437,6 +450,63 @@ mod tests {
         let mut lean = law("lean");
         let [roll, ..] = boost(&mut lean, 10_000, [0.0, 45.0, 89.0], [0.0; 3]);
         assert_eq!(roll, 0, "a roll angle near vertical is not an error");
+    }
+
+    #[test]
+    fn the_boost_ceiling_caps_the_fins_in_boosting_only() {
+        // the lean law leaning 30 deg off vertical, with no readings: the governor's own cap is the unconfident
+        // speed's (14 degrees), above a 10-degree boost ceiling
+        let ceiled = |limit: Value| {
+            let gains = json!({"kp": 1.0, "ki": 0.0, "kd": 0.1});
+            let flight = json!({
+                "gains": {"roll": gains, "pitch": gains, "yaw": gains},
+                "schedule_hz": 100,
+                "stages": {"boosting": {}, "gliding": {}},
+                "boost_engage_speed": 0.0,
+                "boost_law": "lean",
+                "boost_limit_deg": limit,
+            });
+            FlightLaw::new(&flight, &json!({"mixer": {}}))
+        };
+        let glide = Step {
+            stage: Stage::Gliding,
+            armed: true,
+            now_us: 20_000,
+            attitude: Some([0.0, 0.0, -6.0]),
+            rate: Some([0.0; 3]),
+            readings: Readings::default(),
+            guidance: Inputs::default(),
+            ground: None,
+            ground_stamp: None,
+            drift: [0.0; 2],
+        };
+        let mut plain = ceiled(Value::Null);
+        boost(&mut plain, 10_000, [0.0, 0.0, 60.0], [0.0; 3]);
+        let own = plain.cap();
+        assert!(own > 10, "the governor's own cap: {own}");
+        let mut law = ceiled(json!(10));
+        boost(&mut law, 10_000, [0.0, 0.0, 60.0], [0.0; 3]);
+        assert_eq!(law.cap(), 10);
+        assert!(
+            law.angles().iter().all(|angle| (80..=100).contains(angle)),
+            "{:?}",
+            law.angles()
+        );
+        // the glide gets the governor's own cap back on its first step
+        plain.step(&glide);
+        law.step(&glide);
+        assert_eq!(law.cap(), plain.cap());
+        // NEGATIVE: no ceiling (absent, 0, a string) leaves the governor's cap, and the lean pushes past 10 degrees
+        for limit in [Value::Null, json!(0), json!("10")] {
+            let mut law = ceiled(limit.clone());
+            boost(&mut law, 10_000, [0.0, 0.0, 60.0], [0.0; 3]);
+            assert_eq!(law.cap(), own, "{limit}");
+            assert!(
+                law.angles().iter().any(|angle| (*angle - 90).abs() > 10),
+                "{limit}: {:?}",
+                law.angles()
+            );
+        }
     }
 
     #[test]

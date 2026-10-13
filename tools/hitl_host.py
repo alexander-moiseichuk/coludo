@@ -123,6 +123,9 @@ def hitl_config(saved: dict, not_ported: set, args: argparse.Namespace) -> dict:
             stages.setdefault('boosting', {})
             if law == 'lean':
                 flights[0]['boost_law'] = 'lean'
+    # BOOSTING's own ceiling on the fin cap (the flight entry's boost_limit_deg); None keeps the config's
+    if getattr(args, 'boost_limit', None) is not None:
+        flights[0]['boost_limit_deg'] = args.boost_limit
     # the law plans with the airframe the physics flies: its reach (glide_ratio) and the endgame's stall floor
     frame = sim_model.AIRFRAMES[getattr(args, 'airframe', 'tms7')]
     flights[0]['glide_ratio'] = frame['air_quality']
@@ -597,6 +600,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--boost-law', default='config', choices=('config', 'passive', 'hold', 'lean'),
                         help="BOOSTING's law over the board's config: passive (not a control stage), hold (plan B's), "
                              "lean (BC3); config (default) flies the config's")
+    parser.add_argument('--boost-limit', type=int, help="BOOSTING's own ceiling on the fin cap, whole degrees "
+                        "(the flight entry's boost_limit_deg); default: the config's")
     parser.add_argument('--stack-azimuth', type=float, help='--boost 6dof: the compass direction the stack\'s '
                         'dorsal side faces on the rod (default: the wind\'s, against the folded wings)')
     parser.add_argument('--laser-range-m', type=float, default=4.0)

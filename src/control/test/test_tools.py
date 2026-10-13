@@ -1995,6 +1995,10 @@ def test_hitl_host_sets_boostings_law_over_the_boards_config():
     assert lean['stages'] == hold['stages'] and lean['boost_law'] == 'lean', lean
     for unchanged in (flown('config'), flown(None)):
         assert unchanged['stages'] == saved['components'][0]['stages'] and unchanged['boost_law'] == 'lean'
+    ceiled = hitl_host.hitl_config(saved, set(), argparse.Namespace(**dict(vars(args), boost_law='lean',
+                                                                            boost_limit=10)))
+    assert ceiled['components'][0]['boost_limit_deg'] == 10, '--boost-limit: the boost ceiling'
+    assert 'boost_limit_deg' not in lean, 'no --boost-limit: the config has none and gets none'
     bare = {'components': [{'name': 'flight', 'activity': 'flight'}]}
     held = hitl_host.hitl_config(bare, set(), argparse.Namespace(**dict(vars(args), boost_law='hold')))
     assert held['components'][0]['stages'] == {'boosting': {}}, 'a config with no stages gets BOOSTING'
