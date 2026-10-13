@@ -97,6 +97,8 @@ struct Fin {
     servo: Servo,
     /// The commands it wrote.
     writes: u32,
+    /// The writes that changed its angle (a step of 0 rewrites a held one).
+    moves: u32,
     /// The degrees those commands moved it.
     degrees: u32,
 }
@@ -132,6 +134,7 @@ impl Hooks for Host {
             let held = fin.servo.angle();
             if let Some(command) = fin.servo.set_angle(f64::from(angle)) {
                 fin.writes += 1;
+                fin.moves += u32::from(command.angle != held);
                 fin.degrees += command.angle.abs_diff(held);
             }
         }
@@ -217,6 +220,7 @@ fn servos(entries: &[board_config::Entry<'_>], law: Option<&FlightLaw>) -> Vec<O
         Some(Fin {
             servo: Servo::new(&servo_type, &settings),
             writes: 0,
+            moves: 0,
             degrees: 0,
         })
     };
@@ -239,7 +243,7 @@ fn fins(law: Option<&FlightLaw>, servos: &[Option<Fin>]) -> Option<[i16; 3]> {
     Some(fins)
 }
 
-/// The fins' tally at DONE, one line: each fin's writes and the degrees they moved it.
+/// The fins' tally at DONE, one line: each fin's writes, the moves among them and the degrees they moved it.
 fn tally(law: Option<&FlightLaw>, servos: &[Option<Fin>]) -> String {
     let surfaces = law.map(|law| law.mixer().surfaces()).unwrap_or_default();
     let fins: Vec<String> = surfaces
@@ -247,10 +251,10 @@ fn tally(law: Option<&FlightLaw>, servos: &[Option<Fin>]) -> String {
         .zip(servos)
         .filter_map(|(surface, fin)| {
             let fin = fin.as_ref()?;
-            Some(format!("{}={}/{}", surface.name, fin.writes, fin.degrees))
+            Some(format!("{}={}/{}/{}", surface.name, fin.writes, fin.moves, fin.degrees))
         })
         .collect();
-    format!("sitl :: servos (writes/degrees) {}", fins.join(" "))
+    format!("sitl :: servos (writes/moves/degrees) {}", fins.join(" "))
 }
 
 /// The attitude filter's implementation name in the config (its entry's `activity`).

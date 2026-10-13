@@ -666,9 +666,10 @@ def _sitl(args: argparse.Namespace) -> int:
                 burn['burnout_ms'] if burn['burnout_ms'] is not None else -1.0))
         print('FINS %d of %d %s' % (sim.with_fins, sim.answers, ' '.join(
             '%s=%d..%d' % (name, low, high) for name, (low, high) in zip(('left', 'right', 'yaw'), sim.fin_range))))
-        # the SITL's own tally at DONE (logged before its DONE answer): each fin's writes and the degrees they moved it
+        # the SITL's own tally at DONE (logged before its DONE answer): each fin's writes, the moves among them and
+        # the degrees they moved it
         with open(os.path.join(folder, 'sitl.log')) as handle:
-            tally = re.search(r'sitl :: servos \(writes/degrees\) (.*)$', handle.read(), re.M)
+            tally = re.search(r'sitl :: servos \(writes/moves/degrees\) (.*)$', handle.read(), re.M)
         if tally:
             print('SERVOS %s' % tally.group(1))
         if args.record:
