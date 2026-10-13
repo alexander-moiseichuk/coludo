@@ -187,6 +187,84 @@ The board ran this phase all along: the realtime matrices of §3–§3d are the 
 that code, not a near copy. Open: plan B's reference still steps on the old phase. Moving `planb_sitl.py` to the
 board's pacing would compare the two laws on one stage-machine phase, and the 20-seed reference would be flown again.
 
+## 3f. The fourth board run (r4, 2026-10-13): the refactored firmware, the RAM fix
+
+The taster flew the matrix on firmware `60687fa`: the refactor's R1–R5 (doc/specs/avionics-refactor.md, the board's
+control tick in crates/controller, the boxed `ControlCore`), and the internal-RAM fix (the ring's threads and
+esp_hosted on PSRAM stacks: idle internal RAM 40 -> 137 KB). The reference is plan B's SITL, 20 seeds on the new
+frames. Table: [`board_r3_r4_vs_planb20.md`](board_r3_r4_vs_planb20.md); per motor, each run's miss and apogee against
+plan B's seed range: [`board_r3_r4_vs_planb20.html`](board_r3_r4_vs_planb20.html)
+([SVG](board_r3_r4_vs_planb20.svg)).
+
+![r3 and r4 against plan B's 20 seeds](board_r3_r4_vs_planb20.svg)
+
+- **24 of 24 reached DONE; 23 pass every gate.** The noise100 pads that launched falsely in r3 armed and flew.
+- r3 against r4, the same scenario on two firmware builds:
+
+  | family | pairs | miss difference, median / max | GLIDING difference, max |
+  |---|---|---|---|
+  | wind 00-12 | 10 | 2.2 / 6.7 m | 0.05 s |
+  | low noise 05-25 | 6 | 12.8 / 56.8 m (E16 noise10) | 0.05 s |
+  | corner spike/stress | 4 | 7.6 / 39.1 m | 0.50 s |
+  | high noise 50-100 | 2 | 24.7 / 39.0 m | 0.50 s |
+
+  The wind family repeats as r1 against r2 did (§3b): the refactor and the RAM work changed nothing the law sees.
+
+- **The one failure, E16 noise10, 144.6 m** (plan B's 20 seeds 70.8–104.3 m). Its twin, wind00, flies the same noise
+  with no wind and landed at 80.6 m. Both reached the endgame's orbit with the heading error near 180 degrees. There
+  the twin kept turning left (heading error -167 -> -49 degrees). The failing flight's noise flipped the turn across
+  the wrap:
+
+  | t, s | heading error | roll setpoint | turn |
+  |---|---|---|---|
+  | 35.3 | +179 deg | +54 deg | right |
+  | 37.4 | -178 deg | -59 deg | left |
+  | 39.5 | +154 deg | +54 deg | right |
+
+  It then committed to the right with 121 degrees still to turn, and came down 145 m out. Ground tracks:
+  [`e16_noise10_vs_wind00_r4.html`](e16_noise10_vs_wind00_r4.html) ([SVG](e16_noise10_vs_wind00_r4.svg)).
+  This is the law's, shared by both stacks: plan B's own 20 seeds reach 156.6 m at noise25, and the Rust SITL's
+  reach 184.3 m there. A realtime board, with its timing jitter on top of the nominal noise, met it at noise10.
+  It is not a port defect. §3g fixes it in the law.
+
+## 3g. The turn kept across the wrap (`turn_wrap_band_deg`, 2026-10-13)
+
+The operator asked for the fix §3f found (`3bff106`). When the last heading error and the new one both lie within
+the band of 180 degrees on opposite sides of the wrap, the steering keeps the turn in progress, reported as ±180.
+Continuing the turn carries the raw error across the wrap within the band. A target that really moved across, such
+as the oval's leg ends (this zone is a 186 x 40 m strip, so the Mission flies the oval), costs at most twice the band
+of extra turn. A band of 0 is plan B's law, and the golden fixtures replay there.
+
+Flown over the Rust SITL with plan B's law (band 0) as the reference, 8 scenarios × 20 seeds per motor, seed for
+seed:
+
+| band | F15 mean / worst miss | F15 in zone | E16 mean / worst miss | E16 in zone |
+|---|---|---|---|---|
+| 0 (plan B) | 88.8 / 294.9 m | 11 of 160 | 88.5 / 197.1 m | 11 of 160 |
+| 15 | 95.9 / 458.8 m | 17 | 82.4 / 192.5 m | 17 |
+| 30 | 91.3 / 321.5 m | 13 | 78.9 / 156.2 m | 18 |
+| **45 (the default)** | **78.5 / 148.3 m** | **18** | **78.3 / 149.2 m** | **18** |
+| 60 | 78.6 / 166.1 m | 16 | 79.1 / 148.4 m | 17 |
+
+15 degrees is too narrow: noise still crosses it. 45 and 60 land alike, and 45 has the shorter tail. Per scenario,
+at 45 against plan B's law:
+
+- **The low-noise tail is gone.** E16 noise25's worst goes from 184 to 90 m (median 107 -> 80 m), and noise10's from
+  103 to 77 m. That is §3f's failure, removed.
+- **wind03 lands in the zone more:** F15 2 -> 10 of 20, E16 11 -> 17.
+- **F15 noise100's median goes from 190 to 55 m** (in the zone 3 -> 8).
+- **wind06 and wind09 are identical seed for seed**: nothing flips there.
+- **One loss: F15 noise50**, median 94 -> 110 m, in the zone 6 -> 0. Plan B's flip-flop dithered the oval there, and
+  six seeds touched down mid-strip by chance. A recorded seed (4) shows it: both fly the same ±150 m racetrack, and
+  plan B's touches down at 7 m from the centre, the latch's at the west end, 107 m. With the latch, noise50 flies
+  as the low-noise flights do: none of F15's noise05-25 flights lands in the zone either way. That is the oval's
+  orbit-phase lottery, not the latch.
+
+The regression gate (`hitl_matrix_compare.py sitl` and `compare`, 72 flights, 3 seeds, against plan B's 20 seeds):
+71 pass. The one outside is E16 wind03 seed 1, which lands **19.3 m from the centre, in the zone**, below plan B's
+53.4–61.5 m. The gate is two-sided, so a law that now differs from plan B's on purpose fails it only by landing
+better. Table: [`latch_sitl_vs_planb20.md`](latch_sitl_vs_planb20.md).
+
 ## 4. What it took
 
 - `tools/hitl_matrix_host.sh`: the matrix for a Rust board, the scenario table of `hitl_matrix.sh` (a test keeps the

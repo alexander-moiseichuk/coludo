@@ -49,8 +49,26 @@ whether the nose went below the horizon with the motor burning (a loop), the apo
 - The seeds vary the sensor noise only: the physics is deterministic, so the two runs agree except where the board's
   noisy inputs move the hold (0.2 cal at 3 m/s: one loop, one not).
 
-## What comes next
+## The lean law (BC3, 2026-10-13)
 
 BC3 in `doc/specs/boost-control.md`: a boost law for vertical flight. It steers the elevons and the yaw fin by the
-lean's components in the body frame (cos θ·sin φ and cos θ·cos φ, continuous where Euler degenerates) and damps the
-roll rate. It is flown on this same grid against these two columns.
+lean's components in the body frame (cos θ·sin φ and cos θ·cos φ, continuous where Euler degenerates) and only damps
+the roll rate. Flown on the same grid as a third column (144 flights; the configs differ only in `stages` and the
+flight entry's `boost_law`; the passive rows repeat this study's exactly). Data: `runs_bc3.csv`, `summary_bc3.csv`;
+the figure: `envelope_bc3.html`, `envelope_bc3.svg`.
+
+![passive, hold and lean](envelope_bc3.svg)
+
+| crosswind | passive: no loop from | existing hold | lean law |
+|---|---|---|---|
+| calm (path minimum) | 90° | 85-88° | 89.1-89.4° |
+| 3 m/s | 0.5 cal | 0.5 cal | **0.2 cal** |
+| 4.5 m/s | 1.0 cal | 0.8 cal | **0.5 cal** (path 74°, apogee 179 m) |
+| 6 m/s | 1.5 cal | 1.5 cal | **1.0 cal** (path 59°, apogee 156 m) |
+
+- **The lean law is worth about 0.5 calibers**, the hold 0.3 at 4.5 m/s and nothing at 6 m/s. At 6 m/s and 1.5 cal
+  the path minimum is 71° (hold 57°, passive 28°).
+- **In calm air it costs under a degree** of path, where the hold cost 2-5°.
+- **Margin still dominates:** nothing saves 0.2-0.8 cal in 6 m/s.
+
+Next, BC4: the law on the taster, servos moving (HITL).

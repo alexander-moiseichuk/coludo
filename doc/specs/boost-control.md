@@ -132,6 +132,35 @@ near vertical. `hitl_host.py` prints the burn's figures as a `BOOST` line and ta
 
 The law's design is open until BC2's envelope shows what it must cover.
 
+**BC3 as built** (`93db936`, the flight entry's `boost_law: "lean"`; the default stays plan B's hold): a first cut
+smaller than the plan above. It reads the board's fused attitude, not a gyro-integrated quaternion, and engages
+where the hold does (guidance's rod gate, under the governor's cap). What it changes is what it holds. In the marks
+frame (x the nose, y the left wing, z dorsal) the vertical is (sin θ, sin φ cos θ, cos φ cos θ). Its two lean
+components, asin(cos φ cos θ) toward the dorsal side and asin(sin φ cos θ) toward the left wing, are continuous where
+the Euler roll and heading degenerate near a vertical nose:
+- the elevons steer the lean toward the dorsal side;
+- the yaw fin steers the lean toward the left wing;
+- the roll loop's error is 0, so it only damps the roll rate (its D term).
+
+Flown on BC2's grid against the same two columns (`tools/boost_sweep.py --laws passive=... hold=... lean=...`, 144
+SITL flights, the configs differing only in `stages` and `boost_law`):
+
+| crosswind | passive: no loop from | the hold | the lean law |
+|---|---|---|---|
+| calm (path minimum) | 90° | 85-88° | 89.1-89.4° |
+| 3 m/s | 0.5 cal | 0.5 cal (0.2: 1 of 2 loops) | **0.2 cal** (path 83°) |
+| 4.5 m/s | 1.0 cal | 0.8 cal | **0.5 cal** (path 74°, apogee 179 m; 0.2: 1 of 2 loops) |
+| 6 m/s | 1.5 cal | 1.5 cal | **1.0 cal** (path 59°, apogee 156 m) |
+
+- **The lean law moves the loop's edge ~0.5 calibers**, against the hold's ~0.3 at 4.5 m/s and nothing at 6 m/s. At
+  6 m/s and 1.5 cal the path minimum is 71° (hold 57°, passive 28°) and the apogee 178 m (154, 87).
+- **It costs well under a degree in calm air**, where the hold cost 2-5°: it no longer chases the degenerate Euler
+  roll.
+- **Margin still dominates.** Nothing saves 0.2-0.8 cal in 6 m/s, and 7C's 0.24 cal still needs a calm day.
+
+The same aerodynamics caveats as BC2's (fitted to two flights, one stack, one wind plane, a 1 m rod). BC4 flies the
+law on the taster with servos moving; until then the default stays the hold.
+
 ## 3. Not in this plan
 
 The stack's own design (margin, booster fins, the joint, a longer rail: the launch README's December list) and
