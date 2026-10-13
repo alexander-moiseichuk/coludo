@@ -1723,7 +1723,10 @@ Durable streams: `sequencer`, `separation`, `checkpoint`, `<task>_events`, sessi
 **Placement.** One thread on core 0 at priority 7: above the video SD writer (6), below the encoder (10).
 - IDF flash programming busy-waits: L1 measured core 0 at 98.5 % when writing flat out.
 - At the real rate (about 16 KB/s in flash, §3.13: some 160 B per 10 ms tick, one program of ~0.4 ms each, G1)
-  that is about 4 % of core 0.
+  that is about 4 % of core 0. Measured 2026-10-13 on the taster's pad (33 KB/s, v1.1's streams): 9.6 %.
+- It spins, and stays so: SPI1 programs at most 64 bytes per command, so 33 KB/s is ~520 commands a second at
+  ~190 us of CPU each, most of them done inside components/flash_wait's 100 us spin (registering the writer there
+  measured 9.7 %); a 1 ms sleep per command would cap it near 64 KB/s. Its cost follows the bytes it writes.
 - L1 measured the opposite priority order (writer at 5) with 0 dropped frames. At 7 the writer can delay the
   video writer by at most one chunk program: ≤ 1.5 ms for a tick's chunk (G1), about 10 ms (estimated) for a
   full 4 KiB chunk after a backlog. The 2 MB video ring absorbs about 2 s. R3 confirms this (§7, R2).
@@ -1746,10 +1749,10 @@ Durable streams: `sequencer`, `separation`, `checkpoint`, `<task>_events`, sessi
    - A failed program is retried at the next offset. If the failed call had landed whole, the chunk is in flash
      twice: a duplicate (§3.8).
 
-**Power-cut bound** for rows: ≤ 10 ms (the tick) + ≤ 17 ms (an eraser's 4 KiB erase in progress) + ≤ 16 ms
-(an NVS page erase holding the flash lock) + ≤ 2 ms (opening a block and programming the chunk, G1). That is
-about 11 ms typical and ≤ ~45 ms worst case. Log records wait up to 20 ms more for the merge horizon (step 2),
-so a log line's worst case is ~65 ms. A durable record skips the tick: ≤ ~35 ms.
+**Power-cut bound** for rows: ≤ 10 ms (the tick) + ≤ 23 ms (an eraser's 4 KiB erase in progress: ~22 ms on the
+taster, its end seen within a tick, §3.7) + ≤ 16 ms (an NVS page erase holding the flash lock) + ≤ 2 ms (opening a
+block and programming the chunk, G1). That is about 11 ms typical and ≤ ~51 ms worst case. Log records wait up to 20 ms more for the merge horizon (step 2),
+so a log line's worst case is ~71 ms. A durable record skips the tick: ≤ ~41 ms.
 
 ### 3.4 Block and chunk format (`flash_ring`)
 
