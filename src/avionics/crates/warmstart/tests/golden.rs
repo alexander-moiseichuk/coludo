@@ -10,8 +10,8 @@ use golden::{Compare, Fixture};
 use sequencer::Stage;
 use serde_json::{Map, Value, json};
 use warmstart::{
-    ApplyPlan, CRUMB_KEY, Checkpoint, Crumb, Freeze, Identity, Live, Nvs, NvsError, ResetReason, Restore, STAGE_KEY,
-    load, restore, save, should_restore,
+    ApplyPlan, CRUMB_KEY, Checkpoint, Crumb, Freeze, Identity, Live, Nvs, NvsError, Restore, STAGE_KEY, load, restore,
+    save, should_restore,
 };
 
 /// plan B's warm start over the gate, load, save, apply and restore cases.
@@ -94,12 +94,6 @@ fn crumb(value: &Value) -> Option<Crumb> {
         return None;
     }
     Some(Crumb::from_json(value).expect("a fixture crumb is an object"))
-}
-
-/// The ESP-IDF reset reason a case names.
-fn reset(input: &Value) -> ResetReason {
-    let name = input["cause"].as_str().expect("the cause is text");
-    ResetReason::from_name(name).unwrap_or_else(|| panic!("unknown reset reason {name}"))
 }
 
 /// An f32 as the JSON number its shortest text is: how the Rust writer puts it in a blob, and so the decimal plan B
@@ -197,7 +191,6 @@ fn the_gate_matches_plan_b() {
         let (restore, reason) = should_restore(
             crumb(&input["crumb"]).as_ref(),
             input["separated"].as_bool().expect("separated"),
-            reset(input),
             input["now_s"].as_i64().expect("now_s"),
         );
         json!({"restore": restore, "reason": reason.to_string()})
@@ -256,7 +249,6 @@ fn the_boot_decision_matches_plan_b() {
             &mut nvs,
             input["warm_start"].as_bool().unwrap_or(true),
             input["separated"].as_bool().expect("separated"),
-            reset(input),
             input["now_s"].as_i64().expect("now_s"),
             [("baro_icp10111", "icp10111")],
         );
@@ -291,7 +283,6 @@ fn a_wrong_gate_fails_the_comparison() {
         let (restore, reason) = should_restore(
             crumb.as_ref(),
             input["separated"].as_bool().unwrap(),
-            reset(input),
             input["now_s"].as_i64().unwrap(),
         );
         json!({"restore": restore || on_ground, "reason": reason.to_string()})

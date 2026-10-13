@@ -43,7 +43,12 @@
 //!    re-armed, after a reset on the pad). No crumb is SETTING in both;
 //!  * a crumb stage that is no flight stage is refused. Plan B passed it ('recover ?') and then raised in
 //!    `Controller.set_stage()`, crashing the boot halfway through the restore;
-//!  * the P4's CPU_LOCKUP (a double exception, an in-flight crash) is a reset; MicroPython maps it to 0, cold;
+//!  * Q19's step 2 (the operator, 2026-10-13): the gate makes no time or cause check. With no battery-backed RTC a
+//!    power cycle loses the clock, so a crumb's age says nothing, and a battery bounce in flight is a power-on too;
+//!    only the separation latch refuses a glide stage. Plan B refused a power-on (and every cause MicroPython maps
+//!    to cold, the P4's CPU_LOCKUP among them) and a crumb outside 0..600 s. A crumb of an interrupted flight so
+//!    recovers whenever the board comes back, and the stage machine walks it on to DONE (a lying glider reaches DONE
+//!    by stillness); the next power-up after DONE is a new session;
 //!  * a crumb blob that is JSON but not an object reads as no crumb; plan B's load() raised TypeError there and
 //!    crashed the boot. A value of the wrong JSON type reads as absent, where plan B computed on whatever arrived;
 //!  * the writer never puts NaN or infinity in the blob (they become null); CPython would write NaN, which a board's
@@ -58,8 +63,8 @@
 //!    armed bench hold (`arm`, then `stage gliding`) writes none, and a reset never resumes it as a launched flight;
 //!  * plan B left the last crumb in NVS after a disarm; the keeper clears it on any edge out of flying (a disarm, or
 //!    a hold, which clears `launched`). The recovery from a false launch (disarm, `stage done`, the re-zero, `stage
-//!    setting`) so leaves no armed BOOSTING crumb for a reset within [`MAX_AGE_S`] to warm-start on the pad. The
-//!    cost: plan B's simulated HITL reboot, whose outage begins with a disarm, finds no crumb;
+//!    setting`) so leaves no armed BOOSTING crumb for a later boot to warm-start on the pad. The cost: plan B's
+//!    simulated HITL reboot, whose outage begins with a disarm, finds no crumb;
 //!  * plan B wrote each crumb once, whatever NVS answered; the keeper retries a refused crumb or clear on every poll
 //!    until it lands. The schedule never re-checkpoints DONE, so a lost DONE crumb left the last airborne one, and a
 //!    reset then warm-started a landed glider;
@@ -93,11 +98,6 @@ pub const NO_STAGE: i32 = 0;
 /// The read buffer for the crumb blob (plan B `_BLOB_MAX`). A crumb is about 250 bytes; the headroom is for new
 /// fields. A longer blob does not fit the buffer, so it reads as no crumb (a cold boot), on both firmwares.
 pub const BLOB_MAX: usize = 512;
-
-/// The oldest crumb the gate accepts, in seconds (plan B `_MAX_AGE_S`). Airborne crumbs are re-stamped every
-/// checkpoint, so they arrive at a reset about a second old; the bound rejects a stale crumb from a past session.
-/// (Plan B also sized it as the DONE operator-wait dwell; DONE no longer warm-starts.)
-pub const MAX_AGE_S: i64 = 600;
 
 /// Unix seconds at 2000-01-01T00:00:00Z: the stamp's epoch is MicroPython's, so the firmware subtracts this from
 /// `gettimeofday` before it stamps a crumb or asks the gate.
@@ -504,26 +504,6 @@ impl ResetReason {
     pub fn from_name(name: &str) -> Option<ResetReason> {
         ResetReason::ALL.into_iter().find(|reason| reason.name() == name)
     }
-
-    /// Whether this is a RESET the warm start may recover from, rather than a cold boot (§4.6).
-    ///
-    /// A reset is the firmware's own doing in flight: a software restart, a panic, a watchdog, a CPU lockup. A
-    /// power-on is human hands (a battery insertion, the power switch: a fresh flight or a recovery crew), and so
-    /// is a USB or JTAG reset from a host; a brownout means the power is not there to fly on. EXT counts as a reset
-    /// because plan B counted it (MicroPython's HARD_RESET), though the P4 never reports it. CPU_LOCKUP is the one
-    /// reason plan B read as cold (MicroPython maps it to 0) that is a reset here.
-    pub fn is_reset(self) -> bool {
-        matches!(
-            self,
-            ResetReason::Software
-                | ResetReason::Panic
-                | ResetReason::External
-                | ResetReason::InterruptWatchdog
-                | ResetReason::TaskWatchdog
-                | ResetReason::Watchdog
-                | ResetReason::CpuLockup
-        )
-    }
 }
 
 /// Why the gate answered as it did: plan B's reason texts, plus the ones the boot rules add. Display gives the text
@@ -541,17 +521,14 @@ pub enum Reason {
     /// The crumb reads SETTING: only BOOSTING..LANDING warm-starts, so the pad boot is cold. (New: the operator's
     /// rule.)
     OnThePad,
-    /// The reset reason is no reset: human hands, never a recovery.
-    PowerOn,
-    /// The crumb's age in seconds is outside 0..=[`MAX_AGE_S`]: the clock went back, or the crumb is stale.
-    Age(i64),
     /// A gliding stage, but the separation latch reads nested: this glider never left its booster.
     Nested,
     /// The gate passed: recover this stage, this many seconds after the checkpoint.
     Recover {
         /// The stage to restore.
         stage: Stage,
-        /// The crumb's age in seconds.
+        /// The crumb's age in seconds, for the log only: after a power cycle the clock restarted, so it can read
+        /// anything.
         age_s: i64,
     },
 }
@@ -567,8 +544,6 @@ impl fmt::Display for Reason {
             Reason::OnThePad => {
                 formatter.write_str("crumb reads setting -> a cold boot (only boosting..landing warm-start)")
             }
-            Reason::PowerOn => formatter.write_str("power-on boot (human hands), not a reset"),
-            Reason::Age(age_s) => write!(formatter, "crumb age {age_s}s outside 0..{MAX_AGE_S}s"),
             Reason::Nested => formatter.write_str("separation switch reads nested"),
             Reason::Recover { stage, age_s } => {
                 write!(formatter, "recover {}, {age_s}s after checkpoint", stage.name())
@@ -588,23 +563,22 @@ fn passive(stage: Stage) -> bool {
     matches!(stage, Stage::Gliding | Stage::Landing)
 }
 
-/// The warm-start gate (plan B `should_restore`, behind the operator's boot rules): is this a legitimate mid-flight
-/// reset to recover the crumb's stage into?
+/// The warm-start gate (plan B `should_restore`, behind the operator's boot rules and Q19's step 2): does the crumb
+/// name a flight stage to recover into?
 ///
-/// The checkpoint re-stamps the crumb every second aloft, so its STAGE is trustworthy; the gate confirms this is a
-/// genuine, RECENT reset of a real flight. In order, the first that fails is the reason:
-///  * a crumb, with a stage and a stamp;
+/// The checkpoint keeps the crumb's STAGE current aloft and clears it on any edge out of flying, so a crumb is a
+/// flight that was interrupted. Only physical evidence refuses it. In order, the first that fails is the reason:
+///  * a crumb, with a stage and a stamp (a crumb without them is torn: its blob carries the identity a recovery
+///    applies);
 ///  * the stage rules (§4.6): a flight stage, not DONE (a new session), not SETTING (a cold pad boot);
-///  * the reset reason is a reset ([`ResetReason::is_reset`]), never a power-on;
-///  * the age `now_s - stamp` within 0..=[`MAX_AGE_S`]: the RTC survives a reset, so continuity holds, while a
-///    power cycle restarts it and breaks the arithmetic;
 ///  * GLIDING and LANDING need the separation latch SEPARATED: the physical latch no software can fake, so a
-///    landed-then-nested glider never recovers into a glide. BOOSTING is the boost itself (latch nested), so the
-///    reset and the age carry it.
+///    landed-then-nested glider never recovers into a glide. BOOSTING is the boost itself (latch nested).
 ///
-/// `now_s` is in seconds since 2000, like the stamp. Returns (true, [`Reason::Recover`]) on a pass, else false with
-/// the first failing reason.
-pub fn should_restore(crumb: Option<&Crumb>, separated: bool, reset: ResetReason, now_s: i64) -> (bool, Reason) {
+/// No time or cause check (Q19's step 2, the operator 2026-10-13): with no battery-backed RTC a power cycle loses the
+/// clock, so the crumb's age says nothing, and a battery bounce in flight is a power-on too. Plan B refused a
+/// power-on and a crumb outside 0..600 s. `now_s` (seconds since 2000, like the stamp) only reports the age.
+/// Returns (true, [`Reason::Recover`]) on a pass, else false with the first failing reason.
+pub fn should_restore(crumb: Option<&Crumb>, separated: bool, now_s: i64) -> (bool, Reason) {
     let Some(crumb) = crumb else {
         return (false, Reason::NoCrumb);
     };
@@ -617,13 +591,7 @@ pub fn should_restore(crumb: Option<&Crumb>, separated: bool, reset: ResetReason
         Some(Stage::Setting) => return (false, Reason::OnThePad),
         Some(stage) => stage,
     };
-    if !reset.is_reset() {
-        return (false, Reason::PowerOn);
-    }
     let age_s = now_s.saturating_sub(stamp_s);
-    if !(0..=MAX_AGE_S).contains(&age_s) {
-        return (false, Reason::Age(age_s));
-    }
     if passive(stage) && !separated {
         return (false, Reason::Nested);
     }
@@ -767,19 +735,17 @@ impl Restore {
 /// config toggle, ask the gate, and clear the stage on a refusal.
 ///
 /// A refused clear is ignored, as plan B swallowed it, so the stage i32 keeps the crumb for the next boot. A
-/// refusal that lasts (DONE, SETTING, torn, no flight stage, too old) refuses it there again; one that can change by
-/// then (a power-on, the toggle off, a nested latch, a clock behind the stamp) can pass. The [`Keeper`] clears only
-/// a crumb it saved or was seeded with, so a later reset within [`MAX_AGE_S`] of the stamp can warm-start a landed
-/// board. Plan B has the same gap.
+/// refusal that lasts (DONE, SETTING, torn, no flight stage) refuses it there again; one that can change by then
+/// (the toggle off, a nested latch) can pass. The [`Keeper`] clears only a crumb it saved or was seeded with, so a
+/// later boot can warm-start a landed board. Plan B has the same gap.
 ///
 /// `warm_start` is the checkpoint component's toggle (default on), `separated` the separation latch read at
-/// setup, `reset` this boot's reset reason, `now_s` the clock in seconds since 2000, and `sensors` the board
-/// config's (name, driver) pairs for the baro rebase.
+/// setup, `now_s` the clock in seconds since 2000 (it reports the crumb's age), and `sensors` the board config's
+/// (name, driver) pairs for the baro rebase.
 pub fn restore<'a>(
     nvs: &mut impl Nvs,
     warm_start: bool,
     separated: bool,
-    reset: ResetReason,
     now_s: i64,
     sensors: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Restore {
@@ -790,7 +756,7 @@ pub fn restore<'a>(
         clear(nvs);
         return Restore::Disabled;
     }
-    let (allowed, reason) = should_restore(Some(&crumb), separated, reset, now_s);
+    let (allowed, reason) = should_restore(Some(&crumb), separated, now_s);
     match ApplyPlan::new(&crumb, sensors).filter(|_plan| allowed) {
         Some(plan) => Restore::Warm { reason, plan },
         None => {
@@ -1015,7 +981,7 @@ pub struct Counters {
 ///    `stage gliding`) owes none: keyed on the arming alone, a reset would resume it as a launched flight;
 ///  * leaving flying (a disarm, or any hold) while a crumb may be in NVS owes a clear, which replaces an owed crumb.
 ///    The recovery from a false launch (disarm, `stage done`, the re-zero, `stage setting`) would otherwise leave an
-///    armed BOOSTING crumb, and a reset within [`MAX_AGE_S`] would warm-start the pad board armed;
+///    armed BOOSTING crumb, and the next boot would warm-start the pad board armed;
 ///  * an owed action is tried on every pass until NVS commits it, an owed crumb rebuilt from the pass that tries
 ///    it. The schedule counts a checkpoint done whether its crumb landed or not and never re-checkpoints DONE, so
 ///    without the retry a refused DONE crumb leaves the last airborne one, and a reset warm-starts a landed glider.

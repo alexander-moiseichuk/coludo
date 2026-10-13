@@ -153,7 +153,7 @@ fn replay(fixture: &Grouped, case: &Value) -> Vec<String> {
 #[test]
 fn the_fixture_says_where_it_came_from() {
     let meta = fixture().get("meta").clone();
-    assert_eq!(meta["tag"], "micropython_plan_B_2");
+    assert_eq!(meta["tag"], golden::PLAN_B_TAG);
     assert_eq!(meta["generator"], "guidance");
     assert!(meta["source"].as_str().unwrap().contains("src/glider/guidance.py"));
 }

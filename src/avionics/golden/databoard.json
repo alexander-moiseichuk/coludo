@@ -4,12 +4,12 @@
   "tol": 0.01
  },
  "meta": {
-  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
   "generator": "databoard",
-  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
   "python": "3.12",
   "source": "src/glider/databoard.py",
-  "tag": "micropython_plan_B_2"
+  "tag": "micropython_plan_B_3"
  },
  "note": "one parameter per scenario, each with its own compare; now_us is the uptime each step runs at; a read with no fresh source is null (no extrapolation); integers compare exactly",
  "scenarios": [

@@ -39,7 +39,10 @@ plus a note, and the Rust test expects that answer instead of `output`):
     refused for its stage whatever the cause or age.
   * a crumb stage that is no flight stage (0, 6, -1) is refused; plan B passes the gate ('recover ?') and then
     raises in Controller.set_stage(), crashing the boot after half the restore was applied.
-  * CPU_LOCKUP (P4 only: a double exception, an in-flight crash) counts as a reset; MicroPython maps it to 0, cold.
+  * Q19's step 2 (the operator, 2026-10-13): the Rust gate makes no time or cause check. With no battery-backed RTC
+    a power cycle loses the clock, so a crumb's age says nothing, and a battery bounce in flight is a power-on too;
+    only the separation latch refuses a glide stage. Plan B refuses a power-on (and USB, JTAG, CPU_LOCKUP, every cause
+    MicroPython maps to cold) and a crumb outside 0..600 s; the Rust port recovers them.
   * a blob that is JSON but not an object, or one holding NaN: plan B's load() raises TypeError on the first (the
     stage assignment), crashing the boot, and CPython reads NaN where a board's MicroPython json does not; the Rust
     port reads both as no crumb (a cold boot that writes nothing, as for a torn blob).
@@ -93,8 +96,6 @@ _MICROPYTHON_CAUSE: dict = {
     'SW': _HARD_RESET, 'PANIC': _HARD_RESET, 'EXT': _HARD_RESET,
 }
 """The reasons the Rust port counts as a reset (doc/specs/avionics-port.md section 4.6): plan B's, plus CPU_LOCKUP."""
-_RUST_RESETS: frozenset = frozenset(('SW', 'PANIC', 'EXT', 'INT_WDT', 'TASK_WDT', 'WDT', 'CPU_LOCKUP'))
-
 _STAGE_IDS: tuple = (1, 2, 3, 4, 5)  # SETTING..DONE
 _NOT_STAGES: tuple = (0, 6, -1)  # ids a corrupted NVS i32 could hold: the sentinel, past DONE, negative
 
@@ -107,7 +108,8 @@ _BOOT_RULES_NOTE: str = ('the operator boot rules (2026-10-06): a DONE crumb is 
                          'BOOSTING..LANDING warm-starts; plan B restores SETTING and DONE too')
 _UNKNOWN_STAGE_NOTE: str = ('a crumb stage that is no flight stage is refused; plan B passes it and then raises in '
                             'Controller.set_stage()')
-_CPU_LOCKUP_NOTE: str = 'CPU_LOCKUP (P4: a double exception) is a reset; MicroPython maps it to 0, a cold boot'
+_STEP_TWO_NOTE: str = ("Q19's step 2 (the operator, 2026-10-13): no time or cause check, only the separation latch "
+                       'refuses a glide stage; plan B refuses a power-on and a crumb outside 0..600 s')
 _NOT_AN_OBJECT_NOTE: str = ('a blob that is JSON but no object reads as no crumb; plan B raises TypeError and crashes '
                             'the boot')
 _NAN_NOTE: str = ('a blob holding NaN reads as no crumb (strict JSON, as a board\'s MicroPython json reads it); '
@@ -181,7 +183,8 @@ def _cause_is_reset(reason: str) -> bool:
 
 def _rust_gate(crumb: dict | None, separated: bool, reason: str, now_s: int) -> tuple:
     """
-    The Rust port's answer to a gate case (see the module notes): plan B's gate behind the operator's stage rules.
+    The Rust port's answer to a gate case (see the module notes): the operator's stage rules, then Q19's step 2 --
+    plan B's texts, but no time or cause check, only the separation latch.
 
     Args:
         crumb - the crumb, or None.
@@ -203,18 +206,21 @@ def _rust_gate(crumb: dict | None, separated: bool, reason: str, now_s: int) -> 
         return False, _AFTER_DONE_REASON
     if stage == controller.Stage.SETTING:
         return False, _ON_THE_PAD_REASON
-    return warmstart.should_restore(crumb, separated, reason in _RUST_RESETS, now_s)
+    if controller.Stage.passive(stage) and not separated:
+        return False, 'separation switch reads nested'
+    return True, 'recover %s, %ds after checkpoint' % (controller.Stage.STAGES[stage], now_s - stamp)
 
 
-def _divergence_note(crumb: dict | None, reason: str) -> str:
+def _divergence_note(crumb: dict | None, reason: str, now_s: int) -> str:
     """Why the Rust gate answers this case differently (the first rule that applies)."""
     stage = (crumb or {}).get('stage')
     if stage is not None and stage not in controller.Stage.STAGES:
         return _UNKNOWN_STAGE_NOTE
     if stage in (controller.Stage.SETTING, controller.Stage.DONE):
         return _BOOT_RULES_NOTE
-    if reason == 'CPU_LOCKUP':
-        return _CPU_LOCKUP_NOTE
+    stamp = (crumb or {}).get('stamp')
+    if stamp is not None and (not _cause_is_reset(reason) or not 0 <= now_s - stamp <= 600):
+        return _STEP_TWO_NOTE
     raise ValueError('a gate divergence no rule explains: %r %s' % (crumb, reason))
 
 
@@ -239,7 +245,7 @@ def _gate_case(name: str, crumb: dict | None, separated: bool, reason: str, now_
             'output': {'restore': restore, 'reason': text}}
     rust = _rust_gate(crumb, separated, reason, now_s)
     if rust != (restore, text):
-        case['divergence'] = {'restore': rust[0], 'reason': rust[1], 'note': _divergence_note(crumb, reason)}
+        case['divergence'] = {'restore': rust[0], 'reason': rust[1], 'note': _divergence_note(crumb, reason, now_s)}
     return case
 
 
@@ -650,7 +656,7 @@ def _restore_case(name: str, stage: int | None, blob: bytes | None, warm_start: 
         if 'raises' in case['output'] and crumb is None:
             note = _NOT_AN_OBJECT_NOTE
         else:
-            note = _divergence_note(crumb, reason)
+            note = _divergence_note(crumb, reason, now_s)
         case['divergence'] = dict(rust, note=note)
     return case
 

@@ -1693,12 +1693,12 @@
   "note": "diagnose() on i2c:0 at 0x69: the verdict, up to ' -- ' (the error's repr is the runtime's own)"
  },
  "meta": {
-  "commit": "1ba7501524ec25bcd494d284a776f1fa2a8dc98d",
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
   "generator": "drivers_bmi323",
-  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
   "python": "3.12",
   "source": "src/glider/drivers/bmi323.py, src/glider/i2cbus.py, src/glider/task.py, src/glider/test/test_bmi323.py",
-  "tag": "micropython_plan_B_2"
+  "tag": "micropython_plan_B_3"
  },
  "probe": {
   "cases": [

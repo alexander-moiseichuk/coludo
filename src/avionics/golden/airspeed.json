@@ -4,12 +4,12 @@
   "tol": 0.001
  },
  "meta": {
-  "commit": "1f204b57fdfa4590bde43fde9954fbafafd7925d",
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
   "generator": "airspeed",
-  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
   "python": "3.12",
   "source": "src/glider/airspeed.py",
-  "tag": "micropython_plan_B_2"
+  "tag": "micropython_plan_B_3"
  },
  "note": "m/s on the value, f32 against f64 rounding; confident is a flag and exact; no latch within 1e-3 of 5",
  "scenarios": [

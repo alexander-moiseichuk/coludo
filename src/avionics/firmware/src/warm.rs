@@ -188,7 +188,6 @@ pub fn restore(
             &mut nvs,
             board_config::warm_start(document),
             separated,
-            reset,
             clock::epoch() - warmstart::UNIX_SECONDS_AT_2000,
             sensors(document),
         ),

@@ -6863,11 +6863,11 @@
   "kind": "exact"
  },
  "meta": {
-  "commit": "76c138c418f780a41bf433756207931211199bf7",
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
   "generator": "config_validate",
-  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
   "python": "3.12",
   "source": "src/glider/config.py (validate), src/glider/test/test_config.py; src/glider/config.py, src/glider/config_default.py, src/glider/config_hitl.py, tools/launch_config.py, launches/20261003/*/*.config",
-  "tag": "micropython_plan_B_2"
+  "tag": "micropython_plan_B_3"
  }
 }

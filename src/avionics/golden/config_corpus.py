@@ -42,7 +42,7 @@ import config_hitl
 
 _ROOT: str = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
 
-_TAG: str = 'micropython_plan_B_2'  # the tag a fixture names (generate.py's _TAG): the inputs must be as it holds them
+_TAG: str = 'micropython_plan_B_3'  # the tag a fixture names (generate.py's _TAG): the inputs must be as it holds them
 
 """The corpus inputs outside src/glider, as repository paths (see the module docstring)."""
 _INPUTS: tuple = ('tools/launch_config.py', 'launches/20261003')

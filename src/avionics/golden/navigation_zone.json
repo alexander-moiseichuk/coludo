@@ -2977,12 +2977,12 @@
   "note": "metres; f32 on integer differences is under 3e-7 of the distance up to 50 degrees of latitude, 6e-7 at 70; the cases reach 5 km"
  },
  "meta": {
-  "commit": "76c138c418f780a41bf433756207931211199bf7",
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
   "generator": "navigation_zone",
-  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
   "python": "3.12",
   "source": "src/glider/navigation.py, src/glider/commons.py",
-  "tag": "micropython_plan_B_2"
+  "tag": "micropython_plan_B_3"
  },
  "zone": {
   "cases": [

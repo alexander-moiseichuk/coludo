@@ -1099,8 +1099,9 @@ honest. TMS-7F arms on a bench copy of its config (the not-ported entries remove
 
 **Proof**
 - Golden `warmstart.json`: `should_restore` over every crumb, cause and age boundary, plus a torn crumb, exact
-  (step 1 of Q19). Q19's step 2 comes after M8's HITL comparison. When it drops the age and power-on refusals,
-  plan B's verdicts for those cases become listed divergences; the stage rules and the separation latch stay exact.
+  (step 1 of Q19). Q19's step 2 (done 2026-10-13, on the tag `micropython_plan_B_3`) dropped the age and power-on
+  refusals: plan B's verdicts for those cases are listed divergences (129 gate and 32 boot cases); the stage rules and
+  the separation latch stay exact.
 - On the taster: arm, pass through BOOSTING (M7's hand-shaken launch), then hold `stage gliding` with the
   separation latch reading separated; console `panic` then returns warm into GLIDING with the same pad, and
   `gettimeofday` has survived. (Plan B writes the crumb only while armed and freezes the pad only on entry to
@@ -1531,8 +1532,8 @@ servo; ordered). Done 2026-10-12: the cap on warm cycles (the crumb's `warm_star
 start recovers DISARMED -- the law and the fins off, the stage machine walking the flight to DONE and its beacon --
 where a cold boot mid-air would never reach DONE). Left as it is: a BOOSTING crumb whose latch already reads separated
 recovers into BOOSTING and the apogee detector moves it on; recovering straight into GLIDING would bypass the thrust
-gate (a contact that reads open under thrust would start the glide mid-boost). Q19's step 2 waits for the golden tag
-(`micropython_plan_B_2` no longer matches src/glider's sim_model.py, so no fixture regenerates); the fast warm boot
+gate (a contact that reads open under thrust would start the glide mid-boost). Q19's step 2 is done (2026-10-13:
+the golden tag moved to `micropython_plan_B_3`, plan B plus the host sim's physics fixes; no fixture's content changed); the fast warm boot
 (next: flight sensors and the control thread first, the camera and the Wi-Fi after them without blocking, operator
 2026-10-11).
 
@@ -2517,7 +2518,7 @@ tick: 3.6 s before, **1.0 s** after (power-on reset; the Wi-Fi joins later on it
     - GLIDING and LANDING also need the separation latch read at setup.
     - The warmstart crate matches it on golden vectors, and M8 proved it on the bench (TMS-7F and the taster). The
       HITL comparison against the plan B baselines moves to M12/M14, as does step 2.
-  - **Step 2, after M8's HITL comparison (Q19): the simple state machine.** Only physical evidence can refuse:
+  - **Step 2 (Q19, done 2026-10-13): the simple state machine.** Only physical evidence can refuse:
     - the crumb must carry a stage;
     - GLIDING and LANDING still need the separation latch (it is the latch no software can fake, so a nested glider
       never recovers into a glide).

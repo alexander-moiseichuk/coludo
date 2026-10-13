@@ -34251,12 +34251,12 @@
   "tol": 1.0
  },
  "meta": {
-  "commit": "e095d11d8466b33752e0e47c150afc08df508452",
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
   "generator": "control_trace",
-  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
   "python": "3.12",
   "source": "src/glider/tasks/flight.py, tools/virtual_flight.py",
-  "tag": "micropython_plan_B_2"
+  "tag": "micropython_plan_B_3"
  },
  "note": "per case: input {hz, zone, endgame_heading, flight (the entry), fins (the config section), columns, ticks: one text per tick, its columns joined by \";\" and a vector's components by \",\", empty = no source -- stage id, accel |a| g, attitude heading,roll,pitch deg, rate roll,pitch,yaw deg/s, speed m/s, position lat,lon, course deg (only on a tick with a new GNSS sample), pitot m/s, agl m, elevation m}; output {columns, ticks: one text per tick -- fins per surface sorted by name, cap, airspeed m/s; samples: every 10th tick, packed the same -- tick, active, roll_sp, pitch_sp deg, heading_err, commands roll,pitch,yaw whole deg, wind speed,from, reckoning}. Fins, cap, setpoints and commands within 1 deg; the test sets its own tolerance for airspeed and wind"
 }

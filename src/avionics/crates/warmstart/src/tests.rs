@@ -1,13 +1,13 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! Unit tests of the warm start, positive and negative: the crumb serde, the NVS order, the gate with its boot rules
-//! and reset classes, the apply plan, the boot decision, the checkpoint schedule and its keeper over NVS. The plan B
+//! and no time or cause check (Q19's step 2), the apply plan, the boot decision, the checkpoint schedule and its keeper over NVS. The plan B
 //! comparison itself is tests/golden.rs.
 
 use super::{
     ApplyPlan, BLOB_MAX, CRUMB_KEY, Checkpoint, Counters, Crumb, Freeze, GROUND_SLOTS, Identity, Keeper, Live,
-    MAX_AGE_S, NO_STAGE, Nvs, NvsError, Pass, Reason, ResetReason, Restore, STAGE_KEY, Step, WARM_CAP, Write, clear,
-    load, restore, save, should_restore,
+    NO_STAGE, Nvs, NvsError, Pass, Reason, ResetReason, Restore, STAGE_KEY, Step, WARM_CAP, Write, clear, load,
+    restore, save, should_restore,
 };
 use control::navigation::Position;
 use sequencer::{Flight, FlightWord, Request, Stage, Transition};
@@ -300,21 +300,8 @@ fn reset_reasons_map_the_esp_idf_codes() {
 }
 
 #[test]
-fn only_the_firmware_s_own_resets_count() {
-    let resets: Vec<&str> = ResetReason::ALL
-        .into_iter()
-        .filter(|reason| reason.is_reset())
-        .map(ResetReason::name)
-        .collect();
-    assert_eq!(
-        resets,
-        ["EXT", "SW", "PANIC", "INT_WDT", "TASK_WDT", "WDT", "CPU_LOCKUP"]
-    );
-}
-
-#[test]
-fn the_gate_passes_a_recent_reset_of_a_real_flight() {
-    let (allowed, reason) = should_restore(Some(&glide()), true, ResetReason::TaskWatchdog, 1030);
+fn the_gate_passes_an_interrupted_flight() {
+    let (allowed, reason) = should_restore(Some(&glide()), true, 1030);
     assert!(allowed);
     assert_eq!(
         reason,
@@ -324,79 +311,75 @@ fn the_gate_passes_a_recent_reset_of_a_real_flight() {
         }
     );
     assert_eq!(reason.to_string(), "recover gliding, 30s after checkpoint");
-    // BOOSTING is the boost itself: the latch is still nested, and the reset and the age carry it
-    assert!(should_restore(Some(&staged(2, 1000)), false, ResetReason::Panic, 1030).0);
-    assert!(should_restore(Some(&staged(4, 1000)), true, ResetReason::CpuLockup, 1030).0);
+    // BOOSTING is the boost itself: the latch is still nested
+    assert!(should_restore(Some(&staged(2, 1000)), false, 1030).0);
+    assert!(should_restore(Some(&staged(4, 1000)), true, 1030).0);
 }
 
 #[test]
-fn the_age_window_is_zero_to_six_hundred_seconds() {
-    let gate = |now_s| should_restore(Some(&glide()), true, ResetReason::Software, now_s);
-    assert!(gate(1000).0);
-    assert!(gate(1000 + MAX_AGE_S).0);
-    assert_eq!(gate(1000 + MAX_AGE_S + 1), (false, Reason::Age(601)));
-    assert_eq!(gate(999), (false, Reason::Age(-1)));
-    assert_eq!(gate(999).1.to_string(), "crumb age -1s outside 0..600s");
+fn no_time_check_refuses_a_crumb() {
+    // Q19's step 2: a power cycle restarts the clock, so the age says nothing -- behind the stamp, an hour past it,
+    // or absurd, the crumb recovers and the age is only reported
+    for (now_s, age_s) in [(999, -1), (1000 + 3600, 3600), (0, -1000)] {
+        assert_eq!(
+            should_restore(Some(&glide()), true, now_s),
+            (
+                true,
+                Reason::Recover {
+                    stage: Stage::Gliding,
+                    age_s
+                }
+            )
+        );
+    }
     // the age saturates rather than wrapping on an absurd stamp
     let ancient = staged(3, i64::MIN);
     assert_eq!(
-        should_restore(Some(&ancient), true, ResetReason::Software, i64::MAX).1,
-        Reason::Age(i64::MAX)
+        should_restore(Some(&ancient), true, i64::MAX).1,
+        Reason::Recover {
+            stage: Stage::Gliding,
+            age_s: i64::MAX
+        }
+    );
+    // NEGATIVE: the separation latch still refuses a glide stage, whatever the age
+    assert_eq!(
+        should_restore(Some(&glide()), false, 1000 + 3600),
+        (false, Reason::Nested)
     );
 }
 
 #[test]
 fn the_gate_refuses_with_the_first_failing_reason() {
-    let gate = |crumb: Option<&Crumb>, separated, reset| should_restore(crumb, separated, reset, 1030);
-    assert_eq!(gate(None, true, ResetReason::Software), (false, Reason::NoCrumb));
+    let gate = |crumb: Option<&Crumb>, separated| should_restore(crumb, separated, 1030);
+    assert_eq!(gate(None, true), (false, Reason::NoCrumb));
     let stageless = Crumb { stage: None, ..glide() };
     let unstamped = Crumb {
         stamp_s: None,
         ..glide()
     };
+    assert_eq!(gate(Some(&stageless), true), (false, Reason::Torn));
+    assert_eq!(gate(Some(&unstamped), true), (false, Reason::Torn));
+    assert_eq!(gate(Some(&glide()), false), (false, Reason::Nested));
+    assert_eq!(gate(Some(&staged(4, 1000)), false), (false, Reason::Nested));
     assert_eq!(
-        gate(Some(&stageless), true, ResetReason::Software),
-        (false, Reason::Torn)
-    );
-    assert_eq!(
-        gate(Some(&unstamped), true, ResetReason::Software),
-        (false, Reason::Torn)
-    );
-    assert_eq!(
-        gate(Some(&glide()), true, ResetReason::PowerOn),
-        (false, Reason::PowerOn)
-    );
-    assert_eq!(
-        gate(Some(&glide()), true, ResetReason::Brownout),
-        (false, Reason::PowerOn)
-    );
-    assert_eq!(
-        gate(Some(&glide()), false, ResetReason::Software),
-        (false, Reason::Nested)
-    );
-    assert_eq!(
-        gate(Some(&staged(4, 1000)), false, ResetReason::Watchdog),
-        (false, Reason::Nested)
-    );
-    assert_eq!(
-        gate(Some(&glide()), false, ResetReason::Software).1.to_string(),
+        gate(Some(&glide()), false).1.to_string(),
         "separation switch reads nested"
     );
 }
 
 #[test]
-fn the_boot_rules_come_before_the_reset_and_the_age() {
-    // DONE is a new session, SETTING a cold pad boot, whatever the reason, the latch or the age
-    for (reset, now_s) in [(ResetReason::Software, 1030), (ResetReason::PowerOn, 99_999)] {
+fn the_boot_rules_refuse_whatever_the_latch_or_the_age() {
+    // DONE is a new session, SETTING a cold pad boot, whatever the latch or the age
+    for now_s in [1030, 99_999] {
         for separated in [true, false] {
-            let done = should_restore(Some(&staged(5, 1000)), separated, reset, now_s);
+            let done = should_restore(Some(&staged(5, 1000)), separated, now_s);
             assert_eq!(done, (false, Reason::AfterDone));
-            let setting = should_restore(Some(&staged(1, 1000)), separated, reset, now_s);
+            let setting = should_restore(Some(&staged(1, 1000)), separated, now_s);
             assert_eq!(setting, (false, Reason::OnThePad));
         }
     }
     for id in [0, 6, -1, i32::MAX] {
-        let (allowed, reason) = should_restore(Some(&staged(id, 1000)), true, ResetReason::Software, 1030);
+        let (allowed, reason) = should_restore(Some(&staged(id, 1000)), true, 1030);
         assert_eq!((allowed, reason), (false, Reason::NotAStage(id)));
     }
     assert_eq!(
@@ -479,10 +462,7 @@ fn the_apply_plan_leaves_alone_what_the_crumb_lacks() {
 #[test]
 fn restore_boots_cold_without_a_crumb_and_writes_nothing() {
     let mut nvs = Memory::default();
-    assert_eq!(
-        restore(&mut nvs, true, true, ResetReason::Software, 1030, SENSORS),
-        Restore::Cold
-    );
+    assert_eq!(restore(&mut nvs, true, true, 1030, SENSORS), Restore::Cold);
     assert!(nvs.writes.is_empty());
 }
 
@@ -490,20 +470,17 @@ fn restore_boots_cold_without_a_crumb_and_writes_nothing() {
 fn restore_clears_the_stage_when_disabled_or_refused() {
     let blob = glide().to_json();
     let mut disabled = Memory::holding(Some(3), Some(blob.as_bytes()));
-    assert_eq!(
-        restore(&mut disabled, false, true, ResetReason::Software, 1030, SENSORS),
-        Restore::Disabled
-    );
+    assert_eq!(restore(&mut disabled, false, true, 1030, SENSORS), Restore::Disabled);
     assert_eq!(disabled.stage, Some(NO_STAGE));
     let mut refused = Memory::holding(Some(3), Some(blob.as_bytes()));
     assert_eq!(
-        restore(&mut refused, true, true, ResetReason::PowerOn, 1030, SENSORS),
-        Restore::Refused(Reason::PowerOn)
+        restore(&mut refused, true, false, 1030, SENSORS),
+        Restore::Refused(Reason::Nested)
     );
     assert_eq!(refused.stage, Some(NO_STAGE));
     let mut done = Memory::holding(Some(5), Some(blob.as_bytes()));
     assert_eq!(
-        restore(&mut done, true, true, ResetReason::Software, 1030, SENSORS),
+        restore(&mut done, true, true, 1030, SENSORS),
         Restore::Refused(Reason::AfterDone)
     );
 }
@@ -518,18 +495,18 @@ fn a_refused_clear_leaves_the_crumb_to_the_next_boot_s_gate() {
     let mut done = refusing(staged(5, 1000));
     for now_s in [1030, 1060] {
         assert_eq!(
-            restore(&mut done, true, true, ResetReason::Panic, now_s, SENSORS),
+            restore(&mut done, true, true, now_s, SENSORS),
             Restore::Refused(Reason::AfterDone)
         );
     }
-    // a power-on's refusal does not last: the crumb it failed to clear warm-starts on a reset within the age bound
+    // a nested latch's refusal does not last: the crumb it failed to clear warm-starts once the latch reads separated
     let mut glided = refusing(glide());
     assert_eq!(
-        restore(&mut glided, true, true, ResetReason::PowerOn, 1030, SENSORS),
-        Restore::Refused(Reason::PowerOn)
+        restore(&mut glided, true, false, 1030, SENSORS),
+        Restore::Refused(Reason::Nested)
     );
     assert_eq!(glided.stage, Some(3));
-    assert!(restore(&mut glided, true, true, ResetReason::Panic, 1060, SENSORS).keeps_flight());
+    assert!(restore(&mut glided, true, true, 1060, SENSORS).keeps_flight());
 }
 
 #[test]
@@ -537,36 +514,28 @@ fn only_a_warm_start_keeps_the_recorder_s_flight_flag() {
     let blob = glide().to_json();
     // a stage i32 over a blob that does not read: Cold, with nothing cleared, and still the flag goes down
     let mut torn = Memory::holding(Some(3), Some(&blob.as_bytes()[..40]));
-    let decision = restore(&mut torn, true, true, ResetReason::Panic, 1030, SENSORS);
+    let decision = restore(&mut torn, true, true, 1030, SENSORS);
     assert_eq!(decision, Restore::Cold);
     assert!(!decision.keeps_flight());
     assert_eq!(torn.stage, Some(3), "the i32 stays for the next boot");
     let refusals = [
-        (Memory::default(), true, ResetReason::Panic),
-        (
-            Memory::holding(Some(3), Some(blob.as_bytes())),
-            false,
-            ResetReason::Panic,
-        ),
-        (
-            Memory::holding(Some(3), Some(blob.as_bytes())),
-            true,
-            ResetReason::PowerOn,
-        ),
+        (Memory::default(), true, true),
+        (Memory::holding(Some(3), Some(blob.as_bytes())), false, true),
+        (Memory::holding(Some(3), Some(blob.as_bytes())), true, false),
     ];
-    for (mut nvs, warm_start, reset) in refusals {
-        let decision = restore(&mut nvs, warm_start, true, reset, 1030, SENSORS);
+    for (mut nvs, warm_start, separated) in refusals {
+        let decision = restore(&mut nvs, warm_start, separated, 1030, SENSORS);
         assert!(!decision.keeps_flight(), "{decision:?}");
     }
     let mut flying = Memory::holding(Some(3), Some(blob.as_bytes()));
-    assert!(restore(&mut flying, true, true, ResetReason::Panic, 1030, SENSORS).keeps_flight());
+    assert!(restore(&mut flying, true, true, 1030, SENSORS).keeps_flight());
 }
 
 #[test]
 fn a_warm_start_after_a_software_reset_suppresses_the_stall_restart() {
     let blob = glide().to_json();
     let mut nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
-    let warm = restore(&mut nvs, true, true, ResetReason::Software, 1030, SENSORS);
+    let warm = restore(&mut nvs, true, true, 1030, SENSORS);
     assert!(warm.keeps_flight(), "a software reset in flight warm-starts");
     assert!(warm.stall_restart_suppressed(ResetReason::Software));
 }
@@ -576,7 +545,7 @@ fn every_other_boot_restarts_for_a_stall() {
     let blob = glide().to_json();
     // a warm start after any other reset: a panic warm boot after a stall restart lifts the suppression
     let mut nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
-    let warm = restore(&mut nvs, true, true, ResetReason::Panic, 1030, SENSORS);
+    let warm = restore(&mut nvs, true, true, 1030, SENSORS);
     assert!(warm.keeps_flight());
     let others = ResetReason::ALL
         .into_iter()
@@ -586,13 +555,13 @@ fn every_other_boot_restarts_for_a_stall() {
     }
     // a software reset that boots cold, disabled or refused is no stall restart's warm start
     let mut empty = Memory::default();
-    let cold = restore(&mut empty, true, true, ResetReason::Software, 1030, SENSORS);
+    let cold = restore(&mut empty, true, true, 1030, SENSORS);
     assert_eq!(cold, Restore::Cold);
     let mut toggled_off = Memory::holding(Some(3), Some(blob.as_bytes()));
-    let disabled = restore(&mut toggled_off, false, true, ResetReason::Software, 1030, SENSORS);
+    let disabled = restore(&mut toggled_off, false, true, 1030, SENSORS);
     assert_eq!(disabled, Restore::Disabled);
     let mut nested = Memory::holding(Some(3), Some(blob.as_bytes()));
-    let refused = restore(&mut nested, true, false, ResetReason::Software, 1030, SENSORS);
+    let refused = restore(&mut nested, true, false, 1030, SENSORS);
     assert_eq!(refused, Restore::Refused(Reason::Nested));
     for decision in [cold, disabled, refused] {
         assert!(
@@ -606,7 +575,7 @@ fn every_other_boot_restarts_for_a_stall() {
 fn restore_warm_starts_a_passed_gate_and_keeps_the_crumb() {
     let blob = glide().to_json();
     let mut nvs = Memory::holding(Some(3), Some(blob.as_bytes()));
-    let Restore::Warm { reason, plan } = restore(&mut nvs, true, true, ResetReason::Panic, 1030, SENSORS) else {
+    let Restore::Warm { reason, plan } = restore(&mut nvs, true, true, 1030, SENSORS) else {
         panic!("no warm start");
     };
     assert_eq!(reason.to_string(), "recover gliding, 30s after checkpoint");
@@ -848,7 +817,7 @@ fn a_checkpointed_crumb_restores_on_a_warm_boot() {
     };
     let mut nvs = Memory::default();
     assert!(save(&mut nvs, &schedule.crumb(Stage::Boosting, live, 5000)));
-    let Restore::Warm { plan, .. } = restore(&mut nvs, true, false, ResetReason::TaskWatchdog, 5001, SENSORS) else {
+    let Restore::Warm { plan, .. } = restore(&mut nvs, true, false, 5001, SENSORS) else {
         panic!("no warm start");
     };
     assert_eq!(plan.stage, Stage::Boosting);

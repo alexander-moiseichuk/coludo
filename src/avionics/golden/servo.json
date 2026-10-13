@@ -827,12 +827,12 @@
   "note": "_clamp(angle) with _min_deg / _max_deg: round half even, then clamp_int"
  },
  "meta": {
-  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
   "generator": "servo",
-  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
   "python": "3.12",
   "source": "src/glider/drivers/sg90.py, src/glider/drivers/mg90s.py, src/glider/commons.py, src/glider/test/test_sg90.py, src/glider/test/test_mg90s.py",
-  "tag": "micropython_plan_B_2"
+  "tag": "micropython_plan_B_3"
  },
  "scenarios": {
   "cases": [
