@@ -65,9 +65,10 @@ fn required_bus_pins(kind: &str) -> &'static [&'static str] {
 
 /// The component fields the control path does arithmetic on, which must be numbers: a quoted number
 /// survives save() and load(), then TypeErrors at 100 Hz in flight (config.py `_NUMERIC_FIELDS`).
-const NUMERIC_FIELDS: [&str; 15] = [
+const NUMERIC_FIELDS: [&str; 16] = [
     "limit_multiplier",
     "trim",
+    "step_deg",
     "still_g",
     "stall_speed_1g",
     "stall_margin",

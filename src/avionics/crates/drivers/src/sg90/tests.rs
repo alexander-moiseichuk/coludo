@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! Unit tests of the servo logic beyond its golden fixture (tests/golden_servo.rs): the probe verdict, the
-//! compare-and-set, the floored pulse map below the range, and the refusals.
+//! compare-and-set and its step, the floored pulse map below the range, and the refusals.
 
 use super::{Command, ProbeVerdict, Refusal, SG90, Servo, Settings, round_half_even};
 use serde_json::json;
@@ -36,6 +36,37 @@ fn compare_and_set_writes_only_a_change() {
     assert_eq!(yaw.set_angle(45.4), None, "it rounds to the same whole degree");
     assert_eq!(yaw.set_angle(999.0).map(|command| command.angle), Some(180));
     assert_eq!(yaw.set_angle(180.0), None, "clamp-equal is unchanged");
+}
+
+#[test]
+fn the_step_writes_a_move_only_once_it_is_that_far() {
+    // step 3: a fin at 90 holds through 91-92, moves at 93, then holds within 2 of 93 either way
+    let mut yaw = fin(json!({"step_deg": 3}));
+    assert_eq!(yaw.set_angle(92.0), None, "2 deg is under the step");
+    assert_eq!(yaw.set_angle(93.0).map(|command| command.angle), Some(93));
+    assert_eq!(yaw.set_angle(91.0), None, "back 2: held at 93, no chatter");
+    assert_eq!(
+        yaw.set_angle(90.0).map(|command| command.angle),
+        Some(90),
+        "back 3: written"
+    );
+    assert_eq!(
+        yaw.set_angle(140.0).map(|command| command.angle),
+        Some(140),
+        "a big move goes straight there"
+    );
+    // step 0: every command goes out, an unchanged one too
+    let mut all = fin(json!({"step_deg": 0}));
+    assert!(all.set_angle(90.0).is_some() && all.set_angle(90.0).is_some());
+    // NEGATIVE: the default is plan B's any-change, and a negative step reads as 0
+    let mut plain = fin(json!({}));
+    assert_eq!(plain.set_angle(91.0).map(|command| command.angle), Some(91));
+    assert_eq!(plain.set_angle(91.0), None);
+    let mut negative = fin(json!({"step_deg": -4}));
+    assert!(
+        negative.set_angle(90.0).is_some(),
+        "a negative step is 0: every command"
+    );
 }
 
 #[test]

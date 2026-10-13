@@ -3100,6 +3100,10 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 - **M9, diagnostics:** the bus diagnostics run only while disarmed (`bustune` armed only back to its configured
   clock); `imu mute` and `i2c read` are Rust-only forced-proof tools; `inspect databoard` / `stats databoard` as plan B;
   the BMI323 inspects `rate_dps` (deg/s, as the LSM6DSO32) where plan B had `rate_cds`.
+- **The servo's `step_deg`** (operator, 2026-10-13; Rust-only): the flight loop writes a fin only once its command is
+  that many whole degrees from where the fin stands, then straight to the command (a deadband, so noise at a step's
+  edge cannot chatter). The default 1 is plan B's any-change compare-and-set; 0 writes every command. The operator's
+  question is what 0, 1, 3 and 5 cost in energy, moves and accuracy.
 
 **Unchanged** (contract): the CC grammar and replies, the routing and CRC wrapper, the session.csv columns, the
 stream names and field lists, the config JSON schema and `config_id` algorithm, the NVS namespace `coludo` and

@@ -44,6 +44,9 @@ pub const DEFAULT_MIN_DEGREES: i32 = 0;
 /// The default command range's high end, degrees.
 pub const DEFAULT_MAX_DEGREES: i32 = 180;
 
+/// The default step of the flight loop's command, whole degrees (`step_deg`): 1, any change written, as plan B.
+pub const DEFAULT_STEP_DEGREES: i32 = 1;
+
 /// The probe's settle before it takes the resting power baseline, ms (only with a fresh INA226).
 pub const PROBE_SETTLE_MS: u32 = 300;
 
@@ -133,6 +136,9 @@ pub struct Settings {
     pub engine_min_mw: i32,
     /// The probe's HIGH-draw flag, mW (`engine_max_mw`, default the type's).
     pub engine_max_mw: i32,
+    /// The least move the flight loop writes, whole degrees (`step_deg`, [`DEFAULT_STEP_DEGREES`]; operator
+    /// 2026-10-13): a fin moves only once its command is this far from where it stands. 0 writes every command.
+    pub step_degrees: i32,
 }
 
 impl Settings {
@@ -155,6 +161,7 @@ impl Settings {
             angle: number("angle"),
             engine_min_mw: integer("engine_min_mw", servo_type.engine_min_mw),
             engine_max_mw: integer("engine_max_mw", servo_type.engine_max_mw),
+            step_degrees: integer("step_deg", DEFAULT_STEP_DEGREES).max(0),
         }
     }
 }
@@ -257,6 +264,8 @@ pub struct Servo {
     engine_min_mw: i32,
     /// The probe's HIGH-draw flag, mW.
     engine_max_mw: i32,
+    /// The least move the flight loop writes, whole degrees (0: every command).
+    step_degrees: i32,
     /// The last command written.
     command: Command,
 }
@@ -277,6 +286,7 @@ impl Servo {
             trim: settings.trim,
             engine_min_mw: settings.engine_min_mw,
             engine_max_mw: settings.engine_max_mw,
+            step_degrees: settings.step_degrees,
             command: Command {
                 angle: neutral,
                 pulse_us: settings.min_us,
@@ -365,11 +375,14 @@ impl Servo {
         self.write(angle)
     }
 
-    /// The 100 Hz flight-loop command, compare-and-set (sg90.set_angle): clamp, then write ONLY when the angle
-    /// changed, so a held fin costs nothing. None when it did not change.
+    /// The 100 Hz flight-loop command, compare-and-set (sg90.set_angle): clamp, then write ONLY once the angle is
+    /// the servo's step (`step_deg`) or more from the one held, so a held fin costs nothing and a fin does not chase
+    /// every degree. With the default step of 1 that is any change, plan B's; 0 writes every command, unchanged
+    /// ones too. None when nothing was written.
     pub fn set_angle(&mut self, degrees: f64) -> Option<Command> {
         let angle = self.clamp(degrees);
-        (angle != self.command.angle).then(|| self.write(angle))
+        let moved = (angle - self.command.angle).saturating_abs();
+        (self.step_degrees == 0 || (moved > 0 && moved >= self.step_degrees)).then(|| self.write(angle))
     }
 
     /// How long a move of `degrees` occupies the horn, ms (sg90.travel_ms): the type's rated slew, plus the settle
