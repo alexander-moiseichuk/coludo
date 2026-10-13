@@ -80,3 +80,75 @@ the same footing as the pre-flight report's.
 
 Re-run: `tools/sitl_matrix.py --config <a board's saved config> -o <dir>` (the study) and
 `... --airframes tms8 --runs 2 --boost-cdas 0.0015 0.0020 0.0025 0.0030` (the sweep).
+
+## On the board (2026-10-13): HITL on the taster, the Python collection's charts, and video
+
+**How it was flown.** The taster (Rust firmware, realtime HITL, real SG90s on the INA226 rail) flew TMS-8 as the
+SITL study picked it: F15, **285 g**, `--airframe tms8`, the firmware's defaults of the day (the 3-degree fin grid,
+the endgame's turn kept across the heading wrap). Three independent runs of the ten scenarios (r1-r3), then the
+operator's **video run** (`hitl_host --video`: the ten again with the camera recording through the flight; 9 of 10,
+corner_stress's pull hit a full host disk) and one random scenario per plain run flown again with video (the
+pairs). 42 flights. r1 and r2 flew `69a4496`, r3 and the video flights `15cb17f` (the same flight law, plus the
+`runtime.csv` stream). The SITL reference is the same law at HEAD, 20 seeds a scenario (`board/sitl_head_*.csv`).
+
+Charts as the Python preflight's (`doc/sims/TMS-7-preflight`), now that its tools read a Rust cut
+(`flight_telemetry.load_cut`): per flight `board/<run>_report_<scenario>.svg` (the ground track with the zone, the
+altitude and roll), the noise and wind overlays `board/<run>_compare_{noise,wind}.svg`, and the interactive 11-panel
+`flight_report` for a pair and a video flight (`board/r1_report_wind00{,_video}.html`, `board/rv_report_noise05.html`:
+the 3D track coloured by stage, |a|, altitude, speed, attitude, fins, health, power, gyro, airspeed, control
+authority, every stage marked). The summary: `board/board_vs_sitl.html`. Data: `board/board.csv` (per flight),
+`board/board_vs_sitl.csv`, `board/video_pairs.csv`, `board/video_run.csv`, and `board/comparison.json` (hitl_compare:
+every panel quantity across r1-r3).
+
+### The board flies what the SITL predicts
+
+| scenario | board r1 / r2 / r3 miss | in zone | SITL median (20 seeds' range) | SITL in zone |
+|---|---|---|---|---|
+| noise05 | 27.1 / 43.3 / 37.1 m | 3/3 | 35.1 (26.4-42.2) | 20/20 |
+| noise10 | 57.3 / 56.2 / 59.3 m | 3/3 | 52.5 (43.0-64.7) | 19/20 |
+| noise25 | 6.1 / 29.7 / 4.0 m | 3/3 | 21.9 (5.3-60.6) | 19/20 |
+| wind00 | 57.7 / 61.0 / 70.9 m | 1/3 | 52.5 (43.0-64.7) | 19/20 |
+| wind03 | 49.0 / 46.1 / 50.1 m | 1/3 | 50.5 (48.0-59.4) | 0/20 |
+| wind06 | 32.6 / 32.7 / 32.0 m | 3/3 | 33.4 (27.2-34.5) | 20/20 |
+| wind09 | 43.6 / 43.7 / 43.1 m | 3/3 | 45.7 (42.4-49.0) | 0/20 |
+| wind12 | 137.0 / 136.2 / 138.8 m | 0/3 | 138.8 (136.2-140.9) | 0/20 |
+| corner_spike | 62.9 / 60.2 / 52.4 m | 2/3 | 46.6 (31.7-62.9) | 19/20 |
+| corner_stress | 218.7 / 220.8 / 220.6 m | 0/3 | 220.3 (213.5-235.9) | 0/20 |
+
+- **19 of 30 board flights land in the zone**; the runs' medians are 53.1 / 51.2 / 51.2 m (in zone 6 / 6 / 7). The
+  SITL at HEAD: median 48.1 m, 116 of 200 in the zone.
+- **Scenario by scenario the board sits in the SITL's range**, wind to the decimetre (wind06 32.0-32.7 m against
+  27.2-34.5). The apogee agrees within 1 % (231-233 m against 231 m); the board stays aloft 1-6 s longer.
+- The "in zone" split at 43-50 m is the strip's geometry (40 m wide): wind03 and wind09 land just outside on both.
+- **The runs repeat:** across r1-r3 hitl_compare finds no anomaly in the ten scenarios (no channel missing, no
+  value outside its physical range); the widest spreads are the chaotic quantities (the fin cap's low point, the gyro
+  ranges), as in the Python preflight.
+
+### What video costs the board
+
+The twelve video flights (the video run and the three pairs) against the thirty plain ones:
+
+| | plain (median, range) | video (median, range) |
+|---|---|---|
+| control tick's longest work | 0.49 ms (0.45-0.58) | **1.04 ms** (0.91-1.56) |
+| control tick's worst lateness | 13 us (9-22) | 54 us (39-81) |
+| control overruns | 0 | 0 |
+| core 0 mean load | 48 % | **60 %** |
+| heap free, lowest | 23.1 MB | **9.6 MB** (the camera's buffers) |
+| board temperature, highest | 37.3 °C | **43.8 °C** |
+| flash-to-SD saver lag | 0.7 s (max 24 s) | 0.5 s (**max 63 s**) |
+| SD busy | -- | 43 % |
+| video | -- | ~3,060 frames a flight (25 fps), 1.7 % missed (max 2.7 %), 0 dropped |
+| in the zone | 19 / 30 | 9 / 12 |
+
+- **The flight is unaffected:** no overrun in 42 flights, the landing as without video. The control tick's longest
+  work doubles and still takes about a tenth of the 10 ms tick.
+- **Core 1 has room:** `runtime.csv` (r3 and the video flights) shows core 1, the control loop and the buses, at
+  1-4 % through a video flight, core 0 at 42-91 %. Moving the recorder's threads to core 1 below the control
+  priorities is the lever if core 0 ever runs short (static affinity, from a per-thread `load` profile first).
+- **Watch the saver on a long flight:** the 63 s backlog is well inside the 20 MiB flash ring, but it is the camera
+  and the saver sharing the card.
+- **Open: the servo rail reads 15-20 J lower with video** (60 against 76 J). The fins move the same degrees (r3: 27.9k
+  against 27.5k) and the rail's voltage is the same (4.68-4.71 V in flight); the INA226 averages 9 ms of every 100,
+  so the camera's load may shift its sampling phase against the 100 Hz fin moves. A 1 kHz bench capture settles it;
+  until then it is no finding.
