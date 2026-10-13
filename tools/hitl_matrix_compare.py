@@ -16,7 +16,7 @@ variation on that scenario, and a seed's frames are the same for both stacks whi
   sitl       the Rust matrix through the Rust SITL (src/avionics/sitl), the same layout
   compare    Rust runs -- the SITL's seeds, or tools/hitl_matrix_host.sh outdirs `<run>/<motor>/<scenario>/flight/`
              from the board -- against the reference's seeds, scenario by scenario; a table to stdout, `--json` and
-             `--markdown` to files
+             `--markdown` to files, `--figure` the miss and apogee against the seeds' range (plotly)
 
 What is gated, each Rust flight against plan B's seeds (`low..high` their range):
   * the stage machine, every scenario: the apogee within 3 % of the range, GLIDING (the apogee detection) within
@@ -227,6 +227,58 @@ def table(result: dict) -> str:
     return '\n'.join(lines)
 
 
+def figure(result: dict, out: str) -> bool:
+    """
+    The comparison as a figure (`<out>.html`, `<out>.svg`): per motor, each scenario's touchdown miss and apogee,
+    plan B's seeds as a bar from the lowest to the highest with their median marked, each Rust run as its own marker.
+
+    Returns:
+        False when plotly does not import here (run with the plotly venv); True once the html is written.
+    """
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        return False
+    motors = sorted({row['motor'] for row in result['rows']})
+    runs = sorted({row['run'] for row in result['rows']})
+    panels = make_subplots(rows=2, cols=len(motors), shared_xaxes=True, vertical_spacing=0.08,
+                           subplot_titles=['%s: touchdown miss, m' % motor for motor in motors]
+                           + ['%s: apogee, m' % motor for motor in motors])
+    symbols = ('circle', 'diamond', 'square', 'triangle-up', 'x')
+    for column, motor in enumerate(motors, start=1):
+        rows = [row for row in result['rows'] if row['motor'] == motor]
+        scenarios = list(dict.fromkeys(row['scenario'] for row in rows))
+        for line, key in ((1, 'miss_m'), (2, 'apogee_m')):
+            seeds = {row['scenario']: [flight[key] for flight in row['planb'] if flight.get(key) is not None]
+                     for row in rows}
+            low = [min(seeds[scenario]) if seeds[scenario] else None for scenario in scenarios]
+            high = [max(seeds[scenario]) if seeds[scenario] else None for scenario in scenarios]
+            middle = [sorted(seeds[scenario])[len(seeds[scenario]) // 2] if seeds[scenario] else None
+                      for scenario in scenarios]
+            panels.add_trace(go.Bar(x=scenarios, y=[None if a is None else b - a for a, b in zip(low, high)],
+                                    base=low, marker_color='rgba(120,120,120,0.35)', name='plan B, seeds',
+                                    legendgroup='planb', showlegend=column == 1 and line == 1), row=line, col=column)
+            panels.add_trace(go.Scatter(x=scenarios, y=middle, mode='markers', marker={'symbol': 'line-ew-open',
+                                        'size': 18, 'color': 'black'}, name='plan B, median', legendgroup='median',
+                                        showlegend=column == 1 and line == 1), row=line, col=column)
+            for index, run in enumerate(runs):
+                values = {row['scenario']: row['rust'].get(key) for row in rows if row['run'] == run}
+                panels.add_trace(go.Scatter(x=scenarios, y=[values.get(scenario) for scenario in scenarios],
+                                            mode='markers', marker={'symbol': symbols[index % len(symbols)],
+                                                                    'size': 10}, name='Rust ' + run,
+                                            legendgroup=run, showlegend=column == 1 and line == 1),
+                                 row=line, col=column)
+    panels.update_layout(title='The Rust HITL matrix against plan B on the same physics', height=900,
+                         width=700 * len(motors), template='plotly_white', barmode='overlay')
+    panels.write_html(out + '.html', include_plotlyjs='cdn')
+    try:
+        panels.write_image(out + '.svg')
+    except Exception as error:  # kaleido or its browser missing: the html is the figure
+        print('no svg: %s' % error)
+    return True
+
+
 def main() -> int:
     """reference or compare; 0 on success (compare: every flight present and every gate passed)."""
     parser = argparse.ArgumentParser(description="The Rust HITL matrix against plan B's on the same physics")
@@ -248,6 +300,8 @@ def main() -> int:
     compared.add_argument('--motors', default=','.join(_MOTORS))
     compared.add_argument('--json', help='write the whole result here')
     compared.add_argument('--markdown', help='write the table here')
+    compared.add_argument('--figure', help='draw the miss and apogee against plan B\'s seeds: <prefix>.html, .svg '
+                          '(run with the plotly venv)')
     args = parser.parse_args()
     motors = tuple(motor for motor in args.motors.split(',') if motor)
     if args.command == 'reference':
@@ -268,6 +322,8 @@ def main() -> int:
     if args.markdown:
         with open(args.markdown, 'w') as handle:
             handle.write(text + '\n')
+    if args.figure and not figure(result, args.figure):
+        print('plotly does not import here: no figure (run with the plotly venv)')
     return 1 if result['failures'] or result['missing'] else 0
 
 

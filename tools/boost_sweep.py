@@ -3,17 +3,19 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 The boost's envelope over the SITL (doc/specs/boost-control.md BC2): the Rust flight code flown lockstep on the 6-DoF
-boost (tools/stack_dynamics.py, `hitl_host.py --boost 6dof`), every combination of BOOSTING's law (passive: not a
-control stage; hold: the existing rod-vertical hold) x the stack's static margin x the crosswind against its folded
-wings x a seeded run. Scored by the physics: the burn's path minimum and its worst lean, whether the nose went below
-the horizon under thrust (a loop), the apogee, the landing.
+boost (tools/stack_dynamics.py, `hitl_host.py --boost 6dof`), every combination of BOOSTING's law (a board config
+each: passive, BOOSTING not a control stage; hold, the existing rod-vertical hold; lean, the flight entry's
+`boost_law: "lean"`) x the stack's static margin x the crosswind against its folded wings x a seeded run. Scored
+by the physics: the burn's path minimum and its worst lean, whether the nose went below the horizon under thrust (a
+loop), the apogee, the landing.
 
-  ~/.local/share/pipx/venvs/plotly/bin/python tools/boost_sweep.py --passive <config> --hold <config> -o <outdir>
+  ~/.local/share/pipx/venvs/plotly/bin/python tools/boost_sweep.py --laws passive=<config> hold=<config> -o <outdir>
         [--stack tms7d] [--glider-g 287] [--margins 0.2 0.5 ...] [--winds 0 3 4.5 6] [--runs 2] [--workers 6]
 
-The two configs are the same board config but for the flight entry's `stages`: `boosting` absent (passive) or
-present (hold). Writes <outdir>/runs.csv and summary.csv (';'), and, where plotly imports, <outdir>/envelope.html
-and envelope.svg: per law, the margin x wind grid of the path minimum (LOOP where the stack looped) and the apogee.
+The configs are the same board config but for the flight entry: `boosting` absent from its `stages` (passive) or
+present (hold), `boost_law` set (lean). Writes <outdir>/runs.csv and summary.csv (';'), and, where plotly imports,
+<outdir>/envelope.html and envelope.svg: per law, the margin x wind grid of the path minimum (LOOP where the stack
+looped) and the apogee.
 """
 
 import argparse
@@ -81,19 +83,18 @@ def _write(path: str, rows: list, columns: tuple) -> None:
             handle.write(';'.join(str(row[column]) for column in columns) + '\n')
 
 
-def render(lines: list, out: str) -> bool:
-    """The envelope figure (html + svg) from the summary; False when plotly does not import here."""
+def render(lines: list, laws: list, out: str) -> bool:
+    """The envelope figure (html + svg) from the summary, one column per law; False when plotly does not import."""
     try:
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
     except ImportError:
         return False
-    laws = ('passive', 'hold')
     margins = sorted({line['margin_cal'] for line in lines})
     winds = sorted({line['wind_ms'] for line in lines})
-    figure = make_subplots(rows=2, cols=2, horizontal_spacing=0.12, vertical_spacing=0.14, subplot_titles=(
-        'passive: the burn\'s path minimum, deg', 'hold: the burn\'s path minimum, deg',
-        'passive: apogee, m', 'hold: apogee, m'))
+    titles = ['%s: the burn\'s path minimum, deg' % law for law in laws] + ['%s: apogee, m' % law for law in laws]
+    figure = make_subplots(rows=2, cols=len(laws), horizontal_spacing=0.06 + 0.06 / len(laws), vertical_spacing=0.14,
+                           subplot_titles=titles)
     for column, law in enumerate(laws, start=1):
         cell = {(line['margin_cal'], line['wind_ms']): line for line in lines if line['law'] == law}
         panels = ((1, 'median_path_min_deg', 'RdYlGn', 90), (2, 'median_apogee_m', 'Viridis', None))
@@ -107,10 +108,11 @@ def render(lines: list, out: str) -> bool:
             figure.add_trace(go.Heatmap(z=values, x=['%g m/s' % wind for wind in winds],
                                         y=['%g cal' % margin for margin in margins], text=text,
                                         texttemplate='%{text}', colorscale=scale, zmin=0, zmax=high,
-                                        showscale=column == 2, colorbar={'len': 0.42, 'y': 0.79 if row == 1 else 0.21}),
+                                        showscale=column == len(laws),
+                                        colorbar={'len': 0.42, 'y': 0.79 if row == 1 else 0.21}),
                              row=row, col=column)
     figure.update_layout(title='Boost envelope over the SITL: the 6-DoF stack (tms7d), F15, crosswind against the '
-                               'folded wings', height=900, width=1200, template='plotly_white')
+                               'folded wings', height=900, width=600 * len(laws), template='plotly_white')
     figure.write_html(out + '.html', include_plotlyjs='cdn')
     try:
         figure.write_image(out + '.svg')
@@ -121,8 +123,8 @@ def render(lines: list, out: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[1])
-    parser.add_argument('--passive', required=True, help='the board config with BOOSTING not a control stage')
-    parser.add_argument('--hold', required=True, help='the same config with `boosting` in the flight stages')
+    parser.add_argument('--laws', nargs='+', required=True, metavar='NAME=CONFIG',
+                        help='each law flown, by name and its board config: passive=..., hold=..., lean=...')
     parser.add_argument('-o', '--out', required=True)
     parser.add_argument('--stack', default='tms7d')
     parser.add_argument('--glider-g', type=int, default=287)
@@ -132,7 +134,8 @@ def main() -> int:
     parser.add_argument('--workers', type=int, default=6)
     args = parser.parse_args()
     os.makedirs(args.out, exist_ok=True)
-    jobs = [(config, law, margin, wind, run) for law, config in (('passive', args.passive), ('hold', args.hold))
+    laws = [law.split('=', 1) for law in args.laws]
+    jobs = [(config, law, margin, wind, run) for law, config in laws
             for margin in args.margins for wind in args.winds for run in range(1, args.runs + 1)]
     ports: queue.Queue = queue.Queue()
     for index in range(args.workers):
@@ -156,7 +159,7 @@ def main() -> int:
     _write(os.path.join(args.out, 'runs.csv'), rows, _COLUMNS)
     lines = summary(rows)
     _write(os.path.join(args.out, 'summary.csv'), lines, tuple(lines[0]))
-    if not render(lines, os.path.join(args.out, 'envelope')):
+    if not render(lines, [law for law, _ in laws], os.path.join(args.out, 'envelope')):
         print('plotly does not import here: no figure (run with the plotly venv)')
     return 0
 
