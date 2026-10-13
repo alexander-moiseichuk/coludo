@@ -72,3 +72,31 @@ the figure: `envelope_bc3.html`, `envelope_bc3.svg`.
 - **Margin still dominates:** nothing saves 0.2-0.8 cal in 6 m/s.
 
 Next, BC4: the law on the taster, servos moving (HITL).
+
+## The rail (2026-10-13)
+
+The same grid on rails of 1.0, 1.5 and 2.5 m (432 flights, HEAD's SITL: the 3-degree fin grid and the wrap latch
+on; the stack leaves the rail when it has travelled the rail's length). The 1.0 m rows repeat BC2 and BC3 exactly,
+so neither change touches the boost. Data: `summary_rail_<rail>m.csv`, `runs_rail_<rail>m.csv`.
+
+The loop's edge, the smallest static margin from which no larger margin loops, in calibers:
+
+| rail | law | calm | 3 m/s | 4.5 m/s | 6 m/s |
+|---|---|---|---|---|---|
+| 1.0 m | passive | 0.2 | 0.5 | 1.0 | 1.5 |
+| 1.0 m | hold | 0.2 | 0.5 | 0.8 | 1.5 |
+| 1.0 m | lean | 0.2 | 0.2 | 0.5 | 1.0 |
+| 1.5 m | passive | 0.2 | 0.2 | 0.8 | 1.5 |
+| 1.5 m | hold | 0.2 | 0.2 | 0.8 | 1.5 |
+| 1.5 m | lean | 0.2 | 0.2 | 0.5 | 1.0 |
+| 2.5 m | passive | 0.2 | 0.2 | 0.8 | 1.5 |
+| 2.5 m | hold | 0.2 | 0.2 | 0.5 | 1.0 |
+| 2.5 m | lean | 0.2 | 0.2 | **0.2** | **0.8** |
+
+- **A longer rail is worth ~0.2-0.5 caliber**, the lean law another ~0.5: on a 2.5 m rail with the lean law, 4.5 m/s
+  is flyable from 0.2 caliber, 6 m/s from 0.8. On today's ~1 m rod and passive, 1.0 at 4.5 m/s and 1.5 at 6 m/s.
+- **The rail also buys height where nothing loops.** At 6 m/s and 1.5 cal, passive: path minimum 28° and apogee 87 m
+  on the 1 m rod, 75° and 179 m on 2.5 m. At 4.5 m/s and 1.0 cal: 67° / 170 m against 81° / 181 m.
+- **For a launch day**, the wind limit by the stack's margin (passive, a 1 m rod): 3 m/s from 0.5 cal, 4.5 m/s from
+  1.0, 6 m/s from 1.5. 7C's 0.24 cal is a calm-day stack on any rail but a 2.5 m one with the lean law (4.5 m/s);
+  7D's 0.84 flies 4.5 m/s on a 1.5 m rail, or on the 1 m rod with the hold or the lean law.

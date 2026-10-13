@@ -161,6 +161,11 @@ SITL flights, the configs differing only in `stages` and `boost_law`):
 The same aerodynamics caveats as BC2's (fitted to two flights, one stack, one wind plane, a 1 m rod). BC4 flies the
 law on the taster with servos moving; until then the default stays the hold.
 
+**The rail** (2026-10-13, [TMS-7-boost_envelope](../sims/TMS-7-boost_envelope/) "The rail", 432 SITL flights on 1.0,
+1.5 and 2.5 m): a longer rail moves the loop's edge ~0.2-0.5 caliber, the lean law another ~0.5. On a 2.5 m rail with
+the lean law 4.5 m/s flies from 0.2 cal and 6 m/s from 0.8; on today's ~1 m rod passive, 1.0 and 1.5. Where nothing
+loops the rail buys height too: 6 m/s at 1.5 cal passive, 87 m apogee on 1 m against 179 m on 2.5 m.
+
 ## 3. Not in this plan
 
 The stack's own design (margin, booster fins, the joint, a longer rail: the launch README's December list) and
