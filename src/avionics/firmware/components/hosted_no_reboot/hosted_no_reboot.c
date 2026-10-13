@@ -13,8 +13,13 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 
 static const char *TAG = "hosted_no_reboot";
+/* esp_hosted's return codes (port_esp_hosted_host_os.h RET_OK, RET_INVALID; that header pulls in esp_hosted's
+ * private ones) */
+#define HOSTED_RET_OK 0
+#define HOSTED_RET_INVALID -2
 static volatile bool link_down;
 static bool installed;
 static bool pinned;
@@ -30,6 +35,7 @@ static volatile uint32_t internal_fallbacks;
 extern int hosted_restart_host(void);
 extern void *hosted_thread_create(const char *name, uint32_t priority, uint32_t stack_size,
                                   void (*start_routine)(void const *), void *argument);
+extern int hosted_thread_cancel(void *thread_handle);
 extern void *hosted_malloc_align(size_t size, size_t align);
 
 /* Called where esp_hosted would restart the host. It must NOT return: at sdio_drv.c:450 the caller holds the
@@ -44,26 +50,59 @@ static int park(void)
     return 0;
 }
 
-/* hosted_thread_create, pinned: the same handle (a malloc'd TaskHandle_t, which hosted_thread_cancel frees with
- * free()) around xTaskCreatePinnedToCore instead of the unpinned xTaskCreate. */
+/* esp_hosted's thread handle, ours: the TaskHandle_t first, where esp_hosted reads it (`*(TaskHandle_t *)handle`),
+ * then how the task was made, so cancel_thread deletes it the same way. */
+typedef struct {
+    TaskHandle_t task;
+    bool psram_stack;
+} hosted_thread_t;
+
+/* hosted_thread_create, pinned to HOSTED_CORE and on a PSRAM stack (2026-10-13, doc/specs/avionics-port.md §4.7:
+ * internal RAM is the camera's and the flight's). esp_hosted's tasks hand the SDIO DMA only buffers from its aligned
+ * malloc (malloc_align_psram below), never stack memory, and none of them maps flash, the one thing a PSRAM-stack task
+ * must not do. PSRAM full: an internal stack, as before (`heap stacks` shows each task's region). */
 static void *create_pinned_thread(const char *name, uint32_t priority, uint32_t stack_size,
                                   void (*start_routine)(void const *), void *argument)
 {
     if (!start_routine) {
         return NULL;
     }
-    TaskHandle_t *handle = malloc(sizeof(TaskHandle_t));
+    hosted_thread_t *handle = malloc(sizeof(hosted_thread_t));
     if (!handle) {
         return NULL;
     }
-    *handle = NULL;
-    if (xTaskCreatePinnedToCore((void (*)(void *))start_routine, name, stack_size, argument, priority, handle,
-                                HOSTED_CORE) != pdTRUE || !*handle) {
+    handle->task = NULL;
+    handle->psram_stack = true;
+    if (xTaskCreatePinnedToCoreWithCaps((void (*)(void *))start_routine, name, stack_size, argument, priority,
+                                        &handle->task, HOSTED_CORE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdTRUE &&
+        handle->task) {
+        return handle;
+    }
+    handle->psram_stack = false;
+    if (xTaskCreatePinnedToCore((void (*)(void *))start_routine, name, stack_size, argument, priority, &handle->task,
+                                HOSTED_CORE) != pdTRUE || !handle->task) {
         ESP_LOGE(TAG, "esp_hosted task %s not created", name);
         free(handle);
         return NULL;
     }
     return handle;
+}
+
+/* hosted_thread_cancel for create_pinned_thread's tasks: a task made with caps is deleted with caps (plain vTaskDelete
+ * would keep its PSRAM stack), then the handle is freed as esp_hosted's own cancel frees it. */
+static int cancel_thread(void *thread_handle)
+{
+    hosted_thread_t *handle = thread_handle;
+    if (!handle) {
+        return HOSTED_RET_INVALID;
+    }
+    if (handle->psram_stack) {
+        vTaskDeleteWithCaps(handle->task);
+    } else {
+        vTaskDelete(handle->task);
+    }
+    free(handle);
+    return HOSTED_RET_OK;
 }
 
 /* hosted_malloc_align, in PSRAM: every buffer esp_hosted hands to the SDIO DMA comes from it -- the frame pool
@@ -96,11 +135,15 @@ static void __attribute__((constructor(101))) install(void)
     } else {
         ESP_LOGE(TAG, "esp_hosted's OS table does not hold its restart where expected: guard NOT installed");
     }
-    if (g_hosted_osi_funcs._h_thread_create == hosted_thread_create) {
+    /* create and cancel together: a task this create makes is deleted by this cancel */
+    if (g_hosted_osi_funcs._h_thread_create == hosted_thread_create &&
+        g_hosted_osi_funcs._h_thread_cancel == hosted_thread_cancel) {
         g_hosted_osi_funcs._h_thread_create = create_pinned_thread;
+        g_hosted_osi_funcs._h_thread_cancel = cancel_thread;
         pinned = true;
     } else {
-        ESP_LOGE(TAG, "esp_hosted's OS table does not hold its thread create where expected: tasks NOT pinned");
+        ESP_LOGE(TAG, "esp_hosted's OS table does not hold its thread create and cancel where expected: tasks NOT "
+                      "pinned, stacks internal");
     }
     if (g_hosted_osi_funcs._h_malloc_align == hosted_malloc_align) {
         g_hosted_osi_funcs._h_malloc_align = malloc_align_psram;

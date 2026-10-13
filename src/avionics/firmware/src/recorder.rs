@@ -478,8 +478,9 @@ fn log_ignored_session(document: &Value) {
 /// partition, writes the session-start record and spawns the ring_eraser and, with a card, the ring_saver; then the
 /// writer steps forever. Boot goes on meanwhile.
 ///
-/// Call it after the camera's encoder has reserved its internal RAM (video::reserve): the three ring threads'
-/// stacks and buffers come from the same heap, and would split the encoder's ~138 KB block.
+/// The three ring threads run on PSRAM stacks, so their buffers are PSRAM too (crate's global allocator): their flash
+/// reads and programs go through [`BOUNCE`], and their card writes through the SD driver's own bounce. Internal RAM is
+/// the camera's and the flight's (2026-10-13: the flight load had taken the DMA-capable heap to ~0.3 KB).
 ///
 /// Args:
 /// * `settings` - the `cfg` partition: the ring positions and the session-start record live there.
@@ -498,7 +499,7 @@ pub fn start(settings: EspCustomNvsPartition, card: Option<Card>, config_id: &st
     spawn(
         c"ring_writer",
         WRITER_STACK,
-        Stack::Internal,
+        Stack::Psram,
         BRING_UP_PRIORITY,
         move || write(recording, settings, card, &config_id),
     )
@@ -769,13 +770,9 @@ fn start_eraser(
             return;
         }
     };
-    if let Err(error) = spawn(
-        c"ring_eraser",
-        ERASER_STACK,
-        Stack::Internal,
-        ERASER_PRIORITY,
-        move || erase(eraser, recorder, store),
-    ) {
+    if let Err(error) = spawn(c"ring_eraser", ERASER_STACK, Stack::Psram, ERASER_PRIORITY, move || {
+        erase(eraser, recorder, store)
+    }) {
         log::error!("ring :: the eraser would not start: {error}");
     }
 }
@@ -930,7 +927,7 @@ fn start_saver(
         let saver = Saver::new(recorder, partition, table, StdFs::new(sd::MOUNT), start);
         save(saver, store)
     };
-    if let Err(error) = spawn(c"ring_saver", SAVER_STACK, Stack::Internal, SAVER_PRIORITY, body) {
+    if let Err(error) = spawn(c"ring_saver", SAVER_STACK, Stack::Psram, SAVER_PRIORITY, body) {
         log::error!("ring :: the saver would not start, nothing reaches the card: {error}");
     }
 }
@@ -1293,6 +1290,25 @@ fn pair(position: Position) -> [u32; 2] {
     [position.block_sequence, position.offset]
 }
 
+/// The bounce, bytes: [`Partition`]'s reads and programs of a buffer outside internal RAM go through it in pieces this
+/// long.
+const BOUNCE_BYTES: usize = 2048;
+
+/// The one internal buffer every [`Partition`] read and program of a buffer outside internal RAM goes through (a
+/// PSRAM-stack thread's heap: the ring threads', the file server's, the panic log's). Without it esp_flash mallocs up
+/// to 16 KiB of internal memory for each such read, and programs such a buffer 32 bytes at a time
+/// (esp_flash_api.c). In .bss, so internal; one lock for every caller, which SPI1's own mutex serialises anyway.
+static BOUNCE: Mutex<Bounce> = Mutex::new(Bounce([0; BOUNCE_BYTES]));
+
+/// [`BOUNCE`]'s bytes, word-aligned as esp_flash's direct path likes them.
+#[repr(align(4))]
+struct Bounce([u8; BOUNCE_BYTES]);
+
+/// Whether `buffer` starts in internal DRAM, the test esp_flash itself makes (`esp_ptr_in_dram`).
+fn in_dram(buffer: &[u8]) -> bool {
+    (sys::SOC_DRAM_LOW as usize..sys::SOC_DRAM_HIGH as usize).contains(&(buffer.as_ptr() as usize))
+}
+
 /// A data partition found by its label, as a [`Flash`]: the `log` partition (partitions.csv: 20 MiB at 0xc00000), the
 /// ring's, and the `panic` partition, the panic log's. Each ring task holds its own copy; esp_flash serialises the
 /// calls, NVS's on the same chip among them.
@@ -1324,18 +1340,55 @@ impl Partition {
 impl Flash for Partition {
     type Error = sys::EspError;
 
-    /// Reads with esp_partition_read. The callers read into internal RAM (a ≤ 4 KiB buffer; on the file server's
-    /// PSRAM stack an allocator::InternalBuffer): esp_flash reads a PSRAM buffer through a bounce buffer of up to
-    /// 16 KiB of internal DMA memory, the kind esp_hosted cannot do without.
+    /// Reads with esp_partition_read: straight into internal RAM, through [`BOUNCE`] into anything else.
     fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), Self::Error> {
-        // SAFETY: esp_partition_read checks the range against the partition and fills at most the buffer's length.
-        sys::esp!(unsafe { sys::esp_partition_read(self.0, offset as usize, buffer.as_mut_ptr().cast(), buffer.len()) })
+        if in_dram(buffer) {
+            // SAFETY: esp_partition_read checks the range against the partition and fills at most the buffer's length.
+            return sys::esp!(unsafe {
+                sys::esp_partition_read(self.0, offset as usize, buffer.as_mut_ptr().cast(), buffer.len())
+            });
+        }
+        let mut bounce = BOUNCE.lock().unwrap_or_else(PoisonError::into_inner);
+        for (index, piece) in buffer.chunks_mut(BOUNCE_BYTES).enumerate() {
+            let staged = &mut bounce.0[..piece.len()];
+            // SAFETY: as above, into the internal bounce, at most its length.
+            sys::esp!(unsafe {
+                sys::esp_partition_read(
+                    self.0,
+                    offset as usize + index * BOUNCE_BYTES,
+                    staged.as_mut_ptr().cast(),
+                    staged.len(),
+                )
+            })?;
+            piece.copy_from_slice(staged);
+        }
+        Ok(())
     }
 
-    /// Programs with esp_partition_write_raw: no encryption, and the ring carries its own CRCs.
+    /// Programs with esp_partition_write_raw (no encryption, and the ring carries its own CRCs): straight from internal
+    /// RAM, through [`BOUNCE`] from anything else.
     fn program(&mut self, offset: u32, data: &[u8]) -> Result<(), Self::Error> {
-        // SAFETY: the range is checked against the partition; the data is read, never kept.
-        sys::esp!(unsafe { sys::esp_partition_write_raw(self.0, offset as usize, data.as_ptr().cast(), data.len()) })
+        if in_dram(data) {
+            // SAFETY: the range is checked against the partition; the data is read, never kept.
+            return sys::esp!(unsafe {
+                sys::esp_partition_write_raw(self.0, offset as usize, data.as_ptr().cast(), data.len())
+            });
+        }
+        let mut bounce = BOUNCE.lock().unwrap_or_else(PoisonError::into_inner);
+        for (index, piece) in data.chunks(BOUNCE_BYTES).enumerate() {
+            let staged = &mut bounce.0[..piece.len()];
+            staged.copy_from_slice(piece);
+            // SAFETY: as above, from the internal bounce.
+            sys::esp!(unsafe {
+                sys::esp_partition_write_raw(
+                    self.0,
+                    offset as usize + index * BOUNCE_BYTES,
+                    staged.as_ptr().cast(),
+                    staged.len(),
+                )
+            })?;
+        }
+        Ok(())
     }
 
     /// Erases the one 4 KiB sector at `offset` (13-17 ms; a 64 KiB erase is never issued).

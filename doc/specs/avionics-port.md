@@ -2678,9 +2678,8 @@ untraced: no console was attached.
 - Fewer capture buffers: they are in PSRAM already, so nothing internal is saved.
 
 **Remaining levers**, in order of yield, each measured the same way:
-- esp_hosted's own task stacks in PSRAM (~28 KB; its data path, priority 23);
-- the ring threads' stacks (saver and eraser 14 KB, writer 8 KB last), after moving their stack-local flash-read
-  targets to internal buffers;
+- ~~esp_hosted's own task stacks in PSRAM~~ (done 2026-10-13, below);
+- ~~the ring threads' stacks~~ (done 2026-10-13, with their buffers, through a static flash bounce; below);
 - the main task (16.9 KB), if `link::run` moves to a PSRAM-stack thread;
 - the SD bounce buffer (8 KB) and the video tasks' stacks (8 KB while recording) in PSRAM;
 - the idle RTC/SPM heaps (39 KB, not DMA-capable) for cold internal objects.
@@ -2714,9 +2713,33 @@ That leaves ~40 KB internal and ~20 KB DMA-capable at idle (7F, with fewer parts
 DMA-capable memory on 10-06. No one feature took it: M7-M21 each paid a few KB, the bring-up's because `main` runs on
 an internal stack, so the global allocator gives its allocations internal RAM. With the video recording on the pad
 and the flight-rate ring load, the DMA-capable heap then falls to 0.2-0.3 KB (10-minute soaks on both boards); the
-same stress plus four downloads ran it out, and `pace`'s thread spawn panicked (now an `err` answer). Moving what
-the flight does not need in internal RAM (the bring-up's allocations, the recorder's slow core-0 threads) is open,
-the operator's call on what stays internal.
+same stress plus four downloads ran it out, and `pace`'s thread spawn panicked (now an `err` answer).
+
+**The fix (operator, 2026-10-13: "we must be fast on bring-up, but the ring threads and maybe Wi-Fi").** The bring-up
+stays internal; two of the levers below moved:
+- the ring_writer, ring_eraser and ring_saver run on PSRAM stacks, so what they allocate is PSRAM too: their working
+  buffers and the ring's 5120-slot block table, which the writer's bring-up builds. `Partition` reads and programs a
+  buffer outside internal RAM through one 2 KiB static internal bounce: esp_flash would otherwise malloc up to 16 KiB
+  of internal memory for each such read and program such a buffer 32 bytes at a time (`esp_flash_api.c`);
+- esp_hosted's six tasks run on PSRAM stacks (`components/hosted_no_reboot`: `xTaskCreatePinnedToCoreWithCaps`, and
+  its cancel deletes them with `vTaskDeleteWithCaps`). They hand the SDIO DMA only the aligned-malloc buffers already
+  in PSRAM, and none maps flash.
+
+| measured on the taster | before | the ring threads | and esp_hosted |
+|---|---|---|---|
+| idle, internal / DMA-capable free | 40 / 20 KB | 108 / 81 KB | 137 / 110 KB |
+| flight load 10 min: lowest DMA-capable | 0.3 KB | 48.5 KB | 77 KB |
+| flight load 10 min: control overruns, late max, work max | 0, 119 us, 2.8 ms | 3, 5.1 ms, 45 ms | 0, 221 us, 1.5 ms |
+| stress with four downloads: lowest internal / DMA | 0.5 / 0.3 KB, then the OOM panic | | 105 / 77 KB |
+| stress: each 19 MB download | 35-55 s | | 33-44 s |
+
+Wi-Fi's throughput did not move (7F: 32-44 s before, 32-43 s after). 7F's flight-load soak with both moves: lowest
+DMA-capable 77 KB, 0 overruns, late max 152 us, work max 1.3 ms, the saver 0.16 s behind. The one bad control figure, the ring-only build's
+45 ms tick, came with `heap` walks every 30 s: a walk holds the heap's lock, and on the taster core 1 allocates in
+steady state (~6.6 a second: the BMP280's staleness lines, formatted on its owner thread; 7F's core 1 allocates
+nothing), so a core-1 allocation meeting a walk waits. With both moves the same soak gave 0 overruns and a 1.5 ms
+worst tick; a 2.5 min run of the flight load with no walks, 1.3 ms; with a walk every 10 s, 3.7 ms. `heap` is a
+ground diagnostic.
 
 The heap tracing investigation that found it: `CONFIG_HEAP_TRACING_STANDALONE` in leak mode around the bring-up,
 its records walked with `heap_trace_get` from Rust. `heap_trace_dump` itself trips core 0's interrupt watchdog, and
