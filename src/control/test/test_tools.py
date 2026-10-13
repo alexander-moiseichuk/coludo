@@ -2032,6 +2032,12 @@ def test_boost_sweep_scores_a_flight_and_keeps_the_matrix_out_of_the_grid():
     assert boost_sweep.matrix_summary(grid + matrix) == [
         {'law': 'lean', 'flights': 1, 'loops': 0, 'median_path_min_deg': 74.0, 'median_miss_m': 12.5, 'in_zone': 1,
          'median_apogee_m': 171}]
+    # --resume reads runs.csv back in its own types: a resumed row equals the row written
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'runs.csv')
+        boost_sweep._write(path, grid + matrix, boost_sweep._COLUMNS)
+        back = [boost_sweep._parsed(row) for row in boost_sweep._read(path)]
+    assert back == [{column: row[column] for column in boost_sweep._COLUMNS} for row in grid + matrix], back
 
 
 def test_flight_pull_takes_a_session_not_a_junk_name():

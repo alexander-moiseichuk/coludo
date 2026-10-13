@@ -18,17 +18,21 @@ present (hold), `boost_law` set (lean).
 On boards (BC4): `--boards taster=192.168.102.152:/dev/ttyACM0 TMS-7F=192.168.102.162:/dev/ttyACM1:no-power` flies
 the same grid in realtime HITL, each board taking the next flight from one queue, the laws by name (`--laws passive
 hold lean`: hitl_host.py `--boost-law` over each board's own config; `lean@10` adds a 10-degree boost ceiling,
-`--boost-limit`); every flight goes through
-tools/hitl_collect_host.sh (pulled, cut) into <outdir>/flights/<law>_m<margin>_w<wind>_r<run>/, plots deferred
-(plotting during another board's realtime flight would load the host). `no-power` is a board whose servo rail is
-off (hitl_host.py --no-power). `--scenarios` adds the 12-scenario matrix (tools/hitl_matrix_host.sh's table) at the
-stack's own margin, per law. Writes <outdir>/runs.csv and summary.csv (';'), and, where plotly imports,
-<outdir>/envelope.html and envelope.svg: per law, the margin x wind grid of the path minimum (LOOP where the stack
-looped) and the apogee.
+`--boost-limit`). Every flight goes through tools/hitl_collect_host.sh (pulled, cut) into
+<outdir>/flights/<law>/m<margin>_w<wind>_r<run>/, plots deferred (plotting during another board's realtime flight
+would load the host). `no-power` is a board whose servo rail is off (hitl_host.py --no-power). `--scenarios` adds
+the 12-scenario matrix (tools/hitl_matrix_host.sh's table) at the stack's own margin, per law. A board that fails
+two flights in a row retires (one hung on 2026-10-13: a failing board answers at once and would drain the queue),
+its flight going back to the others; `--resume` keeps the flights an earlier run's runs.csv has done and flies the
+rest.
+
+Writes <outdir>/runs.csv and summary.csv (';'), and, where plotly imports, <outdir>/envelope.html and envelope.svg:
+per law, the margin x wind grid of the path minimum (LOOP where the stack looped) and the apogee.
 """
 
 import argparse
 import concurrent.futures
+import csv
 import os
 import queue
 import re
@@ -150,6 +154,24 @@ def matrix_summary(rows: list) -> list:
     return out
 
 
+def _read(path: str) -> list:
+    """A ';' CSV's rows as dicts of strings."""
+    with open(path, newline='') as handle:
+        return list(csv.DictReader(handle, delimiter=';'))
+
+
+def _parsed(row: dict) -> dict:
+    """A runs.csv row back in `_COLUMNS`' types (a resumed run's rows meet fresh ones in the summaries)."""
+    out = dict(row)
+    for column in ('margin_cal', 'wind_ms', 'path_min_deg', 'tilt_max_deg', 'burnout_ms', 'aloft_s', 'miss_m'):
+        out[column] = float(row[column])
+    for column in ('run', 'apogee_m'):
+        out[column] = int(row[column])
+    for column in ('looped', 'inside'):
+        out[column] = row[column] == 'True'
+    return out
+
+
 def _write(path: str, rows: list, columns: tuple) -> None:
     """`rows` as a ';' CSV, numeric tokens verbatim."""
     with open(path, 'w') as handle:
@@ -205,6 +227,8 @@ def main() -> int:
                         help='fly realtime HITL on these boards instead of the SITL, one queue')
     parser.add_argument('--scenarios', action='store_true',
                         help="--boards: also the 12-scenario matrix per law, at the stack's own margin")
+    parser.add_argument('--resume', action='store_true',
+                        help="--boards: keep the done flights of <outdir>/runs.csv and fly only the rest")
     parser.add_argument('-o', '--out', required=True)
     parser.add_argument('--stack', default='tms7d')
     parser.add_argument('--glider-g', type=int, default=287)
@@ -260,30 +284,44 @@ def _boards(args: argparse.Namespace) -> int:
     laws = [law.split('=', 1)[0] for law in args.laws]
     jobs: queue.Queue = queue.Queue()
     total = 0
+    rows: list = []
+    if args.resume and os.path.exists(os.path.join(args.out, 'runs.csv')):
+        rows = [_parsed(row) for row in _read(os.path.join(args.out, 'runs.csv')) if row['outcome'] == 'done']
+    done = {(row['law'], row['scenario']) for row in rows}
     # run by run, so a run cut short has whole grids
     for run in range(1, args.runs + 1):
         for margin in args.margins:
             for wind in args.winds:
                 for law in laws:
-                    jobs.put({'law': law, 'margin_cal': margin, 'wind_ms': wind, 'wind_dir': _WIND_TOWARD_DEG,
-                              'noise': _NOISE, 'spike': False, 'run': run, 'scenario': ''})
                     total += 1
+                    if (law, 'm%g_w%g_r%d' % (margin, wind, run)) not in done:
+                        jobs.put({'law': law, 'margin_cal': margin, 'wind_ms': wind, 'wind_dir': _WIND_TOWARD_DEG,
+                                  'noise': _NOISE, 'spike': False, 'run': run, 'scenario': ''})
     if args.scenarios:
         for name, noise, wind, direction, spike in _MATRIX:
             for law in laws:
-                jobs.put({'law': law, 'margin_cal': None, 'wind_ms': wind, 'wind_dir': direction, 'noise': noise,
-                          'spike': spike, 'run': 1, 'scenario': name})
                 total += 1
-    rows: list = []
+                if (law, name) not in done:
+                    jobs.put({'law': law, 'margin_cal': None, 'wind_ms': wind, 'wind_dir': direction,
+                              'noise': noise, 'spike': spike, 'run': 1, 'scenario': name})
+    if rows:
+        print('resuming: %d of %d flown, %d to fly' % (len(rows), total, jobs.qsize()), flush=True)
     lock = threading.Lock()
 
     def worker(board: tuple) -> None:
+        failures = 0
         while True:
             try:
                 job = jobs.get_nowait()
             except queue.Empty:
                 return
             row = fly_board(board, job, args.stack, args.glider_g, args.out)
+            failures = failures + 1 if row['outcome'] != 'done' else 0
+            if failures >= 2:
+                jobs.put(job)  # the board, not the flight: another board flies it
+                print('%s retires: two flights in a row failed (the last %s %s)' % (board[0], job['law'],
+                                                                                   row['scenario']), flush=True)
+                return
             with lock:
                 rows.append(row)
                 _write(os.path.join(args.out, 'runs.csv'), rows, _COLUMNS)
