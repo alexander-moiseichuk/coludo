@@ -143,6 +143,17 @@ enum Own {
     /// The bluetooth stub (plan B bluetooth.py:67-77): the radio state asked for, and the radio's own, always null:
     /// this firmware starts no BLE radio, plan B's answer on a board with none.
     Bluetooth { radio: Value, active: Option<bool> },
+    /// The Wi-Fi station (plan B drivers/wifi.py inspect): the network it is on, whether associated, its address,
+    /// the signal, the transmit power cap, and every configured network in order; `channel` beyond plan B's.
+    Wifi {
+        ssid: Option<String>,
+        connected: bool,
+        ip: Option<String>,
+        rssi: Option<i32>,
+        tx_power: Option<f32>,
+        networks: Vec<String>,
+        channel: Option<u8>,
+    },
     /// Any other device: nothing of its own yet.
     None {},
 }
@@ -230,6 +241,7 @@ fn component(context: &Context, implementation: &str, name: &str, now_us: u64) -
         },
         "checkpoint" => Own::Checkpoint(crate::warm::inspect(&context.nvs)),
         "watchdog" => Own::Watchdog(crate::supervisor::inspect()),
+        "wifi" => wifi(context),
         "bluetooth" => Own::Bluetooth {
             radio: with_bluetooth(context, name, |stub| stub.radio().clone()),
             active: None,
@@ -267,6 +279,26 @@ fn gnss(topology: &crate::devices::Topology, name: &str, now_us: u64) -> Own {
             lines: state.lines,
         },
         None => Own::None {},
+    }
+}
+
+/// The Wi-Fi station's own keys (plan B wifi.py inspect): the C6's answer now, every key null (not connected) before
+/// the driver is up; the configured networks either way.
+fn wifi(context: &Context) -> Own {
+    let networks = board_config::wifi(&context.config.document)
+        .networks
+        .into_iter()
+        .map(|network| network.ssid)
+        .collect();
+    let station = crate::link::inspection();
+    Own::Wifi {
+        connected: station.as_ref().is_some_and(|station| station.connected),
+        ssid: station.as_ref().and_then(|station| station.ssid.clone()),
+        ip: station.as_ref().and_then(|station| station.ip.clone()),
+        rssi: station.as_ref().and_then(|station| station.rssi),
+        tx_power: station.as_ref().and_then(|station| station.tx_power),
+        networks,
+        channel: station.and_then(|station| station.channel),
     }
 }
 
@@ -312,7 +344,12 @@ pub fn inspect(message: &Message, context: &mut Context) -> Reply {
                 "alternatives": inspection.alternatives.into_iter().collect::<BTreeMap<_, _>>(),
             }))
         }
-        "mission" => super::ok_json(&context.mission.inspect(None, &clock::text(), clock::epoch())),
+        // the live fix resolves the pad before arm, as the arm's probe does (plan B mission.inspect)
+        "mission" => super::ok_json(&context.mission.inspect(
+            crate::gnss::position(context.topology),
+            &clock::text(),
+            clock::epoch(),
+        )),
         "databoard" => {
             let now_us = uptime_us();
             super::ok_json(&context.topology.inspect(now_us))
@@ -347,6 +384,7 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
         RECORDER => apply_recorder(properties),
         "controller" | "databoard" => Vec::new(), // nothing on them is writable
         device if is_bluetooth(context, device) => with_bluetooth(context, device, |stub| stub.update(properties)),
+        device if is_wifi(context, device) => apply_wifi(properties)?,
         // a fin servo: on the control thread, its owner (trim, angle)
         device if crate::fins::inspection(device).is_some() => {
             crate::control::update_fin(device, &Value::Object(properties.clone()))
@@ -367,6 +405,29 @@ pub fn update(message: &Message, context: &mut Context) -> Reply {
         }
     };
     super::ok_json(&json!({"changed": changed}))
+}
+
+/// Whether the device `name` is the Wi-Fi station.
+fn is_wifi(context: &Context, name: &str) -> bool {
+    context
+        .devices
+        .find(name)
+        .is_some_and(|entry| entry.implementation == "wifi")
+}
+
+/// Apply a Wi-Fi update (plan B wifi.update): `tx_power`, dBm, when it is a number other than the current cap; the
+/// driver's refusal answers `refused`.
+fn apply_wifi(properties: &serde_json::Map<String, Value>) -> Result<Vec<&'static str>, Fault> {
+    let Some(dbm) = properties.get("tx_power").and_then(Value::as_f64) else {
+        return Ok(Vec::new());
+    };
+    let dbm = dbm as f32;
+    let current = crate::link::inspection().and_then(|station| station.tx_power);
+    if current.is_some_and(|current| (current - dbm).abs() < 0.25) {
+        return Ok(Vec::new());
+    }
+    crate::link::set_tx_power(dbm).map_err(|refusal| Fault::new(Code::Refused, refusal))?;
+    Ok(vec!["tx_power"])
 }
 
 /// Whether the device `name` is a bluetooth stub.
@@ -455,6 +516,14 @@ pub fn stats(message: &Message, context: &mut Context) -> Reply {
             super::ok_json(&crate::control::attitude_inspection().unwrap_or_default())
         }
         RECORDER => super::ok_json(&crate::recorder::stats_report().ok_or_else(|| no_object(RECORDER))?),
+        // plan B's Wifi.stats
+        device if is_wifi(context, device) => {
+            let station = crate::link::inspection();
+            super::ok_json(&json!({
+                "connected": station.as_ref().is_some_and(|station| station.connected),
+                "rssi": station.and_then(|station| station.rssi),
+            }))
+        }
         // a device: plan B's Inspectable.stats() default
         device if context.devices.find(device).is_some_and(|entry| entry.active()) => super::ok_json(&json!({})),
         other => Err(no_object(other)),

@@ -96,11 +96,12 @@ const NATIVE: [&str; 6] = ["recorder", "cc", "wifi", "health", "ov5647", "blueto
 const NOT_PORTED: [&str; 1] = ["adxl375"];
 
 /// What runs `entry`. The LSM6DSO32 is an SPI part unless its entry binds it to I2C (plan B's lsm6dso32.py:144: the
-/// `bus` defaults to 'spi').
+/// `bus` defaults to 'spi'). Its read loop runs on the control thread over SPI only: bound to I2C it would come up
+/// and never publish, so it fails as not ported (`verify` lists it, `arm` refuses). Every board wires it on SPI.
 pub fn classify(entry: &Entry) -> Kind {
     match entry.implementation {
         "lsm6dso32" => match controller::binding(entry, "spi", Some(drivers::lsm6dso32::ADDRESS)) {
-            controller::Binding::I2c { .. } => Kind::I2c,
+            controller::Binding::I2c { .. } => Kind::NotPorted,
             _ => Kind::Spi,
         },
         implementation if default_address(implementation).is_some() => Kind::I2c,
@@ -209,6 +210,18 @@ mod tests {
         for implementation in ["sg90", "neo6mv2", "sequencer", "adxl375", "ov5647", ""] {
             assert_eq!(default_address(implementation), None, "{implementation}");
         }
+    }
+
+    #[test]
+    fn the_lsm6dso32_runs_on_spi_only() {
+        let document = serde_json::json!({"sensors": [
+            {"name": "imu_spi", "driver": "lsm6dso32", "bus": "spi", "id": 2},
+            {"name": "imu_default", "driver": "lsm6dso32"},
+            {"name": "imu_i2c", "driver": "lsm6dso32", "bus": "i2c", "id": 0},
+        ]});
+        let kinds: Vec<Kind> = board_config::entries(&document).iter().map(classify).collect();
+        // NEGATIVE: bound to I2C it fails as not ported, never up with no read loop
+        assert_eq!(kinds, [Kind::Spi, Kind::Spi, Kind::NotPorted]);
     }
 
     #[test]

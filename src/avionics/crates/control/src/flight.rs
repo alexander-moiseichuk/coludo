@@ -122,8 +122,10 @@ pub struct FlightLaw {
 
 impl FlightLaw {
     /// The law of the flight entry `flight` (gains, schedule, guidance, wind) and the config's `fins` section
-    /// (the mixer, the limit multiplier), as plan B's setup builds it.
-    pub fn new(flight: &Value, fins: &Value) -> FlightLaw {
+    /// (the mixer, the limit multiplier), as plan B's setup builds it. `position_window_ms` is the GNSS channels' own
+    /// databoard window (the larger of `position`'s and `speed`'s, plan B's): the guidance's default freshness gate
+    /// for a fix, so it tracks the GNSS's rate, not a constant.
+    pub fn new(flight: &Value, fins: &Value, position_window_ms: u32) -> FlightLaw {
         let mut mixer = Mixer::new(&fins["mixer"]);
         let limit = mixer.limit() as f32;
         let number = |key: &str| flight[key].as_f64().map(|value| value as f32);
@@ -148,8 +150,6 @@ impl FlightLaw {
         } else {
             number("period_ms").unwrap_or(20.0) / 1000.0
         };
-        // the guidance's freshness gate: the GNSS channels' own windows (position 400 ms, speed 500 ms)
-        let window_ms = 500;
         FlightLaw {
             pids: [pid("roll"), pid("pitch"), pid("yaw")],
             governor: Governor::new(
@@ -157,7 +157,7 @@ impl FlightLaw {
                 fins["limit_multiplier"].as_f64().unwrap_or(1.0) as f32,
             ),
             wind: WindEstimator::new(&flight["wind"]),
-            guidance: Guidance::new(GuidanceConfig::from_json(flight, window_ms)),
+            guidance: Guidance::new(GuidanceConfig::from_json(flight, position_window_ms)),
             angles: mixer.mix(0.0, 0.0, 0.0).to_vec(),
             mixer,
             nominal_s,
@@ -411,7 +411,7 @@ mod tests {
             "boost_engage_speed": 0.0,
             "boost_law": boost_law,
         });
-        FlightLaw::new(&flight, &json!({"mixer": {}}))
+        FlightLaw::new(&flight, &json!({"mixer": {}}), 500)
     }
 
     /// One boosting step at `attitude` [heading, roll, pitch] with the gyro at `rate`; the demands [roll, pitch, yaw].
@@ -472,7 +472,7 @@ mod tests {
                 "boost_law": "lean",
                 "boost_limit_deg": limit,
             });
-            FlightLaw::new(&flight, &json!({"mixer": {}}))
+            FlightLaw::new(&flight, &json!({"mixer": {}}), 500)
         };
         let glide = Step {
             stage: Stage::Gliding,

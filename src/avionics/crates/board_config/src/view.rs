@@ -167,6 +167,29 @@ pub fn wifi(document: &Value) -> Wifi {
     }
 }
 
+/// The link the board runs: [`wifi`]'s view with the device entries' switches on top, as plan B ran its `wifi`
+/// driver and its `cc` activity only when their entries were enabled. A `wifi` entry configured and disabled leaves
+/// the radio untouched (`policy_enabled` false); a `cc` entry configured and disabled never dials ([`Hub::Off`]: the
+/// board flies standalone, joined for the file server). An entry that is absent changes nothing here: plan B ran no
+/// radio without one, but a hand-built config that leaves it out keeps its link (the operator's only way in).
+pub fn wifi_link(document: &Value) -> Wifi {
+    let mut view = wifi(document);
+    let switched_off = |implementation: &str| {
+        let mut configured = entries(document)
+            .into_iter()
+            .filter(|entry| entry.implementation == implementation)
+            .peekable();
+        configured.peek().is_some() && configured.all(|entry| !enabled(entry.fields))
+    };
+    if switched_off("wifi") {
+        view.policy_enabled = false;
+    }
+    if switched_off("cc") {
+        view.hub = Hub::Off;
+    }
+    view
+}
+
 /// The networks plan B's setup() keeps, in order (see [`wifi`]).
 fn networks(section: &Map<String, Value>) -> Vec<Network> {
     let default_retry = section.get("retry_ms");
@@ -958,7 +981,7 @@ mod tests {
     use super::{
         Camera, CameraClock, DEFAULT_HUB_PORT, DEFAULT_RETRY_MS, DEFAULT_SCHEDULE_HZ, Hub, Network, UartSpecification,
         Watchdog, board_id, camera, checkpoint, directory, hitl_enabled, mask_simulated, max_range_m, mcu, schedule_hz,
-        uart_bus, uart_transmitter, warm_start, watchdog, wifi,
+        uart_bus, uart_transmitter, warm_start, watchdog, wifi, wifi_link,
     };
     use serde_json::{Value, json};
 
@@ -1141,6 +1164,43 @@ mod tests {
             {"ssid": "null", "enabled": null}, {"ssid": "parked", "policy": "disabled"}, {"ssid": ""},
             {"ssid": 5}, 7, null, {"ssid": "kept", "enabled": "yes", "policy": "auto"}]});
         assert_eq!(networks_of(section), [network("kept", DEFAULT_RETRY_MS, "")]);
+    }
+
+    #[test]
+    fn a_disabled_wifi_or_cc_entry_switches_its_half_of_the_link_off() {
+        let document = |wifi_enabled: Value, cc_enabled: Value| {
+            json!({"wifi": {"networks": ["lab"]}, "components": [
+                {"name": "wifi", "driver": "wifi", "enabled": wifi_enabled},
+                {"name": "cc", "activity": "cc", "enabled": cc_enabled},
+            ]})
+        };
+        let on = wifi_link(&document(json!(true), json!(true)));
+        assert!(on.policy_enabled);
+        assert_eq!(on.hub, Hub::Gateway);
+        let radio_off = wifi_link(&document(json!(false), json!(true)));
+        assert!(!radio_off.policy_enabled);
+        assert_eq!(
+            radio_off.networks,
+            [network("lab", DEFAULT_RETRY_MS, "")],
+            "listed, as plan B's setup"
+        );
+        let standalone = wifi_link(&document(json!(true), json!(0)));
+        assert!(standalone.policy_enabled);
+        assert_eq!(standalone.hub, Hub::Off);
+        // NEGATIVE: absent entries change nothing (a hand-built config keeps its link)
+        let bare = wifi_link(&json!({"wifi": {"networks": ["lab"]}}));
+        assert!(bare.policy_enabled);
+        assert_eq!(bare.hub, Hub::Gateway);
+        assert_eq!(
+            wifi_link(&json!({"wifi": {"networks": ["lab"]}})),
+            wifi(&json!({"wifi": {"networks": ["lab"]}}))
+        );
+        // NEGATIVE: a second, enabled entry of the same kind keeps it on
+        let twice = json!({"wifi": {"networks": ["lab"]}, "components": [
+            {"name": "wifi", "driver": "wifi", "enabled": false},
+            {"name": "wifi_2", "driver": "wifi"},
+        ]});
+        assert!(wifi_link(&twice).policy_enabled);
     }
 
     #[test]

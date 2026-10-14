@@ -22,7 +22,7 @@ use control::attitude::{Attitude, Pace, Quantities, assemble};
 use control::flight::FlightLaw;
 use control::guidance::Landing;
 use control::navigation::Position;
-use databoard::Writer;
+use databoard::{Parameter, Writer};
 use recorder::{Cell, Rows};
 use sequencer::{Decider, FlightFlag, FlightWriter, Stage, StageMachine, Transition, VetoEdge};
 use serde_json::Value;
@@ -313,7 +313,19 @@ struct FlightDuty {
 impl FlightDuty {
     /// The loop of `setup` on `topology`.
     fn new(setup: FlightSetup, topology: &'static Topology) -> FlightDuty {
-        let mut law = FlightLaw::new(&setup.entry, &setup.fins);
+        // the guidance's fix freshness: the GNSS channels' own window (plan B tasks/flight.py), 500 ms with no GNSS
+        let window_us = [
+            topology.position("position").map(Parameter::window_us),
+            topology.scalar("speed").map(Parameter::window_us),
+        ]
+        .into_iter()
+        .flatten()
+        .max();
+        let mut law = FlightLaw::new(
+            &setup.entry,
+            &setup.fins,
+            window_us.map_or(500, |window_us| window_us / 1000),
+        );
         if let Some(seed) = setup.seed_airspeed.filter(|seed| *seed > 0.0) {
             law.seed_airspeed(seed);
         }

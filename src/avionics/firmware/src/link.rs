@@ -12,8 +12,9 @@
 //!
 //! The networks are the board config's (`wifi.networks`, board_config::wifi), tried round-robin with each one's
 //! own retry clock; a password comes from the `creds` store, else the config's fallback. The hub is the config's
-//! `cc_host`, the `.1` of the board's own subnet when it is unset, and nothing when it is '' (standalone: Wi-Fi
-//! still joins, for the file server).
+//! `cc_host`, the `.1` of the board's own subnet when it is unset, and nothing when it is '' or the `cc` entry is
+//! disabled (standalone: Wi-Fi still joins, for the file server); a disabled `wifi` entry leaves the radio alone
+//! (board_config::wifi_link).
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -62,6 +63,80 @@ pub fn stack_up() -> bool {
     STACK_UP.load(Ordering::Acquire)
 }
 
+/// What `inspect wifi` shows of the station (plan B drivers/wifi.py inspect), read from the driver on demand.
+pub struct Inspection {
+    /// Associated with an access point.
+    pub connected: bool,
+    /// The network it is on; None when not associated.
+    pub ssid: Option<String>,
+    /// The access point's signal, dBm; None when not associated.
+    pub rssi: Option<i32>,
+    /// The access point's primary channel; None when not associated.
+    pub channel: Option<u8>,
+    /// The station's address; None without a lease.
+    pub ip: Option<String>,
+    /// The radio's transmit power cap, dBm; None when the C6 does not answer.
+    pub tx_power: Option<f32>,
+}
+
+/// The station as the C6 reports it now (each figure one esp_hosted call, a few ms); None before the TCP/IP stack is
+/// up (no Wi-Fi driver yet, or none this boot).
+pub fn inspection() -> Option<Inspection> {
+    use esp_idf_svc::sys;
+    if !stack_up() {
+        return None;
+    }
+    // SAFETY: plain driver queries into zeroed out-structs the calls fill; the driver is up (the stack is).
+    let (record, associated) = unsafe {
+        let mut record: sys::wifi_ap_record_t = core::mem::zeroed();
+        let associated = sys::esp_wifi_sta_get_ap_info(&mut record) == sys::ESP_OK;
+        (record, associated)
+    };
+    // SAFETY: as above; the station interface's handle is the driver's, valid for the program.
+    let ip = unsafe {
+        let station = sys::esp_netif_get_handle_from_ifkey(c"WIFI_STA_DEF".as_ptr());
+        let mut info: sys::esp_netif_ip_info_t = core::mem::zeroed();
+        (!station.is_null() && sys::esp_netif_get_ip_info(station, &mut info) == sys::ESP_OK)
+            .then(|| std::net::Ipv4Addr::from(info.ip.addr.to_le_bytes()))
+            .filter(|address| !address.is_unspecified())
+            .map(|address| address.to_string())
+    };
+    let mut quarter_dbm: i8 = 0;
+    // SAFETY: a plain driver query into a local.
+    let tx_power = (unsafe { sys::esp_wifi_get_max_tx_power(&mut quarter_dbm) } == sys::ESP_OK)
+        .then(|| f32::from(quarter_dbm) / 4.0);
+    let ssid = associated.then(|| {
+        let length = record
+            .ssid
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(record.ssid.len());
+        String::from_utf8_lossy(&record.ssid[..length]).into_owned()
+    });
+    Some(Inspection {
+        connected: associated,
+        ssid,
+        rssi: associated.then_some(i32::from(record.rssi)),
+        channel: associated.then_some(record.primary),
+        ip,
+        tx_power,
+    })
+}
+
+/// Sets the radio's transmit power cap to `dbm` (plan B wifi.set_tx_power, the operator's signal-level knob) until
+/// the next join, which applies its network's `tx_power_dbm` when the config sets one. The C6 rounds it to its own
+/// steps.
+///
+/// Errors: the driver's refusal, or no driver.
+pub fn set_tx_power(dbm: f32) -> Result<(), String> {
+    if !stack_up() {
+        return Err("no Wi-Fi driver".to_string());
+    }
+    // SAFETY: a plain driver call on the started Wi-Fi.
+    esp_idf_svc::sys::esp!(unsafe { esp_idf_svc::sys::esp_wifi_set_max_tx_power((dbm * 4.0) as i8) })
+        .map_err(|error| error.to_string())
+}
+
 /// Join, dial, serve -- forever: the driver started ([`start`]), the file server once the TCP/IP stack is up, then
 /// a look every [`TICK`] ([`Link::look`]).
 pub fn run(
@@ -80,7 +155,7 @@ pub fn run(
         .inspect_err(|error| log::warn!("files :: {error}"))
         .ok();
     if !wifi.policy_enabled || wifi.networks.is_empty() {
-        log::warn!("link :: Wi-Fi disabled by the board config (policy, or no network)");
+        log::warn!("link :: Wi-Fi disabled by the board config (policy, the wifi entry off, or no network)");
         loop {
             std::thread::sleep(Duration::from_secs(3600));
         }

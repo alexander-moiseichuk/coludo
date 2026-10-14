@@ -51,7 +51,7 @@ pub use view::{
     Camera, CameraClock, Entry, Hub, I2cSpecification, Network, Provide, SIM_SENSORS, Section, SpiSpecification,
     UartSpecification, Watchdog, Wifi, board_id, camera, checkpoint, directory, entries, hitl_enabled, i2c_bus,
     mask_simulated, max_range_m, mcu, pin, provides, schedule_hz, setup_retries, spi_bus, uart_bus, uart_transmitter,
-    warm_start, watchdog, wifi,
+    warm_start, watchdog, wifi, wifi_link,
 };
 pub use writer::write;
 

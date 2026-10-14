@@ -586,7 +586,7 @@ pub fn radio(
         modem,
         event_loop,
         partition,
-        board_config::wifi(document),
+        board_config::wifi_link(document),
         credentials,
         executor,
         beacon,

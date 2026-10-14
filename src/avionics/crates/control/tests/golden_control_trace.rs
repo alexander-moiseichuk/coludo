@@ -24,6 +24,10 @@ const TRACE: &str = include_str!("../../../golden/control_trace.json");
 /// The shims' uptime when a builder starts (golden/shims.py `_BOOT_UPTIME_US`).
 const BOOT_UPTIME_US: u64 = 10_000_000;
 
+/// The GNSS channels' window the builder's databoard gave the guidance: the larger of position's 400 ms and speed's
+/// 500 ms (golden/build_control_trace.py, plan B tasks/flight.py).
+const GNSS_WINDOW_MS: u32 = 500;
+
 /// One packed field: None when empty, else its comma-separated numbers.
 fn numbers(field: &str) -> Option<Vec<f64>> {
     (!field.is_empty()).then(|| {
@@ -56,7 +60,7 @@ fn position(value: &Value) -> Position {
 fn replay(case: &Value) -> Vec<String> {
     let name = case["name"].as_str().expect("a name");
     let input = &case["input"];
-    let mut law = FlightLaw::new(&input["flight"], &input["fins"]);
+    let mut law = FlightLaw::new(&input["flight"], &input["fins"], GNSS_WINDOW_MS);
     let zone = &input["zone"];
     let landing = Landing::new(
         position(&zone[0]),
@@ -219,7 +223,7 @@ fn the_flight_law_answers_as_plan_b() {
 fn the_law_actuates_nothing_on_the_pad_until_it_engages() {
     let fixture: Value = serde_json::from_str(TRACE).expect("the fixture parses");
     let input = &fixture["cases"][0]["input"];
-    let mut law = FlightLaw::new(&input["flight"], &input["fins"]);
+    let mut law = FlightLaw::new(&input["flight"], &input["fins"], GNSS_WINDOW_MS);
     let step = |stage: Stage, armed: bool, now_us: u64| Step {
         stage,
         armed,

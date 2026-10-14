@@ -412,6 +412,8 @@ pub struct Keeping {
     altitude: Option<&'static Parameter<f32>>,
     /// The `elevation` quantity: the pad latch's ceiling is read against it.
     elevation: Option<&'static Parameter<f32>>,
+    /// The GNSS `speed` quantity: the crumb's and the row's ground speed (plan B warmstart.py `_speed`).
+    speed: Option<&'static Parameter<f32>>,
     /// The quantities, for the live GNSS fix the freeze pins when no launch point is set.
     topology: &'static Topology,
     /// The rebased barometers' names, in the config order of crates/warmstart `REBASED_BAROS` drivers: whose own
@@ -450,6 +452,7 @@ impl Keeping {
             nvs,
             altitude: topology.scalar("altitude"),
             elevation: topology.scalar("elevation"),
+            speed: topology.scalar("speed"),
             topology,
             baros: BAROS
                 .get_or_init(|| {
@@ -495,9 +498,13 @@ impl Keeping {
             .and_then(|parameter| parameter.read(now_us))
             .filter(|reading| reading.source != crate::control::GNSS_SOURCE)
             .map(|reading| reading.value);
+        let speed_ms = self
+            .speed
+            .and_then(|parameter| parameter.read(now_us))
+            .map(|reading| reading.value);
         let live = Live {
             altitude_m,
-            speed_ms: None,
+            speed_ms,
             airspeed_ms: crate::flight::airspeed(),
             ticks_ms: now_us / 1000,
         };
@@ -546,7 +553,7 @@ impl Keeping {
             _ => {}
         }
         if let Some(stage) = pass.row {
-            self.record(now_us, stage, altitude_m);
+            self.record(now_us, stage, altitude_m, speed_ms);
         }
     }
 
@@ -569,14 +576,14 @@ impl Keeping {
         }
     }
 
-    /// One checkpoint's row at `now_us` (plan B warmstart.py `_checkpoint`): the stage's id, the altitude, the speed
-    /// (none) and the flight law's airspeed, the uptime in ms; then its log line. A refused row is logged once a run: the
-    /// crumb went first either way.
-    fn record(&mut self, now_us: u64, stage: Stage, altitude_m: Option<f32>) {
+    /// One checkpoint's row at `now_us` (plan B warmstart.py `_checkpoint`): the stage's id, the altitude, the GNSS
+    /// ground speed and the flight law's airspeed, the uptime in ms; then its log line. A refused row is logged once a
+    /// run: the crumb went first either way.
+    fn record(&mut self, now_us: u64, stage: Stage, altitude_m: Option<f32>, speed_ms: Option<f32>) {
         let row = [
             Cell::I32(i32::from(stage as u8)),
             altitude_m.map_or(Cell::None, Cell::F32),
-            Cell::None, // speed
+            speed_ms.map_or(Cell::None, Cell::F32),
             crate::flight::airspeed().map_or(Cell::None, Cell::F32),
             Cell::I64((now_us / 1000) as i64),
         ];

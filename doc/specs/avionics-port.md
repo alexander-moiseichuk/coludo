@@ -1510,8 +1510,8 @@ before.
 - `firmware/flight.rs`: the flight loop ticks after the stage machine on the control thread, reading the databoard
   (attitude, rate, accel, GNSS speed/course/fix, the pitot, AGL, elevation) and the mission's zone and launch point
   through a sequence-locked view (no mutex on the flight core); every 100 ms plan B's `flight.csv` row and the
-  vitals `health.flight` shows (plan B's keys: airspeed, fin_cap, active, reach, r_min_m, attitude, fins = the
-  mixer's commanded angles, heading_error, wind). A mixer surface with no servo is logged at boot and `verify`'s
+  vitals `health.flight` shows (plan B's keys: airspeed, fin_cap, active, reach, r_min_m, attitude, fins = what each
+  servo was last told, the mix only before its first pulse, heading_error, wind; reach is live in every stage). A mixer surface with no servo is logged at boot and `verify`'s
   readiness says `fins: no driver for X -- reduced control authority`. The FINS answer carries the real fin angles.
 - The warm start seeds the law's airspeed from the crumb, and the crumb keeps the law's estimate.
 - The control thread's stack is 8 KB (was 6): with the loop's state in its frame, an IMU probe's float formatting
@@ -1701,7 +1701,8 @@ fn push(&mut self, now_us: u64, row: &[Value]) -> Result<(), Overflow>  // telem
 - `misc` is guarded by a std `Mutex` with `try_lock` (drop and count on contention). It is used only by
   unregistered threads and IDF's vprintf hook, never on a hot path.
 
-The config keys `recorder.tlm_capacity`, `log_capacity` and `cell_size` stay accepted and act as lower bounds.
+The config keys `recorder.tlm_capacity`, `log_capacity` and `cell_size` stay accepted (validated as plan B's) and
+size nothing: the rings above are fixed, and every shipped config asks far below them (64 KiB).
 
 **Record format** (little-endian, 4-byte aligned). The same bytes sit in the PSRAM ring and, verbatim, in a flash
 chunk (§3.4):

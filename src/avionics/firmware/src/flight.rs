@@ -237,10 +237,15 @@ pub fn vitals(attitude: Option<[i32; 3]>) -> Option<Value> {
         })
     });
     let turn_radius = load(&VITALS.turn_radius);
+    // what each servo was told (plan B mixer.angles reads each fin's angle): the step_deg grid and a fin's own
+    // limits hold it off the mix; the mix only where no pulse was driven yet (an unbound surface, before the centring)
     let fins: serde_json::Map<String, Value> = surfaces
         .iter()
         .zip(&VITALS.angles)
-        .map(|(surface, angle)| (surface.to_string(), Value::from(angle.load(Ordering::Relaxed))))
+        .map(|(surface, mixed)| {
+            let angle = crate::fins::commanded(surface).unwrap_or_else(|| mixed.load(Ordering::Relaxed));
+            (surface.to_string(), Value::from(angle))
+        })
         .collect();
     Some(serde_json::json!({
         "airspeed": (load(&VITALS.airspeed) * 10.0).round() / 10.0,
