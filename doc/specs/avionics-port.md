@@ -1987,6 +1987,15 @@ line of its own (counted as damage by the tools) and never merges with a re-save
 and HTTP reads), 40 on a one-partition card's only volume; `CONFIG_FATFS_FS_LOCK` (one table for every volume) is
 40, their sum, and `sd_card.c` refuses to build below it. Nothing on the link or health path touches FatFs.
 
+**Profile** (2026-10-13; `ring`'s `saver_step_ms`/`_read_ms`/`_card_ms` and `uart_step_ms`/`_read_ms`/`_out_ms`,
+wall milliseconds since boot, each thread's own): at the taster's pad rate (33 KB/s, ~510 lines/s) over 60 s the
+ring_saver's steps took 46 % of the time, mostly waiting on the card (39.5 %), with 2.4 % in flash reads and 4.5 %
+decoding (88 us a line); the uart_saver's took 21 %, its flash reads 11.5 % (lower priority: waits behind the
+eraser's lock and preemption), 9.9 % decoding, and the UART 67 % busy (47 KB/s of text, half the 921600 link).
+Against their CPU shares (ring_saver ~15 %, uart_saver ~11 % of core 0): decoding costs ~4.5 % of a core per
+thread, paid twice (two cursors, by design, M19), and most of the saver's remainder is the card path (FatFs, the SD
+driver, the bounce copy). Core 0 sits at ~40 % with the eraser sleeping (§3.7); nothing is due.
+
 ### 3.10 SD and flash file layout
 
 **Session first, on one partition (operator, 2026-10-06; one partition from 2026-10-11, the HITL A/B below).** Each

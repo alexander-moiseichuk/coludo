@@ -59,11 +59,13 @@
 //! one growing buffer per file, internal while a file's buffer is 4 KiB or less. The 48 KiB block table is in PSRAM:
 //! the heap puts any allocation over 4 KiB there (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL).
 
+use std::cell::Cell;
 use std::ffi::CStr;
 use std::num::NonZeroU32;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
+use std::thread::LocalKey;
 use std::time::{Duration, Instant};
 
 use esp_idf_svc::hal::cpu::Core;
@@ -78,7 +80,7 @@ use flash_ring::{
     BLOCK_BYTES, BacklogTrend, BlockTable, Eraser, Erasure, Figures, Flash, Geometry, Hints, Position, Ring, Scan,
 };
 use recorder::{
-    BATCH_BLOCKS, BEHIND_BLOCKS, Buffers, Identity, MERGE_HORIZON_US, Recorder, Registry, Relay, Rows, SaveError,
+    BATCH_BLOCKS, BEHIND_BLOCKS, Buffers, Fs, Identity, MERGE_HORIZON_US, Recorder, Registry, Relay, Rows, SaveError,
     Saved, Saver, Settings, StdFs, StreamId, TICK_US, Telemetry, Writer, layout,
 };
 use serde::Serialize;
@@ -947,7 +949,7 @@ fn start_saver(
             .ok();
         // the saver's buffers are allocated here, on its own thread, after the encoder's reservation (start)
         // the card's root: the saver files each session where crates/recorder's layout says, under <session>/recordings
-        let saver = Saver::new(recorder, partition, table, StdFs::new(sd::MOUNT), start);
+        let saver = Saver::new(recorder, partition, table, TimedFs(StdFs::new(sd::MOUNT)), start);
         save(saver, store)
     };
     if let Err(error) = spawn(c"ring_saver", SAVER_STACK, Stack::Psram, SAVER_PRIORITY, body) {
@@ -1071,18 +1073,24 @@ fn relay_loop(
     let mut failing = false;
     let wait = TickType::from(UART_TX_WAIT).ticks();
     let mut bytes: u64 = 0;
+    let (mut step_us, mut out_us) = (0u64, 0u64);
     loop {
         text.clear();
         let mut lines = 0u32;
-        match relay.step(|line| {
+        let started_us = uptime_us();
+        let stepped = relay.step(|line| {
             text.extend_from_slice(line);
             lines += 1;
-        }) {
+        });
+        step_us += uptime_us().saturating_sub(started_us);
+        match stepped {
             Ok(Some(position)) => {
                 failing = false;
+                let writing_us = uptime_us();
                 write_all(port, &text);
                 // SAFETY: a plain wait on the installed driver's transmitter.
                 let _ = unsafe { sys::uart_wait_tx_done(port, wait) };
+                out_us += uptime_us().saturating_sub(writing_us);
                 relay.sent(position);
                 bytes += text.len() as u64;
                 RELAY_LINES.fetch_add(lines, Ordering::Relaxed);
@@ -1098,6 +1106,7 @@ fn relay_loop(
                 std::thread::sleep(UART_RETRY);
             }
         }
+        RELAY_PROFILE.publish(step_us, spent_ms(&READ_US), out_us);
         if let Some(store) = &store {
             hint.publish(store, recorder.relay_position(), uptime_us());
         }
@@ -1133,15 +1142,20 @@ fn write_all(port: sys::uart_port_t, bytes: &[u8]) {
 /// a rest that doubles up to [`SAVER_BACKOFF`]. A failed card call leaves the batch as it was: the next step goes on
 /// with the file that failed, so a card that refuses a file for a while (FR_LOCKED while an HTTP pull reads it)
 /// costs only the wait. Only the first failure of a run is logged.
-fn save(mut saver: Saver<'static, 'static, Partition, StdFs>, store: Option<RecorderStore>) {
+fn save(mut saver: Saver<'static, 'static, Partition, TimedFs>, store: Option<RecorderStore>) {
     SAVER.running.store(true, Ordering::Relaxed);
     SAVER.caught_up_ms.store(uptime_ms(), Ordering::Relaxed);
     let mut backoff = SAVER_IDLE;
     let mut failing = false;
     let mut hint_failing = false;
     let mut bytes: u64 = 0;
+    let mut step_us: u64 = 0;
     loop {
-        let rest = match saver.step(uptime_ms()) {
+        let started_us = uptime_us();
+        let stepped = saver.step(uptime_ms());
+        step_us += uptime_us().saturating_sub(started_us);
+        SAVER_PROFILE.publish(step_us, spent_ms(&READ_US), CARD_US.with(Cell::get));
+        let rest = match stepped {
             Ok(Some(saved)) => {
                 count_batch(&saved, &mut bytes);
                 if let Some(store) = &store {
@@ -1358,13 +1372,9 @@ impl Partition {
         };
         (!partition.is_null()).then_some(Partition(partition))
     }
-}
 
-impl Flash for Partition {
-    type Error = sys::EspError;
-
-    /// Reads with esp_partition_read: straight into internal RAM, through [`BOUNCE`] into anything else.
-    fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), Self::Error> {
+    /// [`Flash::read`] without its timing.
+    fn read_untimed(&self, offset: u32, buffer: &mut [u8]) -> Result<(), sys::EspError> {
         if in_dram(buffer) {
             // SAFETY: esp_partition_read checks the range against the partition and fills at most the buffer's length.
             return sys::esp!(unsafe {
@@ -1386,6 +1396,106 @@ impl Flash for Partition {
             piece.copy_from_slice(staged);
         }
         Ok(())
+    }
+}
+
+// clippy's missing_const_for_thread_local fires on the const form too: on this target std's thread_local! expands to
+// the OS-keyed (pthread) one either way
+thread_local! {
+    /// The microseconds this thread has spent in flash reads ([`Partition::read`]): the ring threads' profile.
+    #[allow(clippy::missing_const_for_thread_local)]
+    static READ_US: Cell<u64> = const { Cell::new(0) };
+    /// The microseconds this thread has spent in card calls ([`TimedFs`]): the ring_saver's profile.
+    #[allow(clippy::missing_const_for_thread_local)]
+    static CARD_US: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Runs `call`, adding its time to this thread's `counter`.
+fn timed<T>(counter: &'static LocalKey<Cell<u64>>, call: impl FnOnce() -> T) -> T {
+    let started_us = uptime_us();
+    let result = call();
+    let spent_us = uptime_us().saturating_sub(started_us);
+    counter.with(|total| total.set(total.get() + spent_us));
+    result
+}
+
+/// This thread's total in `counter`, ms.
+fn spent_ms(counter: &'static LocalKey<Cell<u64>>) -> u32 {
+    counter.with(|total| (total.get() / 1000) as u32)
+}
+
+/// Where a ring thread's time goes, ms since boot (`ring`'s `saver_*_ms`, `uart_*_ms`): its steps, the flash reads
+/// in them and its output (the card, the UART). A step less its reads is the decode and the bookkeeping. Each thread
+/// sums in microseconds and publishes milliseconds here (the P4 has no 64-bit atomics). The profile behind the ring
+/// threads' share of core 0 (2026-10-13: ring_saver 15-18 %, uart_saver 11-12 % at the pad's 33 KB/s).
+struct Profile {
+    /// Its steps, whole.
+    step_ms: AtomicU32,
+    /// The flash reads in them.
+    read_ms: AtomicU32,
+    /// Its output: the card calls (the saver), the UART writes and their wait (the uart_saver).
+    out_ms: AtomicU32,
+}
+
+impl Profile {
+    /// A profile at zero.
+    const fn new() -> Profile {
+        Profile {
+            step_ms: AtomicU32::new(0),
+            read_ms: AtomicU32::new(0),
+            out_ms: AtomicU32::new(0),
+        }
+    }
+
+    /// Publishes a thread's totals in microseconds.
+    fn publish(&self, step_us: u64, read_ms: u32, out_us: u64) {
+        self.step_ms.store((step_us / 1000) as u32, Ordering::Relaxed);
+        self.read_ms.store(read_ms, Ordering::Relaxed);
+        self.out_ms.store((out_us / 1000) as u32, Ordering::Relaxed);
+    }
+}
+
+/// The ring_saver's profile.
+static SAVER_PROFILE: Profile = Profile::new();
+
+/// The uart_saver's profile.
+static RELAY_PROFILE: Profile = Profile::new();
+
+/// The card through [`StdFs`], each call's time added to the calling thread's [`CARD_US`] (the profile).
+struct TimedFs(StdFs);
+
+impl Fs for TimedFs {
+    type File = <StdFs as Fs>::File;
+    type Error = <StdFs as Fs>::Error;
+
+    fn create_dir_all(&mut self, directory: &str) -> Result<(), Self::Error> {
+        timed(&CARD_US, || self.0.create_dir_all(directory))
+    }
+
+    fn tail(&mut self, file: &str, buffer: &mut [u8]) -> Result<u64, Self::Error> {
+        timed(&CARD_US, || self.0.tail(file, buffer))
+    }
+
+    fn open_append(&mut self, file: &str) -> Result<Self::File, Self::Error> {
+        timed(&CARD_US, || self.0.open_append(file))
+    }
+
+    fn write(&mut self, file: &mut Self::File, bytes: &[u8]) -> Result<(), Self::Error> {
+        timed(&CARD_US, || self.0.write(file, bytes))
+    }
+
+    fn fsync(&mut self, file: &mut Self::File) -> Result<(), Self::Error> {
+        timed(&CARD_US, || self.0.fsync(file))
+    }
+}
+
+impl Flash for Partition {
+    type Error = sys::EspError;
+
+    /// Reads with esp_partition_read: straight into internal RAM, through [`BOUNCE`] into anything else. Its time goes
+    /// to the calling thread's [`READ_US`] (the profile).
+    fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), Self::Error> {
+        timed(&READ_US, || self.read_untimed(offset, buffer))
     }
 
     /// Programs with esp_partition_write_raw (no encryption, and the ring carries its own CRCs): straight from internal
@@ -1637,6 +1747,20 @@ pub fn backlog() -> Option<(u32, Option<f32>)> {
     Some((report.unsaved, report.unsaved_s))
 }
 
+/// The ring threads' profiles as `ring` prints them ([`Profile`]): `saver_step_ms`, `saver_read_ms`, `saver_card_ms`,
+/// `uart_step_ms`, `uart_read_ms`, `uart_out_ms`.
+fn profile_values() -> [(&'static str, String); 6] {
+    let ms = |value: &AtomicU32| value.load(Ordering::Relaxed).to_string();
+    [
+        ("saver_step_ms", ms(&SAVER_PROFILE.step_ms)),
+        ("saver_read_ms", ms(&SAVER_PROFILE.read_ms)),
+        ("saver_card_ms", ms(&SAVER_PROFILE.out_ms)),
+        ("uart_step_ms", ms(&RELAY_PROFILE.step_ms)),
+        ("uart_read_ms", ms(&RELAY_PROFILE.read_ms)),
+        ("uart_out_ms", ms(&RELAY_PROFILE.out_ms)),
+    ]
+}
+
 /// The `ring` command's answer: `ok ring name=value ...`, or `err ring <why>` before the bring-up scan has run.
 ///
 /// The block figures are walked from the table now, against the saver's published position (with no saver, every
@@ -1710,7 +1834,12 @@ fn ring_report(recorder: &'static Recorder) -> String {
         ),
         ("saver_stack_free", saver.stack_free.to_string()),
     ];
-    let named: Vec<(&str, &str)> = values.iter().map(|(key, value)| (*key, value.as_str())).collect();
+    let profile = profile_values();
+    let named: Vec<(&str, &str)> = values
+        .iter()
+        .chain(profile.iter())
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
     cc_protocol::build("ok", &["ring"], &named)
 }
 
