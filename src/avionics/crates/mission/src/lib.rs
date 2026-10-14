@@ -294,9 +294,10 @@ impl Mission {
         self.latitude_e7.is_some() && self.longitude_e7.is_some()
     }
 
-    /// Pins the live GNSS `fix` as the launch point (mission.py `freeze_launch`), at arm and again at BOOSTING
-    /// entry, the last moments the board is known to be on the pad: mid-flight the fix can drop, and the launch point
-    /// must not drop with it. An operator-set position always wins, and with no fix nothing changes. In memory only,
+    /// Pins the live GNSS `fix` as the launch point (mission.py `freeze_launch`) at arm, the last moment the board is
+    /// known to be on the pad: mid-flight the fix can drop, and the launch point must not drop with it. Plan B froze
+    /// again at BOOSTING entry; here only the warm-start crumb's identity does (firmware warm.rs), since an arm in
+    /// SETTING needs a launch point (the mission probe) and so always pins one first. An operator-set position always wins, and with no fix nothing changes. In memory only,
     /// as plan B's: the pinned point is the operator's from here, so a later freeze keeps it.
     ///
     /// Returns the point pinned, None when nothing changed.

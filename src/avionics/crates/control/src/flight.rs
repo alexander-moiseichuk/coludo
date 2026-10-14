@@ -183,7 +183,7 @@ impl FlightLaw {
     /// actuates neutral; out of a control stage while nothing engaged it does not actuate at all, so an operator's
     /// fin command on the pad stands (plan B returns before `_actuate`).
     pub fn step(&mut self, input: &Step) -> bool {
-        let elapsed = self.slice(input.now_us);
+        let (exact, elapsed) = self.slice(input.now_us);
         let ceiling = if input.stage == Stage::Boosting {
             self.boost_limit
         } else {
@@ -192,11 +192,20 @@ impl FlightLaw {
         self.governor.set_ceiling(&mut self.mixer, ceiling);
         self.governor.step(
             &mut self.mixer,
-            elapsed,
+            exact,
             (input.stage as u8) < (Stage::Gliding as u8),
             self.pitch,
             &input.readings,
         );
+        // the guidance's inputs in every stage, so the panel's reach is live on the pad and after the law lets go
+        // (plan B's vitals computed it on each read)
+        let (wind_east, wind_north) = self.wind.components();
+        self.inputs = Inputs {
+            airspeed: self.governor.airspeed(),
+            wind_east,
+            wind_north,
+            ..input.guidance
+        };
         if self.guidance.setpoint(input.stage).is_none() || !input.armed {
             if self.active {
                 self.neutral();
@@ -219,13 +228,6 @@ impl FlightLaw {
             }
         }
         self.stage = Some(input.stage);
-        let (wind_east, wind_north) = self.wind.components();
-        self.inputs = Inputs {
-            airspeed: self.governor.airspeed(),
-            wind_east,
-            wind_north,
-            ..input.guidance
-        };
         if !self.guidance.compute(input.stage, heading, input.now_us, &self.inputs) {
             self.neutral(); // the boost still on the rod: no q to bite
             return true;
@@ -250,7 +252,8 @@ impl FlightLaw {
         &self.angles
     }
 
-    /// The zone's reach from the last control step's inputs (plan B flight.vitals `reach`), None without a zone.
+    /// The zone's reach from the last step's inputs, in any stage (plan B flight.vitals `reach`), None without a zone
+    /// or without a fresh fix and elevation.
     pub fn reach(&self) -> Option<crate::guidance::Reach> {
         self.guidance.reachability(self.glide_ratio, &self.inputs)
     }
@@ -265,16 +268,19 @@ impl FlightLaw {
         self.governor.seed_airspeed(&mut self.mixer, airspeed);
     }
 
-    /// The slice since the last step in seconds; the nominal one on the first step or after a gap past 0.5 s
-    /// (plan B `_compute_dt`, whose integer milliseconds the PIDs read: the slice is truncated to whole ms).
-    fn slice(&mut self, now_us: u64) -> f32 {
+    /// The slice since the last step in seconds, (exact, whole ms); the nominal one on the first step or after a gap
+    /// past 0.5 s (plan B `_compute_dt`). The governor integrates the exact slice (plan B's float seconds) and the
+    /// PIDs read it truncated to whole milliseconds (plan B's integer ms). The ticks' clock reads jitter about 10 ms
+    /// (9989-10012 us on the board), so a truncated slice reads 9 ms about half the time: the accel-integrated
+    /// airspeed ran ~5% low on it, toward a looser fin cap, until 2026-10-14.
+    fn slice(&mut self, now_us: u64) -> (f32, f32) {
         let previous = self.last_us.replace(now_us);
         let elapsed_us = previous.map(|previous| now_us.saturating_sub(previous));
         match elapsed_us {
             Some(elapsed) if elapsed > 0 && (elapsed as f32) <= LONGEST_SLICE_S * 1e6 => {
-                (elapsed / 1000) as f32 / 1000.0
+                (elapsed as f32 / 1e6, (elapsed / 1000) as f32 / 1000.0)
             }
-            _ => self.nominal_s,
+            _ => (self.nominal_s, self.nominal_s),
         }
     }
 
@@ -507,6 +513,88 @@ mod tests {
                 law.angles()
             );
         }
+    }
+
+    #[test]
+    fn the_governor_integrates_the_exact_slice() {
+        // a 3 g boost for 100 slices of 9999 us: the airspeed integrates (3 - 1) g over 0.9999 s, 19.6 m/s
+        let mut law = law("lean");
+        for tick in 0..=100u64 {
+            let step = Step {
+                stage: Stage::Boosting,
+                armed: true,
+                now_us: 1_000_000 + tick * 9_999,
+                attitude: Some([0.0, 0.0, 90.0]),
+                rate: Some([0.0; 3]),
+                readings: Readings {
+                    acceleration: Some([3.0, 0.0, 0.0]),
+                    ..Readings::default()
+                },
+                guidance: Inputs::default(),
+                ground: None,
+                ground_stamp: None,
+                drift: [0.0; 2],
+            };
+            law.step(&step);
+        }
+        // the first step runs the nominal 10 ms slice, the other 100 the 9999 us
+        let expected = 2.0 * crate::governor::STANDARD_GRAVITY * (0.010 + 100.0 * 0.009_999);
+        assert!(
+            (law.airspeed() - expected).abs() < 0.01,
+            "{} vs {expected}",
+            law.airspeed()
+        );
+        // NEGATIVE: never the whole-millisecond slices (9 ms each: 17.8 m/s)
+        assert!(law.airspeed() > 19.5, "{}", law.airspeed());
+    }
+
+    #[test]
+    fn the_reach_is_live_in_every_stage() {
+        use crate::guidance::{Fix, Heading, Landing};
+        use crate::navigation::Position;
+        let at = |latitude_e7, longitude_e7| Position {
+            latitude_e7,
+            longitude_e7,
+        };
+        // a made-up pad, its zone's centre 0.009 degree (about 1 km) to the north
+        let pad = at(470_000_000, 80_000_000);
+        let landing = Landing::new(
+            at(470_095_000, 79_990_000),
+            at(470_085_000, 80_010_000),
+            Heading::Circle,
+        );
+        let step = |stage, elevation| Step {
+            stage,
+            armed: false,
+            now_us: 10_000,
+            attitude: Some([0.0; 3]),
+            rate: Some([0.0; 3]),
+            readings: Readings::default(),
+            guidance: Inputs {
+                landing: Some(landing),
+                launch: Some(pad),
+                position: Some(Fix {
+                    position: pad,
+                    age_ms: 0,
+                }),
+                elevation,
+                ..Inputs::default()
+            },
+            ground: None,
+            ground_stamp: None,
+            drift: [0.0; 2],
+        };
+        // on the pad, unarmed in SETTING: the zone out of reach at 0 m, a kilometre away
+        let mut law = law("hold");
+        law.step(&step(Stage::Setting, Some(0.0)));
+        let reach = law.reach().expect("live on the pad");
+        assert!(!reach.reachable && (reach.distance_m - 1001).abs() <= 2, "{reach:?}");
+        // and at DONE, where the law has let go
+        law.step(&step(Stage::Done, Some(0.0)));
+        assert!(law.reach().is_some());
+        // NEGATIVE: no fresh elevation, no reach
+        law.step(&step(Stage::Setting, None));
+        assert_eq!(law.reach(), None);
     }
 
     #[test]
