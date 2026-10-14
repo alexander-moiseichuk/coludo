@@ -123,7 +123,7 @@ fn the_defaults_are_plan_b_setup_defaults() {
             defaults.magnetic_shift,
             defaults.magnetic_offset_shift
         ),
-        (5, 6, 5)
+        (7.5, 6, 5)
     );
     assert_eq!(
         (defaults.turn_gate, defaults.course_gate, defaults.magnetic_level),
@@ -137,8 +137,13 @@ fn the_defaults_are_plan_b_setup_defaults() {
     assert_eq!(test_settings().rank, 1);
     // the port's own two, on; plan B's behaviour back with 0 and false
     assert_eq!((defaults.gyro_bias, defaults.centripetal), (10.0, true));
-    let plan_b = Settings::from_json(&json!({"gyro_bias_s": 0, "centripetal": false}));
-    assert_eq!((plan_b.gyro_bias, plan_b.centripetal), (0.0, false));
+    let plan_b = Settings::from_json(&json!({"gyro_bias_s": 0, "centripetal": false, "course_shift": 5}));
+    assert_eq!(
+        (plan_b.gyro_bias, plan_b.centripetal, plan_b.course_shift),
+        (0.0, false, 5.0)
+    );
+    // the course pull is fractional: 7.5 pulls 2^-7.5 of the way per tick
+    assert!((Attitude::new(defaults, 0).course_pull - 0.5_f32.powf(7.5)).abs() < 1e-9);
 }
 
 #[test]

@@ -296,6 +296,13 @@ class _Sim:
         # then flies alone again
         self.physical = self.drop_attitude
         self.handover_until: float | None = None  # the separation's window, sim time
+        # ...and the heading it hands over is the board's own: a board knows no north before the glide (its heading
+        # reference is its power-up pose, which the gyro carries through the boost), so the separation hands the true
+        # attitude turned by that unknown pad azimuth, drawn on its own generator so a seed's noise stays as it was
+        # (--pad-heading unknown); `known` hands the true heading, as every --no-attitude study before this flag
+        # (2026-10-14) flew
+        unknown = self.physical and getattr(args, 'pad_heading', 'known') == 'unknown'
+        self.pad_yaw = random.Random(getattr(args, 'seed', None)).uniform(-180.0, 180.0) if unknown else 0.0
         # --imu-noise real: each axis's constant bias (seeded), the gyro's in deg/s, the accelerometer's in g
         self.real_imu = getattr(args, 'imu_noise', 'frac') == 'real'
         self.gyro_bias = [random.uniform(-_GYRO_BIAS_DPS, _GYRO_BIAS_DPS) for _ in range(3)] if self.real_imu else None
@@ -476,6 +483,8 @@ class _Sim:
         altitude = noisy(body.elev0 + body.alt, baro_noise, -100.0, 10000.0)
         elevation = noisy(body.alt, baro_noise, -100.0, 10000.0)
         agl_clean = max(0.0, body.alt)
+        if self.pad_yaw:
+            heading = (heading + self.pad_yaw) % 360.0  # the board's own heading reference (see __init__)
         fields = {
             'accel': self.faults.apply('accel', accel, t),
             'rate': [noisy(rate, imu, -2000.0, 2000.0) for rate in rates],
@@ -737,6 +746,10 @@ def _arguments() -> argparse.Namespace:
                              "the binary's --trace)")
     parser.add_argument('--no-attitude', action='store_true',
                         help="publish no attitude at all: the board's filter flies from power-up")
+    parser.add_argument('--pad-heading', default='unknown', choices=('unknown', 'known'),
+                        help="--no-attitude: the heading the separation hands the filter -- the board's own, off "
+                             'by a seeded unknown pad azimuth (default), or the true one (the studies before '
+                             '2026-10-14)')
     parser.add_argument('--gnss-drop-s', type=float, default=0.0)
     parser.add_argument('--no-mag', action='store_true')
     parser.add_argument('--faults', default='', help="sim_model.Faults: 'gnss@30,pitot@45'")

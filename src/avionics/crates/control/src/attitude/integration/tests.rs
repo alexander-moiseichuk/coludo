@@ -227,7 +227,8 @@ fn a_step_reads_the_fused_inputs_mapped_from_the_marks() {
 #[test]
 fn the_heading_follows_the_gnss_track() {
     // the filter boots at heading 0 whatever way the board points; the GNSS track at 90 above the course gate pulls
-    // the heading onto it (the yaw's only absolute reference: on the board it was never read until 2026-10-14)
+    // the heading onto it (the yaw's only absolute reference: on the board it was never read until 2026-10-14), over
+    // 30 s: eight of course_shift 7.5's 3.6 s time constants
     let heading = |speed: Option<f32>| {
         let mut thread = Thread::new(Board::new());
         let parts = |board: &Board, now_us: u64| {
@@ -236,7 +237,7 @@ fn the_heading_follows_the_gnss_track() {
                 board.gnss(90.0, speed, now_us);
             }
         };
-        thread.steps(250, &parts).published.expect("published").heading
+        thread.steps(1500, &parts).published.expect("published").heading
     };
     assert!(close(heading(Some(14.0)), 90.0, 0.5), "{}", heading(Some(14.0)));
     // NEGATIVE: below the 5 m/s course gate (on the pad, a hover) the track is no heading: the gyro's 0 stays

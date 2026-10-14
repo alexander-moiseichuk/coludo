@@ -246,7 +246,12 @@ fn the_settings_resolve_as_plan_b_setup() {
             "mag_shift": settings.magnetic_shift,
             "mag_offset_shift": settings.magnetic_offset_shift,
             "mag_level_cd": centi(settings.magnetic_level),
-            "course_shift": settings.course_shift,
+            // the one departure: an unconfigured pull is the port's 7.5 (attitude `Settings::course_shift`), plan B's 5;
+            // a configured one resolves as plan B's
+            "course_shift": match case["init"]["config"].get("course_shift") {
+                Some(_) => owed["course_shift"].as_u64().filter(|shift| *shift as f32 == settings.course_shift),
+                None => (settings.course_shift == 7.5).then_some(5),
+            },
             "grav_low_sq_cg2": centi(settings.gravity_low).pow(2),
             "grav_high_sq_cg2": centi(settings.gravity_high).pow(2),
             "rank": settings.rank,

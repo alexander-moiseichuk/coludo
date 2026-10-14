@@ -184,12 +184,14 @@ pub struct Settings {
     pub turn_gate: f32,
     /// `course_gate_mps`: the ground speed in m/s above which the GNSS course is meaningful, 5.
     pub course_gate: f32,
-    /// `course_shift`: each tick pulls the yaw 2^-shift of the way to the GNSS track, 5 (1/32): a time constant of
-    /// ~0.64 s at the 50 Hz step. It does NOT average a crosswind crab out (plan B's note said so): a steady crab is a
-    /// constant heading-to-track offset, which any pull drives to 0 within seconds, so the heading the filter publishes
-    /// is the TRACK's, which is what the navigation steers by. The wind triangle (crates/control wind) then sees the
-    /// along-track wind only.
-    pub course_shift: u32,
+    /// `course_shift`: each tick pulls the yaw 2^-shift of the way to the GNSS track, 7.5 (1/181): a time constant of
+    /// ~3.6 s at the 50 Hz step. Fractional, the port's own (plan B's integer 5, ~0.64 s, is a config value away).
+    /// The pull trades two readers of this heading: the guidance steers by it, which wants the TRACK (a fast pull
+    /// homes the ground track onto the zone), and the wind triangle (crates/control wind) needs the NOSE to see the
+    /// crosswind (a steady crab is a constant heading-to-track offset, which any pull drives out). At 5 the crosswind
+    /// read ~0 (a 3.5 m/s wind error at 6 m/s); at 10 the wind read to 0.8 m/s but the landings got worse, and a board
+    /// that knows no north before the glide needs ~20 s to find it. 7.5 is the operator's middle (2026-10-14).
+    pub course_shift: f32,
     /// `mag_shift`: once the offset is learned and the track is gone, each tick pulls the yaw 2^-shift of the way to
     /// the magnetic heading, 6 (1/64).
     pub magnetic_shift: u32,
@@ -241,7 +243,7 @@ impl Default for Settings {
             correction_shift: 4,
             turn_gate: 4.0,
             course_gate: 5.0,
-            course_shift: 5,
+            course_shift: 7.5,
             magnetic_shift: 6,
             magnetic_offset_shift: 5,
             magnetic_level: 15.0,
@@ -289,7 +291,12 @@ impl Settings {
             correction_shift: whole("corr_shift", defaults.correction_shift),
             turn_gate: number("turn_gate_deg_s", defaults.turn_gate),
             course_gate: number("course_gate_mps", defaults.course_gate),
-            course_shift: whole("course_shift", defaults.course_shift),
+            course_shift: config
+                .get("course_shift")
+                .and_then(Value::as_f64)
+                .map(|shift| shift as f32)
+                .filter(|shift| *shift >= 0.0)
+                .unwrap_or(defaults.course_shift),
             magnetic_shift: whole("mag_shift", defaults.magnetic_shift),
             magnetic_offset_shift: whole("mag_offset_shift", defaults.magnetic_offset_shift),
             magnetic_level: number("mag_level_deg", defaults.magnetic_level),
@@ -666,7 +673,7 @@ impl Attitude {
         Attitude {
             settings,
             correction_pull: pull(settings.correction_shift),
-            course_pull: pull(settings.course_shift),
+            course_pull: 0.5_f32.powf(settings.course_shift.min(126.0)),
             rotation: Rotation::LEVEL,
             angles: Orientation {
                 heading: 0.0,

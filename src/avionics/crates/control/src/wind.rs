@@ -8,9 +8,10 @@
 //! An EMA smooths the per-fix estimate. The ALONG-heading component inherits the governor's airspeed error (an
 //! over-read biases the head/tailwind), which is acceptable for the rough uses (the reachability margin, the approach
 //! crab, dead reckoning). The CROSSWIND component needs a heading independent of the track, and the board's attitude
-//! filter pulls its heading onto the GNSS track (crates/control attitude `course_shift`): in straight flight its
-//! crab is pulled out and the crosswind reads ~0; only the turns, where the track swings faster than the pull, show
-//! it. Plan B's design, invisible in HITL while the sim's own heading was mirrored. If the field data shows that bias hurts, the
+//! filter pulls its heading onto the GNSS track (crates/control attitude `course_shift`): in a long straight leg its
+//! crab is pulled out and the crosswind reads ~0; the turns, where the track swings faster than the pull, show it.
+//! Plan B's fast pull (5) lost the crosswind almost entirely, invisible in HITL while the sim's own heading was
+//! mirrored; the port's 7.5 keeps more of it. If the field data shows that bias hurts, the
 //! airspeed-free GPS-only min/max-ground-speed method is the next layer (kept out until a corner case earns it).
 //!
 //! The estimator OWNS its config subtree (the board `wind` block) and is operator-facing, as plan B's
