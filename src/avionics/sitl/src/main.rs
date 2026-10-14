@@ -52,8 +52,9 @@ struct Arguments {
     mission: Option<String>,
     /// The UDP port.
     port: u16,
-    /// `--trace`: the filter's attitude every 100 ms on stderr (`ATT <ms> <heading_cd> <roll_cd> <pitch_cd>`), for the
-    /// host to score against its truth (tools/hitl_host.py `ATTITUDE`).
+    /// `--trace`: the filter's attitude every 100 ms on stderr (`ATT <ms> <heading_cd> <roll_cd> <pitch_cd>`) and the
+    /// flight law's wind estimate every second (`WIND <ms> <east> <north>`, m/s the air moves toward), for the host to
+    /// score against its truth (tools/hitl_host.py `ATTITUDE`).
     trace: bool,
 }
 
@@ -98,6 +99,8 @@ struct Host {
     servos: Vec<Option<Fin>>,
     /// `--trace`.
     trace: bool,
+    /// When the last `WIND` line went out, ms.
+    wind_ms: u64,
 }
 
 /// One fin: its servo and what the flight loop made it do.
@@ -154,7 +157,14 @@ impl Hooks for Host {
         }
     }
 
-    fn vitals(&mut self, _law: &FlightLaw) {}
+    fn vitals(&mut self, law: &FlightLaw) {
+        let now_ms = self.now_us / 1000;
+        if self.trace && now_ms >= self.wind_ms + 1000 {
+            self.wind_ms = now_ms;
+            let (east, north) = law.wind().components();
+            eprintln!("WIND {now_ms} {east:.2} {north:.2}");
+        }
+    }
 }
 
 /// The control tick's lines (crates/controller logs as the board does) on stderr.
@@ -320,6 +330,7 @@ fn main() -> Result<(), String> {
         launch: mission.launch_point(None),
         servos: Vec::new(),
         trace: arguments.trace,
+        wind_ms: 0,
     };
     let word = FlightWord::default();
     let mut writer = word.writer().ok_or("the flight word's writer is taken")?;

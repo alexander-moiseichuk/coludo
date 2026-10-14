@@ -628,13 +628,17 @@ def _down(heading: float, roll: float, pitch: float) -> tuple:
     return (-math.sin(pitch), math.cos(pitch) * math.sin(roll), math.cos(pitch) * math.cos(roll))
 
 
-def attitude_score(truth: dict, log: str, pad_s: float, separation_s: float | None) -> str:
+def attitude_score(truth: dict, log: str, pad_s: float, separation_s: float | None,
+                   wind: tuple = (0.0, 0.0)) -> str:
     """
     The SITL filter against the sim's truth (--no-attitude): `log` the binary's stderr with its --trace lines (`ATT
     <ms> <heading_cd> <roll_cd> <pitch_cd>`, ms the frames' clock after the 10 s boot), `truth` the host's samples by
     the frames' clock in ms. The boost (ignition to separation) and the glide (from a second after the separation's
     window) each: the tilt error (degrees between the true and the estimated down axis in the body, free of the Euler
-    angles' degeneracy at a vertical nose), RMS and worst; the glide's heading error RMS too. One `ATTITUDE` line.
+    angles' degeneracy at a vertical nose), RMS and worst; the glide's heading error RMS too. And the flight law's wind
+    estimate (the binary's `WIND <ms> <east> <north>` lines, m/s toward) against the sim's mean `wind` (east, north):
+    the median error of the vector, and of its speed, over the glide's second half, once the estimator has had its
+    fixes. One `ATTITUDE` line.
     """
     estimates = {}
     for match in re.finditer(r'^ATT (\d+) (-?\d+) (-?\d+) (-?\d+)$', log, re.M):
@@ -655,10 +659,24 @@ def attitude_score(truth: dict, log: str, pad_s: float, separation_s: float | No
 
     def rms(values: list) -> float:
         return math.sqrt(sum(value * value for value in values) / len(values)) if values else -1.0
+
+    def median(values: list) -> float:
+        return sorted(values)[len(values) // 2] if values else -1.0
+    winds = [(int(match.group(1)) - 10_000, float(match.group(2)), float(match.group(3)))
+             for match in re.finditer(r'^WIND (\d+) (-?[\d.]+) (-?[\d.]+)$', log, re.M)]
+    glide = [clock_ms for clock_ms, sample in truth.items() if sample[3]]
+    vector_errors, speed_errors = [], []
+    if glide and winds:
+        half = (min(glide) + max(glide)) / 2
+        for clock_ms, east, north in winds:
+            if half <= clock_ms <= max(glide):
+                vector_errors.append(math.hypot(east - wind[0], north - wind[1]))
+                speed_errors.append(math.hypot(east, north) - math.hypot(*wind))
     return 'ATTITUDE boost_tilt_rms=%.1f boost_tilt_max=%.1f glide_tilt_rms=%.1f glide_tilt_max=%.1f ' \
-           'glide_heading_rms=%.1f samples=%d' % (
+           'glide_heading_rms=%.1f wind_error=%.1f wind_speed_error=%.1f samples=%d' % (
                rms(phases['boost']), max(phases['boost'], default=-1.0), rms(phases['glide']),
-               max(phases['glide'], default=-1.0), rms(headings), len(phases['boost']) + len(phases['glide']))
+               max(phases['glide'], default=-1.0), rms(headings), median(vector_errors), median(speed_errors),
+               len(phases['boost']) + len(phases['glide']))
 
 
 def _panic(port: str) -> None:
@@ -799,7 +817,8 @@ def _sitl(args: argparse.Namespace) -> int:
             with open(os.path.join(folder, 'sitl.log')) as handle:
                 # the separation on the frames' clock: the sim's time from ignition, after the pad
                 separation = sim.handover_until - _HANDOVER_S + pad_s if sim.handover_until is not None else None
-                print(attitude_score(sim.truth, handle.read(), pad_s, separation))
+                print(attitude_score(sim.truth, handle.read(), pad_s, separation,
+                                     (sim.body.wind_e, sim.body.wind_n)))
         if sim.stack is not None:
             burn = sim.burn
             print('BOOST path_min=%.1f tilt_max=%.1f looped=%s burnout=%.1f' % (
