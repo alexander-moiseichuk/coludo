@@ -4,6 +4,10 @@ Main board **v1.1**: the SEN0697 replaces the SEN0253, so this is the first airf
 fuses its own attitude and carries a magnetometer. Built 2026-09-20 with the last LSM6DSO32 in stock
 and the VL53L1X laser moved across from the taster.
 
+It did not fly on 2026-10-03: it was not assembled in time. It now runs the Rust avionics
+([`doc/specs/avionics-port.md`](../../../doc/specs/avionics-port.md)), so the plan B bring-up below is history.
+`tms7f.config` changed after the launch day: since 2026-10-05 its GNSS entry is a NEO-6M (`neo6mv2`) at 5 Hz.
+
 | | |
 |---|---|
 | board | **main board v1.1** — detected at boot, no config edit |
@@ -11,7 +15,7 @@ and the VL53L1X laser moved across from the taster.
 | 6-DoF | LSM6DSO32 on `spi:1` — still the primary `accel`; the BMI323 is the SECOND gyro source |
 | laser | **VL53L1X** (`0x29`) — the L4CX was out of stock; Adafruit parts due in 1–2 weeks |
 | config | [`tms7f.config`](tms7f.config) — passive (`flight` off), `fins.concurrency` **1** |
-| status | **booted on the bench 2026-09-20** — clean boot, `degraded` shows `needs-calibration` alone; the BMM350 calibration and a servo check on a known supply are outstanding (below) |
+| status | **did not fly 2026-10-03** (not assembled in time); **booted on the bench 2026-09-20** — clean boot, `degraded` shows `needs-calibration` alone; the BMM350 calibration and a servo check on a known supply are outstanding (below) |
 
 ## What v1.1 changes
 

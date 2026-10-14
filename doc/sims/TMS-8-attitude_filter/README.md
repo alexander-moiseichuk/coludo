@@ -141,7 +141,9 @@ Every board run reached DONE. The warm start recovered GLIDING with the pad's bi
 
 - The sim's separation jumps the attitude (sim_model begin_glide); `--no-attitude` hands the filter the truth for
   0.5 s there, a perfect gyro through the separation, turned since the closing matrix by an unknown pad azimuth
-  (`--pad-heading`). A real separation's error is the gyro's over its pitch-over.
+  (`--pad-heading`). A real separation's error is the gyro's over its pitch-over. The closing matrix drew that
+  azimuth from the seed's first number, the one the sim's x gyro bias draws too (seeds 3 and 4 got nearly the same
+  heading); since then it has a seed of its own.
 - Two sim issues found by the closing review, both outside the firmware: the sim's magnetometer is mirrored against
   the Rust filter's frame (the magnetic fallback is not exercised in simulation), and the vertical sim clamps the
   coast's specific force at 0 g, so with a positive accelerometer bias the thrust gate holds the apogee to the 12 s
@@ -158,3 +160,4 @@ Every board run reached DONE. The warm start recovered GLIDING with the pad's bi
 - `sitl_shipped.csv`: the shipped firmware on both IMU models, with the attitude scores.
 - `hitl_runs.csv`, `hitl_runs_final.csv`: the board flights, with the filter's free-running rows.
 - `sitl_closing.csv`: the closing matrix, `course_shift` 5 against 7.5, the pad heading unknown and known.
+- `hitl_runs_closing.csv`: the closing board runs on `7452e2c` beside the earlier ones, with the control timing.

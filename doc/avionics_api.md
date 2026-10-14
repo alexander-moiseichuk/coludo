@@ -294,6 +294,14 @@ Readings where plan B could not join or dial at all (validate() lets these throu
    plan B's wifi and CC setups both raise on it, so neither runs: the radio is untouched (`policy_enabled`
    false, no networks) and [`Hub::Off`].
 
+### `pub fn wifi_link(document: &Value) -> Wifi`
+
+The link the board runs: [`wifi`]'s view with the device entries' switches on top, as plan B ran its `wifi`
+driver and its `cc` activity only when their entries were enabled. A `wifi` entry configured and disabled leaves
+the radio untouched (`policy_enabled` false); a `cc` entry configured and disabled never dials ([`Hub::Off`]: the
+board flies standalone, joined for the file server). An entry that is absent changes nothing here: plan B ran no
+radio without one, but a hand-built config that leaves it out keeps its link (the operator's only way in).
+
 ### `pub fn max_range_m(document: &Value) -> Option<f32>`
 
 The airframe's glide range, in metres: `max_range_m` on the first sensor or component named 'field'
@@ -1847,6 +1855,14 @@ channel and no clock, and answers what to publish and what to log in a [`Tick`].
 and [`on_backup`] answers the health flag `attitude-backup`.
 
 Deliberate differences from plan B, besides the mounting map above:
+ * the KINEMATICS (2026-10-14, [`rotation`]): the orientation is a quaternion the gyro's body rates turn, the track
+   and magnetometer pulls turn about the vertical, and the accelerometer pull tilts the shortest way. Plan B added
+   the body rates to the Euler angles, right only about a level body: with a real gyro (body rates; its HITL sim
+   published Euler rates) a banked turn drifted its pitch by the turn rate times the sine of the bank while the turn
+   gate held the accelerometer off (a 20-degree-banked endgame orbit: +25 degrees of pitch), and a boost's spin at
+   a vertical nose scrambled all three within a second. The pulls' gates and orders are plan B's, their strengths
+   too but the course pull's (`course_shift` 7.5, plan B's 5), and the golden fixture still holds every scenario
+   that turns about one axis from level;
  * attitude.csv takes a row on every publish: `telemetry_ms` is read but thins nothing. Plan B decimated the
    stream to it (10 rows a second at its default), a MicroPython-era economy; here every measured sample is reported
    (doc/specs/avionics-port.md, "Measured -> reported");
@@ -1866,11 +1882,9 @@ Deliberate differences from plan B, besides the mounting map above:
    what arrives and raises where it is used. Its truncation of the band edges and gates to the centi-unit
    (int(0.29 * 100) is 28) is gone too: the config number is used as written.
 
-Kept although it is a hazard: the accelerometer pull is NOT wrapped, as plan B's fixed.blend_cd is not. Near
-inverted, an estimate of roll 170 and a gravity vector at roll -170 are 20 degrees apart the short way, but the
-pull takes the error the long way, -340: at 1/4 per pull the published roll goes 85, 21, -27, -62, -89, -109,
-sweeping through wings-level instead of moving 20 degrees. It is pinned by the golden fixture and a unit test, and
-raised with the operator as a plan B defect; wrapping it would be a deliberate, documented deviation.
+Gone with the kinematics: plan B's accelerometer pull was NOT wrapped (fixed.blend_cd), so near inverted an estimate
+of roll 170 and a gravity vector at roll -170 (20 degrees apart) swept through wings-level, the long way. The tilt
+takes the short way.
 
 ### `pub struct Settings`
 
@@ -1936,6 +1950,9 @@ a reference that is wrong but stationary bounds the pull better than a free-runn
 The complementary-filter attitude (plan B `Attitude`): the primary, published at priority 1.
 
 - `fn new(settings: Settings, now_us: u64) -> Attitude` — A filter with these knobs, set up at `now_us` (the first tick integrates from it, and the first accelerometer pull comes an `acceleration_period_ms` after it): level, heading north, nothing learned, not seeded.
+- `fn bias(&self) -> [f32; 3]` — The gyro bias learned at rest for the last tick's `rate` source, degrees per second (0 with `gyro_bias_s` off or before any rest).
+- `fn biases(&self) -> [Option<[f32; 3]>; BIAS_SLOTS]` — Each slot's gyro bias, degrees per second, None for one never learned: what a warm start carries.
+- `fn seed_biases(&mut self, biases: [Option<[f32; 3]>; BIAS_SLOTS])` — Seeds the gyro biases a warm start carried ([`Settings::gyro_bias`]), before the first tick. A slot that is not finite or reads [`STILL_RATE`] or more on an axis is no bias the filter could have learned (a damaged crumb): it stays 0, as does every slot with `gyro_bias_s` off.
 - `fn settings(&self) -> &Settings` — The knobs.
 - `fn orientation(&self) -> Orientation` — The filter's attitude as it stands after the last tick, whether that tick published it or withheld it.
 - `fn blind(&self) -> bool` — Whether the filter is BLIND: no fresh gyro for [`BLIND_CYCLES`] ticks. The health flag `attitude-blind`.
@@ -1963,11 +1980,16 @@ flight core formats no text.
 ### Constants
 
 - `const BLIND_CYCLES: u32 = 5` — Consecutive ticks with no fresh gyro before the filter is BLIND: 100 ms at the 20 ms period. One or two gyro-less ticks follow every GC pause or stall, and holding the last attitude through those is right; five in a row means the gyro is gone. Plan B's `_BLIND_CYCLES`.
+- `const MIRROR_AGE_US: u32 = 50_000` — The oldest winner's sample the filter mirrors, microseconds: two of its periods and a margin. Plan B mirrored any sample inside its source's window, and the HITL sim's window is 1 s (the sim-link holds a sample through a bunched Wi-Fi frame): when the sim stopped publishing its attitude (an attitude drop, `hitl_host --no-attitude`'s separation window), the filter copied the last value, frozen, for a second while the glider rolled (a 24-degree error, 2026-10-14). A held sample is no attitude; the filter free-runs past it.
+- `const STILL_RATE: f32 = 1.5` — [`Settings::gyro_bias`]: every axis of the gyro under this many degrees per second is a board at rest, its reading the bias (the biases measured run to 0.58).
+- `const STILL_G: f32 = 0.05` — [`Settings::gyro_bias`]: the accelerometer within this many g of 1 g is a board at rest (|a| at rest reads 1.013-1.028 g).
+- `const CENTRIPETAL_SPEED: f32 = 5.0` — [`Settings::centripetal`]: the slowest airspeed estimate, m/s, the correction trusts (the governor's floor before it is confident is a guess).
 - `const STREAM: &str = "attitude.csv"` — The attitude.csv stream the caller records the filter into (plan B's `Telemetry('attitude.csv', ...)`).
 - `const FIELDS: [&str; 6] = [` — The attitude.csv columns, the telemetry contract ([`Attitude::row`] fills them): centidegree integers and 0/1 flags.
 - `const GYRO_LOST: &str = "gyro lost -- attitude filter blind"` — The line logged when the gyro has been gone for [`BLIND_CYCLES`] ticks: once per transition, not per tick.
 - `const GYRO_BACK: &str = "gyro back -- attitude filter sighted"` — The line logged on the first fresh gyro sample after the filter went blind.
 - `const PROBE_FAILURE: &str = "attitude: no gyro rate -- attitude filter blind"` — The probe's failure (plan B `probe`): a dead gyro leaves the filter blind, and the board would fly on the BNO055 backup if one is fitted and on a frozen roll and pitch if not, so it is surfaced before the flight.
+- `const BIAS_SLOTS: usize = 4` — The gyro biases the filter keeps apart, by `rate` rank (the LSM6DSO32 at 0, the BMI323 at 1 in config_default); a rank past them shares the last.
 
 ## `control::attitude::integration`
 
@@ -1975,8 +1997,8 @@ _Tested by `src/attitude/integration/tests.rs`._
 
 The attitude filter on the board: the pure helpers its caller needs around [`super::Attitude::tick`].
  * [`assemble`] -- what one step reads from the databoard (plan B `_tick`'s reads): the fused `rate`, `accel` and
-   `mag` through the marks map, the fused `attitude`'s winner with its rank, and whether a source below the filter
-   is fresh to take over from it;
+   `mag` through the marks map, the GNSS `course` and `speed`, the fused `attitude`'s winner with its rank, and
+   whether a source below the filter is fresh to take over from it;
  * [`Pace`] -- which control ticks step the filter: every `period_ms` on the uptime clock (plan B's task slept its
    period between ticks);
  * [`on_backup`] -- the health flag `attitude-backup` (plan B cc_client `_on_backup`): whether a channel's fused
@@ -2004,12 +2026,14 @@ are never closer than a period less a tick.
 - `fn new(period_ms: u32, tick_us: u64) -> Pace` — The pace of a filter stepping every `period_ms` on a control tick of `tick_us`.
 - `fn due(&mut self, now_us: u64) -> bool` — Whether the filter steps on the tick that woke at `now_us`. When it does, the next step is due a period on: from this step's due time while the wake was on time within half a tick, else from the wake itself.
 
-### `pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64) -> Readings`
+### `pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64, ballistic: bool) -> Readings`
 
 The readings of one filter step at `now_us` (plan B `_tick`'s reads): the fused `rate`, `accel` and `mag` mapped
-from the marks frame ([`Readings::from_marks`]); the fused `attitude`'s fresh winner with the rank its source
-registered at; and whether a source ranked below `rank`, the filter's own ([`super::Settings::rank`]), is fresh.
-The GNSS course and ground speed stay absent until the GNSS is ported.
+from the marks frame ([`Readings::from_marks`]); the GNSS `course` and ground `speed`, the yaw's pull toward the
+track (without them the heading is the gyro's alone, relative to how the board sat at power-up, and the
+magnetometer's offset is never learned); the fused `attitude`'s fresh winner with the rank its source registered
+at; whether a source ranked below `rank`, the filter's own ([`super::Settings::rank`]), is fresh; and the
+caller's `ballistic`, the stage is BOOSTING ([`Readings::ballistic`]).
 
 Each is the databoard's fused read: the first source fresh within the quantity's shared window, in rank order,
 never extrapolated and, for a vector, never reconciled. So the BMI323 carries `rate` and `accel` the moment the
@@ -2040,6 +2064,25 @@ float priority, which the registration reads as 0.
 
 True also when `config` is not an object and something is fresh, as plan B answers a config it cannot read: an
 unknown never silently hides a real fallback.
+
+## `control::attitude::rotation`
+
+_Tested by its own `mod tests`._
+
+The filter's orientation as a unit quaternion, body to earth (the aerospace frames: the body x forward, y right,
+z down; the earth north, east, down), and what the filter does to it:
+ * [`Rotation::turned`] -- the gyro's BODY rates integrated as a rotation of the body, singularity-free: through a
+   vertical nose and a banked turn alike;
+ * [`Rotation::yawed`] -- a turn about the earth's vertical, which moves the heading alone (the track and the
+   magnetometer pulls);
+ * [`Rotation::tilted`] -- a turn toward the measured gravity, the shortest way, which moves roll and pitch alone
+   (the accelerometer pull);
+ * [`Rotation::from_euler`] and [`Rotation::euler`] -- the aerospace heading, pitch and roll (Z-Y-X), what the
+   databoard carries.
+
+Plan B integrated the body rates into the Euler angles directly (roll += p dt, pitch += q dt, yaw += r dt), which
+holds only about a level body: in a banked turn its pitch drifts by the turn rate times the sine of the bank, and
+at a vertical nose a spin scrambles all three. Its HITL sim published Euler rates for a gyro, which hid it.
 
 ## `control::change`
 
@@ -2199,13 +2242,14 @@ BOOSTING's law (the flight entry's `boost_law`; doc/specs/boost-control.md).
 
 The flight law's state.
 
-- `fn new(flight: &Value, fins: &Value) -> FlightLaw` — The law of the flight entry `flight` (gains, schedule, guidance, wind) and the config's `fins` section (the mixer, the limit multiplier), as plan B's setup builds it.
+- `fn new(flight: &Value, fins: &Value, position_window_ms: u32) -> FlightLaw` — The law of the flight entry `flight` (gains, schedule, guidance, wind) and the config's `fins` section (the mixer, the limit multiplier), as plan B's setup builds it. `position_window_ms` is the GNSS channels' own databoard window (the larger of `position`'s and `speed`'s, plan B's): the guidance's default freshness gate for a fix, so it tracks the GNSS's rate, not a constant.
 - `fn step(&mut self, input: &Step) -> bool` — One control step (plan B `_tick`). Returns whether it actuated: then [`FlightLaw::angles`] are the fin angles to write. Out of a control stage, disarmed, with no fresh attitude, or with the boost still on the rod, it actuates neutral; out of a control stage while nothing engaged it does not actuate at all, so an operator's fin command on the pad stands (plan B returns before `_actuate`).
 - `fn angles(&self) -> &[i32]` — The fin angles last actuated, in the mixer's surface order (neutral before any).
-- `fn reach(&self) -> Option<crate::guidance::Reach>` — The zone's reach from the last control step's inputs (plan B flight.vitals `reach`), None without a zone.
+- `fn reach(&self) -> Option<crate::guidance::Reach>` — The zone's reach from the last step's inputs, in any stage (plan B flight.vitals `reach`), None without a zone or without a fresh fix and elevation.
 - `fn landing_turn_radius(&self) -> Option<f32>` — The endgame's turn-radius floor at the airspeed estimate, metres (plan B vitals `r_min_m`).
 - `fn seed_airspeed(&mut self, airspeed: f32)` — Seed the airspeed estimate (a warm start's crumb, plan B flight.seed_airspeed), its fin cap with it.
 - `fn airspeed(&self) -> f32` — The airspeed estimate, m/s.
+- `fn measured_airspeed(&self) -> Option<f32>` — The pitot's airspeed the governor last measured, m/s; None without one (the attitude filter's centripetal correction takes no estimate).
 - `fn cap(&self) -> i32` — The fin cap the governor set, whole degrees.
 - `fn active(&self) -> bool` — In a control stage, the PIDs engaged.
 - `fn commands(&self) -> [i32; 3]` — The last per-axis demands [roll, pitch, yaw], whole degrees.
@@ -2269,6 +2313,7 @@ time, and writes the deflection cap into the mixer's limit.
 - `fn new(config: GovernorConfig, fin_limit_multiplier: f32) -> Governor` — A governor with these knobs and the board's `fins.limit_multiplier` (default 1.0; a smaller one tightens the whole schedule), over a fresh, unconfident estimator.
 - `fn set_ceiling(&mut self, mixer: &mut Mixer, ceiling: Option<i32>)` — Set the stage's ceiling on the cap (None lifts it), the mixer re-capped AT ONCE when it changes and a cap was derived: a glide must not start under the boost's ceiling until the throttled next update. Before the first update the ceiling waits for it.
 - `fn airspeed(&self) -> f32` — The current airspeed estimate in m/s: the boost rod gate, the telemetry and the warm-start crumb read it.
+- `fn measured_airspeed(&self) -> Option<f32>` — The pitot's airspeed the last update measured (in its band), m/s; None when it had none. A MEASUREMENT, unlike [`Governor::airspeed`], which over-reads by design when unsure.
 - `fn estimator(&self) -> &AirspeedEstimator` — The estimator, read-only: its value and whether it is trusted yet.
 - `fn seed_airspeed(&mut self, mixer: &mut Mixer, airspeed: f32)` — Restore the airspeed in m/s the warm-start crumb persisted, and cap the mixer off it AT ONCE (governor.Governor.seed_airspeed).
 - `fn step(&mut self, mixer: &mut Mixer, elapsed: f32, full_rate_override: bool, pitch: f32, readings: &Readings)` — One control slice (governor.Governor.step): accumulate `elapsed` seconds and, when due, update the estimator and write the fin cap into the mixer.
@@ -2758,9 +2803,13 @@ Wind estimation from GNSS (src/glider wind.py). The MINIMAL method, proven first
 The GNSS reports the ground velocity (course and ground speed); the attitude gives the heading; the governor
 gives the airspeed. The air mass the glider flies through is moving, so
   wind = ground velocity - air velocity = (ground speed along the course) - (airspeed along the heading).
-An EMA smooths the per-fix estimate. The CROSSWIND component is bias-free; the ALONG-heading component inherits
-the governor's airspeed error (an over-read biases the head/tailwind), which is acceptable for the rough uses
-(the reachability margin, the approach crab, dead reckoning). If the field data shows that bias hurts, the
+An EMA smooths the per-fix estimate. The ALONG-heading component inherits the governor's airspeed error (an
+over-read biases the head/tailwind), which is acceptable for the rough uses (the reachability margin, the approach
+crab, dead reckoning). The CROSSWIND component needs a heading independent of the track, and the board's attitude
+filter pulls its heading onto the GNSS track (crates/control attitude `course_shift`): in a long straight leg its
+crab is pulled out and the crosswind reads ~0; the turns, where the track swings faster than the pull, show it.
+Plan B's fast pull (5) lost the crosswind almost entirely, invisible in HITL while the sim's own heading was
+mirrored; the port's 7.5 keeps more of it. If the field data shows that bias hurts, the
 airspeed-free GPS-only min/max-ground-speed method is the next layer (kept out until a corner case earns it).
 
 The estimator OWNS its config subtree (the board `wind` block) and is operator-facing, as plan B's
@@ -4323,6 +4372,22 @@ profile ([`PROFILE_BYTES`] at 0x55, readable and writable in CONFIG mode only) i
 ([`Bno055::read_profile`]) and written back at bring-up ([`Bno055::restore_profile`]), so a power cycle on the rail
 needs no figure-8. [`Bno055::owed`] says what is still owed: the figure-8, then the save.
 
+THE REFUSED FUSION (measured on the taster, 2026-10-14). The chip can refuse NDOF: it stays in CONFIG mode with
+SYS_STATUS 1 and SYS_ERR 9 (the fusion's configuration), and every data register reads zero, while each bus read
+succeeds. A saved profile whose magnetometer radius is 0 does it, and since the profile is restored at every boot the
+part went blind at every boot, reported healthy (plan B's restore had the same hole). So every switch into NDOF
+reads OPR_MODE back ([`Fault::Configuration`] when it did not take, [`Bno055::refused`] the SYS_ERR), a profile
+with a radius out of the datasheet's range is neither restored nor saved ([`profile_valid`]), and a profile the chip
+refuses anyway is undone by a chip reset and a bring-up without it: the figure-8 is owed again, never a blind part.
+
+THE FRAME (2026-10-14). The fused Euler is the chip's own: Bosch's heading, roll and pitch about its sensor axes,
+world (east, north, up) to chip `Rx(-pitch) Ry(roll) Rz(heading)` in the Windows orientation, which the bring-up
+writes ([`UNITS`]: the chip came up in either; the 10-03 boards' pitch sign was the other one's). The filter, the
+primary, publishes the aerospace frame of the airframe ([`aerospace`]); handed the chip's own angles on a failover
+the law read roll and pitch swapped (the rod's 75 degrees of pitch as roll). Measured against the chip's own
+accelerometer on three poses (the taster, TMS-7C and 7D on the rod). The heading names the chip's +y, Bosch's
+device frame: no pose here could check it (the taster's magnetometer reads zero).
+
 Not here (firmware glue): the channel pushes and the stream, the profile's NVS key, the probe's log lines.
 
 ### `pub struct Sample`
@@ -4347,6 +4412,7 @@ What [`Bno055::judge`] makes of a sample's fusion.
 One BNO055 on an I2C bus.
 
 - `fn new(address: u8) -> Bno055` — A driver for the part at `address`.
+- `fn refused(&self) -> Option<u8>` — The SYS_ERR of the last switch into NDOF the chip refused (9: the fusion's configuration), None since one took.
 - `fn address(&self) -> u8` — The I2C address.
 - `fn identity<Bus: I2c>(&self, bus: &mut Bus) -> Result<u8, Fault<Bus::Error>>` — Read CHIP_ID.
 - `fn read<Bus: I2c>(&self, bus: &mut Bus) -> Result<Sample, Fault<Bus::Error>>` — Read one sample of the block.
@@ -4357,7 +4423,7 @@ One BNO055 on an I2C bus.
 - `fn calibrated(&self) -> bool` — Has the magnetometer ever converged this session, or was a profile restored: the latch, which the live register regularly disagrees with (it regresses while the offsets stay).
 - `fn restored(&self) -> bool` — The latch came from a restored profile.
 - `fn owed(&self) -> Option<String>` — What is still owed (bno055.calibration): [`owed`] of this part.
-- `fn read_profile<Bus: I2c>(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs) -> Result<[u8; PROFILE_BYTES], Fault<Bus::Error>>` — The learned profile, for `calibrate` to save (bno055._save_profile): CONFIG mode for the read, NDOF again afterwards whatever happened, so a failed read never leaves the fusion off. The fusion pauses ~50 ms: a ground action, never on the poll path. Marks the profile saved only when the firmware says it persisted it ([`Bno055::mark_saved`]).
+- `fn read_profile<Bus: I2c>(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs) -> Result<[u8; PROFILE_BYTES], Fault<Bus::Error>>` — The learned profile, for `calibrate` to save (bno055._save_profile): CONFIG mode for the read, NDOF again afterwards whatever happened, so a failed read never leaves the fusion off. The fusion pauses ~50 ms: a ground action, never on the poll path. Marks the profile saved only when the firmware says it persisted it ([`Bno055::mark_saved`]). A profile [`profile_valid`] refuses is [`Fault::Configuration`]: saved, it would blind the part at the next boot.
 - `fn mark_saved(&mut self)` — The firmware persisted the profile: nothing more is owed.
 - `fn saved(&self) -> bool` — The learned profile is saved (restored, or `calibrate` saved it).
 - `fn restore_profile<Bus: I2c>(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs, profile: &[u8; PROFILE_BYTES]) -> Result<(), Fault<Bus::Error>>` — Write a saved profile back (bno055._restore_profile): CONFIG mode, the profile, NDOF again; sets the latch and the saved flag, so a boot with valid offsets owes nothing.
@@ -4369,6 +4435,18 @@ One BNO055 on an I2C bus.
 What is still owed (bno055.calibration), from the last CALIB_STAT read (`state`, None before the first), the
 convergence latch and whether the profile is saved: the figure-8 while unconverged, then the save; None once both
 are done. A free function, so the firmware words it from its run's published state, off the bus owner.
+
+### `pub fn profile_valid(profile: &[u8; PROFILE_BYTES]) -> bool`
+
+Whether a learned `profile` can be put in force: both radii (the last two words) inside the datasheet's range and
+above 0. A radius of 0 is a part that learned nothing, and the chip refuses NDOF with it (SYS_ERR 9).
+
+### `pub fn aerospace(euler: [f32; 3], axes: &Axes) -> [f32; 3]`
+
+The aerospace (heading, roll, pitch) in degrees of the airframe whose BNO055 fused `euler` (heading, roll, pitch in
+degrees, the chip's Windows convention, [`UNITS`]) and is mounted per `axes` (the chip's axes onto the marks, x
+forward, y left, z up): the frame the attitude filter publishes, heading [0, 360) clockwise from north, roll right
+wing down, pitch nose up (see the module notes).
 
 ### Constants
 
@@ -4387,6 +4465,14 @@ are done. A free function, so the firmware words it from its run's published sta
 - `const CALIBRATION_PERIOD_MS: u32 = 1000` — How often the firmware reads CALIB_STAT for the operator (plan B's ~1 Hz).
 - `const NVS_KEY: &str = "bno055_calib"` — The NVS key of the saved profile (plan B's `bno055_calib`, shared with it).
 - `const MODE_SETTLE_MS: u32 = 25` — The wait after a mode switch (plan B's 25 ms; the datasheet's 7 ms to CONFIG, 19 ms from it).
+- `const UNIT_SEL: u8 = 0x3B` — UNIT_SEL: the output units and the Euler convention.
+- `const UNITS: u8 = 0x00` — UNIT_SEL as the bring-up writes it: the Windows orientation, degrees, degrees per second, m/s^2, Celsius.
+- `const SYS_ERR: u8 = 0x3A` — SYS_ERR: why SYS_STATUS reads 1 (9: the fusion's configuration refused).
+- `const SYS_TRIGGER: u8 = 0x3F` — SYS_TRIGGER: [`RESET`] resets the chip.
+- `const RESET: u8 = 0x20` — SYS_TRIGGER's RST_SYS bit.
+- `const RESET_MS: u32 = 650` — The datasheet's power-on reset time to a chip that answers, ms.
+- `const ACCEL_RADIUS_MAX: i16 = 1000` — The largest accelerometer radius the profile may carry (the datasheet's +-1000 LSB).
+- `const MAG_RADIUS_MAX: i16 = 960` — The largest magnetometer radius the profile may carry (the datasheet's +-960 LSB).
 - `const BLOCK_LENGTH: usize = 24` — The block's length: accel, mag, gyro, Euler, 6 bytes each.
 - `const EULER_OFFSET: usize = 18` — The Euler triple's offset in the block.
 - `const GYRO_OFFSET: usize = 12` — The gyro's offset in the block.
@@ -5090,7 +5176,7 @@ independent (an mg90s yaw with sg90 elevons), and the mixer commands angles by n
 
 ### Constants
 
-- `const MG90S: ServoType = ServoType { name: "mg90s", slew_ms_per_60: 100, settle_margin_ms: 60, engine_min_mw: 600, en...` — The MG90S: ~0.1 s per 60 degrees (metal gear, a touch quicker than the SG90's 0.15), and a probe window shifted up for the larger current (600..5000 mW). Both are datasheet-approximate TYPE defaults; tune them per built rig through the component's engine_*_mw config.
+- `const MG90S: ServoType = ServoType { name: "mg90s", slew_ms_per_60: 100, settle_margin_ms: 60, engine_min_mw: 600, en...` — The MG90S: ~0.1 s per 60 degrees (metal gear, a touch quicker than the SG90's 0.15), and a probe window shifted up for the larger current (600..5000 mW). Both are datasheet-approximate TYPE defaults; tune them per built rig through the component's engine_*_mw config. Its pulses stop at 555..2333 us, 5..165 degrees on the stock map: held at 0 or at 170 and up the taster's MG90S stalled at its mechanical ends (225-250 mW where 25 mW holds), stall-free from 5 to 165 (doc/sims/TMS-7-mg90s_yaw). A fin flies 45..135; a manual command past them stops there.
 
 ## `drivers::mock`
 
@@ -5491,7 +5577,7 @@ One fin servo: its range, its trim, and the last command (the only position ther
 - `fn engine_min_mw(&self) -> i32` — The probe's least power rise, mW.
 - `fn engine_max_mw(&self) -> i32` — The probe's HIGH-draw flag, mW.
 - `fn clamp(&self, degrees: f64) -> i32` — A command in degrees, rounded half to even and clamped to [min_deg, max_deg] (sg90._clamp).
-- `fn pulse(&self, angle: i32) -> i32` — The pulse, us, for an already-clamped angle (sg90._write's map): `min_us + (angle + trim - min_deg) x (max_us - min_us) // span`, or min_us for a zero span, bounded to [min_us, max_us].
+- `fn pulse(&self, angle: i32) -> i32` — The pulse, us, for an already-clamped angle (sg90._write's map): `min_us + (angle + trim - min_deg) x (max_us - min_us) // span`, or min_us for a zero span, bounded to [min_us, max_us] and then to the type's stall-free pulses.
 - `fn write(&mut self, angle: i32) -> Command` — Write an already-clamped angle (sg90._write): map it, drive it, remember it. Returns the command, whose row the caller pushes with `done` 0.
 - `fn apply(&mut self, degrees: f64) -> Command` — Clamp then write (sg90._apply): the operator and move() path.
 - `fn set_angle(&mut self, degrees: f64) -> Option<Command>` — The 100 Hz flight-loop command, compare-and-set (sg90.set_angle): clamp, then write ONLY a change. A step (`step_deg`) over 1 puts the fin on a grid of that many degrees each way from the neutral (5 over 45-135: 19 positions) and moves it off its grid point only once the command is more than half a step and a degree away, so noise at a grid boundary does not toggle it. A small command then rests at the exact neutral and a held fin is never more than about half a step off its command (doc/sims/TMS-7-servo_step: on the taster's SG90s a 3-degree grid writes half the moves of step 1 and draws ~20 % less servo energy, and over the SITL it lands no worse). A step of 1 is any change, plan B's; 0 writes every command, unchanged ones too. None when nothing was written.
@@ -6211,7 +6297,7 @@ validate as plan B does; a field set directly skips that.
 - `fn update(&mut self, properties: &Map<String, Value>) -> Vec<&'static str>` — Apply the editable mission fields of an `update mission` request (mission.py `update`, less the clock).
 - `fn merge(&mut self, properties: &Map<String, Value>) -> Vec<&'static str>` — Apply a `set-config launch` payload: [`Mission::update`], plus `sites`.
 - `fn position_set(&self) -> bool` — Whether the operator set the launch position (both coordinates): the dashboard's 'launchpad_set'.
-- `fn freeze_launch(&mut self, fix: Option<Position>) -> Option<Position>` — Pins the live GNSS `fix` as the launch point (mission.py `freeze_launch`), at arm and again at BOOSTING entry, the last moments the board is known to be on the pad: mid-flight the fix can drop, and the launch point must not drop with it. An operator-set position always wins, and with no fix nothing changes. In memory only, as plan B's: the pinned point is the operator's from here, so a later freeze keeps it.
+- `fn freeze_launch(&mut self, fix: Option<Position>) -> Option<Position>` — Pins the live GNSS `fix` as the launch point (mission.py `freeze_launch`) at arm, the last moment the board is known to be on the pad: mid-flight the fix can drop, and the launch point must not drop with it. Plan B froze again at BOOSTING entry; here only the warm-start crumb's identity does (firmware warm.rs), since an arm in SETTING needs a launch point (the mission probe) and so always pins one first. An operator-set position always wins, and with no fix nothing changes. In memory only, as plan B's: the pinned point is the operator's from here, so a later freeze keeps it.
 - `fn max_range_m(&self) -> f32` — The range limit in metres from the launch point to any zone point (the board config's `field.max_range_m`).
 - `fn select_site(&mut self, fix: Position) -> Option<String>` — CC-less site selection (mission.py `select_site`): the nearest known site whose pad is within `max_range_m` of the live `fix` becomes the mission's site and zone, a later site at an equal distance winning as plan B's `<=` lets it. The launch point is left as it is: the live fix stands in for it until `arm` pins it.
 - `fn fallback_zone(&mut self, fix: Position, bearing_deg: f32, near_m: f32, width_m: f32, depth_m: f32) -> Zone` — The spiral-landing fallback (mission.py `fallback_zone`): a generous axis-aligned box the mission adopts as its zone, site 'fallback'. Its wide side (`width_m`) faces the pad, its near edge `near_m` out from `fix`, running `depth_m` away; its centre `near_m + depth_m / 2` from the fix at `bearing_deg` (the operator's clear sector). Degrees in f64, as plan B's CPython reference computes them, then rounded to the position units.
@@ -7114,7 +7200,7 @@ or boots cold, and the normal detectors (separation, apogee, landing) re-evaluat
 The crumb lives in NVS, never in a file: a file write locks the scheduler and wears the data flash, while NVS
 commits to its own partition in milliseconds. It is two keys in the namespace [`NAMESPACE`], the same as plan B's,
 so a crumb plan B wrote reads back here and the other way round:
- * [`CRUMB_KEY`], one JSON blob of at most [`BLOB_MAX`] bytes (about 250 in practice): full precision, no
+ * [`CRUMB_KEY`], one JSON blob of at most [`BLOB_MAX`] bytes (about 370 in practice): full precision, no
    per-field key bookkeeping, and a new field is a member rather than an NVS schema change;
  * [`STAGE_KEY`], the stage id as an i32, written LAST. It IS the flag: 0 ([`NO_STAGE`], what an unwritten key
    reads as) means no flight was checkpointed, anything else is the stage to recover. Written last, a torn
@@ -7123,8 +7209,8 @@ so a crumb plan B wrote reads back here and the other way round:
 
 Only a FLYING board writes a crumb: armed (a disarmed passive flight must never warm-start into an armed stage)
 and launched by its own stage machine (an operator's held stage is a bench test, never a flight to resume). The
-recovery identity (the launch point, the zone, the pad altitude, the pitot tare) is frozen once, at BOOSTING
-entry, and rides every later crumb.
+recovery identity (the launch point, the zone, the pad altitude, the pitot tare, the gyro biases) is frozen once,
+at BOOSTING entry, and rides every later crumb.
 
 The pieces, each plan B's function as data, so the firmware's `warm.rs` and supervisor only move bytes:
  * [`Crumb`], with [`Crumb::from_json`] and [`Crumb::to_json`], and [`save`]/[`clear`]/[`load`] over the [`Nvs`]
@@ -7217,7 +7303,7 @@ plan decide what an absent one means. A field of the wrong JSON type, or a coord
 absent.
 
 - `fn from_json(value: &Value) -> Option<Crumb>` — The crumb a blob holds: None when the JSON is not an object (plan B raised TypeError there and crashed the boot). Every member is read on its own (see [`Crumb`]); an unknown member is ignored.
-- `fn to_json(&self) -> String` — The blob text: compact JSON, well under [`BLOB_MAX`] bytes (about 250 for a full crumb).
+- `fn to_json(&self) -> String` — The blob text: compact JSON, well under [`BLOB_MAX`] bytes (about 370 for a full crumb).
 
 ### `pub enum ResetReason`
 
@@ -7249,7 +7335,8 @@ What a passed gate restores (plan B `_apply_restore`), as data. The firmware's `
 thread runs, in the field order, which is plan B's:
  1. the mission's launch point and zone, BEFORE the arm: arming freezes the launch point from the live fix
     unless one is set, and mid-air that fix is not the pad;
- 2. the baro rebase, the pitot tare and the airspeed seed, before anything reads altitude or airspeed;
+ 2. the baro rebase, the pitot tare, the gyro biases and the airspeed seed, before anything reads altitude,
+    airspeed or the gyro;
  3. the checkpoint's identity, else the first checkpoint after the restore saves a crumb with none, and a second
     reset skips the rebase and the tare (and a warm start into BOOSTING would freeze the mid-air altitude as the
     pad);
@@ -7400,7 +7487,7 @@ setup, `now_s` the clock in seconds since 2000 (it reports the crumb's age), and
 - `const CRUMB_KEY: &str = "crumb"` — The NVS key of the crumb blob, the JSON document.
 - `const STAGE_KEY: &str = "stage"` — The NVS key of the stage i32, the flag written last.
 - `const NO_STAGE: i32 = 0` — The stage i32 that means "no crumb": what an unwritten key reads as, and what [`clear`] writes (plan B `Stage.NULL`). Never a live stage.
-- `const BLOB_MAX: usize = 512` — The read buffer for the crumb blob (plan B `_BLOB_MAX`). A crumb is about 250 bytes; the headroom is for new fields. A longer blob does not fit the buffer, so it reads as no crumb (a cold boot), on both firmwares.
+- `const BLOB_MAX: usize = 512` — The read buffer for the crumb blob (plan B `_BLOB_MAX`). A real crumb is about 370 bytes (two gyros' biases), 410 with four; the largest the writer can produce, every field at the extreme of what it writes, is 507. A longer blob does not fit the buffer, so it reads as no crumb (a cold boot), on both firmwares.
 - `const UNIX_SECONDS_AT_2000: i64 = 946_684_800` — Unix seconds at 2000-01-01T00:00:00Z: the stamp's epoch is MicroPython's, so the firmware subtracts this from `gettimeofday` before it stamps a crumb or asks the gate.
 - `const REBASED_BAROS: [&str; 3] = ["icp10111", "bmp280", "bmp581"]` — The baro drivers whose setup re-zeroes the altitude, so a warm start rebases them to the pad (plan B `_REBASED_BAROS`). Every one: the BMP581 (TMS-7F's backup elevation) was once missing, so after a mid-air reset it read about 0 m aloft and an ICP outage handed the landing check the ground.
 - `const GROUND_SLOTS: usize = REBASED_BAROS.len()` — The rebased barometers whose own pad ground a crumb carries ([`Identity::grounds_m`]): one per driver in [`REBASED_BAROS`].
@@ -7651,6 +7738,7 @@ What the tick needs of its host beyond the databoard: each call is cheap, never 
 - `fn moved(&mut self, stage: Stage)` — The stage machine moved itself to `stage`: the console's line, before the recorded one.
 - `fn veto_edge(&mut self)` — A veto episode's edge, to count.
 - `fn attitude(&mut self, row: [i32; 6], seeded: bool, blind: bool)` — The attitude filter's state after a step: its row, whether it mirrored a source that outranks it, whether it is blind.
+- `fn gyro_biases(&mut self, _biases: [Option<[f32; 3]>; BIAS_SLOTS])` — The filter's gyro biases after a step at rest in SETTING (`Attitude::biases`), for the crumb's freeze at BOOSTING entry; a host that never warm starts ignores them.
 - `fn fins(&mut self, angles: &[i32])` — The law actuated: its whole-degree fin angles, by the mixer's surfaces.
 - `fn vitals(&mut self, law: &FlightLaw)` — A flight.csv sample was taken: the law's vitals.
 
@@ -7985,7 +8073,8 @@ blocks: the owner calls them on its wake.
 ### `pub fn classify(entry: &Entry) -> Kind`
 
 What runs `entry`. The LSM6DSO32 is an SPI part unless its entry binds it to I2C (plan B's lsm6dso32.py:144: the
-`bus` defaults to 'spi').
+`bus` defaults to 'spi'). Its read loop runs on the control thread over SPI only: bound to I2C it would come up
+and never publish, so it fails as not ported (`verify` lists it, `arm` refuses). Every board wires it on SPI.
 
 ### `pub fn rezeroes(implementation: &str) -> bool`
 
@@ -8021,7 +8110,8 @@ What `inspect`, `verify` and the heartbeat show of the BNO055 beyond its channel
 
 ### `pub struct Absolute`
 
-The BNO055's outputs (M18, plan B bno055.run): every period one block read; the fused Euler to `attitude` unless
+The BNO055's outputs (M18, plan B bno055.run): every period one block read; the fused Euler, in the filter's
+aerospace frame through the part's `axes`, to `attitude` unless
 the fusion is stalled (the channel then goes stale and the databoard falls to the next source), the accelerometer
 through the airframe's axes to `accel` always (that half still works), a row to its stream, and CALIB_STAT read
 about once a second for the operator.
@@ -8275,7 +8365,7 @@ Lockstep: the clock is the frame's physics time (`sim_time_ms`, after a 10 s boo
 wall's. Each frame first runs the control ticks due before it on what the earlier frames left, then is published,
 then runs the tick due at its own time, then is answered: what a realtime board sees, every run the same.
 
-  sitl --config <board config JSON> [--mission <launch JSON>] [--port 1236]
+  sitl --config <board config JSON> [--mission <launch JSON>] [--port 1236] [--trace]
 
 # `firmware` — `src/avionics/firmware`
 
@@ -9171,10 +9261,20 @@ Errors: the driver would not install (the console then stays IDF's polling one, 
 The board's side of the control tick's duties (crates/controller `ControlCore`, R3): the hooks, and the state the
 executor reads of the filter and the stage machine.
 
+### `pub fn gyro_biases() -> [Option<[f32; 3]>; BIAS_SLOTS]`
+
+The filter's gyro biases, degrees per second by slot, None for one never learned: the crumb's at BOOSTING entry.
+
+### `pub fn keep_warm_gyro_biases(biases: [Option<[f32; 3]>; BIAS_SLOTS])`
+
+Keeps a warm start's gyro biases for the filter's seed (crate::warm, before the control thread starts), logged
+here: a float formatted on the control thread costs its stack.
+
 ### `pub fn attitude_inspection() -> Option<serde_json::Value>`
 
 What `inspect` shows of the attitude filter (plan B tasks/attitude.py `inspect`): its flags, angles and magnetic
-reference as the filter last published them; None when no filter runs.
+reference as the filter last published them, and the port's own `gyro_bias` (each slot's, deg/s, null for one
+never learned); None when no filter runs.
 
 ### `pub fn probe_attitude(only: Option<&str>) -> Option<(&'static str, Option<String>)>`
 
@@ -9944,12 +10044,30 @@ airborne stage instead (drivers/wifi.py).
 
 The networks are the board config's (`wifi.networks`, board_config::wifi), tried round-robin with each one's
 own retry clock; a password comes from the `creds` store, else the config's fallback. The hub is the config's
-`cc_host`, the `.1` of the board's own subnet when it is unset, and nothing when it is '' (standalone: Wi-Fi
-still joins, for the file server).
+`cc_host`, the `.1` of the board's own subnet when it is unset, and nothing when it is '' or the `cc` entry is
+disabled (standalone: Wi-Fi still joins, for the file server); a disabled `wifi` entry leaves the radio alone
+(board_config::wifi_link).
+
+### `pub struct Inspection`
+
+What `inspect wifi` shows of the station (plan B drivers/wifi.py inspect), read from the driver on demand.
 
 ### `pub fn stack_up() -> bool`
 
 Whether the TCP/IP stack is up, so a socket can be opened (it may not hold an address yet).
+
+### `pub fn inspection() -> Option<Inspection>`
+
+The station as the C6 reports it now (each figure one esp_hosted call, a few ms); None before the TCP/IP stack is
+up (no Wi-Fi driver yet, or none this boot).
+
+### `pub fn set_tx_power(dbm: f32) -> Result<(), String>`
+
+Sets the radio's transmit power cap to `dbm` (plan B wifi.set_tx_power, the operator's signal-level knob) until
+the next join, which applies its network's `tx_power_dbm` when the config sets one. The C6 rounds it to its own
+steps.
+
+Errors: the driver's refusal, or no driver.
 
 ### `pub fn run(modem: Modem<'static>, event_loop: EspSystemEventLoop, partition: EspDefaultNvsPartition, wifi: Wifi, credentials: Credentials, executor: &Executor, beacon: crate::beacon::Beacon) -> !`
 

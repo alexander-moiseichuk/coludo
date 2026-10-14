@@ -1,7 +1,7 @@
-# TMS-8 — the next launch's board config (draft, no date yet)
+# TMS-8 — the 2026-12-05 launch's board config (draft)
 
-`tms8.config` is TMS-8's board config as the operator described the airframe on 2026-10-14; this folder becomes
-`launches/<YYYYMMDD>/TMS-8/` once the field day is set.
+`tms8.config` is TMS-8's board config as the operator described the airframe on 2026-10-14, for the field day on
+2026-12-05.
 
 **Set:**
 - **Board:** id `TMS-8`, `layout: auto` (the v1.1 detection), the Rust avionics.
@@ -20,7 +20,7 @@
 
 **Pending:**
 - **Trims:** the operator zeroes each fin visually (the CC fin-zero card), and the trims go into this file.
-- **The date** and the launch manifest.
+- **The launch manifest** (the date is set: 2026-12-05).
 - `final_approach_agl` is 0 (TMS-7F's), the taster's bench config 8: to settle with the field.
 
 **Never install this config on a bench board on the 1 A supply:** concurrency 3 lets all three fins slew at once, and

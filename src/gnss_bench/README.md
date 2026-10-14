@@ -3,7 +3,8 @@
 [`main.py`](main.py) checks two GNSS modules in the field. They get **our flight init** plus slow diagnostics,
 and the checker records what they do. It runs on an **ESP32-C6 SuperMini** with **MicroPython ≥ 1.29**. It is
 not flight firmware: `tools/deploy.sh` never touches it. The first result is
-[doc/benches/gnss-20261004](../../doc/benches/gnss-20261004/README.md).
+[doc/benches/gnss-20261004](../../doc/benches/gnss-20261004/README.md). The NEO-M8N (TMS-8, UBX) is not covered
+here: see `doc/specs/avionics-port.md` M16.
 
 ## Wiring
 
@@ -23,8 +24,9 @@ before it is configured anyway.
 ## A session per power-on
 
 Every power-on starts session N, numbered on from the highest `336.N` on flash. Each module gets the flight
-init once it talks, as `drivers/atgm336h.py` (hz 10) and `drivers/neo6mv2.py` (hz 5) send it. Then come the
-diagnostics: GSV, GSA and the ATGM's antenna text every ~10 s, which leave the RMC/GGA rates as they are.
+init once it talks, as `src/glider/drivers/atgm336h.py` (hz 10) and `src/glider/drivers/neo6mv2.py` (hz 5) send
+it. Then come the diagnostics: GSV, GSA and the ATGM's antenna text every ~10 s, which leave the RMC/GGA rates
+as they are.
 After that:
 
 * every 10 s, a `status` line per module: RMC valid, GSA mode, GGA quality, satellites used and HDOP,

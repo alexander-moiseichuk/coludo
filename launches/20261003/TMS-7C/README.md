@@ -1,6 +1,7 @@
 # TMS-7C — telemetry airframe
 
-The instrumented flight. Built, calibrated and packed; see the fleet notes for its bring-up history.
+The instrumented flight: it lost boost stability and crashed on 2026-10-03 (below). Since 2026-10-05 its
+attitude module is a SEN0697, and it stays on plan B, the MicroPython firmware ([`doc/plan.md`](../../../doc/plan.md)).
 
 | | |
 |---|---|
@@ -126,9 +127,9 @@ In order:
   produce this failure. It needs a 6-degree-of-freedom boost with margin per plane, a q-proportional roll
   asymmetry and the measured F15 curve, plus a regression that replays 7C and must depart.
 
-**Open questions that would sharpen the verdict:** is there video? Did 7A fly straight on the same
-wings and fins? Which way does the board's +z point relative to the wing plane? What was the wind? What did
-the wreck show (fins' angle and play, wings unfolded, the sleeve joint)?
+**Open questions that would sharpen the verdict:** does the [video](video.mp4) confirm the impact at ≈2.0–2.4 s?
+Did 7A fly straight on the same wings and fins? Which way does the board's +z point relative to the wing plane?
+What was the wind? What did the wreck show (fins' angle and play, wings unfolded, the sleeve joint)?
 
 ### The data
 
@@ -137,6 +138,7 @@ the wreck show (fins' angle and play, wings unfolded, the sleeve joint)?
 | [`recorder/`](recorder/) | the **original lines**, verbatim, from 30 s before ignition to the end of each stream, plus the session's `board.log` |
 | [`flight/`](flight/) | the same rows with named columns, **t_s = 0 at ignition** (uptime 884.028860 s); units as recorded: LSM gyro in centi-°/s, BNO055 roll and pitch in centi-°, pitot fixnums ×100 |
 | [`plots/`](plots/) | the two figures above, plus [`flight.html`](plots/flight.html) interactive |
+| [`video.mp4`](video.mp4) | the onboard Luckfox camera, 21.8 s: the flight from the air, then the wreck in the grass beside the booster |
 
 The session is `20000101_000006_898573`. The board's clock was unset, so it is named for 2000-01-01;
 the launch was found by its boost, not its date. The full recorder dump (5568 files) is kept off-repo.

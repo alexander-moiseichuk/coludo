@@ -301,8 +301,11 @@ class _Sim:
         # attitude turned by that unknown pad azimuth, drawn on its own generator so a seed's noise stays as it was
         # (--pad-heading unknown); `known` hands the true heading, as every --no-attitude study before this flag
         # (2026-10-14) flew
-        unknown = self.physical and getattr(args, 'pad_heading', 'known') == 'unknown'
-        self.pad_yaw = random.Random(getattr(args, 'seed', None)).uniform(-180.0, 180.0) if unknown else 0.0
+        unknown = self.physical and getattr(args, 'pad_heading', 'unknown') == 'unknown'
+        # its own seed, not the run's: random.Random(seed) would draw the same first number the sim's x gyro bias does
+        seed = getattr(args, 'seed', None)
+        self.pad_yaw = random.Random(None if seed is None else 'pad-%d' % seed).uniform(-180.0, 180.0) if unknown \
+            else 0.0
         # --imu-noise real: each axis's constant bias (seeded), the gyro's in deg/s, the accelerometer's in g
         self.real_imu = getattr(args, 'imu_noise', 'frac') == 'real'
         self.gyro_bias = [random.uniform(-_GYRO_BIAS_DPS, _GYRO_BIAS_DPS) for _ in range(3)] if self.real_imu else None

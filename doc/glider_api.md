@@ -3300,6 +3300,21 @@ stripped, the rest forwarded verbatim) and the reply is tagged `from <board> ...
 token is a Control command from the drop-in commands/ registry. CPython 3.12, stdlib asyncio only.
 cc_protocol.py is shared with the firmware (symlinked).
 
+### `claims_a_live_id(existing: board.Board, newcomer: board.Board) -> bool`
+
+Whether `newcomer` is a second board claiming the id `existing` holds, rather than the same board reconnecting.
+
+A reconnect comes from the board's own address (its DHCP lease), or follows a link that has gone silent; a board
+from another address while the registered one still answers is another board whose config carries the same
+id. Letting it in silently reroutes every command for that id to it.
+
+Args:
+    existing - the connection registered under the id.
+    newcomer - the connection that just identified with the same id.
+
+Returns:
+    True when `existing` is live (online, a reply within _LIVE_S) and `newcomer` comes from another address.
+
 ### `class Server`
 
 The hub: a board listener + per-board heartbeat + an operator console.

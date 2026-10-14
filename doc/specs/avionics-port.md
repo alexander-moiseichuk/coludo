@@ -1,11 +1,13 @@
 # Avionics port: src/glider (MicroPython) → src/avionics (Rust)
 
-Status: accepted as the build plan; revised 2026-10-06 (operator ring redesign); M1, M1b, M2 done, M3 in rework.
+Status: accepted as the build plan; revised 2026-10-06 (operator ring redesign), last on 2026-10-14. Every
+milestone is DONE: M1-M16 and M18-M21, with M1b, M7b and M11b (M17 moved to M11b); each heading or row carries its
+date. Open: the field-day proofs (`doc/field_checks.md`: M11's outdoor GNSS checks, the beacons' range and battery
+time, M7b's pad run) and M16's outdoor fix and its cold path after a real power cycle.
 Branch `lmoiseichuk/phase6_rustification`.
-Done so far: M1 `e34f11e`, M1b `07ab6f2`, M2 `8efffa8`/`6303a2d`/`c06bf0a`, G1 `127bc0d`, M3 host crates `97f785f`
-(to be reworked), `ring_split.py` `7aa92a7`.
-Plan B is frozen at tag `micropython_plan_B`, and 7C still flies it. Its one sanctioned change, due with M5, is
-the ICP re-init by bus membership for 7C's SEN0697 (§7.2, Q9).
+Plan B is frozen at tag `micropython_plan_B_3`, and 7C still flies it: `micropython_plan_B_2` (its one sanctioned
+change, the ICP re-init by bus membership for 7C's SEN0697, §7.2 Q9) plus the host sim's TMS-8 airframe profile
+and boost drag (`sim_model.py`).
 
 This document is the build plan for moving the flight firmware from `src/glider` to the Rust firmware in
 `src/avionics`. Four things stay as they are on the wire and on disk, and the Rust board must match them:
@@ -46,6 +48,9 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 
 ### 1.1 Host-testable crates (`src/avionics/crates/`)
 
+Every crate below exists (2026-10-14), the last four added during the build; each crate's API is in
+`doc/avionics_api.md`.
+
 | crate | ports | one line |
 |---|---|---|
 | `cc_protocol` | `cc_protocol.py` | **exists.** Tokens, base64, build/parse. Add the dispatcher error-path vectors. |
@@ -55,14 +60,18 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `mission` | `mission.py` | **exists** (M1; it came forward from the supervisor: the `cc` executor owns the Mission until a supervisor thread exists). The launch.config document, merge/persist (keeps `sites`), the HPRC default, zone geometry, `select_site`/`fallback_zone`, `probe` checks. Positions are i32 1e-7 deg plus an f32 local metric frame. |
 | `recorder_wire` | `recorder.py` (wire parts), `tools/recorder_wire.py` | **exists** (`97f785f`). CRC-32, `wrap`/`verify`/salvage, row/log/header/session.csv text (how the saver prints a record), label rules, and recorderd's demux `split`. Its flash frame codec goes in the M3 rework. |
 | `recorder` | `recorder.py` (producer side) | **exists** (`97f785f`), extended in the M3 rework. Stream registry, `Telemetry` (`due`/`push`), the binary record codec (§3.2), per-producer SPSC byte rings, the CC tees and the counters. |
-| `flash_ring` | — (new; replaces the UART + recorderd) | **exists** (`97f785f`), **in rework** for the operator's ring (§3). 4 KiB blocks, the block header and chunk codec, the bring-up scan and block table, the writer's append, the saver's walk, and the eraser's rules with newest wins. Written over two traits, `Flash` and `Fs`, so it is host-tested with an in-memory NOR flash that cuts power on demand and a temp directory. |
+| `flash_ring` | — (new; replaces the UART + recorderd) | **exists** (`97f785f`, reworked in M3 for the operator's ring, §3). 4 KiB blocks, the block header and chunk codec, the bring-up scan and block table, the writer's append, the saver's walk, and the eraser's rules with newest wins. Written over two traits, `Flash` and `Fs`, so it is host-tested with an in-memory NOR flash that cuts power on demand and a temp directory. |
 | `databoard` | `databoard.py` | `no_std`, core atomics. Seqlock `Channel<T>` and `Parameter<T>` (rank, window, `read() -> Option<Reading>`). There is no extrapolating accessor. Reconcile learning runs on the writer side. |
 | `sequencer` | `controller.py` Stage, `tasks/sequencer.py`, `commons.dwell_step`/`apogee_step` | **exists** (M7; `Stage` since `83c02236`). One module per plan B module: `controller` (`Stage`, `#[repr(u8)]` ids 1..5 SETTING..DONE with names, `ground()` and `airborne()`; 0 is the NVS no-checkpoint sentinel, not a variant), `commons` (the leaky `dwell_step`, the IIR `apogee_step`) and `sequencer`, whose pure `StageMachine::step(now_ms, stage, &Readings, manual) -> Step` takes the stage the flight word holds (§4.1); the caller writes the step's advance into the flight word before the next step. M7 adds `Settings::from_config` (§6), the flight word with its apply rules, and the request slot (§4.3, step 4). A `Step` carries up to two sequencer.csv rows, the external move seen first and then the machine's own advance, because one tick can record both (a hold released past the flight timeout). The crate is `std`, for the `f32::sqrt` of the reason text, which `core` lacks on stable. Golden: `commons.json` (`dwell_step`, `apogee_step`) and `sequencer_trace.json`. |
 | `warmstart` | `warmstart.py` | The crumb serde (the same NVS keys), `should_restore(...) -> (bool, Reason)` with the boot rules (§4.6), and the apply plan as data. |
-| `control` | `pid.py`, `mixer.py`, `governor.py`, `airspeed.py`, `wind.py`, `navigation.py`, `guidance.py`, `tasks/attitude.py` (filter), `commons` fin table and `altitude_m` | **exists** in part (M1: the navigation subset; the rest in M9/M13). f32 flight math with one module per Python file. Every function takes time as an argument; nothing reads a clock. |
+| `control` | `pid.py`, `mixer.py`, `governor.py`, `airspeed.py`, `wind.py`, `navigation.py`, `guidance.py`, `tasks/attitude.py` (filter), `commons` fin table and `altitude_m` | **exists** (M1: the navigation subset; the rest in M9/M13). f32 flight math with one module per Python file. Every function takes time as an argument; nothing reads a clock. |
 | `gnss` | `gnss.py`, `drivers/neo6mv2.py`, `drivers/atgm336h.py` | NMEA checksum and parse with integer ddmm→e7, GSV/sky row, CASIC/PUBX/UBX command bytes, and a thin wrapper over the `ublox` crate (NAV-PVT) for the NEO-M8N. |
 | `drivers` | `drivers/*.py` (device logic) | One module per part. Register init tables as data, conversions, the CRC-8, and `Device` trait impls over embedded-hal 1.0 `I2c`/`SpiDevice`. Host-tested with a scripted mock bus. |
 | `sim_link` | `tasks/hitl.py` (interface only) | A versioned, allocation-free binary codec for SENSORS/FINS frames, shared by the firmware and `sitl`. |
+| `controller` | `controller.py` (the setup pass), `cc_client.py` (its device lines) | **exists** (M5). The bring-up's rules: an entry's setup retries, the alternatives pass, the outcome table CC answers from (`health.tasks`, `verify`, `probe`), `verify`'s readiness and the telemetry streams. Since M14 and R3 it also holds the plumbing the board and the SITL share: the topology, `HitlWriters`, `StageSources` and the control tick, `ControlCore` (`doc/specs/avionics-refactor.md`). |
+| `parts` | the task registry and the drivers' run loops | **exists** (R2, `doc/specs/avionics-refactor.md`). Each I2C part as its bus owner runs it: setup, the re-arm after a general call, its run (channels, stream, health), its published state and inspect keys, and the calibrations it keeps across power cycles. Host-tested on the drivers' mock bus. |
+| `panics` | — (new) | **exists** (2026-10-07, §4.8). The panic log: the last 16 panics, fatal or not, as text records round-robin in the `panic` partition (as Linux's mtdoops). Written over flash_ring's `Flash` trait. |
+| `beacon` | — (new) | **exists** (M20). The recovery beacon shared by the glider at DONE (M11b) and the C6 recorder (M20): one page, the report row (`beacon.csv`) and the captive portal's DNS answer. |
 
 ### 1.2 Firmware modules (`src/avionics/firmware/src/`)
 
@@ -84,6 +93,14 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `warm.rs` | Warm-start load and apply, run before any thread spawns. |
 | `sim_link.rs` | HITL UDP endpoint (only with an enabled `hitl` component). |
 
+**As built (2026-10-14)** the tree differs from the table: there is no `inspector.rs` (the registry is
+`commands/inspection.rs`); `buses/` holds `i2c.rs` and `spi.rs` (the UARTs belong to `gnss.rs`, `recorder.rs` and
+`console.rs`); there is no `sensors/` directory (`sensors.rs` over `crates/parts`, R2); and the control thread is
+`control/` (`duties`, `imu`, `interrupts`, `requests`, `separation`, `watch`; R3). New beside them: `boot.rs` (the
+bring-up's phases, R4), `owner.rs` (the I2C bus owners), `threads.rs`, `allocator.rs`, `status.rs` (the flight word),
+`fins.rs`, `flight.rs`, `gnss.rs`, `gcl.rs`, `entry.rs` (M21), `ota.rs` (M15), `panics_logger.rs`, `clock.rs` and
+`time.rs`. The split: `doc/specs/avionics-refactor.md`; each module's API: `doc/avionics_api.md`.
+
 ### 1.3 Host tools (additive)
 
 | path | role |
@@ -104,15 +121,17 @@ Rules for every milestone:
 - Each one fits in one or two days on the taster.
 - Each ends with a commit of the passed stage. A failed experiment gets an enable commit plus a revert commit
   carrying the reason.
-- `src/glider` is never edited, with one sanctioned exception: the ICP re-init by bus membership for 7C's
-  SEN0697 (M5, §7.2 Q9). The generator only reads it.
+- `src/glider`'s flight code is never edited, with one sanctioned exception: the ICP re-init by bus membership for
+  7C's SEN0697 (M5, §7.2 Q9). `sim_model.py`, the one physics (R12), changes with the sim, and the golden tag moves
+  with it (now `micropython_plan_B_3`). The generator only reads `src/glider`.
 
 The taster is v1.1. Its scan in `test_layout.py:27` (`_TASTER`, derived from its 2026-09-16 verdict plus the
 ES8311 anchor, not a recorded scan) is i2c:0 {0x15, 0x18, 0x40, 0x47, 0x69} and i2c:1 {0x25, 0x29, 0x63}. Its
-VL53L1X (0x29 on i2c:1) has since moved to 7F. It carries a NEO-6M, three SG90s, the camera and a
-32 GB SD card. A part the taster lacks is verified on 7F (or 7C) when that milestone reaches it.
+VL53L1X (0x29 on i2c:1) has since moved to 7F. It carries a NEO-M8N (M16; a NEO-6M before), the SEN0253 (0x28,
+0x76) beside the SEN0697 (M18), two SG90s and an MG90S on the yaw (since 2026-10-13), the camera and a 32 GB SD
+card. A part the taster lacks is verified on 7F (or 7C) when that milestone reaches it.
 
-### M1. CC surface parity: the hub and dashboard treat the Rust board like a MicroPython one (2 days)
+### M1. CC surface parity: the hub and dashboard treat the Rust board like a MicroPython one (2 days; DONE 2026-10-06 on the taster)
 
 **Scope**
 - **`commands/` table.** Add `ErrCode` (badcmd, badargs, invalid, unsafe, refused, unsupported, internal) and
@@ -213,7 +232,7 @@ VL53L1X (0x29 on i2c:1) has since moved to 7F. It carries a NEO-6M, three SG90s,
 temperature. NOT READY carries a true reason. The live log pane streams. Clock sync, pad setting and reboot work
 from the dashboard. Every button gets a spec answer and nothing times out.
 
-### M1b. esp_hosted on core 0 (a stage right after M1)
+### M1b. esp_hosted on core 0 (a stage right after M1; DONE 2026-10-06 on the taster)
 
 **Scope**
 - lwIP's TCP/IP task is already pinned to core 0 (`CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0`, done in M1).
@@ -228,7 +247,7 @@ TCP/IP task on core 0.
 
 **Operator gains.** Nothing visible: the radio no longer competes with the flight core (§4.2, §7.1 R5).
 
-### M2. Board config and the config store (2 days)
+### M2. Board config and the config store (2 days; DONE 2026-10-06 on the taster)
 
 **Scope**
 - **`crates/board_config`:**
@@ -454,7 +473,8 @@ to the SD in the background, and a board without a card keeps the newest ~26 min
   is rare, so there is no per-device fast path.
 - **Plan B patch** (the one sanctioned `src/glider` change, §7.2 Q9): the same membership-based re-init in
   `drivers/icp10111.py`, so 7C's SEN0697 (BMI323, BMM350, BMP581) is re-armed after the ICP's general call.
-  DONE: commit 76c138c, tag `micropython_plan_B_2`; every golden fixture is generated from that tree. Owed: one run of
+  DONE: commit 76c138c, tag `micropython_plan_B_2`. The golden fixtures come from `micropython_plan_B_3` since
+  2026-10-13 (plan_B_2 plus the sim's physics; no fixture's content changed). Owed: one run of
   plan B's patched test (`test_icp10111.py`) on a MicroPython board when one is free (7C, after its post-crash
   validation); it does not block M5.
 - **SPI2** on 48/47/46, mode 3, one handle per CS. Discard-N on first use.
@@ -1576,9 +1596,8 @@ start recovers DISARMED -- the law and the fins off, the stage machine walking t
 where a cold boot mid-air would never reach DONE). Left as it is: a BOOSTING crumb whose latch already reads separated
 recovers into BOOSTING and the apogee detector moves it on; recovering straight into GLIDING would bypass the thrust
 gate (a contact that reads open under thrust would start the glide mid-boost). Q19's step 2 is done (2026-10-13:
-the golden tag moved to `micropython_plan_B_3`, plan B plus the host sim's physics fixes; no fixture's content changed); the fast warm boot
-(next: flight sensors and the control thread first, the camera and the Wi-Fi after them without blocking, operator
-2026-10-11).
+the golden tag moved to `micropython_plan_B_3`, plan B plus the host sim's physics fixes; no fixture's content
+changed); so is the fast warm boot (2026-10-11, §4.5: from a reset to the first control tick 1.0 s, was 3.6 s).
 
 **Operator gains.** Active control in HITL. The fin-zero calibration UI works unchanged.
 
@@ -1633,6 +1652,16 @@ corner families are not gated on miss). All silent-success guards are kept.
   +-2 g noise can fill the 100 ms dwell), and flown twice more each they passed (doc/sims/TMS-7-rust_hitl_m14
   §3d).
 
+- **r4 (2026-10-13, the refactored firmware and the internal-RAM fix):** 24 of 24 reach DONE and 23 pass every gate
+  against plan B's 20 seeds; the noise100 pads that launched falsely in r3 armed and flew. The one failure, E16
+  noise10, landed 144.6 m out (plan B's 70.8-104.3 m): its noise flipped the endgame's turn across the heading
+  error's +-180 wrap. That is the law's, shared by both stacks, not a port defect (doc/sims/TMS-7-rust_hitl_m14 §3f).
+
+- **The wrap latch (2026-10-13, `3bff106`):** `turn_wrap_band_deg` 45 keeps the turn in progress across the wrap; 0
+  is plan B's law, where the golden fixtures replay. The SITL gate, 72 flights against plan B's 20 seeds: 71 pass.
+  The one outside, E16 wind03 seed 1, lands 19.3 m from the centre, in the zone, below plan B's 53.4-61.5 m
+  (doc/sims/TMS-7-rust_hitl_m14 §3g).
+
 **Not here:** the reboot scenario on the SITLs: it needs the warm start, a board's (realtime only).
 
 **Operator gains.** Evidence that the Rust board flies like plan B, which is the precondition to migrate 7F.
@@ -1641,10 +1670,10 @@ corner families are not gated on miss). All silent-success guards are kept.
 
 | id | scope |
 |---|---|
-| M15 | Firmware OTA over CC into the `ota_0`/`ota_1` slots that M3's partition table already has (esp_ota; SETTING-only and disarmed). Replaces `push-*` for the Rust image (§7.2, Q5). **No app rollback, ever** (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n`, pinned): with rollback, a build that has not yet confirmed itself is reverted at the next reset, so a reboot in flight could come back on the OLD build. A reset always boots the slot otadata selects; the slot changes only by an OTA in SETTING followed by a reboot on the ground, and `arm` refuses when the running slot is not the selected one. USB flashing (`flash.sh`) writes ota_0, erases otadata and invalidates ota_1, so no stale build can be selected. **DONE 2026-10-12 on the taster.** `firmware/src/ota.rs`, `tools/ota.py`. Two transports: the console (the operator: more reliable than Wi-Fi for big transfers; speed is no matter, progress in CC's log every 10 %) -- `console baud rate=2000000` (the receive interrupt at 32 bytes), `ota begin size= sha256=`, `ota write offset= crc= data=<base64url>` lines of 192 bytes (a whole line must fit UART0's receive ring and FIFO, ~384 B: 4 KB lines failed their CRC every time; a damaged line writes nothing and is sent again), `ota end`; and Wi-Fi, `POST /ota?sha256=` (it starves the CC link for seconds). **No flash mapping anywhere:** the slot is erased a 64 KB block ahead of SPI1 writes (esp_partition), checked by our SHA-256 and its header and app description read back, and selected by writing otadata as IDF's esp_rewrite_ota_data does (the alternating sector, the sequence number, its CRC). esp_ota_end and esp_ota_set_boot_partition map the image to verify it, which turns the cache off and parks the flight core: on a PSRAM stack it asserted, on an internal one the chip's watchdog reset the board in the verify. `ota commit confirm`; `arm` refuses while running != boot (both read by SPI1 at boot). Proven: 3.0 MB over the console in 95 s, 0 lines resent, ota_0 -> ota_1 -> ota_0, the board booting the build each time. **Open:** the image is 3.0 MB of a 3 MB slot (~100 KB left): the slots must grow before long (cfg and panic move; the settings migrate). |
+| M15 | Firmware OTA over CC into the `ota_0`/`ota_1` slots that M3's partition table already has (esp_ota; SETTING-only and disarmed). Replaces `push-*` for the Rust image (§7.2, Q5). **No app rollback, ever** (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n`, pinned): with rollback, a build that has not yet confirmed itself is reverted at the next reset, so a reboot in flight could come back on the OLD build. A reset always boots the slot otadata selects; the slot changes only by an OTA in SETTING followed by a reboot on the ground, and `arm` refuses when the running slot is not the selected one. USB flashing (`flash.sh`) writes ota_0, erases otadata and invalidates ota_1, so no stale build can be selected. **DONE 2026-10-12 on the taster.** `firmware/src/ota.rs`, `tools/ota.py`. Two transports: the console (the operator: more reliable than Wi-Fi for big transfers; speed is no matter, progress in CC's log every 10 %) -- `console baud rate=2000000` (the receive interrupt at 32 bytes), `ota begin size= sha256=`, `ota write offset= crc= data=<base64url>` lines of 192 bytes (a whole line must fit UART0's receive ring and FIFO, ~384 B: 4 KB lines failed their CRC every time; a damaged line writes nothing and is sent again), `ota end`; and Wi-Fi, `POST /ota?sha256=` (it starves the CC link for seconds). **No flash mapping anywhere:** the slot is erased a 64 KB block ahead of SPI1 writes (esp_partition), checked by our SHA-256 and its header and app description read back, and selected by writing otadata as IDF's esp_rewrite_ota_data does (the alternating sector, the sequence number, its CRC). esp_ota_end and esp_ota_set_boot_partition map the image to verify it, which turns the cache off and parks the flight core: on a PSRAM stack it asserted, on an internal one the chip's watchdog reset the board in the verify. `ota commit confirm`; `arm` refuses while running != boot (both read by SPI1 at boot). Proven: 3.0 MB over the console in 95 s, 0 lines resent, ota_0 -> ota_1 -> ota_0, the board booting the build each time. The image then was 3.0 MB of a 3 MB slot (~100 KB left); the slots grew to 4 MB the same day (`a97a401`; the ring 24 -> 20 MiB, cfg and panic moved, both boards' settings migrated). |
 | M16 | NEO-M8N UBX NAV-PVT (CFG-PRT baud-up, autobaud after a P4 reboot). **DONE 2026-10-12 on the taster** (driver `neom8n`; plan B had none). <ul><li>`crates/gnss::ubx`: the frame builder and a byte-stream parser (sync, length, Fletcher checksum; a damaged frame dropped and counted), NAV-PVT (the position already in 1e-7 degree integers), NAV-SAT (the sky), ACK/NAK, MON-VER. `drivers::neom8n`: CFG-PRT (UART1 at 38400, UBX + NMEA in, UBX out), CFG-RATE (up to 10 Hz), CFG-NAV5 (airborne <4g), CFG-MSG (NAV-PVT every solution, NAV-SAT every 10 s: the sky switch). The engine's `Gnss::message` fills the same update an RMC + GGA pair fills (both rows; the position DOP stands in for HDOP), NAV-SAT the sky row, and PVT is watched for outages beside RMC and GGA.</li><li>The bring-up (`firmware/src/gnss.rs` `bring_up_m8`) finds the module's rate by LISTENING (38400, then the power-on 9600: UBX frames, or NMEA whose checksum holds), never by sending at a guess: a u-blox ignores the valid frames that follow one sent at the wrong rate for about a second (found on the taster). Then MON-VER names the module, the port is raised, each CFG frame's ACK/NAK is logged (a NAK is an event), and when the rate does not switch it falls back to UBX at 9600 (at most 5 Hz), then to NMEA with the NEO-6M's configuration.</li><li>The taster's module answers MON-VER as `EXT CORE 3.01`, hardware `00080000`, `FWVER=ADR 4.11`, `PROTVER=19.10`, GPS/GLO/GAL/BDS (an M8 on the ADR firmware). Proven: from 9600 to UBX at 38400, every CFG frame acknowledged, NAV-PVT at 5.09 frames/s (5 Hz plus the 10 s NAV-SAT); a P4 reboot with the module still raised found it at 38400 and configured it there; `probe gnss` passes. Open: a fix outdoors, and the cold path after a real power cycle (the rate found at 9600 by listening).</li></ul> |
 | M17 | — (the post-landing recovery beacon moved forward to M11b, before the first passive flight). |
-| M18 | Legacy parts as needed: BNO055, BMP280 (the SEN0253 on the v0.1 boards, 7C and 7D). The ADXL375 is off the table: no longer fitted, it stays unported (operator, 2026-10-12). **DONE 2026-10-12 on the taster**, which carries the SEN0253 beside the SEN0697. <ul><li>BMP280 (`crates/drivers/src/bmp280.rs`): plan B's driver with the BMP581's guards (double-burst read, freshness, guarded ground capture, rezero, re-arm); run as the BMP581, recorded as `baro_bmp280.csv`.</li><li>BNO055 (`crates/drivers/src/bno055.rs`): the Euler triple to `attitude` (priority 2, below the filter), the accelerometer through `axes` to `accel`; the stall judge withholds `attitude` while the part rotates with a frozen Euler, so the channel goes stale and the databoard moves on. The CALIB_STAT latch, `calibrate imu_bno055` persisting the learned profile in NVS (`bno055_calib`, plan B's key), the profile written back at bring-up. Shown in `inspect`, in health's `imu_calibration` (CC's IMU column) and as verify's `imu_calibration` readiness item; recorded as `imu_bno055.csv` in plan B's columns.</li><li>The taster (2026-10-12): both parts up from the layout's scan (0x28, 0x76). The BNO055's mag converged on the bench; `calibrate imu_bno055` saved the profile, the next boot restored it (`calibration_restored`, nothing owed). Found and fixed: after every switch into NDOF the fusion reads an all-zero Euler for 60-80 ms, which was published as a level attitude (now withheld until the first real one); and the two backup barometers shared one pair of guard counters, while the taster carries both (each part has its own now: ~1.3 torn reads a second each).</li><li>Left for 7C: a power cycle of the rail (not just a reboot) restoring the profile, and a hand rotation with the filter's gyro gone, the databoard on the BNO055.</li></ul> |
+| M18 | Legacy parts as needed: BNO055, BMP280 (the SEN0253 on the v0.1 boards, 7C and 7D). The ADXL375 is off the table: no longer fitted, it stays unported (operator, 2026-10-12). **DONE 2026-10-12 on the taster**, which carries the SEN0253 beside the SEN0697. <ul><li>BMP280 (`crates/drivers/src/bmp280.rs`): plan B's driver with the BMP581's guards (double-burst read, freshness, guarded ground capture, rezero, re-arm); run as the BMP581, recorded as `baro_bmp280.csv`.</li><li>BNO055 (`crates/drivers/src/bno055.rs`): the Euler triple to `attitude` (priority 2, below the filter), the accelerometer through `axes` to `accel`; the stall judge withholds `attitude` while the part rotates with a frozen Euler, so the channel goes stale and the databoard moves on. The CALIB_STAT latch, `calibrate imu_bno055` persisting the learned profile in NVS (`bno055_calib`, plan B's key), the profile written back at bring-up. Shown in `inspect`, in health's `imu_calibration` (CC's IMU column) and as verify's `imu_calibration` readiness item; recorded as `imu_bno055.csv` in plan B's columns.</li><li>The taster (2026-10-12): both parts up from the layout's scan (0x28, 0x76). The BNO055's mag converged on the bench; `calibrate imu_bno055` saved the profile, the next boot restored it (`calibration_restored`, nothing owed). Found and fixed: after every switch into NDOF the fusion reads an all-zero Euler for 60-80 ms, which was published as a level attitude (now withheld until the first real one); and the two backup barometers shared one pair of guard counters, while the taster carries both (each part has its own now: ~1.3 torn reads a second each).</li><li>Dropped (operator, 2026-10-14: 7C stays on plan B): the proofs left for 7C, a power cycle of the rail (not just a reboot) restoring the profile, and a hand rotation with the filter's gyro gone, the databoard on the BNO055.</li></ul> |
 | M21 | **Entry file: GCL at boot (operator, 2026-10-06; Q20).** `/sdcard/entry.gcl`: one GCL line per line, `#` comments. Once bring-up is done, each line runs in order through the executor (origin `entry`, the one point of injection), under the normal gates, so changes still run only in SETTING. Each line and its answer go to `recorder.log`. It replaces MicroPython's run-any-script flexibility for bench tests, soaks and HITL setup (for example `ring load seconds=600`, `video start`, `pace seconds=60`). Safety: while an entry file is present, `verify` and `arm` refuse with `entry-file`, so a bench mode never rides into a flight. Small; after M4. **DONE 2026-10-11 on the taster** (`firmware/src/entry.rs`): origin `Entry` (a console-only command is refused: the hub can pull the card); the runner thread starts 1 s after bring-up, one line at a time, each line and answer logged (`entry :: N > line`, `entry :: N < answer`). Written over CC, no card reader: `entry add text=<line>`, `entry show`, `entry clear confirm` (SETTING; `board_clean.py` keeps the file). Proof: three lines added over the hub, `verify` and `arm` refused with `entry-file`, the reboot ran them 2 s after bring-up (`video preview` on, `wifi` refused as console-only, `health` answered), `entry clear` lifted the refusal. |
 | M19 | **uart_saver: the remote recorder (operator, 2026-10-06).** The purpose: the data survives when the MCU and its SD card are both damaged. <ul><li>The ring_saver already decodes each block into wire lines (`[@routing@]{OPEN};payload;<CLOSE>`, binary → text + CRC) for the SD. It also hands the same lines to the uart_saver, which sends them out of a UART TX in its own time. One decode, two sinks.</li><li>These are the bytes plan B sent to the Luckfox, so the frozen recorderd is the receiver as it is. The Luckfox is the test bench now. Later it becomes a physically separate flight recorder: a C3/C6 with its own battery and SD card, which could also carry the DONE beacon.</li><li>The handoff never blocks the flash→SD path:<ul><li>a bounded PSRAM byte ring (SPSC: saver in, uart_saver out);</li><li>the saver pushes without waiting. When the ring is full, the oldest undelivered lines go (recency first: the last seconds before an impact matter most), counted;</li><li>the uart_saver runs its own thread below the saver, and shares no lock with it.</li></ul></li><li>Per block, the saver hands the lines to the uart_saver before its SD write, so an SD stall does not delay what is already decoded.</li><li>With no card, the saver still walks and decodes for the uart_saver. It uses a cursor of its own: `saver_position` keeps meaning "on the SD and fsynced", so the eraser never takes a block as saved because the UART had it.</li><li>Lag: the uart_saver trails the saver, not the writer. The saver keeps up by a wide margin (≈ 26 KB/s of text against an SD that takes MB/s), so normally the lag is a block or two.</li><li>Resends after a gap or a reboot are duplicates the tools drop (§3.8).</li><li>Hardware: its own battery, and only TX + GND to the main board, so a short or brown-out there does not take it down. Mounted apart from the main board.</li><li>Link sizing: plan B's link (UART1 TX GPIO20, 921600 baud) carries ≈ 92 KB/s, against ≈ 35 KB/s of routed text at the v0.1 flight rate (§3.13): about 38 % busy, so normally nothing is dropped. 1 kHz IMUs (about 3×) need ≈ 2 Mbaud.</li><li>Open: the UART pins on the v1.x boards.</li><li>**Status 2026-10-11 (stage 1 + fixes).** The tee runs on the taster, UART1 TX GPIO20 at 921600, into the C6 receiver (M20). <ul><li>The tee names the session of a log line and a session.csv line (`<session>_recorder.log`, `<session>_session.csv`, the body unchanged with its checks under its own routing): a receiver that took the session from the last routed line filed a new boot's first lines under the boot before.</li><li>The uart_saver lives off internal RAM (a PSRAM stack, and no driver transmit ring): on internal RAM it cost the board its Wi-Fi (associated, but no DHCP request ever left).</li><li>A `reboot` waits (at most 1 s) until the queue is sent: the saver tees a part when it stages it and the card has it a commit later, so a part committed but still queued at a reset never reached the receiver (~1.5 s lost at a reboot).</li><li>**Stage 2 DONE (2026-10-11):** the uart_saver walks the ring itself (crates/recorder `Relay`), its own cursor, card or no card; a part counts sent once its bytes have left the UART (`uart_wait_tx_done`), published as `relay_position` and kept as the `uart` NVS hint, so a reset resends from there and never skips (the receiver drops what it has). The eraser erases behind the earlier of the saver and the relay (`erase_horizon`). More than 64 blocks (~10 s) behind the writer it jumps forward, counted (recency first). The saver's tee, its queue and the reboot drain went. Proof on the taster: a session ended by a panic is identical on the C6's card, 21 of 21 files.</li></ul></li></ul> |
 | M20 | **The separate flight recorder and its beacon (operator, 2026-10-06).** A C6 SuperMini + battery + SD card box that files the uart_saver's lines (M19) byte for byte on its own card and beacons from the rod trigger to power-off. **DONE 2026-10-11** (stages 1-3); the 3.3 V card module 2026-10-13. Its design, composition, wiring and status: [`../flight_recorder.md`](../flight_recorder.md). |
@@ -2816,8 +2845,9 @@ The operator's design (2026-10-07), after Linux's mtdoops (which Richard Purdie 
 the board's last panics as tagged text records, round-robin over several flash pages, readable as text. A panic may
 be fatal or not.
 
-- **Storage:** the `panic` partition (128 KB at 0x720000): 16 slots of 8 KB (two erase sectors), each one record, a
-  header line in its first 512 bytes (text tags cut to 64 characters, so it always fits) and up to 7680 bytes of text:
+- **Storage:** the `panic` partition (128 KB at 0x920000; 0x720000 until the 4 MB app slots, 2026-10-12): 16 slots of 8
+  KB (two erase sectors), each one record, a header line in its first 512 bytes (text tags cut to 64 characters, so it
+  always fits) and up to 7680 bytes of text:
   ```text
   COLUDO-PANIC 1 seq=6 fatal=1 cause=panic boot=364 session=000364 uptime_ms=11221 firmware=avionics-0.1.0 config=3aa09342698a recorded=365 length=4246 intact=1
   Rust panic in task cc: panicked at firmware/src/main.rs:219:18:
@@ -2904,7 +2934,7 @@ be fatal or not.
    sweeps (`random.Random(seed)`). **Inputs are written into the fixture and never re-derived in Rust.**
 2. **Fixture schema:**
    ```json
-   {"meta": {"source": "src/glider/pid.py", "tag": "micropython_plan_B", "commit": "<sha>",
+   {"meta": {"source": "src/glider/pid.py", "tag": "micropython_plan_B_3", "commit": "<sha>",
              "glider_tree": "<git rev-parse HEAD:src/glider>", "python": "3.12.x", "generator": "pid"},
     "compare": {"kind": "exact|abs|rel|angle_deg|bytes_hex", "tol": 0.02},
     "cases": [{"name": "...", "input": {...}, "output": {...}}]}
@@ -3227,8 +3257,8 @@ The operator's decisions on the earlier questions, one line each:
 - **Q4. `config_id` before vs after layout:** keep plan B's split, which is plan B behaviour: `set-config`
   returns the pre-layout id, `whoami` announces the post-layout one, and the boot log line names both (M5).
 - **Q5. Partitions and OTA:** `otadata` plus `ota_0` and `ota_1` of 4 MB each (3 MB until 2026-10-12), a 1 MB `cfg` at 0x820000,
-  `nvs` and `log` unchanged (§3.10). OTA itself comes later, over CC (M15). The 128 KB `panic` partition at 0x720000
-  followed on 2026-10-07 (§4.8).
+  `nvs` and `log` unchanged (§3.10). OTA over CC came with M15 (2026-10-12). The 128 KB `panic` partition at 0x920000
+  (0x720000 until 2026-10-12) followed on 2026-10-07 (§4.8).
 - **Q6. Watchdog timeout:** keep 5000 ms in board files (Python `validate` rejects < 4000) until Rust measures
   its own floor.
 - **Q7. IMU axes and the body frame:** the body frame is +x nose, +y left, +z up (operator, 2026-10-07); the IMUs

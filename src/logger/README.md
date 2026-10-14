@@ -1,9 +1,9 @@
 # TMS-7 nose logger — ESP32-C6 + SEN0697
 
-A standalone flight recorder for **TMS-7**, the booster-only vertical test (119.5 g airframe +
-98.8 g F15 = **218.3 g liftoff**). TMS-7 carries no electronics and returns no data; this payload
-makes the flight yield **peak boost acceleration** and **apogee altitude** for the cost of a few grams
-in the nose.
+A standalone flight recorder for **TMS-7**, the booster-only vertical test (119.5 g airframe + 10 g
+logger + 98.8 g F15 = **228.3 g liftoff**). TMS-7 carries no other electronics; this payload makes the
+flight yield **peak boost acceleration** and **apogee altitude** for 10 g in the nose. It flew on
+2026-10-03 and recorded the whole flight ([`launches/20261003/TMS-7/`](../../launches/20261003/TMS-7/)).
 
 It talks to nothing. No radio in flight, no link to the main board — a sandwich of
 **ESP32-C6 SuperMini + LiPo + SEN0697**, recording from power-up to power-off and saving to flash as it
@@ -20,17 +20,17 @@ goes. USB is the development and read-out path; the status LED is the liveness c
 | **BMP581** | pressure, temperature | 30–125 kPa | 240 Hz |
 
 **The BMM350 is not wired into this mission.** A magnetometer on a vertical missile reports roll
-orientation at best, and adopting it means owning hard- and soft-iron calibration next to a booster —
-the exact cost that made `doc/hardware.md` reject this family for the glider's attitude role. Skipping
-it saves a driver and buys nothing away.
+orientation at best, and adopting it means owning hard- and soft-iron calibration next to a booster.
+Skipping it saves a driver and buys nothing away. (The glider does use it: the SEN0697 is the main
+board's primary attitude module, `doc/hardware.md`.)
 
 ### The one number to watch
 
-Expected peak specific force is `25 N / (0.225 kg × 9.81) ≈ **11.3 g**`, against the BMI323's ±16 g
-ceiling — **1.4× margin**, with no measured ignition transient anywhere in this project to bound the
-spike. If it rails you still learn *"peak exceeded 16 g"*, which answers "did the booster survive"
-but not "by how much". If the exact peak is the point, add an **ADXL375** (±200 g, already owned,
-driver already written) beside it.
+Expected peak specific force was `25 N / (0.225 kg × 9.81) ≈ **11.3 g**`, against the BMI323's ±16 g
+ceiling — **1.4× margin**. **Measured on TMS-7 (2026-10-03): a ~32 N spike at 0.3 s, a 14.9 g peak,
+93 % of the ±16 g range.** Any airframe under ~215 g at liftoff on an F15 rails it. If it rails you
+still learn *"peak exceeded 16 g"*, which answers "did the booster survive" but not "by how much". If
+the exact peak is the point, add an **ADXL375** (±200 g, already owned, driver already written) beside it.
 
 ## Mechanical
 

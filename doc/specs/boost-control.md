@@ -46,7 +46,7 @@ Each stage is committed on its own proof. The firmware changes only from BC3 on.
 | BC2 | the passive envelope: where an uncontrolled stack departs (margin x asymmetry x wind x rod exit speed) | done: `doc/sims/TMS-7-boost_envelope` |
 | BC3 | the boost law for vertical flight: the lean of the body axis + roll damping, the gyro-integrated attitude, the rod gate | host tests; the SITL sweep with control |
 | BC4 | HITL on the taster, servos moving: the full matrix with metrics and plotly pictures | done: `doc/sims/TMS-7-boost_control` |
-| BC5 | turn it on: BOOSTING a control stage in the flight configs | decided 2026-10-14: law A (lean, no ceiling) in `launches/next/TMS-8` |
+| BC5 | turn it on: BOOSTING a control stage in the flight configs | decided 2026-10-14: law A (lean, no ceiling) in `launches/20261205/TMS-8` |
 
 ### BC1: the 6-DoF boost
 
