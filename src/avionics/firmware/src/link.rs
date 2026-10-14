@@ -26,8 +26,9 @@ use esp_idf_svc::eventloop::{EspSubscription, EspSystemEventLoop, System};
 use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::wifi::config::{ScanConfig, ScanType};
 use esp_idf_svc::wifi::{
-    AccessPointInfo, AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, WifiEvent,
+    AccessPointInfo, AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, ScanMethod, WifiEvent,
 };
 
 use crate::commands::Executor;
@@ -45,6 +46,9 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 const TICK: Duration = Duration::from_secs(1);
 /// How long a cancelled association settles before the next one starts (plan B `_DISCONNECT_SETTLE_MS`).
 const DISCONNECT_SETTLE: Duration = Duration::from_millis(300);
+/// The scan's active dwell on each channel. IDF's default, 120 ms, made the scan before the join ~3 s through the C6
+/// (13 channels and the RPCs); an access point answers a probe request within a few ms.
+const SCAN_DWELL: Duration = Duration::from_millis(60);
 /// How long a join waits for its address (esp-idf-svc's own connect timeout), and how often it looks.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(15);
 const JOIN_POLL: Duration = Duration::from_millis(50);
@@ -328,7 +332,7 @@ impl Link {
             log::warn!("link :: the radio would not start: {error}");
             return false;
         }
-        let seen = match driver.scan() {
+        let seen = match scan(driver) {
             Ok(seen) => Some(seen),
             Err(error) => {
                 log::warn!("link :: the scan failed, trying the networks in turn: {error}");
@@ -491,7 +495,7 @@ fn strongest<'a>(seen: &'a [AccessPointInfo], ssid: &str) -> Option<&'a AccessPo
 }
 
 /// A network's station configuration: open when `password` is empty; `hint` the channel and BSSID a scan saw it on,
-/// so the association scans nothing.
+/// where the association's fast scan finds it first.
 fn station(network: &Network, password: &str, hint: Option<(u8, [u8; 6])>) -> anyhow::Result<ClientConfiguration> {
     Ok(ClientConfiguration {
         ssid: network
@@ -511,8 +515,24 @@ fn station(network: &Network, password: &str, hint: Option<(u8, [u8; 6])>) -> an
         },
         channel: hint.map(|(channel, _)| channel),
         bssid: hint.map(|(_, bssid)| bssid),
+        // the first match, not every channel sorted by signal (the default, which swept all 13 even with the hint:
+        // the association took 4.1 s, 2026-10-14)
+        scan_method: ScanMethod::FastScan,
         ..Default::default()
     })
+}
+
+/// Every access point on the air: an active scan of every channel at [`SCAN_DWELL`] each.
+fn scan(driver: &mut BlockingWifi<EspWifi<'static>>) -> Result<Vec<AccessPointInfo>, esp_idf_svc::sys::EspError> {
+    let configuration = ScanConfig {
+        scan_type: ScanType::Active {
+            min: Duration::ZERO,
+            max: SCAN_DWELL,
+        },
+        ..ScanConfig::default()
+    };
+    driver.wifi_mut().start_scan(&configuration, true)?;
+    driver.wifi_mut().get_scan_result()
 }
 
 /// The radio started in station mode and any pending attempt cleared, ready to scan or associate. `network` is the
