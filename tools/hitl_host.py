@@ -276,7 +276,10 @@ class _Sim:
         self.clock: float | None = None  # lockstep: the frames' clock (pad included), else the physics time
         self.rows: dict = {}  # lockstep --record: stream -> [(t_s, cells...)]
         self.wall_start: float | None = None
-        self.drop_attitude = False
+        # --no-attitude: the sim never publishes the attitude, so the board's own filter flies from power-up on the sim's
+        # gyro, accelerometer, magnetometer and GNSS track (with the sim's attitude at priority 0 the filter only mirrors
+        # it, which hid a filter that never read the GNSS course until 2026-10-14)
+        self.drop_attitude = getattr(args, 'no_attitude', False)
         self.drop_gnss = False
         self.running = True
 
@@ -614,6 +617,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--gnss-drift', type=float, default=0.0)
     parser.add_argument('--gnss-drift-dir', type=float, default=0.0)
     parser.add_argument('--attitude-drop-s', type=float, default=0.0)
+    parser.add_argument('--no-attitude', action='store_true',
+                        help="publish no attitude at all: the board's filter flies from power-up")
     parser.add_argument('--gnss-drop-s', type=float, default=0.0)
     parser.add_argument('--no-mag', action='store_true')
     parser.add_argument('--faults', default='', help="sim_model.Faults: 'gnss@30,pitot@45'")
