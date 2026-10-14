@@ -25,7 +25,9 @@ use esp_idf_svc::eventloop::{EspSubscription, EspSystemEventLoop, System};
 use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, WifiEvent};
+use esp_idf_svc::wifi::{
+    AccessPointInfo, AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, WifiEvent,
+};
 
 use crate::commands::Executor;
 use crate::config::Credentials;
@@ -89,6 +91,7 @@ pub fn run(
         beaconing: None,
         beacon_failed: false,
         gave_up: false,
+        unseen: false,
     };
     let mut first = true;
     loop {
@@ -150,6 +153,8 @@ struct Link {
     beacon_failed: bool,
     /// The launch's end of reconnects was logged ([`reconnect_allowed`]).
     gave_up: bool,
+    /// A scan that saw no configured network was logged, until one is seen again.
+    unseen: bool,
 }
 
 impl Link {
@@ -228,24 +233,60 @@ impl Link {
 
     /// The next network whose retry clock has run out, joined with the credentials' password (else the config's):
     /// whether it joined.
+    ///
+    /// One scan first names the networks on the air, with their channel and BSSID, so no association is spent on an
+    /// absent one and the join skips its own scan: the boot's first join used to try the config's first network,
+    /// absent on the bench, before the present one, two full scans (~6 s of a 13 s join, 2026-10-14). The turn goes
+    /// to the next network in the config's order that the scan saw; none seen rests them all for their windows. A
+    /// scan that fails falls back to the plain round-robin.
     fn join_next(
         &mut self,
         driver: &mut BlockingWifi<EspWifi<'static>>,
         wifi: &Wifi,
         credentials: &Credentials,
     ) -> bool {
-        let Some(index) = self.rotation.next(wifi, Instant::now()) else {
+        let now = Instant::now();
+        if !self.rotation.due(wifi, now) {
             return false; // every network is inside its own retry window
+        }
+        if let Err(error) = ready(driver, &wifi.networks[0]) {
+            log::warn!("link :: the radio would not start: {error}");
+            return false;
+        }
+        let seen = match driver.scan() {
+            Ok(seen) => Some(seen),
+            Err(error) => {
+                log::warn!("link :: the scan failed, trying the networks in turn: {error}");
+                None
+            }
         };
+        let on_air = |ssid: &str| seen.as_ref().map(|seen| strongest(seen, ssid));
+        let Some(index) = self.rotation.next_where(wifi, now, |index| {
+            on_air(&wifi.networks[index].ssid).is_none_or(|ap| ap.is_some())
+        }) else {
+            if seen.is_some() {
+                self.rotation.rest_all(now);
+                if !self.unseen {
+                    log::info!("link :: no configured network on the air");
+                    self.unseen = true;
+                }
+            }
+            return false;
+        };
+        self.unseen = false;
         let network = &wifi.networks[index];
         let password = credentials
             .password(&network.ssid)
             .unwrap_or_else(|| network.password.clone());
-        if let Err(error) = join(driver, network, &password) {
+        let hint = on_air(&network.ssid).flatten().map(|ap| (ap.channel, ap.bssid));
+        if let Err(error) = join(driver, network, &password, hint) {
             log::warn!("link :: join {} failed: {error}", network.ssid);
             return false;
         }
-        log::info!("link :: joined {}", network.ssid);
+        match hint {
+            Some((channel, _)) => log::info!("link :: joined {} (channel {channel})", network.ssid),
+            None => log::info!("link :: joined {}", network.ssid),
+        }
         crate::boot::checkpoint("the join");
         true
     }
@@ -337,23 +378,47 @@ impl Rotation {
         }
     }
 
-    /// The index of the next network to try, stamping its clock; None while every one is inside its window.
-    fn next(&mut self, wifi: &Wifi, now: Instant) -> Option<usize> {
+    /// Whether network `index` is outside its retry window at `now`.
+    fn ready_at(&self, wifi: &Wifi, index: usize, now: Instant) -> bool {
+        self.attempted[index].is_none_or(|last| {
+            now.duration_since(last) >= Duration::from_millis(u64::from(wifi.networks[index].retry_ms))
+        })
+    }
+
+    /// Whether any network is outside its retry window at `now`.
+    fn due(&self, wifi: &Wifi, now: Instant) -> bool {
+        (0..self.attempted.len()).any(|index| self.ready_at(wifi, index, now))
+    }
+
+    /// The index of the next network to try in the round-robin, outside its window and `eligible`, stamping its clock;
+    /// None when there is none.
+    fn next_where(&mut self, wifi: &Wifi, now: Instant, eligible: impl Fn(usize) -> bool) -> Option<usize> {
         let count = self.attempted.len();
-        let index = (0..count).map(|step| (self.start + step) % count).find(|&index| {
-            self.attempted[index].is_none_or(|last| {
-                now.duration_since(last) >= Duration::from_millis(u64::from(wifi.networks[index].retry_ms))
-            })
-        })?;
+        let index = (0..count)
+            .map(|step| (self.start + step) % count)
+            .find(|&index| self.ready_at(wifi, index, now) && eligible(index))?;
         self.attempted[index] = Some(now);
         self.start = (index + 1) % count;
         Some(index)
     }
+
+    /// Every network's clock stamped `now`: a scan saw none of them, so none is tried before its window.
+    fn rest_all(&mut self, now: Instant) {
+        self.attempted.fill(Some(now));
+    }
 }
 
-/// Join one network: configure, start, associate (unless the launch landed meanwhile), and wait for an address.
-fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: &str) -> anyhow::Result<()> {
-    let configuration = ClientConfiguration {
+/// The strongest access point of `ssid` in a scan's results; None when the scan did not see it.
+fn strongest<'a>(seen: &'a [AccessPointInfo], ssid: &str) -> Option<&'a AccessPointInfo> {
+    seen.iter()
+        .filter(|ap| ap.ssid.as_str() == ssid)
+        .max_by_key(|ap| ap.signal_strength)
+}
+
+/// A network's station configuration: open when `password` is empty; `hint` the channel and BSSID a scan saw it on,
+/// so the association scans nothing.
+fn station(network: &Network, password: &str, hint: Option<(u8, [u8; 6])>) -> anyhow::Result<ClientConfiguration> {
+    Ok(ClientConfiguration {
         ssid: network
             .ssid
             .as_str()
@@ -369,12 +434,20 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: 
         } else {
             AuthMethod::WPA2Personal
         },
+        channel: hint.map(|(channel, _)| channel),
+        bssid: hint.map(|(_, bssid)| bssid),
         ..Default::default()
-    };
+    })
+}
+
+/// The radio started in station mode and any pending attempt cleared, ready to scan or associate. `network` is the
+/// configuration it starts with (a mode change on a started radio would raise its start, and a connect, again).
+fn ready(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network) -> anyhow::Result<()> {
     if !wifi.is_started()? {
+        let configuration = station(network, "", None)?;
         // the station mode with the network before the start: a mode change on a started radio raises the station's
         // start again, and its connect with it
-        wifi.set_configuration(&Configuration::Client(configuration.clone()))?;
+        wifi.set_configuration(&Configuration::Client(configuration))?;
         wifi.start()?;
         // modem sleep (the C6's default) parks every incoming packet until the next DTIM beacon: ~150 ms per
         // hub round trip instead of ~2 ms. The pad link wants the latter.
@@ -390,7 +463,18 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: 
     // cancel settles before the configuration
     let _ = wifi.wifi_mut().disconnect();
     std::thread::sleep(DISCONNECT_SETTLE);
-    wifi.set_configuration(&Configuration::Client(configuration))?;
+    Ok(())
+}
+
+/// Join one network on a [`ready`] radio: configure (with the scan's `hint`), associate (unless the launch landed
+/// meanwhile), and wait for an address.
+fn join(
+    wifi: &mut BlockingWifi<EspWifi<'static>>,
+    network: &Network,
+    password: &str,
+    hint: Option<(u8, [u8; 6])>,
+) -> anyhow::Result<()> {
+    wifi.set_configuration(&Configuration::Client(station(network, password, hint)?))?;
     if let Some(dbm) = network.tx_power_dbm {
         // the radio's cap in quarter-dBm (MicroPython's txpower): the operator's signal-level knob
         // SAFETY: a plain driver call on the started Wi-Fi.
