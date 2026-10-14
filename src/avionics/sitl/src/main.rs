@@ -17,7 +17,7 @@
 //! wall's. Each frame first runs the control ticks due before it on what the earlier frames left, then is published,
 //! then runs the tick due at its own time, then is answered: what a realtime board sees, every run the same.
 //!
-//!   sitl --config <board config JSON> [--mission <launch JSON>] [--port 1236]
+//!   sitl --config <board config JSON> [--mission <launch JSON>] [--port 1236] [--trace]
 
 use std::net::UdpSocket;
 
@@ -52,6 +52,9 @@ struct Arguments {
     mission: Option<String>,
     /// The UDP port.
     port: u16,
+    /// `--trace`: the filter's attitude every 100 ms on stderr (`ATT <ms> <heading_cd> <roll_cd> <pitch_cd>`), for the
+    /// host to score against its truth (tools/hitl_host.py `ATTITUDE`).
+    trace: bool,
 }
 
 /// The command line, or why it is wrong.
@@ -60,6 +63,7 @@ fn arguments() -> Result<Arguments, String> {
         config: String::new(),
         mission: None,
         port: SIM_PORT,
+        trace: false,
     };
     let mut words = std::env::args().skip(1);
     while let Some(word) = words.next() {
@@ -68,11 +72,14 @@ fn arguments() -> Result<Arguments, String> {
             "--config" => parsed.config = value()?,
             "--mission" => parsed.mission = Some(value()?),
             "--port" => parsed.port = value()?.parse().map_err(|_| "--port takes a number".to_string())?,
+            "--trace" => parsed.trace = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
     if parsed.config.is_empty() {
-        return Err("usage: sitl --config <board config JSON> [--mission <launch JSON>] [--port 1236]".to_string());
+        return Err(
+            "usage: sitl --config <board config JSON> [--mission <launch JSON>] [--port 1236] [--trace]".to_string(),
+        );
     }
     Ok(parsed)
 }
@@ -89,6 +96,8 @@ struct Host {
     /// The fins by the law's surfaces (None for a surface no servo entry drives), as the board's fins thread holds
     /// them.
     servos: Vec<Option<Fin>>,
+    /// `--trace`.
+    trace: bool,
 }
 
 /// One fin: its servo and what the flight loop made it do.
@@ -124,7 +133,12 @@ impl Hooks for Host {
 
     fn veto_edge(&mut self) {}
 
-    fn attitude(&mut self, _row: [i32; 6], _seeded: bool, _blind: bool) {}
+    fn attitude(&mut self, row: [i32; 6], _seeded: bool, _blind: bool) {
+        // the filter steps on the 20 ms grid: every fifth step, on the whole 100 ms
+        if self.trace && (self.now_us / 1000).is_multiple_of(100) {
+            eprintln!("ATT {} {} {} {}", self.now_us / 1000, row[0], row[1], row[2]);
+        }
+    }
 
     fn fins(&mut self, angles: &[i32]) {
         for (&angle, fin) in angles.iter().zip(&mut self.servos) {
@@ -305,6 +319,7 @@ fn main() -> Result<(), String> {
             .map(|zone| Landing::new(zone.top_left, zone.bottom_right, mission.endgame_heading())),
         launch: mission.launch_point(None),
         servos: Vec::new(),
+        trace: arguments.trace,
     };
     let word = FlightWord::default();
     let mut writer = word.writer().ok_or("the flight word's writer is taken")?;

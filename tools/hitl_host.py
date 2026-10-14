@@ -76,9 +76,16 @@ _MAG_DECLINATION_DEG: float = 17.0  # declination + mounting as one constant, th
 _SERVO_NEUTRAL_DEG: float = 90.0
 _MAX_CATCHUP_S: float = 0.5  # a scheduling stall's catch-up cap (plan B hitl.py)
 _TIMEOUT_S: float = 150.0  # from ignition, plan B hitl_run's cap
+# --imu-noise real: the IMU as measured at rest (doc/specs/avionics-port.md, the LSM6DSO32 on the taster and TMS-7F):
+# white noise, and a constant bias per axis drawn once from the run's seed. The sim's --noise fraction (+-10 % of each
+# reading at 0.1) is far noisier than that and has no bias, the error a real gyro brings to a gated turn
+_GYRO_BIAS_DPS: float = 0.6  # +-, per axis (TMS-7F: +0.58 / -0.03 / -0.08 deg/s)
+_GYRO_NOISE_DPS: float = 0.035  # sd (0.027-0.036 deg/s)
+_ACCEL_BIAS_G: float = 0.02  # +-, per axis (|a| at rest 1.013-1.028 g)
+_ACCEL_NOISE_G: float = 0.003  # sd (0.0017 g at rest; the airframe's vibration on top)
 _HANDOVER_S: float = 0.5  # --no-attitude: the separation's window, the true attitude handed to the filter
 _SITL_PAD_S: float = 2.0  # the SITL's pad before ignition, physics seconds: the stage machine's windows fill
-_FILTER_PAD_S: float = 15.0  # ...with --no-attitude: the board's filter converges on the rod, as minutes there do
+_FILTER_PAD_S: float = 60.0  # ...with --no-attitude: the filter settles and learns its gyro bias, as a rod's minutes do
 _LOCKSTEP_WAIT_S: float = 2.0  # how long a lockstep frame waits for its answer before the run stalls
 _GATE_S: float = 120.0  # how long the board gets to join Wi-Fi and answer a frame
 _QUIET_S: float = 3.0  # after an answer that is no reply: the board finishes a long one (get-config, ~0.8 s)
@@ -289,6 +296,13 @@ class _Sim:
         # then flies alone again
         self.physical = self.drop_attitude
         self.handover_until: float | None = None  # the separation's window, sim time
+        # --imu-noise real: each axis's constant bias (seeded), the gyro's in deg/s, the accelerometer's in g
+        self.real_imu = getattr(args, 'imu_noise', 'frac') == 'real'
+        self.gyro_bias = [random.uniform(-_GYRO_BIAS_DPS, _GYRO_BIAS_DPS) for _ in range(3)] if self.real_imu else None
+        self.accel_bias = [random.uniform(-_ACCEL_BIAS_G, _ACCEL_BIAS_G) for _ in range(3)] if self.real_imu else None
+        # --no-attitude in the SITL: the truth every 100 ms of the frames' clock, (heading, roll, pitch, gliding),
+        # scored against the binary's --trace (ATTITUDE)
+        self.truth: dict = {}
         self.drop_gnss = False
         self.running = True
 
@@ -419,6 +433,7 @@ class _Sim:
     def publish(self) -> None:
         """The noised sensors as one SENSORS frame (plan B hitl.py _publish), in the Rust databoard's units."""
         body, noise, t = self.body, self.args.noise, self.sim_time
+        imu = 0.0 if self.real_imu else noise  # the IMU's own model instead (--imu-noise real)
         self.apogee = max(self.apogee, body.alt)
         noisy = sim_model.noisy
         # the marks frame (x forward, y left, z up), as the IMU drivers publish it. On the pad and through the boost
@@ -428,11 +443,11 @@ class _Sim:
         accel = [0.0, 0.0, 0.0]
         if body.gliding:
             pitch_rad = math.radians(body.pitch)
-            accel = [noisy(math.sin(pitch_rad), noise, -200.0, 200.0), 0.0,
-                     noisy(body.accel_g * math.cos(pitch_rad), noise, -200.0, 200.0)]
+            accel = [noisy(math.sin(pitch_rad), imu, -200.0, 200.0), 0.0,
+                     noisy(body.accel_g * math.cos(pitch_rad), imu, -200.0, 200.0)]
         else:
             # the nose axis (the marks' x) when the filter flies alone: on the rod a real IMU reads 1 g along it
-            accel[0 if self.physical else self.axis] = noisy(body.accel_g, noise, -200.0, 200.0)
+            accel[0 if self.physical else self.axis] = noisy(body.accel_g, imu, -200.0, 200.0)
         heading = noisy(body.heading % 360.0, noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
         roll = noisy(body.roll, noise, -180.0, 180.0)
         pitch = noisy(body.pitch, noise, -180.0, 180.0)
@@ -445,18 +460,24 @@ class _Sim:
         if stack is not None:
             # the 6-DoF's own: the specific force and the body rates are the marks frame already; the Euler angles
             # degenerate near a vertical nose as the board's do
-            accel = [noisy(component / stack_dynamics.G, noise, -200.0, 200.0) for component in stack.specific]
+            accel = [noisy(component / stack_dynamics.G, imu, -200.0, 200.0) for component in stack.specific]
             rates = [math.degrees(rate) for rate in stack.rates]
             heading, roll, pitch = stack.euler()
             heading = noisy(heading, noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
             roll, pitch = noisy(roll, noise, -180.0, 180.0), noisy(pitch, noise, -180.0, 180.0)
+        if self.real_imu:
+            accel = [value + bias + random.gauss(0.0, _ACCEL_NOISE_G) for value, bias in zip(accel, self.accel_bias)]
+            rates = [rate + bias + random.gauss(0.0, _GYRO_NOISE_DPS) for rate, bias in zip(rates, self.gyro_bias)]
+        if getattr(self.args, 'score', False) and self.clock is not None and round(self.clock * 1000) % 100 == 0:
+            truth = stack.euler() if stack is not None else (body.heading % 360.0, body.roll, body.pitch)
+            self.truth[round(self.clock * 1000)] = (*truth, body.gliding)
         baro_noise = noise * _BARO_NOISE_SCALE
         altitude = noisy(body.elev0 + body.alt, baro_noise, -100.0, 10000.0)
         elevation = noisy(body.alt, baro_noise, -100.0, 10000.0)
         agl_clean = max(0.0, body.alt)
         fields = {
             'accel': self.faults.apply('accel', accel, t),
-            'rate': [noisy(rate, noise, -2000.0, 2000.0) for rate in rates],
+            'rate': [noisy(rate, imu, -2000.0, 2000.0) for rate in rates],
             'attitude': None if self.drop_attitude and not self.separating(t)
             else self.faults.apply('attitude', [heading, roll, pitch], t),
             'altitude': self.faults.apply('baro', altitude, t),
@@ -600,6 +621,45 @@ class _Sim:
                     handle.write(';'.join(['%.3f' % t] + [str(cell) for cell in cells]) + '\n')
 
 
+def _down(heading: float, roll: float, pitch: float) -> tuple:
+    """The earth's down axis in the body frame (unit) of an aerospace attitude in degrees: what gravity reads."""
+    roll, pitch = math.radians(roll), math.radians(pitch)
+    return (-math.sin(pitch), math.cos(pitch) * math.sin(roll), math.cos(pitch) * math.cos(roll))
+
+
+def attitude_score(truth: dict, log: str, pad_s: float, separation_s: float | None) -> str:
+    """
+    The SITL filter against the sim's truth (--no-attitude): `log` the binary's stderr with its --trace lines (`ATT
+    <ms> <heading_cd> <roll_cd> <pitch_cd>`, ms the frames' clock after the 10 s boot), `truth` the host's samples by
+    the frames' clock in ms. The boost (ignition to separation) and the glide (from a second after the separation's
+    window) each: the tilt error (degrees between the true and the estimated down axis in the body, free of the Euler
+    angles' degeneracy at a vertical nose), RMS and worst; the glide's heading error RMS too. One `ATTITUDE` line.
+    """
+    estimates = {}
+    for match in re.finditer(r'^ATT (\d+) (-?\d+) (-?\d+) (-?\d+)$', log, re.M):
+        estimates[int(match.group(1)) - 10_000] = [int(match.group(index)) / 100.0 for index in (2, 3, 4)]
+    phases = {'boost': [], 'glide': []}
+    headings = []
+    for clock_ms, (heading, roll, pitch, gliding) in sorted(truth.items()):
+        estimate = estimates.get(clock_ms)
+        if estimate is None or clock_ms < pad_s * 1000:
+            continue
+        if gliding and (separation_s is None or clock_ms < (separation_s + _HANDOVER_S + 1.0) * 1000):
+            continue
+        true_down, estimated_down = _down(heading, roll, pitch), _down(*estimate)
+        dot = max(-1.0, min(1.0, sum(a * b for a, b in zip(true_down, estimated_down))))
+        phases['glide' if gliding else 'boost'].append(math.degrees(math.acos(dot)))
+        if gliding:
+            headings.append(((estimate[0] - heading + 180.0) % 360.0) - 180.0)
+
+    def rms(values: list) -> float:
+        return math.sqrt(sum(value * value for value in values) / len(values)) if values else -1.0
+    return 'ATTITUDE boost_tilt_rms=%.1f boost_tilt_max=%.1f glide_tilt_rms=%.1f glide_tilt_max=%.1f ' \
+           'glide_heading_rms=%.1f samples=%d' % (
+               rms(phases['boost']), max(phases['boost'], default=-1.0), rms(phases['glide']),
+               max(phases['glide'], default=-1.0), rms(headings), len(phases['boost']) + len(phases['glide']))
+
+
 def _panic(port: str) -> None:
     """The console's `panic kind=rust confirm`: the board resets before it could reply, so no answer is awaited."""
     console = transports.Serial(port)
@@ -650,6 +710,12 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument('--gnss-drift', type=float, default=0.0)
     parser.add_argument('--gnss-drift-dir', type=float, default=0.0)
     parser.add_argument('--attitude-drop-s', type=float, default=0.0)
+    parser.add_argument('--imu-noise', default='frac', choices=('frac', 'real'),
+                        help="the IMU's noise: the --noise fraction (default), or the measured parts' (white noise "
+                             'and a seeded constant bias per axis)')
+    parser.add_argument('--score', action='store_true',
+                        help="--sitl: score the board's attitude filter against the truth (an ATTITUDE line, from "
+                             "the binary's --trace)")
     parser.add_argument('--no-attitude', action='store_true',
                         help="publish no attitude at all: the board's filter flies from power-up")
     parser.add_argument('--gnss-drop-s', type=float, default=0.0)
@@ -710,8 +776,10 @@ def _sitl(args: argparse.Namespace) -> int:
         json.dump({'latitude': scenario['launch'][0], 'longitude': scenario['launch'][1],
                    'altitude': scenario['elevation_m'], 'zone': scenario['zone']}, handle)
     with open(os.path.join(folder, 'sitl.log'), 'w') as log:
-        process = subprocess.Popen([args.sitl, '--config', config, '--mission', mission,
-                                    '--port', str(args.sitl_port)], stdout=log, stderr=log)
+        command = [args.sitl, '--config', config, '--mission', mission, '--port', str(args.sitl_port)]
+        if args.score:
+            command.append('--trace')  # the filter's attitude, scored against the truth (ATTITUDE)
+        process = subprocess.Popen(command, stdout=log, stderr=log)
     try:
         args.ip = '127.0.0.1'
         sim = _Sim(args)
@@ -723,8 +791,14 @@ def _sitl(args: argparse.Namespace) -> int:
         print('CLOCK sim=%.2f frames=%d answers=%d' % (sim.sim_time, sim.seq, sim.answers))
         # the scenario's score by the physics: the miss, the zone, the time from ignition to DONE
         miss, inside = landing(sim.body.position(), scenario['zone'])
-        print('LANDED miss=%.1f inside=%s aloft=%.1f apogee=%.0f' % (miss, inside, sim.sim_time - pad_s,
+        # sim_time runs from the ignition (the pad's frames advance only the clock): the flight's own seconds
+        print('LANDED miss=%.1f inside=%s aloft=%.1f apogee=%.0f' % (miss, inside, sim.sim_time,
                                                                       sim.apogee))
+        if args.score:
+            with open(os.path.join(folder, 'sitl.log')) as handle:
+                # the separation on the frames' clock: the sim's time from ignition, after the pad
+                separation = sim.handover_until - _HANDOVER_S + pad_s if sim.handover_until is not None else None
+                print(attitude_score(sim.truth, handle.read(), pad_s, separation))
         if sim.stack is not None:
             burn = sim.burn
             print('BOOST path_min=%.1f tilt_max=%.1f looped=%s burnout=%.1f' % (
