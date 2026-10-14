@@ -109,6 +109,21 @@ pub use integration::{Pace, Quantities, assemble, on_backup};
 /// the gyro is gone. Plan B's `_BLIND_CYCLES`.
 pub const BLIND_CYCLES: u32 = 5;
 
+/// [`Settings::gyro_bias`]: every axis of the gyro under this many degrees per second is a board at rest, its reading
+/// the bias (the biases measured run to 0.58).
+pub const STILL_RATE: f32 = 1.5;
+
+/// [`Settings::gyro_bias`]: the accelerometer within this many g of 1 g is a board at rest (|a| at rest reads
+/// 1.013-1.028 g).
+pub const STILL_G: f32 = 0.05;
+
+/// [`Settings::centripetal`]: the slowest airspeed estimate, m/s, the correction trusts (the governor's floor before
+/// it is confident is a guess).
+pub const CENTRIPETAL_SPEED: f32 = 5.0;
+
+/// Standard gravity, m/s^2.
+const GRAVITY: f32 = 9.806_65;
+
 /// The longest gap, in whole milliseconds, integrated as it is (plan B `_MAX_DT_MS`). A longer one (a bus stall)
 /// integrates one nominal period instead: one huge gyro step would put an error into the yaw that nothing but the
 /// track or the magnetometer could ever take out again.
@@ -180,6 +195,18 @@ pub struct Settings {
     pub gravity_low: f32,
     /// `grav_high_g`: the top of the gravity band in g, 1.3.
     pub gravity_high: f32,
+    /// `gyro_bias_s`: the time constant in seconds of the gyro BIAS learned while the board rests in SETTING (on the
+    /// bench, on the rod), 10; 0 = none (plan B's). A real gyro reads a constant bias (TMS-7F's LSM6DSO32: up to 0.58
+    /// deg/s) that the turn gate leaves to drift the attitude through every turn, 10 degrees in a 20 s orbit; learned
+    /// on the pad and taken off every rate, it is gone. Learned only while still (every axis under
+    /// [`STILL_RATE`] and the accelerometer within [`STILL_G`] of 1 g), held from the launch on.
+    pub gyro_bias: f32,
+    /// `centripetal`: take the turn's centripetal acceleration (the body rates across the airspeed) off the
+    /// accelerometer before it pulls, true; false = plan B's. In a coordinated turn the accelerometer reads the load down
+    /// the body axis, level at any bank; minus omega x V (V along the nose at the flight law's airspeed estimate) it
+    /// reads gravity, so the pulls that fire right a bank instead of flattening it. Needs an airspeed over
+    /// [`CENTRIPETAL_SPEED`].
+    pub centripetal: bool,
     /// `telemetry_ms`: plan B's attitude.csv decimation in ms, 100. Read as plan B reads it, but it decimates
     /// nothing: the caller writes a row on every publish (see the module notes).
     pub telemetry_ms: u32,
@@ -193,7 +220,7 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    /// Plan B's `Attitude.setup()` defaults, every key missing.
+    /// Plan B's `Attitude.setup()` defaults, every key missing; and the port's own two, on.
     fn default() -> Settings {
         Settings {
             period_ms: 20,
@@ -207,6 +234,10 @@ impl Default for Settings {
             magnetic_level: 15.0,
             gravity_low: 0.7,
             gravity_high: 1.3,
+            // both on (2026-10-14, doc/sims/TMS-8-attitude_filter): on the measured IMU's noise and bias the glide's
+            // tilt error fell from 3.2 to 0.6 degrees RMS; the turn gate stays (opened, the airspeed's error costs more)
+            gyro_bias: 10.0,
+            centripetal: true,
             telemetry_ms: 100,
             rank: 0,
         }
@@ -251,6 +282,11 @@ impl Settings {
             magnetic_level: number("mag_level_deg", defaults.magnetic_level),
             gravity_low: number("grav_low_g", defaults.gravity_low),
             gravity_high: number("grav_high_g", defaults.gravity_high),
+            gyro_bias: number("gyro_bias_s", defaults.gyro_bias).max(0.0),
+            centripetal: config
+                .get("centripetal")
+                .and_then(Value::as_bool)
+                .unwrap_or(defaults.centripetal),
             telemetry_ms: whole("telemetry_ms", defaults.telemetry_ms),
             rank,
         }
@@ -319,6 +355,11 @@ pub struct Readings {
     /// gravity band, which a burn's tail and a coast's drag both do: each pull snapped the estimate back toward nose
     /// straight up while the stack pitched over (a 6-DoF boost: 86 degrees estimated against 35).
     pub ballistic: bool,
+    /// The stage is SETTING: the board on the bench or the rod, where a still gyro reads its bias
+    /// ([`Settings::gyro_bias`]).
+    pub resting: bool,
+    /// The flight law's airspeed estimate in m/s, for [`Settings::centripetal`]; None without a flight law.
+    pub airspeed: Option<f32>,
 }
 
 impl Readings {
@@ -354,6 +395,8 @@ impl Readings {
             fused,
             backup_fresh: self.backup_fresh,
             ballistic: self.ballistic,
+            resting: self.resting,
+            airspeed: scalar(self.airspeed),
         }
     }
 }
@@ -572,6 +615,8 @@ pub struct Attitude {
     last_us: u64,
     /// The time of the last accelerometer pull check, in microseconds: the throttle's clock.
     acceleration_us: u64,
+    /// The gyro's bias in degrees per second, learned at rest in SETTING ([`Settings::gyro_bias`]); 0 until then.
+    bias: [f32; 3],
 }
 
 impl Attitude {
@@ -599,7 +644,13 @@ impl Attitude {
             strikes: 0,
             last_us: now_us,
             acceleration_us: now_us,
+            bias: [0.0; 3],
         }
+    }
+
+    /// The gyro bias learned at rest, degrees per second (0 with `gyro_bias_s` off or before any rest).
+    pub fn bias(&self) -> [f32; 3] {
+        self.bias
     }
 
     /// The knobs.
@@ -723,8 +774,12 @@ impl Attitude {
     /// are not: it added the body rates to the Euler angles, and pulled roll and pitch unwrapped (see [`rotation`]).
     fn integrate(&mut self, elapsed: f32, now_us: u64, readings: &Readings) {
         let before = self.angles;
+        self.learn_bias(elapsed, readings);
+        let rate = readings
+            .rate
+            .map(|rate| [0, 1, 2].map(|axis| rate[axis] - self.bias[axis]));
         let mut turning = true;
-        if let Some(rate) = readings.rate {
+        if let Some(rate) = rate {
             self.rotation = self.rotation.turned(rate, elapsed);
             turning = rate[2].abs() > self.settings.turn_gate;
         }
@@ -745,7 +800,10 @@ impl Attitude {
         let since_us = now_us.wrapping_sub(self.acceleration_us) as i64;
         if !turning && !readings.ballistic && since_us >= i64::from(self.settings.acceleration_period_ms) * 1000 {
             self.acceleration_us = now_us;
-            if let Some(gravity) = readings.acceleration.filter(|gravity| self.in_band(*gravity)) {
+            let gravity = readings
+                .acceleration
+                .map(|gravity| self.centripetal(gravity, rate, readings.airspeed));
+            if let Some(gravity) = gravity.filter(|gravity| self.in_band(*gravity)) {
                 self.rotation = self.rotation.tilted(gravity, self.correction_pull);
             }
         }
@@ -755,6 +813,44 @@ impl Attitude {
             roll: wrap_signed(roll),
             pitch,
         };
+    }
+
+    /// Learn the gyro's bias from this tick's readings ([`Settings::gyro_bias`]): only resting in SETTING and still,
+    /// each axis a first-order step of `elapsed` over the time constant toward the rate it reads.
+    fn learn_bias(&mut self, elapsed: f32, readings: &Readings) {
+        let time_constant = self.settings.gyro_bias;
+        let (Some(rate), Some(gravity)) = (readings.rate, readings.acceleration) else {
+            return;
+        };
+        if time_constant <= 0.0 || !readings.resting {
+            return;
+        }
+        let magnitude = (gravity[0] * gravity[0] + gravity[1] * gravity[1] + gravity[2] * gravity[2]).sqrt();
+        if rate.iter().any(|axis| axis.abs() >= STILL_RATE) || (magnitude - 1.0).abs() > STILL_G {
+            return;
+        }
+        let step = (elapsed / time_constant).min(1.0);
+        for (bias, axis) in self.bias.iter_mut().zip(rate) {
+            *bias += (axis - *bias) * step;
+        }
+    }
+
+    /// The accelerometer's gravity vector with the turn's centripetal acceleration taken off ([`Settings::centripetal`]):
+    /// omega x V for V along the nose at `airspeed`, (0, r V, -q V) / g in the filter's frame, `rate` the bias-free
+    /// body rates. As it came with the correction off, no rate, or an airspeed under [`CENTRIPETAL_SPEED`].
+    fn centripetal(&self, gravity: [f32; 3], rate: Option<[f32; 3]>, airspeed: Option<f32>) -> [f32; 3] {
+        let (Some([_, pitch_rate, yaw_rate]), Some(speed)) = (rate, airspeed) else {
+            return gravity;
+        };
+        if !self.settings.centripetal || speed < CENTRIPETAL_SPEED {
+            return gravity;
+        }
+        let [x, y, z] = gravity;
+        [
+            x,
+            y + yaw_rate.to_radians() * speed / GRAVITY,
+            z - pitch_rate.to_radians() * speed / GRAVITY,
+        ]
     }
 
     /// Whether the gravity vector's magnitude is inside the gravity band (compared squared: no square root).

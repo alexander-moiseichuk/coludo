@@ -18,7 +18,7 @@
 //! gptimer, the SPI IMU, the separation switch, the GPIO interrupts and the lapse watches. Nothing here allocates or
 //! formats text on a tick but the machine's own transition (six or fewer a flight).
 
-use control::attitude::{Attitude, Pace, Quantities, assemble};
+use control::attitude::{Attitude, Pace, Quantities, Readings, assemble};
 use control::flight::FlightLaw;
 use control::guidance::Landing;
 use control::navigation::Position;
@@ -276,12 +276,16 @@ impl FilterDuty {
 
     /// One tick that woke at `now_us`: when its pace is due, one filter step on the readings fresh now, its
     /// transition line logged (a constant), its state handed on, and what it publishes pushed and recorded.
-    fn tick(&mut self, now_us: u64, ballistic: bool, hooks: &mut dyn Hooks) {
+    fn tick(&mut self, now_us: u64, stage: Stage, airspeed: Option<f32>, hooks: &mut dyn Hooks) {
         if !self.pace.due(now_us) {
             return;
         }
         let read_us = hooks.now_us();
-        let readings = assemble(&self.quantities, self.rank, read_us, ballistic);
+        let readings = Readings {
+            resting: stage == Stage::Setting,
+            airspeed,
+            ..assemble(&self.quantities, self.rank, read_us, stage == Stage::Boosting)
+        };
         let step = self.attitude.tick(read_us, &readings);
         if let Some(line) = step.log {
             log::warn!("{} :: {line}", self.name);
@@ -451,8 +455,10 @@ impl ControlCore {
         if let Some(filter) = &mut self.filter
             && !done
         {
-            // BOOSTING as the flight word stands before this tick's stage step: the accelerometer reads no gravity
-            filter.tick(now_us, writer.flight().stage == Stage::Boosting, hooks);
+            // the stage as the flight word stands before this tick's step (BOOSTING: the accelerometer reads no gravity;
+            // SETTING: a still gyro reads its bias), and the law's airspeed of the last tick (the turn's centripetal)
+            let airspeed = self.flight.as_ref().map(|flight| flight.law.airspeed());
+            filter.tick(now_us, writer.flight().stage, airspeed, hooks);
         }
         if let Some(sequencer) = &mut self.sequencer {
             sequencer.tick(now_us, slack_us, writer, hooks);

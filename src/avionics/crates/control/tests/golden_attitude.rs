@@ -75,6 +75,8 @@ fn readings(input: &Value) -> Readings {
         fused,
         backup_fresh: input["backup"].as_bool().expect("backup is a flag"),
         ballistic: false,
+        resting: false,
+        airspeed: None,
     }
 }
 

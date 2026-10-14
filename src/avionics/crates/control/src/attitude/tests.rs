@@ -7,9 +7,9 @@
 //! tests/golden_magnetic_yaw.rs) hold the trajectories to plan B; these hold the rules, each with what must NOT happen.
 
 use super::{
-    Attitude, BLIND_CYCLES, FIELDS, Fused, GYRO_BACK, GYRO_LOST, MagneticYaw, Orientation, PROBE_FAILURE, Readings,
-    STREAM, Settings, decimal_text, heading_centidegrees, pull, rate_from_marks, signed_centidegrees, wrap_heading,
-    wrap_signed,
+    Attitude, BLIND_CYCLES, CENTRIPETAL_SPEED, FIELDS, Fused, GYRO_BACK, GYRO_LOST, MagneticYaw, Orientation,
+    PROBE_FAILURE, Readings, STILL_G, STILL_RATE, STREAM, Settings, decimal_text, heading_centidegrees, pull,
+    rate_from_marks, signed_centidegrees, wrap_heading, wrap_signed,
 };
 use serde_json::json;
 
@@ -134,6 +134,10 @@ fn the_defaults_are_plan_b_setup_defaults() {
     );
     assert_eq!(defaults.rank, 0, "plan B registers a missing priority at 0");
     assert_eq!(test_settings().rank, 1);
+    // the port's own two, on; plan B's behaviour back with 0 and false
+    assert_eq!((defaults.gyro_bias, defaults.centripetal), (10.0, true));
+    let plan_b = Settings::from_json(&json!({"gyro_bias_s": 0, "centripetal": false}));
+    assert_eq!((plan_b.gyro_bias, plan_b.centripetal), (0.0, false));
 }
 
 #[test]
@@ -370,6 +374,120 @@ fn a_boost_pulls_nothing_from_the_accelerometer() {
         .unwrap()
         .pitch;
     assert!(pitch > 85.0, "{pitch}");
+}
+
+#[test]
+fn a_still_gyro_s_bias_is_learned_at_rest_and_taken_off() {
+    let settings = Settings {
+        gyro_bias: 2.0,
+        ..test_settings()
+    };
+    let biased = |resting: bool, rate: [f32; 3]| Readings {
+        rate: Some(rate),
+        acceleration: Some(gravity_at(0.0, 0.0)),
+        resting,
+        ..Readings::default()
+    };
+    let bias = [0.5, -0.3, 0.2];
+    let mut bench = Bench::new(settings);
+    bench.ticks(1000, &biased(true, bias)); // 20 s, ten time constants
+    let learned = bench.filter.bias();
+    assert!(
+        learned
+            .iter()
+            .zip(bias)
+            .all(|(learned, bias)| (learned - bias).abs() < 1e-3),
+        "{learned:?}"
+    );
+    // in flight the bias is taken off: 20 s of the same reading holds the heading (plan B's drifted 4 degrees)
+    let heading = bench.filter.orientation().heading;
+    bench.ticks(1000, &biased(false, bias));
+    assert!(
+        close(bench.filter.orientation().heading, heading, 0.01),
+        "{:?}",
+        bench.filter.orientation()
+    );
+    // and it is held once out of SETTING: a rotation in flight teaches it nothing
+    bench.ticks(100, &biased(false, [1.0, 1.0, 1.0]));
+    assert_eq!(bench.filter.bias(), learned);
+    // NEGATIVE: a moving board (an axis at the still threshold), a board not resting, or the key off learn nothing
+    for (settings, readings) in [
+        (settings, biased(true, [STILL_RATE, 0.0, 0.0])),
+        (settings, biased(false, bias)),
+        (
+            Settings {
+                gyro_bias: 0.0,
+                ..settings
+            },
+            biased(true, bias),
+        ),
+    ] {
+        let mut bench = Bench::new(settings);
+        bench.ticks(500, &readings);
+        assert_eq!(bench.filter.bias(), [0.0; 3], "{readings:?}");
+    }
+    // NEGATIVE: nor a board held off 1 g (a hand moving it)
+    let mut bench = Bench::new(settings);
+    bench.ticks(
+        500,
+        &Readings {
+            acceleration: Some([0.0, 0.0, 1.0 + 2.0 * STILL_G]),
+            ..biased(true, bias)
+        },
+    );
+    assert_eq!(bench.filter.bias(), [0.0; 3]);
+}
+
+#[test]
+fn the_centripetal_correction_holds_a_bank_the_accelerometer_reads_level() {
+    // a coordinated turn banked 30 at 15 m/s: the accelerometer reads its load down the body axis, level; its body
+    // rates (q, r) carry the turn. The turn gate opened (1000 deg/s), so every tick pulls
+    let (bank, speed) = (30.0_f32, 15.0_f32);
+    let turn = (9.806_65 * bank.to_radians().tan() / speed).to_degrees();
+    let (sine, cosine) = bank.to_radians().sin_cos();
+    let orbit = Readings {
+        rate: Some([0.0, turn * sine, turn * cosine]),
+        acceleration: Some([0.0, 0.0, 1.0 / cosine]),
+        airspeed: Some(speed),
+        ..Readings::default()
+    };
+    let roll = |centripetal: bool| {
+        let mut bench = Bench::new(Settings {
+            centripetal,
+            turn_gate: 1000.0,
+            ..test_settings()
+        });
+        bench.tick(&Readings {
+            fused: primary(0.0, bank, 0.0),
+            ..Readings::default()
+        });
+        bench.ticks(50, &orbit).published.unwrap().roll
+    };
+    assert!((roll(true) - bank).abs() < 0.1, "{}", roll(true));
+    // NEGATIVE: uncorrected, the pulls flatten the bank (plan B's reason for the turn gate)
+    assert!(roll(false) < 5.0, "{}", roll(false));
+    // NEGATIVE: under CENTRIPETAL_SPEED the estimate is no airspeed: no correction
+    let mut slow = Bench::new(Settings {
+        centripetal: true,
+        turn_gate: 1000.0,
+        ..test_settings()
+    });
+    slow.tick(&Readings {
+        fused: primary(0.0, bank, 0.0),
+        ..Readings::default()
+    });
+    let slow = slow
+        .ticks(
+            50,
+            &Readings {
+                airspeed: Some(CENTRIPETAL_SPEED - 0.1),
+                ..orbit
+            },
+        )
+        .published
+        .unwrap()
+        .roll;
+    assert!(slow < 5.0, "{slow}");
 }
 
 #[test]
@@ -675,6 +793,8 @@ fn a_non_finite_reading_is_no_reading() {
         fused: primary(f32::NAN, 0.0, 0.0),
         backup_fresh: false,
         ballistic: false,
+        resting: false,
+        airspeed: None,
     };
     let tick = bench.ticks(BLIND_CYCLES as usize, &poisoned);
     let published = tick.published.expect("still seeded: it publishes");
