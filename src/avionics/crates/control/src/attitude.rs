@@ -71,8 +71,9 @@
 //!    the body rates to the Euler angles, right only about a level body: with a real gyro (body rates; its HITL sim
 //!    published Euler rates) a banked turn drifted its pitch by the turn rate times the sine of the bank while the turn
 //!    gate held the accelerometer off (a 20-degree-banked endgame orbit: +25 degrees of pitch), and a boost's spin at
-//!    a vertical nose scrambled all three within a second. The pulls' strengths, gates and orders are plan B's, and
-//!    the golden fixture still holds every scenario that turns about one axis from level;
+//!    a vertical nose scrambled all three within a second. The pulls' gates and orders are plan B's, their strengths
+//!    too but the course pull's (`course_shift` 7.5, plan B's 5), and the golden fixture still holds every scenario
+//!    that turns about one axis from level;
 //!  * attitude.csv takes a row on every publish: `telemetry_ms` is read but thins nothing. Plan B decimated the
 //!    stream to it (10 rows a second at its default), a MicroPython-era economy; here every measured sample is reported
 //!    (doc/specs/avionics-port.md, "Measured -> reported");

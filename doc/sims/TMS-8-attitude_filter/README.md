@@ -97,10 +97,55 @@ track (the navigation steers by the track), so a crosswind's crab reads as headi
 - The realtime glides on the filter run shorter than the SITL's (48-90 s against 63-89): one seed each, the landings
   a lottery as in every study, and realtime adds the Wi-Fi's bunched frames. The boost is the same on both boards.
 
+## Closing: `course_shift` 7.5 (`sitl_closing.csv`, `7452e2c`)
+
+The filter pulls its heading onto the GNSS track 2^-shift per tick. Plan B's 5 (tau 0.64 s) drives a crosswind's crab
+out, so the wind triangle lost the crosswind; 10 kept it but landed worse. The operator chose 7.5 (tau 3.6 s), and the
+closing matrix flew it against 5: TMS-8's config, F15, the measured IMU, 0/3/6 m/s crosswind, the vertical and the
+6-DoF boost. New in it: `--pad-heading unknown`, the separation no longer hands the filter north (a real board's
+heading is its power-up pose until the track pulls it), 5 seeds a cell, and the old known heading at 3 seeds.
+
+| pad heading | boost | `course_shift` | miss (median) | in the zone | heading RMS | wind error |
+|---|---|---|---|---|---|---|
+| unknown | vertical | 5 / 7.5 | 55 / 58 m | 9 / 10 of 15 | 10.6 / 15.2 deg | 1.9 / 1.4 m/s |
+| unknown | 6-DoF | 5 / 7.5 | 65 / 72 m | 4 / 3 of 15 | 14.2 / 17.2 | 0.8 / 0.8 |
+| known | vertical | 5 / 7.5 | 42 / 45 m | 6 / 8 of 9 | 9.9 / 7.6 | 2.0 / 1.4 |
+| known | 6-DoF | 5 / 7.5 | 66 / 70 m | 4 / 4 of 9 | 15.4 / 11.1 | 1.8 / 1.0 |
+
+- Paired seed for seed and widened to 108 pairs (the review flew seeds 6-15 too), 7.5 is neutral: the median miss
+  +0.6 m, in the zone 48 -> 51, and the tail shrinks (misses over 120 m 9 -> 2). At 6 m/s on the vertical boost it
+  lands 11 of 15 in the zone against 5, and reads the wind to 1.2 m/s against 3.2.
+- The cost is finding north: with an unknown pad heading the heading takes ~10 s after the separation (or a warm
+  start) to come within 10 degrees, against ~2.3 s at 5. It costs calm air and the short 6-DoF glides at 6 m/s.
+  A fast first capture (the fast pull until the heading has met the track, then 7.5) is the phase 7 fix.
+- The boost is identical at both shifts (the lean law reads roll and pitch only). The 6-DoF loops at 6 m/s in 4 of
+  30 seeds on the filter and 17 of 30 on the sim's perfect attitude, on the shipped `c593ca4` as well: the
+  placeholder stack's edge (the lean law needs 1.0 calibre at 6 m/s, tms7d has 0.84), 0 loops at 4-5 m/s or on a
+  1.5 m rail. A phase 7 envelope requirement, not a port defect.
+- The course-5, known-heading rows reproduce `sitl_shipped.csv` exactly: the harness and the cold start are unchanged.
+
+The boards, `7452e2c`, the measured IMU, a 40 s pad, an unknown pad heading:
+
+| board | run | miss | aloft | burn: path min / most lean | control |
+|---|---|---|---|---|---|
+| taster | the filter, vertical | 33.5 m, in | 88.6 s | | 0 overruns, late at most 39 us |
+| taster | the filter, 6-DoF | 84.4 m | 64.7 s | 89.6 / 0.6 deg | 0 overruns, 50 us |
+| taster | the filter, a panic mid-glide | 14.5 m, in | 55.9 s | | warm start: the gyro bias kept |
+| TMS-7F | the filter, vertical | 95.1 m | 94.7 s | | 0 overruns, 41 us |
+| TMS-7F | the filter, 6-DoF | 83.7 m | 65.5 s | 89.7 / 0.4 deg | 0 overruns, 33 us |
+
+Every board run reached DONE. The warm start recovered GLIDING with the pad's bias as the filter's seed (`gyro 0 bias
+(-0.505, 0.174, 0.212) deg/s kept as the filter's seed`) and landed in the zone.
+
 ## Caveats
 
 - The sim's separation jumps the attitude (sim_model begin_glide); `--no-attitude` hands the filter the truth for
-  0.5 s there, a perfect gyro through the separation. A real separation's error is the gyro's over its pitch-over.
+  0.5 s there, a perfect gyro through the separation, turned since the closing matrix by an unknown pad azimuth
+  (`--pad-heading`). A real separation's error is the gyro's over its pitch-over.
+- Two sim issues found by the closing review, both outside the firmware: the sim's magnetometer is mirrored against
+  the Rust filter's frame (the magnetic fallback is not exercised in simulation), and the vertical sim clamps the
+  coast's specific force at 0 g, so with a positive accelerometer bias the thrust gate holds the apogee to the 12 s
+  burnout timeout (about a third of the seeds: their vertical misses are pessimistic).
 - The measured IMU model is the parts at rest: the boost's vibration and the gyro's scale error are not in it.
 - A warm start carries the learned gyro biases since 2026-10-14 (the crumb's `gyro_bias`, frozen at BOOSTING entry);
   before, the rebuilt filter flew the raw gyro for the rest of the flight. No run here has a warm start.
@@ -112,3 +157,4 @@ track (the navigation steers by the track), so a crosswind's crab reads as headi
 - `sitl_filter_variants.csv`: the bias and centripetal variants, with the attitude scores.
 - `sitl_shipped.csv`: the shipped firmware on both IMU models, with the attitude scores.
 - `hitl_runs.csv`, `hitl_runs_final.csv`: the board flights, with the filter's free-running rows.
+- `sitl_closing.csv`: the closing matrix, `course_shift` 5 against 7.5, the pad heading unknown and known.
