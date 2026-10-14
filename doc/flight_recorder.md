@@ -14,11 +14,10 @@ Firmware: `src/avionics/recorder` (Rust, ESP-IDF 5.5.5, package `flight_recorder
 | part | what it is | notes |
 |---|---|---|
 | MCU | ESP32-C6 SuperMini (a clone) | Wi-Fi for the beacon, USB-Serial-JTAG console, LiPo charging pads on the back |
-| card | WWZMDiB micro-SD SPI module, one VCC pin | it has **its own 3.3 V regulator**, so its VCC goes to **5 V** (see Power) |
-| battery | 1-cell LiPo, 120 mAh planned (300 mAh for longer searches) | on the C6's charging pads |
-| card supply on battery | ME2108 3.7 -> 5 V boost converter | the card module wants 5 V; the LiPo gives 3.5-4.2 V |
+| card | a 3.3 V-only micro-SD SPI module (no regulator; 10 kOhm pull-ups and two capacitors on board) | on the C6's **3V3**, soldered pin to pin on its right header (see Pinout); since 2026-10-13 |
+| battery | 1-cell LiPo, 120 mAh planned (300 mAh for longer searches) | on the C6's B+/B- pads: its charger fills it from USB |
 | switch | a power switch in the battery lead | cuts the battery off when the box is stored |
-| bulk capacitor | 470 uF across the card's supply (option) | if the card's inrush browns out the C6; not needed on USB power |
+| supply in flight | a USB cable from the main board's supply | runs the box and charges the cell while the main board has power; the cell carries on after |
 
 ## Pinout
 
@@ -26,21 +25,27 @@ Firmware: `src/avionics/recorder` (Rust, ESP-IDF 5.5.5, package `flight_recorder
 |---|---|---|
 | main board (P4) GPIO20 | C6 GPIO17 (its RX pin) | UART1, the uart_saver's lines, **921600 baud 8N1**, one way |
 | main board GND | C6 GND | the common ground, the only other wire |
-| C6 GPIO18 | card CS | SPI2 |
-| C6 GPIO19 | card SCK | SPI2 |
-| C6 GPIO20 | card MOSI | SPI2 |
-| C6 GPIO14 | card MISO | SPI2 |
-| C6 5V (or the ME2108 output on battery) | card VCC | 5 V: the module regulates to 3.3 V itself |
-| C6 GND | card GND | |
+| C6 3V3 | card 3V3 | the module has no regulator |
+| C6 GPIO20 | card CS | SPI2 |
+| C6 GPIO19 | card MOSI | SPI2 |
+| C6 GPIO18 | card SCK | SPI2 |
+| C6 GPIO15 | card MISO | SPI2 |
+| C6 GPIO14 | (nothing) | the header pin facing the module's GND |
+| C6 GND | card GND | its own wire: GPIO14 is no ground |
 
-The C6's GPIO20 is the card's MOSI. It isn't the main board's GPIO20, which is that board's UART TX: two
+The first five are the C6's right header in the module's own pin order, so the module solders on pin to pin. GPIO15
+is a strapping pin only once EFUSE_JTAG_SEL_ENABLE is burned, and the module's pull-up then selects USB-JTAG, the
+default. The C6's GPIO20 is the card's CS. It isn't the main board's GPIO20, which is that board's UART TX: two
 different chips that happen to share a pin number.
 
 ## Power
 
-- **The card needs 5 V on this module.** On 3.3 V the module's own regulator drops it too low. The card then answers
-  CMD0 and CMD8, but sits in ACMD41's idle state until the 3 s timeout (2026-10-11, tried twice). On USB the C6's 5V
-  pin feeds it. On battery the ME2108 boost does (the LiPo's 3.5-4.2 V would fall short behind the regulator).
+- **The card runs from the C6's 3V3** (2026-10-13): the module has no regulator, so the LiPo needs no boost. It
+  mounts at 20 MHz SPI with no extra capacitor. The first module (WWZMDiB) carried its own 3.3 V regulator and wanted
+  5 V: on 3.3 V the card answered CMD0 and CMD8 but sat in ACMD41's idle state until the 3 s timeout.
+- **The module must always be powered.** With its 3V3 lead off, the card is fed through its protection diodes from
+  the bus lines: the C6 then failed USB enumeration (-71), and once up the card answered its init but its SCR read
+  failed CRC with the same bytes on every try.
 - **Battery time (estimate, ESP32-C6 datasheet v1.5).** The beacon's access point keeps the receiver on: about
   80-85 mA. The operator's 60 s on / 60 s off cycle averages ~41 mA plus the off minute's draw, so a 120 mAh cell
   lasts ~2.1-2.4 h, against ~1.2 h always on. Measuring it is open: a LiPo run timed to the last beacon.

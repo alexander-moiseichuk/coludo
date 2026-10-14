@@ -5,7 +5,7 @@
 //! on its own SD card, so the data survives the P4 and the P4's card. It replaces the Luckfox's recorderd.
 //!
 //! - The link: UART1 RX on GPIO17 (the board's RX pin) at 921600 baud, 8N1; TX + GND only from the P4.
-//! - The card: SPI2, SCK GPIO19, MOSI GPIO20, MISO GPIO14, CS GPIO18, FAT at `/sd`.
+//! - The card: SPI2, SCK GPIO18, MOSI GPIO19, MISO GPIO15, CS GPIO20, FAT at `/sd`.
 //! - The lines are split as recorderd split them (crates/recorder_wire `split`), and filed where the P4's ring_saver
 //!   files them on its own card (spec §3.10), so the same tools read both cards and the files match byte for byte: a
 //!   stream line to `<session>/recordings/<routing>`, a session.csv line to the session's `session.csv` and the
@@ -82,8 +82,11 @@ const LINE_LIMIT: usize = 8 << 10;
 /// How often an unmounted card is tried again.
 const MOUNT_EVERY: Duration = Duration::from_secs(10);
 
-/// The card's SPI pins: SCK, MOSI, MISO, CS (the SuperMini's right header).
-const CARD_PINS: [i32; 4] = [19, 20, 14, 18];
+/// The card's SPI pins: SCK, MOSI, MISO, CS. The SuperMini's right header in the 3.3 V module's own pin order (3V3,
+/// CS 20, MOSI 19, SCK 18, MISO 15), so the module solders on pin to pin; its GND is wired apart (GPIO14 faces it, and a
+/// GPIO is no ground). GPIO15 is a strapping pin only with EFUSE_JTAG_SEL_ENABLE burned, and the module's 10 kOhm pull-up
+/// then picks USB-JTAG, the default.
+const CARD_PINS: [i32; 4] = [18, 19, 15, 20];
 
 /// The card-init log tags the first mount raises (ESP-IDF's names), so the console shows each SPI command and the
 /// card's answer: the commands with their responses, the host's set-up and clock, an R1 error, the failed step.
