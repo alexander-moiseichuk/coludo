@@ -2,8 +2,8 @@
 //!
 //! The attitude filter on the board: the pure helpers its caller needs around [`super::Attitude::tick`].
 //!  * [`assemble`] -- what one step reads from the databoard (plan B `_tick`'s reads): the fused `rate`, `accel` and
-//!    `mag` through the marks map, the fused `attitude`'s winner with its rank, and whether a source below the filter
-//!    is fresh to take over from it;
+//!    `mag` through the marks map, the GNSS `course` and `speed`, the fused `attitude`'s winner with its rank, and
+//!    whether a source below the filter is fresh to take over from it;
 //!  * [`Pace`] -- which control ticks step the filter: every `period_ms` on the uptime clock (plan B's task slept its
 //!    period between ticks);
 //!  * [`on_backup`] -- the health flag `attitude-backup` (plan B cc_client `_on_backup`): whether a channel's fused
@@ -27,6 +27,11 @@ pub struct Quantities<'board> {
     pub acceleration: Option<&'board Parameter<[f32; 3]>>,
     /// `mag`: the calibrated magnetometer in the marks frame (the BMM350); None when no provider of it came up.
     pub magnetic: Option<&'board Parameter<[f32; 3]>>,
+    /// `course`: the GNSS ground-track course in degrees, the yaw's absolute reference; None when no provider of it
+    /// came up.
+    pub course: Option<&'board Parameter<f32>>,
+    /// `speed`: the GNSS ground speed in m/s, which gates the course; None when no provider of it came up.
+    pub speed: Option<&'board Parameter<f32>>,
     /// `attitude`: the fused attitude the filter publishes into, its samples packed as [`Orientation::to_sample`]
     /// packs them. Never absent: the filter's own registration made it, and a filter with none does not run (plan B's
     /// setup fails).
@@ -34,9 +39,10 @@ pub struct Quantities<'board> {
 }
 
 /// The readings of one filter step at `now_us` (plan B `_tick`'s reads): the fused `rate`, `accel` and `mag` mapped
-/// from the marks frame ([`Readings::from_marks`]); the fused `attitude`'s fresh winner with the rank its source
-/// registered at; and whether a source ranked below `rank`, the filter's own ([`super::Settings::rank`]), is fresh.
-/// The GNSS course and ground speed stay absent until the GNSS is ported.
+/// from the marks frame ([`Readings::from_marks`]); the GNSS `course` and ground `speed`, the yaw's pull toward the
+/// track (without them the heading is the gyro's alone, relative to how the board sat at power-up, and the
+/// magnetometer's offset is never learned); the fused `attitude`'s fresh winner with the rank its source registered
+/// at; and whether a source ranked below `rank`, the filter's own ([`super::Settings::rank`]), is fresh.
 ///
 /// Each is the databoard's fused read: the first source fresh within the quantity's shared window, in rank order,
 /// never extrapolated and, for a vector, never reconciled. So the BMI323 carries `rate` and `accel` the moment the
@@ -46,6 +52,7 @@ pub struct Quantities<'board> {
 /// `now_us` is read after the tick's pushes: the databoard takes a push stamped after it as not fresh.
 pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64) -> Readings {
     let fresh = |parameter: Option<&Parameter<[f32; 3]>>| Some(parameter?.read(now_us)?.value);
+    let scalar = |parameter: Option<&Parameter<f32>>| Some(parameter?.read(now_us)?.value);
     let attitude = quantities.attitude;
     let fused = attitude.read(now_us).and_then(|winner| {
         Some(Fused {
@@ -56,6 +63,8 @@ pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64) -> Readings {
     Readings {
         fused,
         backup_fresh: attitude.fresh_below(rank, now_us),
+        course: scalar(quantities.course),
+        ground_speed: scalar(quantities.speed),
         ..Readings::from_marks(
             fresh(quantities.rate),
             fresh(quantities.acceleration),

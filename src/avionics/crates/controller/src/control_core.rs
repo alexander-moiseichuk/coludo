@@ -251,7 +251,7 @@ impl FilterDuty {
             return None;
         };
         log::info!(
-            "{} :: every {} ms at rank {}, reading rate, accel and mag",
+            "{} :: every {} ms at rank {}, reading rate, accel, mag, course and speed",
             setup.name,
             setup.settings.period_ms,
             setup.settings.rank
@@ -263,6 +263,8 @@ impl FilterDuty {
                 rate: topology.vector("rate"),
                 acceleration: topology.vector("accel"),
                 magnetic: topology.vector("mag"),
+                course: topology.scalar("course"),
+                speed: topology.scalar("speed"),
                 attitude,
             },
             pace: Pace::new(setup.settings.period_ms, tick_us),

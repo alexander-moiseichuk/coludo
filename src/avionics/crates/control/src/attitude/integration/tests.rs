@@ -18,8 +18,8 @@ const STEP_US: u64 = 20_000;
 const TICK_US: u64 = 10_000;
 
 /// A v1.x board's quantities as the topology registers them, at config_default's ranks and timeouts: `rate` and
-/// `accel` from the LSM6DSO32 (p0) and the BMI323 (p1), 20 ms; `mag` from the BMM350, 500 ms; `attitude` from the
-/// filter (p1) and the SEN0253's BNO055 (p2), 40 ms.
+/// `accel` from the LSM6DSO32 (p0) and the BMI323 (p1), 20 ms; `mag` from the BMM350, 500 ms; `course` and `speed`
+/// from the GNSS, 500 ms; `attitude` from the filter (p1) and the SEN0253's BNO055 (p2), 40 ms.
 struct Board {
     /// `rate`, degrees per second in the marks frame.
     rate: Parameter<[f32; 3]>,
@@ -27,6 +27,10 @@ struct Board {
     acceleration: Parameter<[f32; 3]>,
     /// `mag`, in the marks frame.
     magnetic: Parameter<[f32; 3]>,
+    /// `course`, degrees.
+    course: Parameter<f32>,
+    /// `speed`, m/s.
+    speed: Parameter<f32>,
     /// `attitude`, (heading, roll, pitch) degrees.
     attitude: Parameter<[f32; 3]>,
 }
@@ -38,8 +42,13 @@ impl Board {
             rate: Parameter::new("rate"),
             acceleration: Parameter::new("accel"),
             magnetic: Parameter::new("mag"),
+            course: Parameter::new("course"),
+            speed: Parameter::new("speed"),
             attitude: Parameter::new("attitude"),
         };
+        for parameter in [&mut board.course, &mut board.speed] {
+            parameter.add_source("gnss", 0, 500, false).unwrap();
+        }
         for parameter in [&mut board.rate, &mut board.acceleration] {
             parameter.add_source("imu_lsm6dso32", 0, 20, false).unwrap();
             parameter.add_source("imu_bmi323", 1, 20, false).unwrap();
@@ -56,8 +65,16 @@ impl Board {
             rate: Some(&self.rate),
             acceleration: Some(&self.acceleration),
             magnetic: Some(&self.magnetic),
+            course: Some(&self.course),
+            speed: Some(&self.speed),
             attitude: &self.attitude,
         }
+    }
+
+    /// The GNSS at `now_us` reading the ground track `course` (degrees) at `speed` (m/s).
+    fn gnss(&self, course: f32, speed: f32, now_us: u64) {
+        self.course.writer("gnss").expect("unclaimed").push(course, now_us);
+        self.speed.writer("gnss").expect("unclaimed").push(speed, now_us);
     }
 }
 
@@ -163,12 +180,14 @@ fn a_step_reads_the_fused_inputs_mapped_from_the_marks() {
         "the half turn, negated into gravity"
     );
     assert_eq!(readings.magnetic, Some([4.0, -5.0, -6.0]));
-    assert_eq!(
-        (readings.course, readings.ground_speed),
-        (None, None),
-        "no GNSS until it is ported"
-    );
+    assert_eq!((readings.course, readings.ground_speed), (None, None), "no fix yet");
     assert_eq!((readings.fused, readings.backup_fresh), (None, false));
+    board.gnss(90.0, 14.0, 2_000);
+    let tracked = assemble(&board.quantities(), 1, 5_000);
+    assert_eq!((tracked.course, tracked.ground_speed), (Some(90.0), Some(14.0)));
+    // NEGATIVE: past the GNSS's 500 ms window the track is absent, never extrapolated
+    let lost = assemble(&board.quantities(), 1, 502_001);
+    assert_eq!((lost.course, lost.ground_speed), (None, None));
     // NEGATIVE: past the IMUs' 20 ms window the gyro and the accelerometer are absent, never extrapolated, while the
     // magnetometer's 500 ms window still holds
     let later = assemble(&board.quantities(), 1, 21_001);
@@ -184,6 +203,36 @@ fn a_step_reads_the_fused_inputs_mapped_from_the_marks() {
     let readings = assemble(&no_gyro, 1, 5_000);
     assert_eq!(readings.rate, None);
     assert_eq!(readings.acceleration, Some([-0.1, 0.2, 0.9]));
+    // NEGATIVE: a board with no GNSS has no track, the rest unaffected
+    let no_gnss = Quantities {
+        course: None,
+        speed: None,
+        ..board.quantities()
+    };
+    let readings = assemble(&no_gnss, 1, 5_000);
+    assert_eq!((readings.course, readings.ground_speed), (None, None));
+    assert_eq!(readings.magnetic, Some([4.0, -5.0, -6.0]));
+}
+
+#[test]
+fn the_heading_follows_the_gnss_track() {
+    // the filter boots at heading 0 whatever way the board points; the GNSS track at 90 above the course gate pulls
+    // the heading onto it (the yaw's only absolute reference: on the board it was never read until 2026-10-14)
+    let heading = |speed: Option<f32>| {
+        let mut thread = Thread::new(Board::new());
+        let parts = |board: &Board, now_us: u64| {
+            level(board, now_us);
+            if let Some(speed) = speed {
+                board.gnss(90.0, speed, now_us);
+            }
+        };
+        thread.steps(250, &parts).published.expect("published").heading
+    };
+    assert!(close(heading(Some(14.0)), 90.0, 0.5), "{}", heading(Some(14.0)));
+    // NEGATIVE: below the 5 m/s course gate (on the pad, a hover) the track is no heading: the gyro's 0 stays
+    assert!(close(heading(Some(3.0)), 0.0, 1e-3), "{}", heading(Some(3.0)));
+    // NEGATIVE: no GNSS at all, the gyro's 0 stays
+    assert!(close(heading(None), 0.0, 1e-3), "{}", heading(None));
 }
 
 #[test]
@@ -258,7 +307,6 @@ fn the_field_maps_to_the_magnetic_heading() {
 
 #[test]
 fn a_nan_magnetometer_is_ignored() {
-    // the GNSS track, which the step does not read until the GNSS is ported, added by hand as it will come
     let learn = |field: Option<[f32; 3]>| {
         let board = Board::new();
         let mut filter = Attitude::new(settings(), 0);
@@ -268,12 +316,8 @@ fn a_nan_magnetometer_is_ignored() {
             if let Some(field) = field {
                 push(&board.magnetic, "mag_bmm350", field, now_us);
             }
-            let readings = Readings {
-                course: Some(90.0),
-                ground_speed: Some(14.0),
-                ..assemble(&board.quantities(), 1, now_us)
-            };
-            filter.tick(now_us, &readings);
+            board.gnss(90.0, 14.0, now_us);
+            filter.tick(now_us, &assemble(&board.quantities(), 1, now_us));
         }
         filter
     };
