@@ -6,6 +6,9 @@
 //! and its angles (the state, the magnetic offset, the published attitude) within the plan's 0.1 degree, the short
 //! way around (see tests/grouped). Inputs are plan B's integer units, read here exactly as the builder states:
 //! rate_cd_s / 100 degrees per second, accel_cg / 100 g, course_cd / 100 degrees, the fused value / 100 degrees.
+//!
+//! Except the angles of the [`KINEMATIC`] scenarios: the port's kinematics part from plan B's by design (2026-10-14),
+//! and there only the flags compare.
 
 mod grouped;
 
@@ -16,6 +19,30 @@ use serde_json::{Value, json};
 /// plan B's filter over test_attitude.py's blocks, the magnetic yaw, the porting corners, config_default and
 /// seeded flights.
 const ATTITUDE: &str = include_str!("../../../golden/attitude.json");
+
+/// The scenarios whose ANGLES part from plan B by design (crates/control attitude `rotation`, 2026-10-14): plan B added
+/// the gyro's body rates to the Euler angles and blended roll and pitch apart and unwrapped, where the port turns a
+/// quaternion and tilts the shortest way. The two agree to the fixture's 0.1 degree for a turn about one axis from
+/// level and a pull on one angle; these scenarios turn about several axes at once (the seeded flights, the long free
+/// run), turn about a banked yaw axis, pull roll and pitch together, or pull across +-180 (169 degrees apart on the
+/// long free run, 4.4 on a seeded flight). Their flags, blind and seeded states, magnetic latch and log lines still
+/// compare exactly, every tick; their angles are the unit tests' (attitude/rotation.rs and attitude/tests.rs: a
+/// banked turn, a spin at a vertical nose, the short way round, the long single-axis run).
+const KINEMATIC: [&str; 13] = [
+    "a_long_free_run_is_exact",
+    "seeded_flight_00",
+    "seeded_flight_01",
+    "seeded_flight_02",
+    "seeded_flight_03",
+    "seeded_flight_04",
+    "seeded_flight_05",
+    "free_run_integrates_the_gyro",
+    "a_silent_primary_hands_over_to_the_gyro",
+    "the_gravity_band_edges",
+    "the_accel_pull_goes_the_long_way_round",
+    "the_turn_gate_holds_the_bank",
+    "the_accel_correction_is_throttled",
+];
 
 /// The fixture, loaded.
 fn fixture() -> Grouped {
@@ -47,6 +74,7 @@ fn readings(input: &Value) -> Readings {
         magnetic: vector(&input["mag"], 1.0),
         fused,
         backup_fresh: input["backup"].as_bool().expect("backup is a flag"),
+        ballistic: false,
     }
 }
 
@@ -121,6 +149,12 @@ fn replay_adjusted(
             let input = &step["in"];
             let tick = filter.tick(now_us(input), &adjust(readings(input)));
             let answer = answers(&filter, &tick);
+            if KINEMATIC.contains(&name) {
+                let flags = |out: &Value| json!({"exact": out["exact"]});
+                return fixture
+                    .check(&format!("{name} step {index}"), &flags(&step["out"]), &flags(&answer))
+                    .err();
+            }
             largest = largest.max(worst(&step["out"]["degrees"], &answer["degrees"]));
             fixture
                 .check(&format!("{name} step {index}"), &step["out"], &answer)
@@ -256,16 +290,22 @@ fn every_scenario_ends_inspecting_as_plan_b() {
         owed_keys.sort();
         answered_keys.sort();
         assert_eq!(owed_keys, answered_keys, "{name}");
+        let kinematic = KINEMATIC.contains(&name);
         for (key, value) in owed {
             if value.is_boolean() {
                 assert_eq!(&answered[key], value, "{name} {key}");
-            } else {
+            } else if !kinematic {
                 let error = around(inspected(value), inspected(&answered[key]));
                 assert!(error <= 0.1, "{name} {key}: plan B {value}, the port {}", answered[key]);
             }
         }
         // the attitude.csv row is the same state in integer centidegrees and 0/1 flags
         let row = filter.row();
+        assert_eq!(row[3], i32::from(owed["free_running"] == true), "{name}");
+        assert_eq!(row[4], i32::from(owed["mag_known"] == true), "{name}");
+        if kinematic {
+            continue;
+        }
         let centidegrees = |key: &str| inspected(&owed[key]) * 100.0;
         assert!(
             around(f64::from(row[0]) / 100.0, centidegrees("heading") / 100.0) <= 0.1,
@@ -279,8 +319,6 @@ fn every_scenario_ends_inspecting_as_plan_b() {
             (f64::from(row[2]) - centidegrees("pitch")).abs() <= 10.0,
             "{name} {row:?}"
         );
-        assert_eq!(row[3], i32::from(owed["free_running"] == true), "{name}");
-        assert_eq!(row[4], i32::from(owed["mag_known"] == true), "{name}");
         assert!(
             around(f64::from(row[5]) / 100.0, centidegrees("mag_offset") / 100.0) <= 0.1,
             "{name} {row:?}"
@@ -297,11 +335,8 @@ fn a_wrong_pull_fails() {
     config["corr_shift"] = json!(3);
     let (failures, _) = replay(&fixture, case, &config);
     assert!(failures.len() > 30, "{} failures", failures.len());
-    // ...and so does a turn gate one degree per second too loose, which pulls a coordinated turn flat
-    let case = scenario(&fixture, "the_turn_gate_holds_the_bank");
-    let mut config = case["init"]["config"].clone();
-    config["turn_gate_deg_s"] = json!(30);
-    assert!(!replay(&fixture, case, &config).0.is_empty());
+    // (a turn gate too loose, which pulls a coordinated turn flat: attitude/tests.rs the_turn_gate_holds_the_bank,
+    // its scenario's angles being kinematic here)
 }
 
 #[test]
@@ -348,31 +383,6 @@ fn the_withhold_hands_over_and_never_mirrors_a_backup() {
 }
 
 #[test]
-fn a_gyro_off_by_a_fraction_of_a_percent_fails() {
-    // NEGATIVE: the 20 s free run sweeps 600 degrees and plan B integrates it exactly, so 0.1 degree resolves a gyro
-    // step wrong by 0.02 %: a rate 0.05 % high fails it, where the scenarios bounded by a pull let 0.4 % through
-    let fixture = fixture();
-    let case = scenario(&fixture, "a_long_free_run_is_exact");
-    assert_eq!(
-        case["steps"].as_array().unwrap().len(),
-        1001,
-        "a mirror, then 1000 ticks"
-    );
-    let scaled = |factor: f32| {
-        move |readings: Readings| Readings {
-            rate: readings.rate.map(|rate| rate.map(|axis| axis * factor)),
-            ..readings
-        }
-    };
-    let config = &case["init"]["config"];
-    let (failures, _, _) = replay_adjusted(&fixture, case, config, scaled(1.0005));
-    assert!(!failures.is_empty(), "a gyro 0.05 % high passed");
-    let (failures, worst, _) = replay_adjusted(&fixture, case, config, scaled(1.0));
-    assert!(failures.is_empty(), "{failures:?}");
-    assert!(worst < 0.01, "f32 over 1000 ticks drifts {worst} degree");
-}
-
-#[test]
 fn the_fixture_pins_the_orders_plan_b_keeps() {
     let fixture = fixture();
     let outs = |name: &str| -> Vec<Value> {
@@ -395,8 +405,26 @@ fn the_fixture_pins_the_orders_plan_b_keeps() {
         assert_eq!(out["exact"]["mag_known"], false);
     }
     assert_eq!(track[7]["exact"]["mag_known"], true);
-    // the accelerometer pull goes the long way round: from roll 170 toward gravity at -170 it lands near 85
+    // plan B's accelerometer pull went the long way round: from roll 170 toward gravity at -170 it landed near 85 (the
+    // port's takes the short way: attitude/tests.rs the_accel_pull_takes_the_short_way_round)
     let long_way = outs("the_accel_pull_goes_the_long_way_round");
     let roll = long_way[1]["degrees"]["published"][1].as_f64().unwrap();
     assert!((roll - 85.0).abs() < 0.1, "{roll}");
+}
+
+#[test]
+fn the_kinematic_scenarios_are_the_ones_that_turn_or_pull_off_one_axis() {
+    // NEGATIVE: every other scenario still holds the plan's 0.1 degree: the list is the deviation, no wider
+    let fixture = fixture();
+    let names: Vec<&str> = fixture
+        .cases("scenarios")
+        .iter()
+        .map(|case| case["name"].as_str().unwrap())
+        .collect();
+    for kinematic in KINEMATIC {
+        assert!(names.contains(&kinematic), "{kinematic}: no such scenario");
+    }
+    // the other 17 of the 30 (mirroring, blind, withheld, gaps, the track and the magnetometer, the level gate, a
+    // single-axis pull, config_default's pad and slow roll) compare every angle, every tick
+    assert_eq!(names.len() - KINEMATIC.len(), 17, "{names:?}");
 }

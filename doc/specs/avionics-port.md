@@ -1195,7 +1195,22 @@ board can no longer hang silently.
   restores it; its instruction is worded on the executor.
 - **The attitude filter** steps on the control thread every `period_ms`, after the requests and before the stage
   machine; `inspect/probe attitude`, `attitude-backup` and `attitude-blind` as plan B; the executor reads it through
-  atomics.
+  atomics. **Its kinematics left plan B on 2026-10-14** (crates/control `attitude/rotation.rs`; the plan B -> Rust
+  audit and `hitl_host --no-attitude`, the first flights with the filter as the only attitude):
+  - a quaternion the gyro's BODY rates turn, the track and magnetometer pulls turn about the vertical, the
+    accelerometer pull tilts the shortest way. Plan B added the body rates to the Euler angles: right only about a
+    level body, so a banked turn drifted its pitch at the turn rate times the sine of the bank while the turn gate held
+    the accelerometer off, and a spinning boost scrambled all three angles within a second (a 6-DoF boost looped at 56
+    m on it). Its HITL sim published Euler rates for a gyro and the true attitude at p0, which hid both;
+  - no accelerometer pull in BOOSTING: under thrust, then drag, the accelerometer reads no gravity, and plan B's pull
+    fired whenever the magnitude passed through the 0.7-1.3 g band (the burn's tail, the coast), snapping the estimate
+    back to nose-up while the stack pitched over;
+  - the GNSS course and speed reach it (the port had left them out, so the heading was the gyro's from power-up).
+  The pulls' strengths, gates and orders, mirroring, blind and the magnetic latch are plan B's; the golden fixture
+  still compares every flag on every tick, and every angle of the 17 scenarios that turn about one axis from level.
+  SITL, TMS-8's config, F15, `--no-attitude` (the sim's sensors as a real airframe's): the lean boost on the filter
+  alone holds the 6-DoF stack vertical (path minimum 89.6 deg, lean at most 0.6), and the glide tracks the truth to 1-2
+  deg at noise 0 (the 6-DoF flight lands in the zone, 11.6 m), a few degrees at the sim's noise 0.1.
 - **The video** starts on the rod trigger: armed, and the fused +x >= 0.87 g for 8 looks (2 s); armed alone on a board
   with no accelerometer.
 - **Diagnostics:** `i2c read` (register facts), `inspect databoard` / `stats databoard` (plan B's object), `inspect

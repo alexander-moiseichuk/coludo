@@ -76,7 +76,9 @@ _MAG_DECLINATION_DEG: float = 17.0  # declination + mounting as one constant, th
 _SERVO_NEUTRAL_DEG: float = 90.0
 _MAX_CATCHUP_S: float = 0.5  # a scheduling stall's catch-up cap (plan B hitl.py)
 _TIMEOUT_S: float = 150.0  # from ignition, plan B hitl_run's cap
+_HANDOVER_S: float = 0.5  # --no-attitude: the separation's window, the true attitude handed to the filter
 _SITL_PAD_S: float = 2.0  # the SITL's pad before ignition, physics seconds: the stage machine's windows fill
+_FILTER_PAD_S: float = 15.0  # ...with --no-attitude: the board's filter converges on the rod, as minutes there do
 _LOCKSTEP_WAIT_S: float = 2.0  # how long a lockstep frame waits for its answer before the run stalls
 _GATE_S: float = 120.0  # how long the board gets to join Wi-Fi and answer a frame
 _QUIET_S: float = 3.0  # after an answer that is no reply: the board finishes a long one (get-config, ~0.8 s)
@@ -276,10 +278,17 @@ class _Sim:
         self.clock: float | None = None  # lockstep: the frames' clock (pad included), else the physics time
         self.rows: dict = {}  # lockstep --record: stream -> [(t_s, cells...)]
         self.wall_start: float | None = None
-        # --no-attitude: the sim never publishes the attitude, so the board's own filter flies from power-up on the sim's
-        # gyro, accelerometer, magnetometer and GNSS track (with the sim's attitude at priority 0 the filter only mirrors
-        # it, which hid a filter that never read the GNSS course until 2026-10-14)
+        # --no-attitude: the sim never publishes the attitude, so the board's own filter flies from power-up on the
+        # sim's gyro, accelerometer, magnetometer and GNSS track (with the sim's attitude at priority 0 the filter only
+        # mirrors it, which hid a filter that never read the GNSS course until 2026-10-14)
         self.drop_attitude = getattr(args, 'no_attitude', False)
+        # ...and its sensors then read as a real airframe's (the filter flies on them alone): the pad's and the
+        # vertical boost's 1 g on the nose axis and the gyro's BODY rates. The sim's attitude JUMPS at the separation
+        # (sim_model begin_glide), which no gyro rate can follow: a real gyro sees that turn as it happens, so the
+        # filter is handed the true attitude for _HANDOVER_S (it mirrors it, a perfect gyro through the separation),
+        # then flies alone again
+        self.physical = self.drop_attitude
+        self.handover_until: float | None = None  # the separation's window, sim time
         self.drop_gnss = False
         self.running = True
 
@@ -387,6 +396,26 @@ class _Sim:
                 self.sim_time += fixed
             self.publish()
 
+    def separating(self, t: float) -> bool:
+        """Whether --no-attitude hands the filter the true attitude now: the separation's window (see __init__)."""
+        return self.handover_until is not None and t < self.handover_until
+
+    def body_rates(self, t: float) -> list:
+        """
+        The gyro's reading in the marks frame as a real one measures it: the BODY rates of the sim's Euler rates
+        (p = roll' - heading' sin(pitch), q = pitch' cos(roll) + heading' cos(pitch) sin(roll),
+        r = -pitch' sin(roll) + heading' cos(pitch) cos(roll)), not the Euler rates themselves.
+        """
+        body = self.body
+        if body.gliding and self.handover_until is None:
+            self.handover_until = t + _HANDOVER_S
+        roll, pitch = math.radians(body.roll), math.radians(body.pitch)
+        heading_rate = body.yaw_rate
+        p = body.roll_rate - heading_rate * math.sin(pitch)
+        q = body.pitch_rate * math.cos(roll) + heading_rate * math.cos(pitch) * math.sin(roll)
+        r = -body.pitch_rate * math.sin(roll) + heading_rate * math.cos(pitch) * math.cos(roll)
+        return [p, -q, -r]
+
     def publish(self) -> None:
         """The noised sensors as one SENSORS frame (plan B hitl.py _publish), in the Rust databoard's units."""
         body, noise, t = self.body, self.args.noise, self.sim_time
@@ -402,13 +431,16 @@ class _Sim:
             accel = [noisy(math.sin(pitch_rad), noise, -200.0, 200.0), 0.0,
                      noisy(body.accel_g * math.cos(pitch_rad), noise, -200.0, 200.0)]
         else:
-            accel[self.axis] = noisy(body.accel_g, noise, -200.0, 200.0)
+            # the nose axis (the marks' x) when the filter flies alone: on the rod a real IMU reads 1 g along it
+            accel[0 if self.physical else self.axis] = noisy(body.accel_g, noise, -200.0, 200.0)
         heading = noisy(body.heading % 360.0, noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
         roll = noisy(body.roll, noise, -180.0, 180.0)
         pitch = noisy(body.pitch, noise, -180.0, 180.0)
         # the marks frame too, by the right-hand rule: about y left the nose goes DOWN, about z up it goes LEFT
         # (crates/control attitude::rate_from_marks maps it back to roll, pitch, yaw)
         rates = [body.roll_rate, -body.pitch_rate, -body.yaw_rate]
+        if self.physical:
+            rates = self.body_rates(t)
         stack = self.stack if self.stack is not None and not body.gliding else None
         if stack is not None:
             # the 6-DoF's own: the specific force and the body rates are the marks frame already; the Euler angles
@@ -425,7 +457,8 @@ class _Sim:
         fields = {
             'accel': self.faults.apply('accel', accel, t),
             'rate': [noisy(rate, noise, -2000.0, 2000.0) for rate in rates],
-            'attitude': None if self.drop_attitude else self.faults.apply('attitude', [heading, roll, pitch], t),
+            'attitude': None if self.drop_attitude and not self.separating(t)
+            else self.faults.apply('attitude', [heading, roll, pitch], t),
             'altitude': self.faults.apply('baro', altitude, t),
             'elevation': self.faults.apply('baro', elevation, t),
         }
@@ -685,11 +718,12 @@ def _sitl(args: argparse.Namespace) -> int:
         sim.address = (args.ip, args.sitl_port)
         time.sleep(0.5)  # the binary binds its socket
         print('SESSION sitl', args.motor, 'noise', args.noise, 'wind', args.wind)
-        outcome = sim.lockstep(_SITL_PAD_S)
+        pad_s = _FILTER_PAD_S if args.no_attitude else _SITL_PAD_S
+        outcome = sim.lockstep(pad_s)
         print('CLOCK sim=%.2f frames=%d answers=%d' % (sim.sim_time, sim.seq, sim.answers))
         # the scenario's score by the physics: the miss, the zone, the time from ignition to DONE
         miss, inside = landing(sim.body.position(), scenario['zone'])
-        print('LANDED miss=%.1f inside=%s aloft=%.1f apogee=%.0f' % (miss, inside, sim.sim_time - _SITL_PAD_S,
+        print('LANDED miss=%.1f inside=%s aloft=%.1f apogee=%.0f' % (miss, inside, sim.sim_time - pad_s,
                                                                       sim.apogee))
         if sim.stack is not None:
             burn = sim.burn

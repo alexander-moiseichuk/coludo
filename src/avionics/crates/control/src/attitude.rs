@@ -66,6 +66,13 @@
 //! and [`on_backup`] answers the health flag `attitude-backup`.
 //!
 //! Deliberate differences from plan B, besides the mounting map above:
+//!  * the KINEMATICS (2026-10-14, [`rotation`]): the orientation is a quaternion the gyro's body rates turn, the track
+//!    and magnetometer pulls turn about the vertical, and the accelerometer pull tilts the shortest way. Plan B added
+//!    the body rates to the Euler angles, right only about a level body: with a real gyro (body rates; its HITL sim
+//!    published Euler rates) a banked turn drifted its pitch by the turn rate times the sine of the bank while the turn
+//!    gate held the accelerometer off (a 20-degree-banked endgame orbit: +25 degrees of pitch), and a boost's spin at
+//!    a vertical nose scrambled all three within a second. The pulls' strengths, gates and orders are plan B's, and
+//!    the golden fixture still holds every scenario that turns about one axis from level;
 //!  * attitude.csv takes a row on every publish: `telemetry_ms` is read but thins nothing. Plan B decimated the
 //!    stream to it (10 rows a second at its default), a MicroPython-era economy; here every measured sample is reported
 //!    (doc/specs/avionics-port.md, "Measured -> reported");
@@ -85,14 +92,14 @@
 //!    what arrives and raises where it is used. Its truncation of the band edges and gates to the centi-unit
 //!    (int(0.29 * 100) is 28) is gone too: the config number is used as written.
 //!
-//! Kept although it is a hazard: the accelerometer pull is NOT wrapped, as plan B's fixed.blend_cd is not. Near
-//! inverted, an estimate of roll 170 and a gravity vector at roll -170 are 20 degrees apart the short way, but the
-//! pull takes the error the long way, -340: at 1/4 per pull the published roll goes 85, 21, -27, -62, -89, -109,
-//! sweeping through wings-level instead of moving 20 degrees. It is pinned by the golden fixture and a unit test, and
-//! raised with the operator as a plan B defect; wrapping it would be a deliberate, documented deviation.
+//! Gone with the kinematics: plan B's accelerometer pull was NOT wrapped (fixed.blend_cd), so near inverted an estimate
+//! of roll 170 and a gravity vector at roll -170 (20 degrees apart) swept through wings-level, the long way. The tilt
+//! takes the short way.
 
 mod integration;
+mod rotation;
 
+use rotation::Rotation;
 use serde_json::{Value, json};
 
 pub use integration::{Pace, Quantities, assemble, on_backup};
@@ -307,6 +314,11 @@ pub struct Readings {
     pub fused: Option<Fused>,
     /// Whether a source ranked BELOW the filter is fresh (the BNO055 backup): a blind filter then withholds.
     pub backup_fresh: bool,
+    /// The stage is BOOSTING: under thrust, then drag, the accelerometer reads no gravity, so it pulls nothing and the
+    /// gyro alone carries the attitude to the separation. Plan B pulled whenever the magnitude passed through the
+    /// gravity band, which a burn's tail and a coast's drag both do: each pull snapped the estimate back toward nose
+    /// straight up while the stack pitched over (a 6-DoF boost: 86 degrees estimated against 35).
+    pub ballistic: bool,
 }
 
 impl Readings {
@@ -341,6 +353,7 @@ impl Readings {
             magnetic: vector(self.magnetic),
             fused,
             backup_fresh: self.backup_fresh,
+            ballistic: self.ballistic,
         }
     }
 }
@@ -538,14 +551,11 @@ pub struct Attitude {
     correction_pull: f32,
     /// The pull toward the GNSS track per tick, 2^-course_shift.
     course_pull: f32,
-    /// The roll in degrees: right wing down positive. Wrapped to [-180, 180) at the end of a tick that publishes
-    /// (and a tick that withholds is blind, so it moves neither roll nor pitch); within a tick the gyro step and the
-    /// accelerometer pull act on it unwrapped, as plan B's do.
-    roll: f32,
-    /// The pitch in degrees, nose up positive; wrapped like the roll.
-    pitch: f32,
-    /// The yaw (the heading) in degrees, [0, 360) after every change.
-    yaw: f32,
+    /// The orientation the gyro turns and the pulls correct (see [`rotation`]).
+    rotation: Rotation,
+    /// The attitude it reads as: the heading [0, 360), the roll [-180, 180), the pitch [-90, 90] after a free-running
+    /// tick; a mirrored source's own angles, wrapped, after a mirroring one (plan B republished them as they came).
+    angles: Orientation,
     /// The magnetic reference and its learned offset.
     magnetic: MagneticYaw,
     /// Whether a source that outranks the filter has ever been mirrored. Until then the filter runs only on ticks
@@ -572,9 +582,12 @@ impl Attitude {
             settings,
             correction_pull: pull(settings.correction_shift),
             course_pull: pull(settings.course_shift),
-            roll: 0.0,
-            pitch: 0.0,
-            yaw: 0.0,
+            rotation: Rotation::LEVEL,
+            angles: Orientation {
+                heading: 0.0,
+                roll: 0.0,
+                pitch: 0.0,
+            },
             magnetic: MagneticYaw::new(
                 settings.magnetic_shift,
                 settings.magnetic_offset_shift,
@@ -596,11 +609,7 @@ impl Attitude {
 
     /// The filter's attitude as it stands after the last tick, whether that tick published it or withheld it.
     pub fn orientation(&self) -> Orientation {
-        Orientation {
-            heading: self.yaw,
-            roll: self.roll,
-            pitch: self.pitch,
-        }
+        self.angles
     }
 
     /// Whether the filter is BLIND: no fresh gyro for [`BLIND_CYCLES`] ticks. The health flag `attitude-blind`.
@@ -648,9 +657,6 @@ impl Attitude {
             }
             _ => return Tick { published: None, log },
         }
-        self.roll = wrap_signed(self.roll);
-        self.pitch = wrap_signed(self.pitch);
-        self.yaw = wrap_heading(self.yaw);
         Tick {
             published: Some(self.orientation()),
             log,
@@ -695,79 +701,76 @@ impl Attitude {
     /// Copy a source that outranks the filter (plan B `_mirror`), so the filter stays warm and the handover is
     /// seamless the moment that source stops. In practice the HITL sim's attitude.
     fn mirror(&mut self, orientation: Orientation) {
-        self.roll = orientation.roll;
-        self.pitch = orientation.pitch;
-        self.yaw = orientation.heading;
+        self.angles = Orientation {
+            heading: wrap_heading(orientation.heading),
+            roll: wrap_signed(orientation.roll),
+            pitch: wrap_signed(orientation.pitch),
+        };
+        self.rotation = Rotation::from_euler(orientation.heading, orientation.roll, orientation.pitch);
         self.seeded = true;
     }
 
-    /// Free-run one tick of `elapsed` seconds (plan B `_integrate`): gyro-integrate roll, pitch and yaw, pull the
-    /// yaw toward the track and the magnetometer, then re-anchor roll and pitch to the gravity vector.
+    /// Free-run one tick of `elapsed` seconds (plan B `_integrate`): turn the orientation by the gyro's body rates,
+    /// pull the heading toward the track and the magnetometer, then tilt toward the gravity vector.
     ///
-    /// The accelerometer pull fires ONLY when the gravity vector is trustworthy: inside the gravity band, NOT
-    /// turning (the yaw rate at or under the turn gate; with no gyro the gate is closed, so roll and pitch hold),
-    /// and at least `acceleration_period_ms` since the last check. A turn neither checks nor restarts that clock.
+    /// The accelerometer pull fires ONLY when the gravity vector is trustworthy: not ballistic (BOOSTING), inside the
+    /// gravity band, NOT turning (the yaw rate at or under the turn gate; with no gyro the gate is closed, so roll and
+    /// pitch hold), and at least `acceleration_period_ms` since the last check. A turn or a boost neither checks nor
+    /// restarts that clock.
     ///
-    /// Three orders are plan B's and each is pinned by the golden fixture: the track needs the course AND the ground
-    /// speed fresh (either alone is no track: plan B drops both); the magnetic level gate reads the roll and pitch as
-    /// they were BEFORE this tick's gyro step (plan B's `_magnetic_heading` runs before `blend_cd`); and the
-    /// accelerometer pull takes its error unwrapped, the long way round across +/-180 (see the module notes).
+    /// Plan B's orders are kept: the track needs the course AND the ground speed fresh (either alone is no track),
+    /// and the magnetic level gate reads the roll and pitch as they were BEFORE this tick's gyro step. Its kinematics
+    /// are not: it added the body rates to the Euler angles, and pulled roll and pitch unwrapped (see [`rotation`]).
     fn integrate(&mut self, elapsed: f32, now_us: u64, readings: &Readings) {
-        let mut deltas = [0.0_f32; 3];
+        let before = self.angles;
         let mut turning = true;
         if let Some(rate) = readings.rate {
-            deltas = rate.map(|axis| axis * elapsed);
+            self.rotation = self.rotation.turned(rate, elapsed);
             turning = rate[2].abs() > self.settings.turn_gate;
         }
-        self.yaw = wrap_heading(self.yaw + deltas[2]);
+        let (heading, ..) = self.rotation.euler();
+        let turned = wrap_heading(heading);
+        let mut yaw = turned;
         let tracking = match (readings.course, readings.ground_speed) {
             (Some(course), Some(speed)) if speed > self.settings.course_gate => Some(course),
             _ => None,
         };
         if let Some(course) = tracking {
-            self.yaw = wrap_heading(self.yaw + wrap_signed(course - self.yaw) * self.course_pull);
+            yaw = wrap_heading(yaw + wrap_signed(course - yaw) * self.course_pull);
         }
-        self.yaw = self
+        yaw = self
             .magnetic
-            .step(readings.magnetic, self.roll, self.pitch, tracking, self.yaw);
-        let mut target = None;
+            .step(readings.magnetic, before.roll, before.pitch, tracking, yaw);
+        self.rotation = self.rotation.yawed(wrap_signed(yaw - turned));
         let since_us = now_us.wrapping_sub(self.acceleration_us) as i64;
-        if !turning && since_us >= i64::from(self.settings.acceleration_period_ms) * 1000 {
+        if !turning && !readings.ballistic && since_us >= i64::from(self.settings.acceleration_period_ms) * 1000 {
             self.acceleration_us = now_us;
-            target = readings
-                .acceleration
-                .and_then(|acceleration| self.gravity(acceleration));
+            if let Some(gravity) = readings.acceleration.filter(|gravity| self.in_band(*gravity)) {
+                self.rotation = self.rotation.tilted(gravity, self.correction_pull);
+            }
         }
-        self.roll += deltas[0];
-        self.pitch += deltas[1];
-        if let Some((roll, pitch)) = target {
-            // unwrapped, as plan B's blend_cd: a plan B hazard kept on purpose (see the module notes)
-            self.roll += (roll - self.roll) * self.correction_pull;
-            self.pitch += (pitch - self.pitch) * self.correction_pull;
-        }
+        let (heading, roll, pitch) = self.rotation.euler();
+        self.angles = Orientation {
+            heading: wrap_heading(heading),
+            roll: wrap_signed(roll),
+            pitch,
+        };
     }
 
-    /// The (roll, pitch) the gravity vector reads, in degrees, or None outside the gravity band.
-    ///
-    /// The band is compared squared, so the common case takes no square root: roll = atan2(ay, az), pitch =
-    /// atan2(-ax, |(ay, az)|) (see the module notes for the frame).
-    fn gravity(&self, [x, y, z]: [f32; 3]) -> Option<(f32, f32)> {
-        let planar = y * y + z * z;
-        let magnitude = x * x + planar;
+    /// Whether the gravity vector's magnitude is inside the gravity band (compared squared: no square root).
+    fn in_band(&self, [x, y, z]: [f32; 3]) -> bool {
+        let magnitude = x * x + y * y + z * z;
         let (low, high) = (self.settings.gravity_low, self.settings.gravity_high);
-        if !(low * low <= magnitude && magnitude <= high * high) {
-            return None;
-        }
-        Some((y.atan2(z).to_degrees(), (-x).atan2(planar.sqrt()).to_degrees()))
+        low * low <= magnitude && magnitude <= high * high
     }
 
     /// The attitude.csv row ([`FIELDS`]): heading, roll and pitch in whole centidegrees, the `free` and `mag_known`
     /// flags as 0/1, and the magnetic offset in centidegrees. Integers only, as plan B records them.
     pub fn row(&self) -> [i32; 6] {
         [
-            heading_centidegrees(self.yaw),
-            signed_centidegrees(self.roll),
-            signed_centidegrees(self.pitch),
+            heading_centidegrees(self.angles.heading),
+            signed_centidegrees(self.angles.roll),
+            signed_centidegrees(self.angles.pitch),
             i32::from(self.free),
             i32::from(self.magnetic.known),
             heading_centidegrees(self.magnetic.offset),

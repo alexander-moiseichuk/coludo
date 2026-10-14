@@ -276,12 +276,12 @@ impl FilterDuty {
 
     /// One tick that woke at `now_us`: when its pace is due, one filter step on the readings fresh now, its
     /// transition line logged (a constant), its state handed on, and what it publishes pushed and recorded.
-    fn tick(&mut self, now_us: u64, hooks: &mut dyn Hooks) {
+    fn tick(&mut self, now_us: u64, ballistic: bool, hooks: &mut dyn Hooks) {
         if !self.pace.due(now_us) {
             return;
         }
         let read_us = hooks.now_us();
-        let readings = assemble(&self.quantities, self.rank, read_us);
+        let readings = assemble(&self.quantities, self.rank, read_us, ballistic);
         let step = self.attitude.tick(read_us, &readings);
         if let Some(line) = step.log {
             log::warn!("{} :: {line}", self.name);
@@ -451,7 +451,8 @@ impl ControlCore {
         if let Some(filter) = &mut self.filter
             && !done
         {
-            filter.tick(now_us, hooks);
+            // BOOSTING as the flight word stands before this tick's stage step: the accelerometer reads no gravity
+            filter.tick(now_us, writer.flight().stage == Stage::Boosting, hooks);
         }
         if let Some(sequencer) = &mut self.sequencer {
             sequencer.tick(now_us, slack_us, writer, hooks);

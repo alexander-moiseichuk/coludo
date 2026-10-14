@@ -296,16 +296,105 @@ fn never_seeded_and_no_accel_publishes_and_integrates_nothing() {
 
 #[test]
 fn free_run_integrates_the_gyro() {
-    let mut bench = Bench::seeded(0.0, 0.0, 0.0);
-    let readings = Readings {
-        rate: Some([10.0, -5.0, 20.0]),
-        acceleration: Some([0.0; 3]), // present but outside the band: no correction
+    // each body axis alone from level, a second: the angle it names moves by the rate
+    let turned = |rate: [f32; 3]| {
+        let mut bench = Bench::seeded(0.0, 0.0, 0.0);
+        let readings = Readings {
+            rate: Some(rate),
+            acceleration: Some([0.0; 3]), // present but outside the band: no correction
+            ..Readings::default()
+        };
+        bench.ticks(50, &readings).published.unwrap()
+    };
+    let rolled = turned([10.0, 0.0, 0.0]);
+    assert!(
+        (rolled.roll - 10.0).abs() < 1e-3 && rolled.pitch.abs() < 1e-3,
+        "{rolled:?}"
+    );
+    let pitched = turned([0.0, -5.0, 0.0]);
+    assert!(
+        (pitched.pitch + 5.0).abs() < 1e-3 && pitched.roll.abs() < 1e-3,
+        "{pitched:?}"
+    );
+    let yawed = turned([0.0, 0.0, 20.0]);
+    assert!(
+        close(yawed.heading, 20.0, 1e-3) && yawed.pitch.abs() < 1e-3,
+        "{yawed:?}"
+    );
+    // NEGATIVE: the rates together are one rotation, not plan B's sum of angles (roll 10, pitch -5, heading 20): the
+    // body rolling while it yaws turns part of the yaw into pitch
+    let together = turned([10.0, -5.0, 20.0]);
+    assert!((together.pitch + 5.0).abs() > 0.5, "not plan B's -5: {together:?}");
+}
+
+#[test]
+fn a_long_free_run_is_exact_and_a_gyro_off_by_a_fraction_of_a_percent_shows() {
+    // 20 s yawing level at 30 deg/s: 600 degrees, f32 over 1000 ticks within 0.01 (plan B's own long run, one axis)
+    let run = |factor: f32| {
+        let mut bench = Bench::seeded(0.0, 0.0, 0.0);
+        let yawing = Readings {
+            rate: Some([0.0, 0.0, 30.0 * factor]),
+            acceleration: Some([0.0; 3]),
+            ..Readings::default()
+        };
+        bench.ticks(1000, &yawing).published.unwrap().heading
+    };
+    assert!(close(run(1.0), 240.0, 0.01), "{}", run(1.0));
+    // NEGATIVE: a gyro 0.05 % high ends 0.3 degree off: the 0.1 resolves it
+    assert!(!close(run(1.0005), 240.0, 0.1), "{}", run(1.0005));
+}
+
+#[test]
+fn a_boost_pulls_nothing_from_the_accelerometer() {
+    // pitched over to 60 in the burn's tail, its 1 g along the nose: an accelerometer that reads nose straight up
+    let burn = Readings {
+        rate: Some([0.0; 3]),
+        acceleration: Some(gravity_at(0.0, 90.0)),
+        ballistic: true,
         ..Readings::default()
     };
-    let published = bench.ticks(50, &readings).published.unwrap();
-    assert!((published.roll - 10.0).abs() < 1e-3, "{published:?}");
-    assert!((published.pitch + 5.0).abs() < 1e-3);
-    assert!((published.heading - 20.0).abs() < 1e-3);
+    let mut bench = Bench::seeded(0.0, 0.0, 60.0);
+    let pitch = bench.ticks(20, &burn).published.unwrap().pitch;
+    assert!((pitch - 60.0).abs() < 1e-3, "{pitch}");
+    // NEGATIVE: the same reading out of BOOSTING is gravity, and pulls
+    let mut glide = Bench::seeded(0.0, 0.0, 60.0);
+    let pitch = glide
+        .ticks(
+            20,
+            &Readings {
+                ballistic: false,
+                ..burn
+            },
+        )
+        .published
+        .unwrap()
+        .pitch;
+    assert!(pitch > 85.0, "{pitch}");
+}
+
+#[test]
+fn a_banked_turn_keeps_its_pitch() {
+    // a coordinated turn's body rates (banked 20, nose down 6, 10 deg/s): the turn gate holds the accelerometer off,
+    // so the gyro alone carries the attitude round a 20 s orbit
+    let (bank, pitch, turn) = (20.0_f32, -6.0_f32, 10.0_f32);
+    let rate = [
+        -turn * pitch.to_radians().sin(),
+        turn * pitch.to_radians().cos() * bank.to_radians().sin(),
+        turn * pitch.to_radians().cos() * bank.to_radians().cos(),
+    ];
+    let mut bench = Bench::seeded(40.0, bank, pitch);
+    let orbit = Readings {
+        rate: Some(rate),
+        acceleration: Some(gravity_at(0.0, 0.0)), // the load along z: in the turn the accelerometer reads level
+        ..Readings::default()
+    };
+    let published = bench.ticks(1000, &orbit).published.unwrap();
+    assert!(close(published.heading, 240.0, 0.1), "{published:?}");
+    // NEGATIVE: plan B's sum of angles climbed the pitch by turn * sin(bank) * cos(pitch), 3.4 deg/s
+    assert!(
+        (published.roll - bank).abs() < 0.1 && (published.pitch - pitch).abs() < 0.1,
+        "{published:?}"
+    );
 }
 
 #[test]
@@ -358,18 +447,33 @@ fn the_accel_pulls_toward_gravity_and_a_high_g_reading_is_rejected() {
 
 #[test]
 fn the_turn_gate_holds_the_bank() {
-    // a coordinated turn: banked 40 with the accelerometer reading level and a 30 degree/s yaw rate
+    // a coordinated turn: banked 40 with the accelerometer reading level, its body rates at 30 degree/s
     let mut bench = Bench::seeded(0.0, 40.0, 0.0);
+    let (sine, cosine) = 40.0_f32.to_radians().sin_cos();
     let turning = Readings {
-        rate: Some([0.0, 0.0, 30.0]),
+        rate: Some([0.0, 30.0 * sine, 30.0 * cosine]),
         acceleration: Some(gravity_at(0.0, 0.0)),
         ..Readings::default()
     };
     bench.ticks(3, &turning);
-    assert_eq!(
-        bench.filter.orientation().roll,
-        40.0,
+    assert!(
+        (bench.filter.orientation().roll - 40.0).abs() < 1e-3,
         "NEGATIVE: the turn must not roll the estimate flat"
+    );
+    // NEGATIVE: a gate too loose (30 deg/s, over the turn's 23 about z) pulls the turn flat
+    let mut loose = Bench::new(Settings {
+        turn_gate: 30.0,
+        ..test_settings()
+    });
+    loose.tick(&Readings {
+        fused: primary(0.0, 40.0, 0.0),
+        ..Readings::default()
+    });
+    loose.ticks(3, &turning);
+    assert!(
+        loose.filter.orientation().roll < 30.0,
+        "{:?}",
+        loose.filter.orientation()
     );
     // exactly the gate is not a turn (plan B's `>`), and straight-ish flight re-anchors to level
     let straight = Readings {
@@ -433,7 +537,7 @@ fn yaw_follows_the_ground_track_and_wraps_through_north() {
             ..moving
         },
     );
-    assert_eq!(slow.filter.orientation().heading, 45.0);
+    assert!(close(slow.filter.orientation().heading, 45.0, 1e-3));
     // a track just past north pulls 358 UP through 360
     let mut north = Bench::seeded(358.0, 0.0, 0.0);
     north.tick(&Readings {
@@ -570,6 +674,7 @@ fn a_non_finite_reading_is_no_reading() {
         magnetic: Some([f32::NAN, 0.0, 0.0]),
         fused: primary(f32::NAN, 0.0, 0.0),
         backup_fresh: false,
+        ballistic: false,
     };
     let tick = bench.ticks(BLIND_CYCLES as usize, &poisoned);
     let published = tick.published.expect("still seeded: it publishes");
@@ -767,11 +872,19 @@ fn a_part_mounted_per_its_marks_reads_nose_up_as_pitch_up() {
         "right wing down: {banked:?}"
     );
     // the gyro agrees with gravity: nose up about y left is a NEGATIVE rate, right wing down about x a positive one
-    let gyro = Readings::from_marks(Some([10.0, -10.0, 0.0]), Some([0.0; 3]), None);
-    let turned = Bench::seeded(0.0, 0.0, 0.0).ticks(50, &gyro).published.unwrap();
+    let gyro = |rate: [f32; 3]| {
+        let readings = Readings::from_marks(Some(rate), Some([0.0; 3]), None);
+        Bench::seeded(0.0, 0.0, 0.0).ticks(50, &readings).published.unwrap()
+    };
+    let nosed_up = gyro([0.0, -10.0, 0.0]);
     assert!(
-        (turned.pitch - 10.0).abs() < 1e-3 && (turned.roll - 10.0).abs() < 1e-3,
-        "{turned:?}"
+        (nosed_up.pitch - 10.0).abs() < 1e-3 && nosed_up.roll.abs() < 1e-3,
+        "{nosed_up:?}"
+    );
+    let rolled = gyro([10.0, 0.0, 0.0]);
+    assert!(
+        (rolled.roll - 10.0).abs() < 1e-3 && rolled.pitch.abs() < 1e-3,
+        "{rolled:?}"
     );
     // NEGATIVE: the same part fed unmapped reads the nose-up pitch as nose DOWN, with nothing to flag it
     let unmapped = Readings {
@@ -862,9 +975,9 @@ fn a_field_at_the_heading_learns_one_constant_offset() {
 }
 
 #[test]
-fn the_accel_pull_takes_the_long_way_round_as_plan_b() {
-    // a plan B hazard kept on purpose: estimate roll 170, gravity at roll -170 (inverted, inside the 1 g band). The
-    // short way is 20 degrees; blend_cd's unwrapped error is -340, so the estimate sweeps through wings-level
+fn the_accel_pull_takes_the_short_way_round() {
+    // estimate roll 170, gravity at roll -170 (inverted, inside the 1 g band): 20 degrees apart the short way. Plan B's
+    // blend_cd took the unwrapped -340 and swept through wings-level (85, 21, -27, ...); the tilt steps 5 at a time
     let mut bench = Bench::seeded(0.0, 170.0, 0.0);
     let inverted = Readings {
         rate: Some([0.0; 3]),
@@ -872,11 +985,11 @@ fn the_accel_pull_takes_the_long_way_round_as_plan_b() {
         ..Readings::default()
     };
     let rolls: Vec<f32> = (0..6).map(|_| bench.tick(&inverted).published.unwrap().roll).collect();
-    for (roll, owed) in rolls.iter().zip([85.0, 21.25, -26.5625, -62.42, -89.32, -109.49]) {
-        assert!((roll - owed).abs() < 0.01, "{rolls:?}");
+    for (roll, owed) in rolls.iter().zip([175.0, 178.75, -178.44, -176.33, -174.75, -173.56]) {
+        assert!(close(*roll, owed, 0.01), "{rolls:?}");
     }
-    // NEGATIVE: not the wrapped error's short step to 175
-    assert!(!close(rolls[0], 175.0, 1.0));
+    // NEGATIVE: never through wings-level
+    assert!(rolls.iter().all(|roll| roll.abs() > 170.0), "{rolls:?}");
 }
 
 #[test]
@@ -933,7 +1046,7 @@ fn the_track_needs_the_course_and_the_speed() {
             ..level
         },
     );
-    assert_eq!(bench.filter.orientation().heading, 45.0);
+    assert!(close(bench.filter.orientation().heading, 45.0, 1e-3));
     assert!(!bench.filter.magnetic().known());
     // both: the track pulls and the offset is learned
     bench.tick(&Readings {
@@ -958,7 +1071,7 @@ fn the_course_gate_is_strict() {
         });
         bench.filter.orientation().heading
     };
-    assert_eq!(moving(5.0), 45.0, "NEGATIVE: on the gate, no pull");
+    assert!(close(moving(5.0), 45.0, 1e-3), "NEGATIVE: on the gate, no pull");
     assert!(close(moving(5.0_f32.next_up()), 56.25, 1e-3), "one f32 step over pulls");
 }
 
@@ -970,7 +1083,7 @@ fn the_gravity_band_is_inclusive() {
     let edge = Bench::new(test_settings()).filter;
     assert_eq!(0.0_f32 * 0.0 + (0.0_f32 * 0.0 + 0.7_f32 * 0.7), 0.7_f32 * 0.7);
     for inside in [0.7, 1.3] {
-        assert!(edge.gravity([0.0, 0.0, inside]).is_some(), "{inside} g pulls");
+        assert!(edge.in_band([0.0, 0.0, inside]), "{inside} g pulls");
         let mut bench = Bench::seeded(0.0, 10.0, 0.0);
         bench.tick(&Readings {
             rate: Some([0.0; 3]),
@@ -980,11 +1093,7 @@ fn the_gravity_band_is_inclusive() {
         assert!((bench.filter.orientation().roll - 7.5).abs() < 1e-5);
     }
     for outside in [0.69, 1.31] {
-        assert_eq!(
-            edge.gravity([0.0, 0.0, outside]),
-            None,
-            "NEGATIVE: {outside} g does not"
-        );
+        assert!(!edge.in_band([0.0, 0.0, outside]), "NEGATIVE: {outside} g does not");
     }
 }
 

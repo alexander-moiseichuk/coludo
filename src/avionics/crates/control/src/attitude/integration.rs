@@ -42,7 +42,8 @@ pub struct Quantities<'board> {
 /// from the marks frame ([`Readings::from_marks`]); the GNSS `course` and ground `speed`, the yaw's pull toward the
 /// track (without them the heading is the gyro's alone, relative to how the board sat at power-up, and the
 /// magnetometer's offset is never learned); the fused `attitude`'s fresh winner with the rank its source registered
-/// at; and whether a source ranked below `rank`, the filter's own ([`super::Settings::rank`]), is fresh.
+/// at; whether a source ranked below `rank`, the filter's own ([`super::Settings::rank`]), is fresh; and the
+/// caller's `ballistic`, the stage is BOOSTING ([`Readings::ballistic`]).
 ///
 /// Each is the databoard's fused read: the first source fresh within the quantity's shared window, in rank order,
 /// never extrapolated and, for a vector, never reconciled. So the BMI323 carries `rate` and `accel` the moment the
@@ -50,7 +51,7 @@ pub struct Quantities<'board> {
 /// [`super::Attitude::tick`] takes it as absent.
 ///
 /// `now_us` is read after the tick's pushes: the databoard takes a push stamped after it as not fresh.
-pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64) -> Readings {
+pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64, ballistic: bool) -> Readings {
     let fresh = |parameter: Option<&Parameter<[f32; 3]>>| Some(parameter?.read(now_us)?.value);
     let scalar = |parameter: Option<&Parameter<f32>>| Some(parameter?.read(now_us)?.value);
     let attitude = quantities.attitude;
@@ -63,6 +64,7 @@ pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64) -> Readings {
     Readings {
         fused,
         backup_fresh: attitude.fresh_below(rank, now_us),
+        ballistic,
         course: scalar(quantities.course),
         ground_speed: scalar(quantities.speed),
         ..Readings::from_marks(

@@ -139,7 +139,12 @@ impl Thread {
     fn step(&mut self, parts: &impl Fn(&Board, u64)) -> Tick {
         self.now_us += STEP_US;
         parts(&self.board, self.now_us);
-        let readings = assemble(&self.board.quantities(), self.filter.settings().rank, self.now_us);
+        let readings = assemble(
+            &self.board.quantities(),
+            self.filter.settings().rank,
+            self.now_us,
+            false,
+        );
         let tick = self.filter.tick(self.now_us, &readings);
         if let Some(orientation) = tick.published {
             push(&self.board.attitude, "attitude", orientation.to_sample(), self.now_us);
@@ -158,7 +163,12 @@ impl Thread {
 
     /// What the filter would read now, the step's clock unmoved.
     fn readings(&self) -> Readings {
-        assemble(&self.board.quantities(), self.filter.settings().rank, self.now_us)
+        assemble(
+            &self.board.quantities(),
+            self.filter.settings().rank,
+            self.now_us,
+            false,
+        )
     }
 }
 
@@ -172,7 +182,7 @@ fn a_step_reads_the_fused_inputs_mapped_from_the_marks() {
     let board = Board::new();
     primary_imu(&board, [1.0, 2.0, 3.0], [0.1, 0.2, 0.9], 1_000);
     push(&board.magnetic, "mag_bmm350", [4.0, 5.0, 6.0], 1_000);
-    let readings = assemble(&board.quantities(), 1, 5_000);
+    let readings = assemble(&board.quantities(), 1, 5_000, false);
     assert_eq!(readings.rate, Some([1.0, -2.0, -3.0]));
     assert_eq!(
         readings.acceleration,
@@ -183,24 +193,24 @@ fn a_step_reads_the_fused_inputs_mapped_from_the_marks() {
     assert_eq!((readings.course, readings.ground_speed), (None, None), "no fix yet");
     assert_eq!((readings.fused, readings.backup_fresh), (None, false));
     board.gnss(90.0, 14.0, 2_000);
-    let tracked = assemble(&board.quantities(), 1, 5_000);
+    let tracked = assemble(&board.quantities(), 1, 5_000, false);
     assert_eq!((tracked.course, tracked.ground_speed), (Some(90.0), Some(14.0)));
     // NEGATIVE: past the GNSS's 500 ms window the track is absent, never extrapolated
-    let lost = assemble(&board.quantities(), 1, 502_001);
+    let lost = assemble(&board.quantities(), 1, 502_001, false);
     assert_eq!((lost.course, lost.ground_speed), (None, None));
     // NEGATIVE: past the IMUs' 20 ms window the gyro and the accelerometer are absent, never extrapolated, while the
     // magnetometer's 500 ms window still holds
-    let later = assemble(&board.quantities(), 1, 21_001);
+    let later = assemble(&board.quantities(), 1, 21_001, false);
     assert_eq!((later.rate, later.acceleration), (None, None));
     assert_eq!(later.magnetic, Some([4.0, -5.0, -6.0]));
     // NEGATIVE: a push stamped after the read is not fresh, so the read comes after the tick's pushes
-    assert_eq!(assemble(&board.quantities(), 1, 999), Readings::default());
+    assert_eq!(assemble(&board.quantities(), 1, 999, false), Readings::default());
     // NEGATIVE: a quantity no provider of came up is absent, the others unaffected
     let no_gyro = Quantities {
         rate: None,
         ..board.quantities()
     };
-    let readings = assemble(&no_gyro, 1, 5_000);
+    let readings = assemble(&no_gyro, 1, 5_000, false);
     assert_eq!(readings.rate, None);
     assert_eq!(readings.acceleration, Some([-0.1, 0.2, 0.9]));
     // NEGATIVE: a board with no GNSS has no track, the rest unaffected
@@ -209,7 +219,7 @@ fn a_step_reads_the_fused_inputs_mapped_from_the_marks() {
         speed: None,
         ..board.quantities()
     };
-    let readings = assemble(&no_gnss, 1, 5_000);
+    let readings = assemble(&no_gnss, 1, 5_000, false);
     assert_eq!((readings.course, readings.ground_speed), (None, None));
     assert_eq!(readings.magnetic, Some([4.0, -5.0, -6.0]));
 }
@@ -242,18 +252,21 @@ fn the_bmi323_carries_the_inputs_while_the_lsm6dso32_is_stale() {
     push(&board.rate, "imu_bmi323", [2.0; 3], 10_000);
     push(&board.acceleration, "imu_bmi323", [0.0, 0.0, 0.5], 10_000);
     // NEGATIVE: both fresh, the primary wins although the backup pushed later
-    let both = assemble(&board.quantities(), 1, 15_000);
+    let both = assemble(&board.quantities(), 1, 15_000, false);
     assert_eq!(both.rate, Some([1.0, -1.0, -1.0]));
     assert_eq!(both.acceleration, Some([0.0, 0.0, 1.0]));
     // the LSM6DSO32 past its 20 ms window: the BMI323 carries the gyro and the accelerometer
-    let failover = assemble(&board.quantities(), 1, 25_000);
+    let failover = assemble(&board.quantities(), 1, 25_000, false);
     assert_eq!(failover.rate, Some([2.0, -2.0, -2.0]));
     assert_eq!(failover.acceleration, Some([0.0, 0.0, 0.5]));
     // and hands them back the moment the primary pushes again
     primary_imu(&board, [3.0; 3], [0.0, 0.0, 1.0], 26_000);
-    assert_eq!(assemble(&board.quantities(), 1, 27_000).rate, Some([3.0, -3.0, -3.0]));
+    assert_eq!(
+        assemble(&board.quantities(), 1, 27_000, false).rate,
+        Some([3.0, -3.0, -3.0])
+    );
     // NEGATIVE: both stale, no gyro at all
-    assert_eq!(assemble(&board.quantities(), 1, 50_000).rate, None);
+    assert_eq!(assemble(&board.quantities(), 1, 50_000, false).rate, None);
 }
 
 #[test]
@@ -290,7 +303,7 @@ fn the_field_maps_to_the_magnetic_heading() {
     for heading in [30.0, 120.0, 250.0, 340.0] {
         let board = Board::new();
         push(&board.magnetic, "mag_bmm350", marks_field(heading), 0);
-        let readings = assemble(&board.quantities(), 1, 1_000);
+        let readings = assemble(&board.quantities(), 1, 1_000, false);
         let magnetic = reference.magnetic().heading(readings.magnetic, 0.0, 0.0);
         assert!(
             magnetic.is_some_and(|magnetic| close(magnetic, heading, 1e-3)),
@@ -317,7 +330,7 @@ fn a_nan_magnetometer_is_ignored() {
                 push(&board.magnetic, "mag_bmm350", field, now_us);
             }
             board.gnss(90.0, 14.0, now_us);
-            filter.tick(now_us, &assemble(&board.quantities(), 1, now_us));
+            filter.tick(now_us, &assemble(&board.quantities(), 1, now_us, false));
         }
         filter
     };
