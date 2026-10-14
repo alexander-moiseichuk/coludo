@@ -80,6 +80,11 @@ _SITL_PAD_S: float = 2.0  # the SITL's pad before ignition, physics seconds: the
 _LOCKSTEP_WAIT_S: float = 2.0  # how long a lockstep frame waits for its answer before the run stalls
 _GATE_S: float = 120.0  # how long the board gets to join Wi-Fi and answer a frame
 _QUIET_S: float = 3.0  # after an answer that is no reply: the board finishes a long one (get-config, ~0.8 s)
+# the board's hitl quantities hold their last sample for their timeout (1000 ms, firmware/src/devices.rs): a held
+# launch-sized |a| fires the stage machine's launch dwell again after `stage setting` (7F, noise100, 2026-10-13), so
+# the restore waits them out first, and makes sure the board is in SETTING before it writes the configs
+_HELD_S: float = 1.5
+_SETTING_TRIES: int = 3
 _OFF: tuple = ('separation', 'watchdog', 'bluetooth', 'field')  # plan B's _OFF less the radios the link rides
 _SERVO_DRIVERS: tuple = ('sg90', 'mg90s')  # the fins' drivers (firmware/src/fins.rs SERVO_DRIVERS)
 
@@ -741,6 +746,7 @@ def main() -> int:
                                                          'altitude': scenario['elevation_m'],
                                                          'zone': scenario['zone']})]))
     outcome = 1
+    sim = None
     try:
         whoami = board.reboot()
         sim = _Sim(args)
@@ -839,8 +845,15 @@ def main() -> int:
         print('RUN_END')
     finally:
         if not args.keep_config:
-            board.ask('disarm')
-            board.ask('stage setting')  # set-config is SETTING-only: back from DONE, or from a timeout's stage
+            if sim is not None:
+                sim.running = False
+            time.sleep(_HELD_S)
+            for _ in range(_SETTING_TRIES):
+                board.ask('disarm')
+                board.ask('stage setting')  # set-config is SETTING-only: back from DONE, or from a timeout's stage
+                if board.ask('health')[1].get('stage') == 'setting':
+                    break
+                time.sleep(_HELD_S)
             board.ask(cc.build('set-config', ['board', json.dumps(saved)]))
             board.ask(cc.build('set-config', ['launch', json.dumps(launch)]))
             board.reboot()
