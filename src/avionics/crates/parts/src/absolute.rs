@@ -57,7 +57,8 @@ impl AbsoluteState {
     }
 }
 
-/// The BNO055's outputs (M18, plan B bno055.run): every period one block read; the fused Euler to `attitude` unless
+/// The BNO055's outputs (M18, plan B bno055.run): every period one block read; the fused Euler, in the filter's
+/// aerospace frame through the part's `axes`, to `attitude` unless
 /// the fusion is stalled (the channel then goes stale and the databoard falls to the next source), the accelerometer
 /// through the airframe's axes to `accel` always (that half still works), a row to its stream, and CALIB_STAT read
 /// about once a second for the operator.
@@ -66,7 +67,8 @@ pub struct Absolute {
     attitude: Option<Writer<'static, [f32; 3]>>,
     /// The `accel` writer (g, the airframe's axes).
     accel: Option<Writer<'static, [f32; 3]>>,
-    /// How the part's axes map onto the airframe's (`axes`): the accelerometer's; the Euler is the chip's own.
+    /// How the part's axes map onto the airframe's (`axes`): the accelerometer's, and the Euler's onto the filter's
+    /// frame.
     axes: Axes,
     /// Its stream: a refused row logged once a run (recorder::Rows).
     rows: Rows<'static>,
@@ -137,7 +139,8 @@ impl Absolute {
         match part.judge(&sample) {
             bno055::Fusion::Live => {
                 if let Some(writer) = &mut self.attitude {
-                    writer.push(sample.euler, now_us);
+                    // the filter's frame, not the chip's (drivers bno055 `aerospace`)
+                    writer.push(bno055::aerospace(sample.euler, &self.axes), now_us);
                 }
             }
             // withheld: the channel goes stale and the databoard moves on; logged on the transition only
@@ -148,7 +151,11 @@ impl Absolute {
             bno055::Fusion::StillStalled | bno055::Fusion::Starting => {}
         }
         let accel = self.axes.apply(sample.accel);
-        if let Some(writer) = &mut self.accel {
+        // CONFIG-mode zeros are no data (plan B's `_configuring`): a still or moving accelerometer never reads exactly
+        // 0 on all three axes, and a part whose fusion was refused reads them on every block
+        if sample.accel != [0.0; 3]
+            && let Some(writer) = &mut self.accel
+        {
             writer.push(accel, now_us);
         }
         // plan B's row: heading in degrees, roll and pitch in centidegrees (raw x 100 / 16, floored), accel in g

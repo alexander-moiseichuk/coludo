@@ -183,6 +183,10 @@ impl<Pin> Member<Pin> {
                         blob: profile.to_vec(),
                     };
                 }
+                Err(drivers::device::Fault::Configuration) => Some(
+                    "the learned profile has a radius out of range (nothing learned yet): keep turning the figure-8"
+                        .to_string(),
+                ),
                 Err(fault) => Some(format!("profile read failed: {fault}")),
             },
             other => Some(other.calibration().to_string()).filter(|pending| !pending.is_empty()),

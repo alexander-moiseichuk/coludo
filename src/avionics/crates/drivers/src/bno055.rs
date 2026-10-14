@@ -28,11 +28,28 @@
 //! ([`Bno055::read_profile`]) and written back at bring-up ([`Bno055::restore_profile`]), so a power cycle on the rail
 //! needs no figure-8. [`Bno055::owed`] says what is still owed: the figure-8, then the save.
 //!
+//! THE REFUSED FUSION (measured on the taster, 2026-10-14). The chip can refuse NDOF: it stays in CONFIG mode with
+//! SYS_STATUS 1 and SYS_ERR 9 (the fusion's configuration), and every data register reads zero, while each bus read
+//! succeeds. A saved profile whose magnetometer radius is 0 does it, and since the profile is restored at every boot the
+//! part went blind at every boot, reported healthy (plan B's restore had the same hole). So every switch into NDOF
+//! reads OPR_MODE back ([`Fault::Configuration`] when it did not take, [`Bno055::refused`] the SYS_ERR), a profile
+//! with a radius out of the datasheet's range is neither restored nor saved ([`profile_valid`]), and a profile the chip
+//! refuses anyway is undone by a chip reset and a bring-up without it: the figure-8 is owed again, never a blind part.
+//!
+//! THE FRAME (2026-10-14). The fused Euler is the chip's own: Bosch's heading, roll and pitch about its sensor axes,
+//! world (east, north, up) to chip `Rx(-pitch) Ry(roll) Rz(heading)` in the Windows orientation, which the bring-up
+//! writes ([`UNITS`]: the chip came up in either; the 10-03 boards' pitch sign was the other one's). The filter, the
+//! primary, publishes the aerospace frame of the airframe ([`aerospace`]); handed the chip's own angles on a failover
+//! the law read roll and pitch swapped (the rod's 75 degrees of pitch as roll). Measured against the chip's own
+//! accelerometer on three poses (the taster, TMS-7C and 7D on the rod). The heading names the chip's +y, Bosch's
+//! device frame: no pose here could check it (the taster's magnetometer reads zero).
+//!
 //! Not here (firmware glue): the channel pushes and the stream, the profile's NVS key, the probe's log lines.
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::I2c;
 
+use crate::axes::Axes;
 use crate::commons::id_classify;
 use crate::device::{Device, Fault};
 
@@ -80,6 +97,30 @@ pub const NVS_KEY: &str = "bno055_calib";
 
 /// The wait after a mode switch (plan B's 25 ms; the datasheet's 7 ms to CONFIG, 19 ms from it).
 pub const MODE_SETTLE_MS: u32 = 25;
+
+/// UNIT_SEL: the output units and the Euler convention.
+pub const UNIT_SEL: u8 = 0x3B;
+
+/// UNIT_SEL as the bring-up writes it: the Windows orientation, degrees, degrees per second, m/s^2, Celsius.
+pub const UNITS: u8 = 0x00;
+
+/// SYS_ERR: why SYS_STATUS reads 1 (9: the fusion's configuration refused).
+pub const SYS_ERR: u8 = 0x3A;
+
+/// SYS_TRIGGER: [`RESET`] resets the chip.
+pub const SYS_TRIGGER: u8 = 0x3F;
+
+/// SYS_TRIGGER's RST_SYS bit.
+pub const RESET: u8 = 0x20;
+
+/// The datasheet's power-on reset time to a chip that answers, ms.
+pub const RESET_MS: u32 = 650;
+
+/// The largest accelerometer radius the profile may carry (the datasheet's +-1000 LSB).
+pub const ACCEL_RADIUS_MAX: i16 = 1000;
+
+/// The largest magnetometer radius the profile may carry (the datasheet's +-960 LSB).
+pub const MAG_RADIUS_MAX: i16 = 960;
 
 /// The block's length: accel, mag, gyro, Euler, 6 bytes each.
 pub const BLOCK_LENGTH: usize = 24;
@@ -218,6 +259,62 @@ pub struct Bno055 {
     restored: bool,
     /// The learned profile is saved (restored, or `calibrate` saved it).
     saved: bool,
+    /// The SYS_ERR of the last switch into NDOF the chip refused, None since one took.
+    refused: Option<u8>,
+}
+
+/// Whether a learned `profile` can be put in force: both radii (the last two words) inside the datasheet's range and
+/// above 0. A radius of 0 is a part that learned nothing, and the chip refuses NDOF with it (SYS_ERR 9).
+pub fn profile_valid(profile: &[u8; PROFILE_BYTES]) -> bool {
+    let word = |at: usize| i16::from_le_bytes([profile[at], profile[at + 1]]);
+    (1..=ACCEL_RADIUS_MAX).contains(&word(18)) && (1..=MAG_RADIUS_MAX).contains(&word(20))
+}
+
+/// A 3 x 3 matrix, rows first.
+type Matrix = [[f32; 3]; 3];
+
+/// The product of two matrices.
+fn multiply(first: &Matrix, second: &Matrix) -> Matrix {
+    core::array::from_fn(|row| core::array::from_fn(|column| (0..3).map(|k| first[row][k] * second[k][column]).sum()))
+}
+
+/// The aerospace (heading, roll, pitch) in degrees of the airframe whose BNO055 fused `euler` (heading, roll, pitch in
+/// degrees, the chip's Windows convention, [`UNITS`]) and is mounted per `axes` (the chip's axes onto the marks, x
+/// forward, y left, z up): the frame the attitude filter publishes, heading [0, 360) clockwise from north, roll right
+/// wing down, pitch nose up (see the module notes).
+pub fn aerospace(euler: [f32; 3], axes: &Axes) -> [f32; 3] {
+    let [heading, roll, pitch] = euler.map(f32::to_radians);
+    let (sine_heading, cosine_heading) = heading.sin_cos();
+    let (sine_roll, cosine_roll) = roll.sin_cos();
+    let (sine_pitch, cosine_pitch) = (-pitch).sin_cos();
+    // world (east, north, up) to chip: Rx(-pitch) Ry(roll) Rz(heading)
+    let about_x = [
+        [1.0, 0.0, 0.0],
+        [0.0, cosine_pitch, -sine_pitch],
+        [0.0, sine_pitch, cosine_pitch],
+    ];
+    let about_y = [
+        [cosine_roll, 0.0, sine_roll],
+        [0.0, 1.0, 0.0],
+        [-sine_roll, 0.0, cosine_roll],
+    ];
+    let about_z = [
+        [cosine_heading, -sine_heading, 0.0],
+        [sine_heading, cosine_heading, 0.0],
+        [0.0, 0.0, 1.0],
+    ];
+    let chip = multiply(&multiply(&about_x, &about_y), &about_z);
+    // the chip's axes onto the marks (each column the marks of one chip axis), then the marks onto the aerospace body
+    // (x, -y, -z), and the world from (north, east, down)
+    let columns = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]].map(|axis| axes.apply(axis));
+    let marks: Matrix = core::array::from_fn(|row| core::array::from_fn(|column| columns[column][row]));
+    let body = [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]];
+    let world = [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]];
+    let frame = multiply(&multiply(&multiply(&body, &marks), &chip), &world);
+    let heading = frame[0][1].atan2(frame[0][0]).to_degrees().rem_euclid(360.0);
+    let roll = frame[1][2].atan2(frame[2][2]).to_degrees();
+    let pitch = -frame[0][2].clamp(-1.0, 1.0).asin().to_degrees();
+    [heading, roll, pitch]
 }
 
 impl Bno055 {
@@ -233,7 +330,14 @@ impl Bno055 {
             converged: false,
             restored: false,
             saved: false,
+            refused: None,
         }
+    }
+
+    /// The SYS_ERR of the last switch into NDOF the chip refused (9: the fusion's configuration), None since one
+    /// took.
+    pub fn refused(&self) -> Option<u8> {
+        self.refused
     }
 
     /// The I2C address.
@@ -329,7 +433,8 @@ impl Bno055 {
     /// The learned profile, for `calibrate` to save (bno055._save_profile): CONFIG mode for the read, NDOF again
     /// afterwards whatever happened, so a failed read never leaves the fusion off. The fusion pauses ~50 ms: a ground
     /// action, never on the poll path. Marks the profile saved only when the firmware says it persisted it
-    /// ([`Bno055::mark_saved`]).
+    /// ([`Bno055::mark_saved`]). A profile [`profile_valid`] refuses is [`Fault::Configuration`]: saved, it would
+    /// blind the part at the next boot.
     pub fn read_profile<Bus: I2c>(
         &mut self,
         bus: &mut Bus,
@@ -344,6 +449,9 @@ impl Bno055 {
         let back = self.set_mode(bus, delay, MODE_NDOF);
         let profile = read?;
         back?;
+        if !profile_valid(&profile) {
+            return Err(Fault::Configuration);
+        }
         Ok(profile)
     }
 
@@ -359,18 +467,35 @@ impl Bno055 {
 
     /// Write a saved profile back (bno055._restore_profile): CONFIG mode, the profile, NDOF again; sets the latch and
     /// the saved flag, so a boot with valid offsets owes nothing.
+    ///
+    /// Errors: [`Fault::Configuration`] for a profile [`profile_valid`] refuses (the chip untouched), and for one the
+    /// chip refused anyway (NDOF did not take): it is reset and brought up again without the profile, so the part
+    /// runs and the figure-8 is owed ([`Bno055::refused`] says why). A bus fault on the way, as it came.
     pub fn restore_profile<Bus: I2c>(
         &mut self,
         bus: &mut Bus,
         delay: &mut dyn DelayNs,
         profile: &[u8; PROFILE_BYTES],
     ) -> Result<(), Fault<Bus::Error>> {
+        if !profile_valid(profile) {
+            return Err(Fault::Configuration);
+        }
         self.set_mode(bus, delay, MODE_CONFIG)?;
         let mut write = [0u8; PROFILE_BYTES + 1];
         write[0] = PROFILE;
         write[1..].copy_from_slice(profile);
         let written = bus.write(self.address, &write).map_err(Fault::Bus);
-        self.set_mode(bus, delay, MODE_NDOF)?;
+        match self.set_mode(bus, delay, MODE_NDOF) {
+            Err(Fault::Configuration) => {
+                let refused = self.refused;
+                bus.write(self.address, &[SYS_TRIGGER, RESET]).map_err(Fault::Bus)?;
+                delay.delay_ms(RESET_MS);
+                self.setup(bus, delay)?;
+                self.refused = refused;
+                return Err(Fault::Configuration);
+            }
+            other => other?,
+        }
         written?;
         self.converged = true;
         self.restored = true;
@@ -395,7 +520,8 @@ impl Bno055 {
         id_classify(self.identity(bus).ok(), IDENTITY)
     }
 
-    /// Switch the operating mode and wait it out.
+    /// Switch the operating mode and wait it out; a switch into NDOF is read back (see the module notes): one that did
+    /// not take is [`Fault::Configuration`], its SYS_ERR kept ([`Bno055::refused`]).
     fn set_mode<Bus: I2c>(
         &mut self,
         bus: &mut Bus,
@@ -406,15 +532,29 @@ impl Bno055 {
         self.starting |= mode == MODE_NDOF;
         bus.write(self.address, &[OPR_MODE, mode]).map_err(Fault::Bus)?;
         delay.delay_ms(MODE_SETTLE_MS);
-        Ok(())
+        if mode != MODE_NDOF {
+            return Ok(());
+        }
+        let mut read = [0u8; 1];
+        bus.write_read(self.address, &[OPR_MODE], &mut read)
+            .map_err(Fault::Bus)?;
+        if read[0] & 0x0F == MODE_NDOF {
+            self.refused = None;
+            return Ok(());
+        }
+        bus.write_read(self.address, &[SYS_ERR], &mut read)
+            .map_err(Fault::Bus)?;
+        self.refused = Some(read[0]);
+        Err(Fault::Configuration)
     }
 }
 
 impl<Bus: I2c> Device<Bus> for Bno055 {
     type BusError = Bus::Error;
 
-    /// The identity, CONFIG mode, normal power, then NDOF (bno055.setup's bus half; the profile is restored after,
-    /// by the firmware, from its NVS: [`Bno055::restore_profile`]).
+    /// The identity, CONFIG mode, normal power, the units ([`UNITS`]: plan B left the chip's own), then NDOF
+    /// (bno055.setup's bus half; the profile is restored after, by the firmware, from its NVS:
+    /// [`Bno055::restore_profile`]).
     fn setup(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs) -> Result<(), Fault<Bus::Error>> {
         let read = self.identity(bus)?;
         if read != IDENTITY {
@@ -425,11 +565,15 @@ impl<Bus: I2c> Device<Bus> for Bno055 {
         }
         self.set_mode(bus, delay, MODE_CONFIG)?;
         bus.write(self.address, &[PWR_MODE, POWER_NORMAL]).map_err(Fault::Bus)?;
+        bus.write(self.address, &[UNIT_SEL, UNITS]).map_err(Fault::Bus)?;
         self.set_mode(bus, delay, MODE_NDOF)
     }
 
-    /// NDOF again (plan B had no rearm: a reset part comes back in CONFIG mode, its fusion off, reading zeros).
+    /// CONFIG mode, the units, NDOF again (plan B had no rearm: a reset part comes back in CONFIG mode, its fusion
+    /// off, reading zeros, and its units the chip's own).
     fn rearm(&mut self, bus: &mut Bus, delay: &mut dyn DelayNs) -> Result<(), Fault<Bus::Error>> {
+        self.set_mode(bus, delay, MODE_CONFIG)?;
+        bus.write(self.address, &[UNIT_SEL, UNITS]).map_err(Fault::Bus)?;
         self.set_mode(bus, delay, MODE_NDOF)
     }
 }

@@ -37,8 +37,18 @@ pub fn restore_profiles<Pin, Bus: I2c>(
         };
         let mut profile = [0u8; drivers::bno055::PROFILE_BYTES];
         match store.blob(drivers::bno055::NVS_KEY, &mut profile) {
+            Ok(drivers::bno055::PROFILE_BYTES) if !drivers::bno055::profile_valid(&profile) => log::warn!(
+                "{} :: the saved profile is invalid (a radius out of range): not restored, the figure-8 is owed",
+                member.name
+            ),
             Ok(drivers::bno055::PROFILE_BYTES) => match fused.restore_profile(port, delay, &profile) {
                 Ok(()) => log::info!("{} :: calibration profile restored from NVS", member.name),
+                Err(drivers::device::Fault::Configuration) => log::warn!(
+                    "{} :: the chip refused the saved profile (SYS_ERR {:?}): reset, running without it, the figure-8 \
+                     is owed",
+                    member.name,
+                    fused.refused()
+                ),
                 Err(fault) => log::warn!("{} :: calibration restore failed: {fault}", member.name),
             },
             Ok(length) => log::warn!(

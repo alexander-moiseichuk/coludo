@@ -1211,6 +1211,16 @@ board can no longer hang silently.
   SITL, TMS-8's config, F15, `--no-attitude` (the sim's sensors as a real airframe's): the lean boost on the filter
   alone holds the 6-DoF stack vertical (path minimum 89.6 deg, lean at most 0.6), and the glide tracks the truth to 1-2
   deg at noise 0 (the 6-DoF flight lands in the zone, 11.6 m), a few degrees at the sim's noise 0.1.
+- **The BNO055 backup (2026-10-14, the same audit):** it published its fused Euler in the chip's own frame (Bosch's
+  heading, roll and pitch about its sensor axes), so a failover handed the law roll and pitch swapped (the rod's 75
+  degrees of pitch as roll). It now publishes the filter's aerospace frame through its `axes` (drivers bno055
+  `aerospace`, checked against its own accelerometer on the taster and on 7C's and 7D's 10-03 rod data), and the
+  bring-up and re-arm write UNIT_SEL (the Windows orientation): the chip came up in either (the 10-03 boards' pitch sign
+  was the other one's). The heading is Bosch's (the chip's +y): unchecked on a part with a working magnetometer. Every
+  switch into NDOF is read back: the taster's chip sat in CONFIG mode with SYS_ERR 9 (the fusion's configuration
+  refused) at every boot, all its registers zero, reported healthy, because the profile restored from NVS had a
+  magnetometer radius of 0. A profile with a radius out of range is neither restored nor saved, one the chip refuses is
+  undone by a chip reset (the figure-8 owed again), and an all-zero accelerometer block is never published.
 - **The video** starts on the rod trigger: armed, and the fused +x >= 0.87 g for 8 looks (2 s); armed alone on a board
   with no accelerometer.
 - **Diagnostics:** `i2c read` (register facts), `inspect databoard` / `stats databoard` (plan B's object), `inspect
