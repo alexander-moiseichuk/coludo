@@ -63,7 +63,7 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 6 — the Rust avionics (`src/avionics`, branch `lmoiseichuk/phase6_rustification`).** The flight firmware
   leaves MicroPython: plan B (`src/glider`, frozen at tag `micropython_plan_B_2`) ported to Rust on the same board,
   milestone by milestone, against golden vectors and plan B's own code (the plan and every milestone's status:
-  [`specs/avionics-port.md`](specs/avionics-port.md)). As of 2026-10-12:
+  [`specs/avionics-port.md`](specs/avionics-port.md)). As of 2026-10-14:
   - **Done:** M1-M15 and M18-M21. The CC surface, config, the flash ring with its savers, buses and sensors (every
     plan B part but the retired ADXL375), the stage machine, the warm start, the attitude filter, GNSS, DONE with
     its beacon, HITL over the UDP sim-link, active control, and the HITL matrix against plan B (24 of 24 board
@@ -78,11 +78,17 @@ Required hardware and the phased development roadmap. Architecture lives in
     uncapped, a +-10 ceiling gives up 6 m/s; `boost_limit_deg` added); the MG90S on the taster's yaw
     (`doc/sims/TMS-7-mg90s_yaw`); the ring_eraser sleeping through erases (17.8 -> 1.8 % of core 0); the restart
     guarded by the RTC watchdog (a silent hang in a reboot); the C6 recorder's 3.3 V card module.
-  - **Open:** BC5 (the operator's call on the boost law and its ceiling); the TMS-8 launch config
-    (`launches/next/TMS-8`: NEO-M8N, the SEN0697 as on 7F, three MG90S at concurrency 3; the visual fin trims and
-    BC5 remain); the C6 recorder soldered (2026-10-14) and its battery checks; the field-day checks
+  - **Done 10-14:** BC5 decided, law A (the lean law, no ceiling) in TMS-8's config; the plan B -> Rust audit (every
+    `src/glider` module mapped to the port, ~660 behaviours; the gaps fixed: the filter's GNSS course, the governor's
+    slice, the operator surface, the config switches); the attitude filter's own flight (`hitl_host --no-attitude`,
+    [`sims/TMS-8-attitude_filter`](sims/TMS-8-attitude_filter/)): plan B's kinematics replaced by a quaternion and
+    no accelerometer pull in BOOSTING, after which the lean boost holds on the filter alone; the BNO055 in the
+    filter's frame and never blind on a refused fusion.
+  - **Open:** the TMS-8 launch config's visual fin trims, date and `final_approach_agl`; a TMS-8 stack profile for
+    the 6-DoF and a measured polar; the C6 recorder soldered (2026-10-14) and its battery checks; the field-day checks
     ([`field_checks.md`](field_checks.md): a real GNSS fix, the beacons' range, the batteries' time; no date yet).
-    Dropped: the 7C BNO055 proofs -- 7C flies on its SEN0697, the BNO055 having gone blind (operator 2026-10-14).
+    **TMS-7C stays on plan B** (the operator, 2026-10-14: no SD card can be fitted to it, which the Rust recorder's
+    ring saver needs); its BNO055 proofs are dropped -- 7C flies on its SEN0697, the BNO055 having gone blind.
 - **Firmware / toolchain — the board runs `v1.29.0` OFFICIAL** (moved off `preview.414.g533a154c8a`
   on 2026-09-04; the full board suite is **57/57** on it, no delta). The repo `mpy-cross` is still
   `preview.417` and stays there deliberately: the contract between compiler and runtime is the **mpy
