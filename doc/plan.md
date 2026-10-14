@@ -78,10 +78,11 @@ Required hardware and the phased development roadmap. Architecture lives in
     uncapped, a +-10 ceiling gives up 6 m/s; `boost_limit_deg` added); the MG90S on the taster's yaw
     (`doc/sims/TMS-7-mg90s_yaw`); the ring_eraser sleeping through erases (17.8 -> 1.8 % of core 0); the restart
     guarded by the RTC watchdog (a silent hang in a reboot); the C6 recorder's 3.3 V card module.
-  - **Open:** BC5 (the operator's call on the boost law and its ceiling); the TMS-8
-    launch config (drafted; the airframe's trims, IMU axes and GNSS remain); the 7C proofs (a rail power cycle
-    restoring the BNO055 profile, a hand rotation on the BNO055 alone); the field-day checks
-    ([`field_checks.md`](field_checks.md): a real GNSS fix, the beacons' range, the batteries' time).
+  - **Open:** BC5 (the operator's call on the boost law and its ceiling); the TMS-8 launch config
+    (`launches/next/TMS-8`: NEO-M8N, the SEN0697 as on 7F, three MG90S at concurrency 3; the visual fin trims and
+    BC5 remain); the C6 recorder soldered (2026-10-14) and its battery checks; the field-day checks
+    ([`field_checks.md`](field_checks.md): a real GNSS fix, the beacons' range, the batteries' time; no date yet).
+    Dropped: the 7C BNO055 proofs -- 7C flies on its SEN0697, the BNO055 having gone blind (operator 2026-10-14).
 - **Firmware / toolchain — the board runs `v1.29.0` OFFICIAL** (moved off `preview.414.g533a154c8a`
   on 2026-09-04; the full board suite is **57/57** on it, no delta). The repo `mpy-cross` is still
   `preview.417` and stays there deliberately: the contract between compiler and runtime is the **mpy

@@ -13,6 +13,7 @@ entry**: an unfitted one fails `verify` and `arm`.
 
 | launch | status |
 |---|---|
+| [next](next/TMS-8/README.md) | **draft, no date** — TMS-8's board config (Rust avionics): trims and the boost law (BC5) pending |
 | [20261003](20261003/README.md) | **flown** — [TMS-7](20261003/TMS-7/README.md) booster test: success, full flight logged; TMS-7F not assembled in time |
 | ~~20260905~~ | **cancelled — weather** |
 
