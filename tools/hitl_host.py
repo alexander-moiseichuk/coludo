@@ -421,7 +421,7 @@ class _Sim:
         r = -pitch' sin(roll) + heading' cos(pitch) cos(roll)), not the Euler rates themselves.
         """
         body = self.body
-        if body.gliding and self.handover_until is None:
+        if self.physical and body.gliding and self.handover_until is None:  # --no-attitude's separation only
             self.handover_until = t + _HANDOVER_S
         roll, pitch = math.radians(body.roll), math.radians(body.pitch)
         heading_rate = body.yaw_rate
@@ -454,7 +454,8 @@ class _Sim:
         # the marks frame too, by the right-hand rule: about y left the nose goes DOWN, about z up it goes LEFT
         # (crates/control attitude::rate_from_marks maps it back to roll, pitch, yaw)
         rates = [body.roll_rate, -body.pitch_rate, -body.yaw_rate]
-        if self.physical:
+        if self.physical or self.drop_attitude:
+            # the filter flies on the gyro alone (from power-up, or since an attitude drop): a real gyro's body rates
             rates = self.body_rates(t)
         stack = self.stack if self.stack is not None and not body.gliding else None
         if stack is not None:

@@ -72,7 +72,8 @@ pub struct ServoType {
     /// The power rise above which a probe flags HIGH draw (stall or binding), mW: a flag, not a failure.
     pub engine_max_mw: i32,
     /// The pulses the part drives without stalling, us (low, high): every pulse is held inside them after the angle
-    /// map, whatever the fin's range and trim ask. The SG90 holds its whole 500..2500.
+    /// map, whatever the fin's range and trim ask. The SG90 has no such stop (plan B's: its configured min_us..max_us
+    /// alone bound it).
     pub stall_free_us: (i32, i32),
 }
 
@@ -88,7 +89,7 @@ pub const SG90: ServoType = ServoType {
     settle_margin_ms: 60,
     engine_min_mw: 500,
     engine_max_mw: 3_500,
-    stall_free_us: (500, 2500),
+    stall_free_us: (i32::MIN, i32::MAX),
 };
 
 /// Python's `round()` of a whole-degree command: a half to even (2.5 -> 2, -1.5 -> -2).

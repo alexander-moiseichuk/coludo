@@ -184,8 +184,11 @@ pub struct Settings {
     pub turn_gate: f32,
     /// `course_gate_mps`: the ground speed in m/s above which the GNSS course is meaningful, 5.
     pub course_gate: f32,
-    /// `course_shift`: each tick pulls the yaw 2^-shift of the way to the GNSS track, 5 (1/32): weak, so a crosswind
-    /// crab averages out. The TRACK is what the navigation steers by anyway.
+    /// `course_shift`: each tick pulls the yaw 2^-shift of the way to the GNSS track, 5 (1/32): a time constant of
+    /// ~0.64 s at the 50 Hz step. It does NOT average a crosswind crab out (plan B's note said so): a steady crab is a
+    /// constant heading-to-track offset, which any pull drives to 0 within seconds, so the heading the filter publishes
+    /// is the TRACK's, which is what the navigation steers by. The wind triangle (crates/control wind) then sees the
+    /// along-track wind only.
     pub course_shift: u32,
     /// `mag_shift`: once the offset is learned and the track is gone, each tick pulls the yaw 2^-shift of the way to
     /// the magnetic heading, 6 (1/64).
@@ -206,7 +209,9 @@ pub struct Settings {
     /// bench, on the rod), 10; 0 = none (plan B's). A real gyro reads a constant bias (TMS-7F's LSM6DSO32: up to 0.58
     /// deg/s) that the turn gate leaves to drift the attitude through every turn, 10 degrees in a 20 s orbit; learned
     /// on the pad and taken off every rate, it is gone. Learned only while still (every axis under
-    /// [`STILL_RATE`] and the accelerometer within [`STILL_G`] of 1 g), held from the launch on.
+    /// [`STILL_RATE`] and the accelerometer within [`STILL_G`] of 1 g), held from the launch on, each gyro its own
+    /// (by its `rate` rank). Not across a warm start: a mid-air reset rebuilds the filter with no bias, and it flies
+    /// the raw gyro (plan B's) for the rest of that flight; the crumb does not carry it.
     pub gyro_bias: f32,
     /// `centripetal`: take the turn's centripetal acceleration (the body rates across the airspeed) off the
     /// accelerometer before it pulls, true; false = plan B's. In a coordinated turn the accelerometer reads the load down
@@ -367,8 +372,14 @@ pub struct Readings {
     /// The stage is SETTING: the board on the bench or the rod, where a still gyro reads its bias
     /// ([`Settings::gyro_bias`]).
     pub resting: bool,
-    /// The flight law's airspeed estimate in m/s, for [`Settings::centripetal`]; None without a flight law.
+    /// A MEASURED airspeed in m/s (the pitot's, in its band), for [`Settings::centripetal`]; None without one. Never
+    /// the governor's estimate: it over-reads by design when unsure (the fin cap's safe side), and an over-read V
+    /// turns the correction into a roll error.
     pub airspeed: Option<f32>,
+    /// The rank of the source the `rate` came from (crates/databoard `Parameter::rank`), None when unknown: each
+    /// gyro's bias is its own ([`Settings::gyro_bias`]), so the BMI323 carrying `rate` gets its own, not the
+    /// LSM6DSO32's.
+    pub rate_rank: Option<i32>,
 }
 
 impl Readings {
@@ -406,6 +417,7 @@ impl Readings {
             ballistic: self.ballistic,
             resting: self.resting,
             airspeed: scalar(self.airspeed),
+            rate_rank: self.rate_rank,
         }
     }
 }
@@ -624,8 +636,24 @@ pub struct Attitude {
     last_us: u64,
     /// The time of the last accelerometer pull check, in microseconds: the throttle's clock.
     acceleration_us: u64,
-    /// The gyro's bias in degrees per second, learned at rest in SETTING ([`Settings::gyro_bias`]); 0 until then.
-    bias: [f32; 3],
+    /// Each gyro's bias in degrees per second, by its `rate` rank ([`bias_slot`]), learned at rest in SETTING
+    /// ([`Settings::gyro_bias`]); 0 until then.
+    biases: [[f32; 3]; BIAS_SLOTS],
+    /// The slot of the last tick's `rate` source.
+    rate_slot: usize,
+    /// The orientation was ever anchored: mirrored, or tilted toward gravity. A filter built mid-flight (a warm start)
+    /// starts LEVEL, and in BOOSTING nothing anchors it (the accelerometer reads no gravity): it publishes nothing
+    /// until something does, so the law flies the fins neutral instead of steering on an invented attitude.
+    anchored: bool,
+}
+
+/// The gyro biases the filter keeps apart, by `rate` rank (the LSM6DSO32 at 0, the BMI323 at 1 in config_default);
+/// a rank past them shares the last.
+const BIAS_SLOTS: usize = 4;
+
+/// The bias slot of a `rate` source's rank (0 when unknown).
+fn bias_slot(rank: Option<i32>) -> usize {
+    rank.map_or(0, |rank| rank.clamp(0, BIAS_SLOTS as i32 - 1) as usize)
 }
 
 impl Attitude {
@@ -653,13 +681,16 @@ impl Attitude {
             strikes: 0,
             last_us: now_us,
             acceleration_us: now_us,
-            bias: [0.0; 3],
+            biases: [[0.0; 3]; BIAS_SLOTS],
+            rate_slot: 0,
+            anchored: false,
         }
     }
 
-    /// The gyro bias learned at rest, degrees per second (0 with `gyro_bias_s` off or before any rest).
+    /// The gyro bias learned at rest for the last tick's `rate` source, degrees per second (0 with `gyro_bias_s` off
+    /// or before any rest).
     pub fn bias(&self) -> [f32; 3] {
-        self.bias
+        self.biases[self.rate_slot]
     }
 
     /// The knobs.
@@ -711,6 +742,9 @@ impl Attitude {
             _ if self.seeded || readings.acceleration.is_some() => {
                 self.integrate(elapsed, now_us, &readings);
                 self.free = true;
+                if readings.ballistic && !self.anchored {
+                    return Tick { published: None, log }; // a warm start's LEVEL guess, never anchored (see `anchored`)
+                }
                 if self.blind && readings.backup_fresh {
                     return Tick { published: None, log }; // withhold: a frozen attitude would mask the live backup
                 }
@@ -768,6 +802,7 @@ impl Attitude {
         };
         self.rotation = Rotation::from_euler(orientation.heading, orientation.roll, orientation.pitch);
         self.seeded = true;
+        self.anchored = true;
     }
 
     /// Free-run one tick of `elapsed` seconds (plan B `_integrate`): turn the orientation by the gyro's body rates,
@@ -783,10 +818,10 @@ impl Attitude {
     /// are not: it added the body rates to the Euler angles, and pulled roll and pitch unwrapped (see [`rotation`]).
     fn integrate(&mut self, elapsed: f32, now_us: u64, readings: &Readings) {
         let before = self.angles;
+        self.rate_slot = bias_slot(readings.rate_rank);
         self.learn_bias(elapsed, readings);
-        let rate = readings
-            .rate
-            .map(|rate| [0, 1, 2].map(|axis| rate[axis] - self.bias[axis]));
+        let bias = self.biases[self.rate_slot];
+        let rate = readings.rate.map(|rate| [0, 1, 2].map(|axis| rate[axis] - bias[axis]));
         let mut turning = true;
         if let Some(rate) = rate {
             self.rotation = self.rotation.turned(rate, elapsed);
@@ -814,6 +849,7 @@ impl Attitude {
                 .map(|gravity| self.centripetal(gravity, rate, readings.airspeed));
             if let Some(gravity) = gravity.filter(|gravity| self.in_band(*gravity)) {
                 self.rotation = self.rotation.tilted(gravity, self.correction_pull);
+                self.anchored = true;
             }
         }
         let (heading, roll, pitch) = self.rotation.euler();
@@ -839,7 +875,7 @@ impl Attitude {
             return;
         }
         let step = (elapsed / time_constant).min(1.0);
-        for (bias, axis) in self.bias.iter_mut().zip(rate) {
+        for (bias, axis) in self.biases[self.rate_slot].iter_mut().zip(rate) {
             *bias += (axis - *bias) * step;
         }
     }

@@ -62,9 +62,13 @@ pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64, ballistic: bool
             age_us: winner.age_us,
         })
     });
+    let rate_rank = quantities
+        .rate
+        .and_then(|parameter| parameter.rank(parameter.read(now_us)?.source));
     Readings {
         fused,
         backup_fresh: attitude.fresh_below(rank, now_us),
+        rate_rank,
         ballistic,
         course: scalar(quantities.course),
         ground_speed: scalar(quantities.speed),

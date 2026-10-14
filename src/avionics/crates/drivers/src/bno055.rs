@@ -312,6 +312,8 @@ pub fn aerospace(euler: [f32; 3], axes: &Axes) -> [f32; 3] {
     let world = [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]];
     let frame = multiply(&multiply(&multiply(&body, &marks), &chip), &world);
     let heading = frame[0][1].atan2(frame[0][0]).to_degrees().rem_euclid(360.0);
+    // f32's rem_euclid rounds a hair under 0 up to 360 itself
+    let heading = if heading >= 360.0 { 0.0 } else { heading };
     let roll = frame[1][2].atan2(frame[2][2]).to_degrees();
     let pitch = -frame[0][2].clamp(-1.0, 1.0).asin().to_degrees();
     [heading, roll, pitch]

@@ -441,6 +441,75 @@ fn a_still_gyro_s_bias_is_learned_at_rest_and_taken_off() {
 }
 
 #[test]
+fn each_gyro_keeps_its_own_bias() {
+    // the LSM6DSO32 (rank 0) and the BMI323 (rank 1) read different biases; on the pad they alternate
+    let settings = Settings {
+        gyro_bias: 2.0,
+        ..test_settings()
+    };
+    let at_rest = |rank: i32, rate: [f32; 3]| Readings {
+        rate: Some(rate),
+        acceleration: Some(gravity_at(0.0, 0.0)),
+        resting: true,
+        rate_rank: Some(rank),
+        ..Readings::default()
+    };
+    let mut bench = Bench::new(settings);
+    for _ in 0..1000 {
+        // each its own 20 s of steps: ten time constants
+        bench.tick(&at_rest(0, [0.5, 0.0, 0.2]));
+        bench.tick(&at_rest(1, [-0.3, 0.1, 0.0]));
+    }
+    bench.tick(&at_rest(0, [0.5, 0.0, 0.2]));
+    let lsm = bench.filter.bias();
+    bench.tick(&at_rest(1, [-0.3, 0.1, 0.0]));
+    let bmi = bench.filter.bias();
+    assert!((lsm[0] - 0.5).abs() < 1e-3 && (lsm[2] - 0.2).abs() < 1e-3, "{lsm:?}");
+    assert!((bmi[0] + 0.3).abs() < 1e-3 && (bmi[1] - 0.1).abs() < 1e-3, "{bmi:?}");
+    // NEGATIVE: in flight the BMI323 carrying `rate` has its own bias taken off: the heading holds
+    let heading = bench.filter.orientation().heading;
+    bench.ticks(
+        500,
+        &Readings {
+            resting: false,
+            ..at_rest(1, [-0.3, 0.1, 0.0])
+        },
+    );
+    assert!(close(bench.filter.orientation().heading, heading, 0.01));
+}
+
+#[test]
+fn a_boost_never_anchored_publishes_nothing() {
+    // a warm start into BOOSTING: the filter is built LEVEL mid-climb, and the accelerometer reads no gravity
+    let boost = Readings {
+        rate: Some([0.0; 3]),
+        acceleration: Some(gravity_at(0.0, 90.0)),
+        ballistic: true,
+        ..Readings::default()
+    };
+    let mut bench = Bench::new(test_settings());
+    assert_eq!(
+        bench.ticks(10, &boost).published,
+        None,
+        "the law flies neutral, not on a guess"
+    );
+    // the glide's first pull anchors it, and it publishes from there
+    let glide = Readings {
+        acceleration: Some(gravity_at(0.0, -6.0)),
+        ballistic: false,
+        ..boost
+    };
+    assert!(bench.tick(&glide).published.is_some());
+    // NEGATIVE: a filter anchored on the pad publishes through the boost
+    let mut cold = Bench::new(test_settings());
+    cold.tick(&Readings {
+        ballistic: false,
+        ..boost
+    });
+    assert!(cold.ticks(10, &boost).published.is_some());
+}
+
+#[test]
 fn the_centripetal_correction_holds_a_bank_the_accelerometer_reads_level() {
     // a coordinated turn banked 30 at 15 m/s: the accelerometer reads its load down the body axis, level; its body
     // rates (q, r) carry the turn. The turn gate opened (1000 deg/s), so every tick pulls
@@ -827,6 +896,7 @@ fn a_non_finite_reading_is_no_reading() {
         ballistic: false,
         resting: false,
         airspeed: None,
+        rate_rank: None,
     };
     let tick = bench.ticks(BLIND_CYCLES as usize, &poisoned);
     let published = tick.published.expect("still seeded: it publishes");

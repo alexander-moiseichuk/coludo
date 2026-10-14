@@ -87,7 +87,9 @@ pub struct Inspection {
 /// up (no Wi-Fi driver yet, or none this boot).
 pub fn inspection() -> Option<Inspection> {
     use esp_idf_svc::sys;
-    if !stack_up() {
+    // a parked C6 (hosted_no_reboot) answers no RPC: each would wait out esp_hosted's 5 s on the executor
+    // SAFETY: a flag read.
+    if !stack_up() || unsafe { sys::hosted_link_down() } {
         return None;
     }
     // SAFETY: plain driver queries into zeroed out-structs the calls fill; the driver is up (the stack is).
@@ -135,6 +137,10 @@ pub fn inspection() -> Option<Inspection> {
 pub fn set_tx_power(dbm: f32) -> Result<(), String> {
     if !stack_up() {
         return Err("no Wi-Fi driver".to_string());
+    }
+    // SAFETY: a flag read.
+    if unsafe { esp_idf_svc::sys::hosted_link_down() } {
+        return Err("the C6 link is parked".to_string());
     }
     // SAFETY: a plain driver call on the started Wi-Fi.
     esp_idf_svc::sys::esp!(unsafe { esp_idf_svc::sys::esp_wifi_set_max_tx_power((dbm * 4.0) as i8) })

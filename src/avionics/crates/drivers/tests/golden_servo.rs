@@ -26,8 +26,7 @@ fn servo_type(name: &str) -> &'static ServoType {
 }
 
 /// `owed` (plan B's answer) with every pulse (`pulse_us`, a row's second cell) held inside the type's stall-free
-/// pulses, the one departure (see the module notes): the SG90's range is the whole 500..2500, so its answers stand as
-/// plan B wrote them.
+/// pulses, the one departure (see the module notes): the SG90 has no stop, so its answers stand as plan B wrote them.
 fn stopped(owed: &Value, kind: &ServoType) -> Value {
     match owed {
         Value::Object(fields) => Value::Object(

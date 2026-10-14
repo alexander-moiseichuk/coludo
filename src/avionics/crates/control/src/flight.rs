@@ -355,6 +355,12 @@ impl FlightLaw {
         self.governor.airspeed()
     }
 
+    /// The pitot's airspeed the governor last measured, m/s; None without one (the attitude filter's centripetal
+    /// correction takes no estimate).
+    pub fn measured_airspeed(&self) -> Option<f32> {
+        self.governor.measured_airspeed()
+    }
+
     /// The fin cap the governor set, whole degrees.
     pub fn cap(&self) -> i32 {
         self.mixer.limit()

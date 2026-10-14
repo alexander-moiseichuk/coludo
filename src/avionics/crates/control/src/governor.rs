@@ -161,6 +161,8 @@ pub struct Governor {
     ceiling: Option<i32>,
     /// The cap the last update derived, before the ceiling; None before the first.
     derived: Option<i32>,
+    /// The pitot's airspeed the last update took, m/s, None when that update had none in band.
+    measured: Option<f32>,
 }
 
 impl Governor {
@@ -176,6 +178,7 @@ impl Governor {
             accumulated: 0.0,
             ceiling: None,
             derived: None,
+            measured: None,
         }
     }
 
@@ -206,6 +209,12 @@ impl Governor {
     /// The current airspeed estimate in m/s: the boost rod gate, the telemetry and the warm-start crumb read it.
     pub fn airspeed(&self) -> f32 {
         self.estimator.value()
+    }
+
+    /// The pitot's airspeed the last update measured (in its band), m/s; None when it had none. A MEASUREMENT, unlike
+    /// [`Governor::airspeed`], which over-reads by design when unsure.
+    pub fn measured_airspeed(&self) -> Option<f32> {
+        self.measured
     }
 
     /// The estimator, read-only: its value and whether it is trusted yet.
@@ -273,9 +282,11 @@ impl Governor {
             let magnitude = (x * x + y * y + z * z).sqrt();
             self.estimator.predict((magnitude - 1.0) * STANDARD_GRAVITY, elapsed);
         }
+        self.measured = None;
         match readings.pitot {
             Some(airspeed) if self.config.pitot_minimum <= airspeed && airspeed < self.config.pitot_maximum => {
                 self.estimator.measure(airspeed, self.config.pitot_gain);
+                self.measured = Some(airspeed);
             }
             _ => {
                 let steep = pitch >= self.config.steep_pitch || pitch <= -self.config.steep_pitch;
@@ -453,11 +464,14 @@ mod tests {
             15.5,
             "blended toward the pitot; the GNSS 40 was not consulted"
         );
+        assert_eq!(unit.measured_airspeed(), Some(16.0), "the pitot's measurement");
         unit.step(&mut mixer, 0.1, true, 0.0, &level(Some(12.5), Some(30.0)));
         assert!(
             (unit.airspeed() - (15.5 + 0.2 * (12.5 - 15.5))).abs() < 1e-5,
             "railed: the GNSS blend ran"
         );
+        // NEGATIVE: a railed pitot is no measurement, though the estimate holds a value
+        assert_eq!(unit.measured_airspeed(), None);
     }
 
     #[test]

@@ -5,9 +5,12 @@
 //! The GNSS reports the ground velocity (course and ground speed); the attitude gives the heading; the governor
 //! gives the airspeed. The air mass the glider flies through is moving, so
 //!   wind = ground velocity - air velocity = (ground speed along the course) - (airspeed along the heading).
-//! An EMA smooths the per-fix estimate. The CROSSWIND component is bias-free; the ALONG-heading component inherits
-//! the governor's airspeed error (an over-read biases the head/tailwind), which is acceptable for the rough uses
-//! (the reachability margin, the approach crab, dead reckoning). If the field data shows that bias hurts, the
+//! An EMA smooths the per-fix estimate. The ALONG-heading component inherits the governor's airspeed error (an
+//! over-read biases the head/tailwind), which is acceptable for the rough uses (the reachability margin, the approach
+//! crab, dead reckoning). The CROSSWIND component needs a heading independent of the track, and the board's attitude
+//! filter pulls its heading onto the GNSS track (crates/control attitude `course_shift`): in straight flight its
+//! crab is pulled out and the crosswind reads ~0; only the turns, where the track swings faster than the pull, show
+//! it. Plan B's design, invisible in HITL while the sim's own heading was mirrored. If the field data shows that bias hurts, the
 //! airspeed-free GPS-only min/max-ground-speed method is the next layer (kept out until a corner case earns it).
 //!
 //! The estimator OWNS its config subtree (the board `wind` block) and is operator-facing, as plan B's

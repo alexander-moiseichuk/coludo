@@ -79,6 +79,7 @@ fn readings(input: &Value) -> Readings {
         ballistic: false,
         resting: false,
         airspeed: None,
+        rate_rank: None,
     }
 }
 

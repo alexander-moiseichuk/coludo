@@ -456,8 +456,9 @@ impl ControlCore {
             && !done
         {
             // the stage as the flight word stands before this tick's step (BOOSTING: the accelerometer reads no gravity;
-            // SETTING: a still gyro reads its bias), and the law's airspeed of the last tick (the turn's centripetal)
-            let airspeed = self.flight.as_ref().map(|flight| flight.law.airspeed());
+            // SETTING: a still gyro reads its bias), and the pitot's airspeed the law last measured (the turn's
+            // centripetal; never the governor's over-reading estimate)
+            let airspeed = self.flight.as_ref().and_then(|flight| flight.law.measured_airspeed());
             filter.tick(now_us, writer.flight().stage, airspeed, hooks);
         }
         if let Some(sequencer) = &mut self.sequencer {
