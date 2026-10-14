@@ -194,6 +194,16 @@ from the rod (1.5 m) the glider tries to be as vertical as possible until separa
 metre or two above a 1.5 m rod's top; BOOSTING ends at the separation switch (the baro apogee as the fallback).
 Still open: a TMS-8 stack profile for the 6-DoF (its own margin; the figures above are 7D's).
 
+**The attitude BC4 flew on (2026-10-14).** BC2-BC4's law steered on the sim's own attitude, published at priority 0:
+the board's attitude filter only mirrored it. TMS-8 has no BNO055, so in flight the law steers on that filter alone,
+which had never flown a boost. `hitl_host --no-attitude` (the sim's sensors as a real airframe's) flew it, and the
+plan B filter the port carried failed: its Euler-rate kinematics scrambled under the boost's spin and its accelerometer
+pull read thrust and drag as gravity; on it the lean law looped the 6-DoF stack at 56 m. With the filter fixed (a
+quaternion, no accelerometer pull in BOOSTING; doc/specs/avionics-port.md M9) the SITL on the filter alone, TMS-8's
+config, 7D's stack, noise 0.1, 3 seeds: no loop at 0 and 3 m/s (path minimum 86-90 deg, as on the sim's attitude),
+and at 6 m/s 3 loops of 3 later in the burn (path minimum 46-52 deg) where the sim's attitude looped 1 of 3: the edge
+moves toward calm by a fraction of a margin step. A TMS-8 boost study should fly `--no-attitude`.
+
 ## 3. Not in this plan
 
 The stack's own design (margin, booster fins, the joint, a longer rail: the launch README's December list) and
