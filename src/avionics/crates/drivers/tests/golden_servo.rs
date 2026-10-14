@@ -4,6 +4,9 @@
 //! src/glider/drivers/sg90.py and mg90s.py on CPython, compared exactly. The clamp (Python's round, a half to even,
 //! then the range), and servos set up from a component block and driven step by step: operator updates, the flight
 //! loop's compare-and-set, moves with their travel estimate, and travel_ms itself.
+//!
+//! One deliberate departure: the MG90S's pulses stop short of the ends it stalls at (crates/drivers mg90s
+//! `stall_free_us`, 2026-10-14; plan B drove them), so plan B's pulses are compared held inside that range.
 
 use drivers::mg90s::MG90S;
 use drivers::sg90::{SG90, Servo, ServoType, Settings};
@@ -20,6 +23,48 @@ fn servo_type(name: &str) -> &'static ServoType {
         "mg90s" => &MG90S,
         other => panic!("unknown servo type {other}"),
     }
+}
+
+/// `owed` (plan B's answer) with every pulse (`pulse_us`, a row's second cell) held inside the type's stall-free
+/// pulses, the one departure (see the module notes): the SG90's range is the whole 500..2500, so its answers stand as
+/// plan B wrote them.
+fn stopped(owed: &Value, kind: &ServoType) -> Value {
+    match owed {
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, value)| match (key.as_str(), value) {
+                    ("pulse_us", Value::Number(_)) => (key.clone(), held(value, kind)),
+                    // a move's `<name>.csv` rows: (angle, pulse_us, done)
+                    ("rows", Value::Array(rows)) => (
+                        key.clone(),
+                        Value::Array(
+                            rows.iter()
+                                .map(|row| match row {
+                                    Value::Array(cells) if cells.len() == 3 => {
+                                        json!([cells[0], held(&cells[1], kind), cells[2]])
+                                    }
+                                    other => other.clone(),
+                                })
+                                .collect(),
+                        ),
+                    ),
+                    _ => (key.clone(), stopped(value, kind)),
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(|item| stopped(item, kind)).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A pulse, us, held inside the type's stall-free pulses.
+fn held(pulse: &Value, kind: &ServoType) -> Value {
+    let (low, high) = kind.stall_free_us;
+    pulse.as_i64().map_or_else(
+        || pulse.clone(),
+        |pulse| json!(pulse.clamp(i64::from(low), i64::from(high))),
+    )
 }
 
 /// What the servo holds, as every step reports it.
@@ -115,13 +160,17 @@ fn every_step_matches_plan_b() {
         }
         let mut fin = Servo::new(kind, &Settings::from_config(&config, kind));
         compare
-            .check(&format!("{name} setup"), &scenario["setup"], &state(&fin))
+            .check(
+                &format!("{name} setup"),
+                &stopped(&scenario["setup"], kind),
+                &state(&fin),
+            )
             .unwrap_or_else(|failure| panic!("{failure}"));
         for (index, item) in scenario["steps"].as_array().unwrap().iter().enumerate() {
             compare
                 .check(
                     &format!("{name} step {index}"),
-                    &item["out"],
+                    &stopped(&item["out"], kind),
                     &step(&mut fin, &item["in"]),
                 )
                 .unwrap_or_else(|failure| panic!("{failure}"));

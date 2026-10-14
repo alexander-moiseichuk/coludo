@@ -71,6 +71,9 @@ pub struct ServoType {
     pub engine_min_mw: i32,
     /// The power rise above which a probe flags HIGH draw (stall or binding), mW: a flag, not a failure.
     pub engine_max_mw: i32,
+    /// The pulses the part drives without stalling, us (low, high): every pulse is held inside them after the angle
+    /// map, whatever the fin's range and trim ask. The SG90 holds its whole 500..2500.
+    pub stall_free_us: (i32, i32),
 }
 
 /// The SG90: ~0.15 s per 60 degrees (plastic gear), probe window 500..3500 mW.
@@ -85,6 +88,7 @@ pub const SG90: ServoType = ServoType {
     settle_margin_ms: 60,
     engine_min_mw: 500,
     engine_max_mw: 3_500,
+    stall_free_us: (500, 2500),
 };
 
 /// Python's `round()` of a whole-degree command: a half to even (2.5 -> 2, -1.5 -> -2).
@@ -344,7 +348,8 @@ impl Servo {
     }
 
     /// The pulse, us, for an already-clamped angle (sg90._write's map): `min_us + (angle + trim - min_deg) x
-    /// (max_us - min_us) // span`, or min_us for a zero span, bounded to [min_us, max_us].
+    /// (max_us - min_us) // span`, or min_us for a zero span, bounded to [min_us, max_us] and then to the type's
+    /// stall-free pulses.
     pub fn pulse(&self, angle: i32) -> i32 {
         let span = i64::from(self.max_degrees) - i64::from(self.min_degrees);
         let pulse = if span != 0 {
@@ -358,7 +363,8 @@ impl Servo {
             i64::from(self.min_us)
         };
         let bounded = pulse.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-        clamp_int(self.min_us, bounded, self.max_us)
+        let (low, high) = self.servo_type.stall_free_us;
+        clamp_int(low, clamp_int(self.min_us, bounded, self.max_us), high)
     }
 
     /// Write an already-clamped angle (sg90._write): map it, drive it, remember it. Returns the command, whose row

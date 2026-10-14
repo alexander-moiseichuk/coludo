@@ -19,13 +19,16 @@ use crate::sg90::ServoType;
 
 /// The MG90S: ~0.1 s per 60 degrees (metal gear, a touch quicker than the SG90's 0.15), and a probe window shifted
 /// up for the larger current (600..5000 mW). Both are datasheet-approximate TYPE defaults; tune them per built rig
-/// through the component's engine_*_mw config.
+/// through the component's engine_*_mw config. Its pulses stop at 555..2333 us, 5..165 degrees on the stock map:
+/// held at 0 or at 170 and up the taster's MG90S stalled at its mechanical ends (225-250 mW where 25 mW holds),
+/// stall-free from 5 to 165 (doc/sims/TMS-7-mg90s_yaw). A fin flies 45..135; a manual command past them stops there.
 pub const MG90S: ServoType = ServoType {
     name: "mg90s",
     slew_ms_per_60: 100,
     settle_margin_ms: 60,
     engine_min_mw: 600,
     engine_max_mw: 5_000,
+    stall_free_us: (555, 2333),
 };
 
 #[cfg(test)]
@@ -47,6 +50,22 @@ mod tests {
         assert_eq!((stock.engine_min_mw(), stock.engine_max_mw()), (600, 5000));
         assert_eq!(stock.travel_ms(60, false), 100);
         assert_eq!(stock.travel_ms(60, true), 160);
+    }
+
+    #[test]
+    fn the_pulse_stops_short_of_the_ends_it_stalls_at() {
+        // the stock 0..180 map: 0 would be 500 us and 180 2500, both into the MG90S's stops
+        let mut fin = servo(json!({}));
+        assert_eq!(fin.apply(0.0).pulse_us, 555);
+        assert_eq!(fin.apply(180.0).pulse_us, 2333);
+        assert_eq!(fin.apply(5.0).pulse_us, 555);
+        assert_eq!(fin.apply(165.0).pulse_us, 2333);
+        // a flight's travel is untouched
+        assert_eq!(fin.apply(45.0).pulse_us, 1000);
+        assert_eq!(fin.apply(135.0).pulse_us, 2000);
+        // NEGATIVE: the SG90 drives its whole range
+        let mut sg90 = Servo::new(&SG90, &Settings::from_config(&json!({}), &SG90));
+        assert_eq!((sg90.apply(0.0).pulse_us, sg90.apply(180.0).pulse_us), (500, 2500));
     }
 
     #[test]
