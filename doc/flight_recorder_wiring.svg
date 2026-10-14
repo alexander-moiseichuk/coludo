@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="600" viewBox="0 0 920 600" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <!-- Coludo project, copyright under MIT license, Alexander Moiseichuk -->
+  <!-- The flight recorder's wiring (doc/flight_recorder.md), 2026-10-13: the 3.3 V card module pin to pin on the
+       C6 SuperMini's right header, the UART from the main board, the battery on B+/B-, 5 V + GND from the main pack on the USB-C. -->
+  <rect width="920" height="600" fill="#ffffff"/>
+  <text x="460" y="28" text-anchor="middle" font-size="17" font-weight="bold">Flight recorder: wiring (2026-10-13)</text>
+
+  <!-- main board -->
+  <rect x="20" y="130" width="210" height="210" rx="8" fill="#eef3fb" stroke="#33507a" stroke-width="2"/>
+  <text x="125" y="155" text-anchor="middle" font-weight="bold">Main board (ESP32-P4)</text>
+  <text x="220" y="184" text-anchor="end">UART1 TX · GPIO20</text>
+  <circle cx="230" cy="180" r="4" fill="#2a7d2a"/>
+  <circle cx="200" cy="130" r="4" fill="#c0392b"/>
+  <text x="190" y="120" text-anchor="end" font-size="12">5 V + GND (the 800 mAh pack)</text>
+
+  <!-- C6 SuperMini -->
+  <rect x="330" y="100" width="230" height="370" rx="8" fill="#f4f4f4" stroke="#444" stroke-width="2"/>
+  <rect x="415" y="78" width="60" height="26" rx="5" fill="#ddd" stroke="#444" stroke-width="1.5"/>
+  <text x="445" y="96" text-anchor="middle" font-size="11">USB-C</text>
+  <text x="445" y="128" text-anchor="middle" font-weight="bold">ESP32-C6 SuperMini</text>
+  <text x="445" y="146" text-anchor="middle" font-size="11" fill="#555">charger TP4054-type on board</text>
+  <!-- left side -->
+  <text x="342" y="184">GPIO17 · RX</text>
+  <circle cx="330" cy="180" r="4" fill="#2a7d2a"/>
+  <!-- right header: the module's own pin order -->
+  <g font-size="12">
+    <text x="548" y="184" text-anchor="end">3V3</text>
+    <text x="548" y="224" text-anchor="end">GPIO20</text>
+    <text x="548" y="264" text-anchor="end">GPIO19</text>
+    <text x="548" y="304" text-anchor="end">GPIO18</text>
+    <text x="548" y="344" text-anchor="end">GPIO15</text>
+    <text x="548" y="384" text-anchor="end">GPIO14</text>
+  </g>
+  <g fill="#c8a400" stroke="#806800">
+    <rect x="555" y="175" width="10" height="10"/>
+    <rect x="555" y="215" width="10" height="10"/>
+    <rect x="555" y="255" width="10" height="10"/>
+    <rect x="555" y="295" width="10" height="10"/>
+    <rect x="555" y="335" width="10" height="10"/>
+    <rect x="555" y="375" width="10" height="10"/>
+  </g>
+  <!-- the back's pads -->
+  <rect x="372" y="420" width="44" height="22" rx="4" fill="#fbe3e0" stroke="#c0392b"/>
+  <text x="394" y="436" text-anchor="middle" font-size="12">B+</text>
+  <rect x="428" y="420" width="44" height="22" rx="4" fill="#e6e6e6" stroke="#222"/>
+  <text x="450" y="436" text-anchor="middle" font-size="12">B−</text>
+  <rect x="490" y="420" width="50" height="22" rx="4" fill="#e6e6e6" stroke="#222"/>
+  <text x="515" y="436" text-anchor="middle" font-size="12">GND</text>
+  <text x="456" y="410" text-anchor="middle" font-size="11" fill="#555">pads on the back</text>
+
+  <!-- SD module -->
+  <rect x="680" y="140" width="220" height="270" rx="8" fill="#fdf6e3" stroke="#8a6d00" stroke-width="2"/>
+  <text x="790" y="160" text-anchor="middle" font-weight="bold">micro-SD module, 3.3 V</text>
+  <text x="790" y="398" text-anchor="middle" font-size="11" fill="#555">no regulator · 10 kΩ pull-ups · 2 caps</text>
+  <g font-size="12">
+    <text x="700" y="184">3V3</text>
+    <text x="700" y="224">CS</text>
+    <text x="700" y="264">MOSI</text>
+    <text x="700" y="304">CLK (SCK)</text>
+    <text x="700" y="344">MISO</text>
+    <text x="700" y="384">GND</text>
+  </g>
+  <g fill="#c8a400" stroke="#806800">
+    <rect x="675" y="175" width="10" height="10"/>
+    <rect x="675" y="215" width="10" height="10"/>
+    <rect x="675" y="255" width="10" height="10"/>
+    <rect x="675" y="295" width="10" height="10"/>
+    <rect x="675" y="335" width="10" height="10"/>
+    <rect x="675" y="375" width="10" height="10"/>
+  </g>
+
+  <!-- pin to pin -->
+  <line x1="565" y1="180" x2="675" y2="180" stroke="#c0392b" stroke-width="3"/>
+  <line x1="565" y1="220" x2="675" y2="220" stroke="#1f4e9c" stroke-width="2.5"/>
+  <line x1="565" y1="260" x2="675" y2="260" stroke="#1f4e9c" stroke-width="2.5"/>
+  <line x1="565" y1="300" x2="675" y2="300" stroke="#1f4e9c" stroke-width="2.5"/>
+  <line x1="565" y1="340" x2="675" y2="340" stroke="#1f4e9c" stroke-width="2.5"/>
+  <text x="620" y="173" text-anchor="middle" font-size="11" fill="#c0392b">pin to pin</text>
+  <!-- GPIO14 faces the module's GND: not joined -->
+  <line x1="600" y1="372" x2="640" y2="388" stroke="#999" stroke-width="1.5"/>
+  <line x1="600" y1="388" x2="640" y2="372" stroke="#999" stroke-width="1.5"/>
+  <text x="620" y="404" text-anchor="middle" font-size="11" fill="#777">not joined</text>
+  <!-- the module's GND: its own wire to a GND pin -->
+  <path d="M 680 380 L 660 380 L 660 500 L 515 500 L 515 442" fill="none" stroke="#222" stroke-width="2.5"/>
+  <text x="590" y="494" text-anchor="middle" font-size="11">module GND: its own wire</text>
+
+  <!-- the UART from the main board: its ground is the USB cable's -->
+  <line x1="230" y1="180" x2="330" y2="180" stroke="#2a7d2a" stroke-width="2.5"/>
+  <text x="280" y="172" text-anchor="middle" font-size="11" fill="#2a7d2a">921600 8N1</text>
+  <!-- USB power from the main pack -->
+  <path d="M 200 130 L 200 58 L 445 58 L 445 78" fill="none" stroke="#c0392b" stroke-width="2.5"/>
+  <text x="365" y="52" text-anchor="middle" font-size="11" fill="#c0392b">USB cable, 5 V + GND only (the common ground): runs the box, charges the cell</text>
+
+  <!-- battery and switch: + up through the switch to B+, - straight up to B- -->
+  <rect x="350" y="540" width="140" height="34" rx="5" fill="#fbe3e0" stroke="#c0392b"/>
+  <text x="420" y="562" text-anchor="middle" font-size="12">LiPo 1S 120 mAh</text>
+  <text x="384" y="534" text-anchor="end" font-size="13" fill="#c0392b">+</text>
+  <text x="460" y="534" font-size="13">−</text>
+  <line x1="394" y1="540" x2="394" y2="516" stroke="#c0392b" stroke-width="2.5"/>
+  <circle cx="394" cy="513" r="3" fill="#c0392b"/>
+  <line x1="392" y1="510" x2="378" y2="484" stroke="#c0392b" stroke-width="2.5"/>
+  <circle cx="394" cy="481" r="3" fill="#c0392b"/>
+  <line x1="394" y1="478" x2="394" y2="442" stroke="#c0392b" stroke-width="2.5"/>
+  <text x="372" y="502" text-anchor="end" font-size="11">switch</text>
+  <line x1="450" y1="540" x2="450" y2="442" stroke="#222" stroke-width="2.5"/>
+  <!-- notes -->
+  <g font-size="12" fill="#333">
+    <text x="20" y="390">Keep the module powered whenever the C6 is: an</text>
+    <text x="20" y="406">unpowered card loads the bus through its diodes</text>
+    <text x="20" y="422">(USB enumeration fails, the SCR read fails CRC).</text>
+    <text x="20" y="452">On main power loss the board's power path</text>
+    <text x="20" y="468">takes the cell: the box records and beacons on.</text>
+    <text x="20" y="498">Firmware: src/avionics/recorder, CARD_PINS</text>
+    <text x="20" y="514">[SCK 18, MOSI 19, MISO 15, CS 20].</text>
+  </g>
+</svg>
