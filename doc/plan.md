@@ -19,14 +19,13 @@ Required hardware and the phased development roadmap. Architecture lives in
   `server.py` (the hub: board listener + ~2 s heartbeat + telnet operator console, drop-in
   `commands/`, `all`-only broadcast) and `main.py` (CLI: `--host 0.0.0.0` / `--port` / `--help`),
   plus the HTTP/SSE dashboard (`web.py`). Per-file host tests (`test_board`, `test_server`).
-  Remaining polish: draft config + save/reboot from the UI. **Then** the Controller
-  **bring-up wiring** (connect → time-sync → start tasks), two-sided so it wants Control live first.
+  The dashboard's config editor (draft → save → reboot) and the Controller bring-up wiring are done (Phase 1).
   The Recorder is now wired into the task graph by a thin adapter (`@task.activity('recorder')` in
   `tasks/recorder.py`); the `recorder` component (bus uart:1) makes the Controller create + supervise
   its drain loop. ✅
 - **Phase 3 — done.** Active control: surface `mixer`, PID stabilization `flight` loop, stage
   `sequencer`, per-phase behaviour, `watchdog` + heartbeat, arming/ground-test safety. 36/36 board.
-- **Phase 4 — in progress.** *Done:* landing-zone `navigation` (heading-to-home, 3 GPS-degrading tiers)
+- **Phase 4 — done (2026-07-03).** Landing-zone `navigation` (heading-to-home, 3 GPS-degrading tiers)
   + **bank-to-turn energy management** (the airframe was over-*ranging* the 100 m zone ~456 m downrange;
   it now orbits the target to bleed altitude, contained to ≤ ~224 m from the pad); the **LSM6DSO32
   6-DoF IMU** integrated + verified; **boot hardening** (Wi-Fi never blocks boot — radio comes up lazily,
@@ -48,19 +47,64 @@ Required hardware and the phased development roadmap. Architecture lives in
   GNSS corrector** (`gnss_steep_pitch` — near-vertical flight must not blend 2D ground speed into the
   airspeed estimate; HITL-neutral, unit-proven); `flight_kpi.py` (guidance-effectiveness KPIs, the
   per-capture-set regression practice); and `config_default` documenting **every runtime knob** where
-  it is consumed. *Open:* flight-log review, optional **viperization** of the now-integer hot path
-  (DEFERRED on `bench_flight` evidence: a control step is ~4.5% of the 100 Hz budget and no single
+  it is consumed. The **viperization** of the now-integer hot path was dropped
+  (deferred on `bench_flight` evidence: a control step is ~4.5% of the 100 Hz budget and no single
   slice dominates — 3× `pid.step` ~20%, the fused `mixer.actuate` ~15%, `navigation.steer` throttled
-  to ~23 µs amortized/step; `pid.step` can't be `@viper` wholesale — object attrs + `None` sentinels),
-  and Phase 5 prep.
+  to ~23 µs amortized/step; `pid.step` can't be `@viper` wholesale — object attrs + `None` sentinels;
+  then the flight firmware moved to Rust, Phase 6).
 - **Simulation & performance — done.** On-board **HITL simulator** (closed-loop, no production-code
-  changes) + host **virtual-flight** tool with interactive HTML/SVG reports (`doc/sims/TMS-7/`:
+  changes) + host **virtual-flight** tool with interactive HTML/SVG reports (`doc/sims/TMS-7-basic/`:
   noise/wind/spike sweeps + corner cases); **perf cluster** (nav-heading cache, zero-alloc
   mixer, GC-disabled-in-flight, sleeping CPU-load probe → **7.2 W → 3.6 W**); spike injection;
   the TMS-7 flight envelope + airframe notes in `coludo.md`. Bench re-run + numbers refreshed.
-- **Phase 5 — field testing (next).** Staged ladder: maket walk-test → telemetry launch → powered
-  launch, likely on the wider **TMS-8** airframe. See below.
-- **Firmware / toolchain — the board runs `v1.29.0` OFFICIAL** (moved off `preview.414.g533a154c8a`
+- **Phase 5 (field testing) — done (2026-10-05).** The first launch day was
+  [2026-10-03 at HPRC](../launches/20261003/README.md) (09-05 was cancelled for weather): the TMS-7 booster test
+  succeeded (~470 m, 14.9 g peak, 125 m/s); TMS-7C looped and crashed in the boost
+  ([its video](../launches/20261003/TMS-7C/video.mp4)); TMS-7D and 7E did not separate (7E's PCB broke, no data);
+  TMS-7F was not assembled in time. The next launch flies **TMS-8**
+  ([`launches/20261205/TMS-8`](../launches/20261205/TMS-8/README.md)). The ladder: see below.
+- **Phase 6 — the Rust avionics (`src/avionics`, branch `lmoiseichuk/phase6_rustification`) — done 2026-10-14.**
+  The flight firmware left MicroPython: plan B (`src/glider`, frozen at tag `micropython_plan_B_3`) ported to Rust on
+  the same board, milestone by milestone, against golden vectors and plan B's own code (the plan and every
+  milestone's status: [`specs/avionics-port.md`](specs/avionics-port.md)).
+  - **Every milestone done** (M1-M16, M18-M21; M17 became M11b): the CC surface, config, the flash ring with its
+    savers, buses and sensors (every plan B part but the retired ADXL375), the stage machine, the warm start, the
+    attitude filter, GNSS (the NEO-M8N on UBX), DONE with its beacon, HITL over the UDP sim-link, active control,
+    firmware OTA over the console, the separate C6 flight recorder with its own beacon
+    ([`flight_recorder.md`](flight_recorder.md)), and the entry file. The HITL matrix against plan B: 24 of 24 board
+    flights, 72 of 72 SITL (r2); since the wrap latch the law differs on purpose (SITL 71 of 72, the one outside
+    landing better; `TMS-7-rust_hitl_m14` §3f-§3g). Both boards (the taster, TMS-7F) run it;
+    `tools/cc_contract.py <board> --milestone M21` answers 0 violations.
+  - **10-12..10-14:** the fins' 3-degree grid and the endgame's turn kept across the heading wrap; BC4 and BC5 (boost
+    control, law A: the lean law, no ceiling, in TMS-8's config); the restart under the RTC watchdog; the plan B ->
+    Rust audit (~660 behaviours mapped; the gaps fixed); the attitude filter's own flight
+    ([`sims/TMS-8-attitude_filter`](sims/TMS-8-attitude_filter/)): a quaternion, no accelerometer pull in BOOSTING,
+    the GNSS course, the gyro bias learned on the pad (and kept across a warm start), the turn's centripetal, only a
+    current sample mirrored; the BNO055 in the filter's frame; the soldered C6 recorder (the card mounts, the
+    battery carries it through a USB pull).
+  - **Closed** on the operator's criterion: `course_shift` 7.5 (the track pull; plan B's 5 lost the crosswind) and the
+    matrix re-flown, done if no showstopper. The closing matrix (96 SITL flights, the separation no longer handing the
+    filter north; 5 board runs, a mid-air reset among them) and a five-lens adversarial review found none: landings
+    neutral over 108 paired flights, the crosswind read, every board run to DONE.
+  - **TMS-7C stays on plan B** (the operator, 2026-10-14: no SD card can be fitted to it, which the Rust recorder's
+    ring saver needs); its BNO055 proofs are dropped -- 7C flies on its SEN0697, the BNO055 having gone blind.
+- **Phase 7 — TMS-8, the launch on 2026-12-05 (next).** A new glider with fixed wings and new weights. It starts when
+  its CAD (`.stp`, for the analysis) and its weight arrive: the polar and the stack profile from them, then the
+  launch config ([`launches/20261205/TMS-8`](../launches/20261205/TMS-8/README.md): the visual fin trims and
+  `final_approach_agl`) and the field-day checks ([`field_checks.md`](field_checks.md): a real GNSS fix, the beacons'
+  range, the batteries' time). Carried over from phase 6's close:
+  - a fast first heading capture after the separation or a warm start (at 7.5 the filter needs ~10 s to find north,
+    at 5 ~2 s), and the wind estimate gated until then;
+  - the stack's boost envelope: the placeholder (TMS-7D's stack, 0.84 calibre) loops at 6 m/s in 4 of 30 seeds; the
+    lean law needs at least 1.0 calibre there, or the 1.5 m rail; set a launch wind limit;
+  - the simulator: its magnetometer is mirrored against the Rust filter's frame (the magnetic fallback goes untested
+    in simulation), and the vertical model clamps the coast at 0 g, so a positive accelerometer bias holds the apogee
+    to the 12 s burnout timeout; after a loop the thrust gate can do the same on the board;
+  - after a warm start mid-glide, wings level for a few seconds until the rebuilt filter has anchored its tilt and
+    found the heading (the HITL reboot banked hard on a heading of 0); the control thread's gyro lost/back log line
+    allocates (move it off the flight core);
+  - a fractional `course_shift` never goes into a plan B config (7C): plan B shifts an integer.
+- **Plan B firmware / toolchain (TMS-7C) — MicroPython `v1.29.0` OFFICIAL** (moved off `preview.414.g533a154c8a`
   on 2026-09-04; the full board suite is **57/57** on it, no delta). The repo `mpy-cross` is still
   `preview.417` and stays there deliberately: the contract between compiler and runtime is the **mpy
   format version**, and both sides emit/accept **v6.3**, which the passing suite demonstrates. Matching
@@ -75,6 +119,9 @@ Required hardware and the phased development roadmap. Architecture lives in
   delta that touches us flips the **esp32 `i2c_master` driver default at IDF ≥ 5.5.2** — a regression risk
   to the four `i2c:0` sensors (bmp280/bno055/icp10111/vl53l4cx) with **no benefit**. Only bump for a
   concrete upstream fix, and re-qualify every I2C sensor on hardware (`verify`/`probe`) before trusting it.
+- **Rust firmware / toolchain (the taster, TMS-7F)** — nightly Rust (`src/avionics/firmware/rust-toolchain.toml`: the
+  P4 target is Tier 3; the host crates build on stable) on ESP-IDF `v5.5.5`, pinned (6.0.0-6.0.2 broke SD + esp_hosted
+  together). Flashed by `src/avionics/firmware/flash.sh` over USB, or by `tools/ota.py` (the console or Wi-Fi).
 
 ## Phase 5 — field testing
 
@@ -95,9 +142,28 @@ flight on real hardware (extends the flight-test-plan):
    and stage detection under a real boost → coast → descent.
 3. **Powered launch with active control** — enable the flight loop; first controlled glides.
 
-**Airframe:** the real flights likely move to **TMS-8** — a wider, more triangular glider (~2 cm wider
-span) for more wing area / stability than the TMS-7 modelled here. When it is printed, the sim's flight
-envelope + landing-zone numbers re-derive from the TMS-8 masses/geometry (`coludo.md`, `doc/sims/`).
+**Airframe:** the real flights move to **TMS-8** (below). When it is printed, the sim's flight envelope and
+landing-zone numbers re-derive from the TMS-8 masses and geometry (`coludo.md`, `doc/sims/`).
+
+**TMS-8, as the operator set it out (2026-10-11):**
+- **No folding wings.** They were hard to build, stressed the frame and changed the mass between stages; the tips
+  and the tail are fixed and ride the boost open.
+- **A flat triangle frame** pushed by today's booster (still separating at apogee): a body up to 20 cm wide (wider
+  toward the tips at the rear) and ~5 cm deep from the frame's bottom to its top, room for the motor, the
+  electronics and the obturation ring of the 43 mm booster. It carries most of the drag. Not a tailless B-2: a
+  **tail** plus **left and right tip surfaces** of today's size.
+- **The same servos as TMS-7:** left and right surfaces and a yaw servo, MG90S.
+- **Planning figures for the sim:** L/D 8 at a 12 m/s trim (`sim_model.AIRFRAMES['tms8']`), F15 at 235 and 285 g.
+  Everything else is assumed the same as TMS-7 (the operator): the stall (9 m/s), the booster, the servos, the
+  boost dynamics. The boost drag is an estimate: ~5 x 5 cm of body around the ring plus the 2 cm-high tips and
+  wing across the ~20 cm span, ~55 cm^2 behind a pointed front, Cd ~0.35: 0.0020 m^2, about 2x TMS-7's stack.
+- **First number (the sim, an F15 vertical climb at 430 g, no wind):** apogee **266 m against TMS-7's 329 m**, top
+  speed 65 m/s against 72 m/s: the open frame costs ~19 % of the height, and the better glide (L/D 8 vs 5.5) buys
+  more than that back in time aloft.
+- **The pre-flight study (2026-10-12, [doc/sims/TMS-8-preflight](sims/TMS-8-preflight/)):** 280 SITL flights.
+  **Fly TMS-8 at 285 g**: a 48.0 m median, 26/50 in the zone, TMS-7's best (235 g: 42.3 m, 35/50) at the full
+  build's mass. 235 g stays up longer but lands worse (orbit phase); 12 m/s wind (its trim speed) costs it 140 m. The
+  boost drag moves the apogee +-30 m, the landing only by lottery. Open: a measured TMS-8 polar, then a re-run.
 
 Supporting precision + tooling (continue alongside / from Phase 4):
 
@@ -359,9 +425,9 @@ Supporting precision + tooling (continue alongside / from Phase 4):
 - **`test/probe_pins.py`** — sweep pins 0..60 and UART/I2C/SPI 0..5 to auto-derive a board map;
   inspect `machine.Pin.board`. ✅ (low priority — we have a map)
 
-### Structural refactoring roadmap (findings.md §20)
+### Structural refactoring roadmap
 
-Top-down proposals S01–S07 live in `findings.md` §20; this is the agreed execution order
+Top-down proposals S01–S07 live in the local audit notes; this is the agreed execution order
 (value / effort), reconciled with the fixnum + gyro-D-term + adaptive-airspeed work of the last
 week. Architecture is largely sound — this is targeted slimming, not a rewrite. The declined
 non-goals stand (no DI container, no message bus replacing the databoard, no config micro-ORM).
@@ -705,7 +771,7 @@ no drift), so a difference above ~1 m in the matrix is a real change rather than
 
 ## Hardware roadmap — v0.2 and v1.0
 
-v0.1 PCBs are ordered and the Gerbers cross-check clean against `config_default.py`. The design
+The boards are built: v0.1 (TMS-7C/7D), v1.0 (TMS-7E) and v1.1 (TMS-7F, the SEN0697). The design
 review, the merge-to-one-board analysis and the bus-split decision live in
 [`hardware.md`](hardware.md); in short:
 
@@ -720,22 +786,26 @@ review, the merge-to-one-board analysis and the bus-split decision live in
   a factor — both buses sit under 5 % load.
 - **v1.0:** a BNO085 could collapse the IMU stack *if* real boost shock stays under 16 g. Measured
   peak in sim is 3.3–4.3 g, but that model has no ignition transient, separation shock or landing
-  impact — the decision needs one real capture logging through separation first.
+  impact — the decision needs one real capture logging through separation first. The first real capture
+  (2026-10-03, TMS-7 on an F15 at 228 g): a **14.9 g** boost peak, 93 % of the BMI323's ±16 g, and shocks of at
+  least 19 g (50 Hz filtering flattens them). None has logged through a separation yet.
 
 ## Required hardware
 
 1. ESP32-P4 with Wi-Fi (or ESP32-C6 low-end variant) — Main Controller
-2. accelerometer + gyro (ADXL375 high-G; BNO055 may be present too for redundancy)
+2. accelerometer + gyro (LSM6DSO32 6-DoF; the SEN0697, or a BNO055, for attitude; no ADXL375 high-G any more)
 3. altimeter (barometric: ICP-10111 primary, BMP280 backup)
 4. laser altimeter for low-altitude AGL (ultrasonic also possible)
 5. battery (separate rails for controller and servos)
 6. 3 servos for fins
 7. button / breakaway for stage-separation detection
 8. wires
-9. nice to have: camera + recorder (Luckfox Pico) — **separate board, own power, own SD**
+9. nice to have: a camera on the main board; the flight recorder (an ESP32-C6,
+   [`flight_recorder.md`](flight_recorder.md)) — **separate box, own battery, own SD**
 
-The controller itself carries **no SD card** (logs/telemetry/video go to the Recorder over
-UART). Everything must stay under 100 g to fit F6-class lift. See
+The Rust controller saves its flash ring and the video to **its own SD card**, and sends a copy of the lines to the
+recorder over UART (plan B's boards have no SD: everything goes to the recorder). Everything must stay under 100 g
+to fit F6-class lift. See
 [`hardware.md`](hardware.md) for what is purchased.
 
 ## Development roadmap
@@ -817,8 +887,8 @@ testable foundations and connectivity come before the flight loop.
   `<board> log <ms>` poll (operator console or dashboard `POST /api/log`) returns each window's lines
   to the console + `/logs` SSE. Auto hub discovery: a board with no `cc_host` dials its subnet `.1`
   (explicit address overrides; `''` = standalone).
-- **Deferred (not blocking close):** LSM6DSO32 IMU driver (hardware not arrived — fusion already
-  accepts a new ranked accel source); outdoor GNSS fix (driver works indoors, needs an open-sky test).
+- ✅ **LSM6DSO32** 6-DoF IMU (±32 g accel + the sole gyro `rate`, on SPI1), integrated after the close (Phase 4).
+- **Deferred (not blocking close):** outdoor GNSS fix (driver works indoors, needs an open-sky test).
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
 
 ### Phase 3 — Active control
@@ -902,7 +972,7 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
 - **Milestone:** a controlled glide — launch detect → separation → stabilized glide → flare, with
   the loop gated by stage + arming + a fed watchdog.
 
-### Phase 4 — Polish (in progress)
+### Phase 4 — Polish — DONE (2026-07-03)
 - ✅ **Landing-zone navigation** (`navigation.py` + `tasks/flight.py` + `mission.py`) — the mission's zone is a
   lat/lon rectangle (TL/BR); `navigation.zone()` → target (centre) + gates (short-side midpoints, the safe
   approach corridors — operator orients the zone, `coludo.md`). In GLIDING the yaw heading setpoint is
@@ -914,10 +984,9 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
 - ✅ **GC/perf strategy** — done (see Simulation & performance below): GC disabled in flight (collect on the ground), nav-heading
   cache + zero-alloc mixer keep the 100 Hz loop near-zero-allocation (`coludo.md` "Garbage collection
   in flight"). Second-core / native control loop not needed at current latency.
-- Still open: flight-log review, **code-audit follow-ups**, **Phase 5 prep** (maket-board bring-up),
-  enabling the **6-DoF IMU** (LSM6DSO32 — frees the BNO055 / adds redundant attitude+accel), per-launch
-  mission config (`launch.config`), GPX export of telemetry, richer browser UI, spiral-to-launch-site
-  maneuver.
+- ✅ The **6-DoF IMU** (LSM6DSO32) and the per-launch mission config (`launch.config`).
+- Left open at the close: **code-audit follow-ups**, GPX export of telemetry, richer browser UI,
+  spiral-to-launch-site maneuver.
 
 ### Simulation & performance — DONE
 - ✅ **HITL simulator** (`tasks/hitl.py` + `sim_model.py` + `config_hitl.py`) — closed-loop on the board
@@ -927,7 +996,7 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
 - ✅ **Virtual flight** (`tools/virtual_flight.py`) — the same model + real control code on the host,
   emitting recorder captures; `tools/flight_report.py` (interactive plotly: 3D track + accel/altitude/
   speed/attitude/**fins**/board-health/agl, unified hover) and `tools/flight_svg.py` (dependency-free).
-  Experiments + corner cases stored in [`sims/TMS-7/`](sims/TMS-7/).
+  Experiments + corner cases stored in [`sims/TMS-7-basic/`](sims/TMS-7-basic/).
 - ✅ **Energy management** (bank-to-turn, Phase 4) and the **perf cluster** — measured on
   the board (`steer()` 174 µs cached off the hot loop; mixer zero-alloc; GC-off-flight 20 MB headroom;
   load probe 7.2 W → 3.6 W).
@@ -941,8 +1010,8 @@ than the *board*:
 - AGL landing-trigger altitude and vertical-speed/roll gates,
 - minimum controllable airspeed, and any per-launch tuning.
 
-Needed by Phase 3/4 navigation. **Interim:** until it exists, and because all launches are from
-the same site, these parameters may live in `board.config` (noted in `board-config.md`).
+Needed by Phase 3/4 navigation. It exists: plan B's `mission.py` and the Rust `crates/mission` read and save it
+(`get-config launch` / `set-config launch`; on the Rust boards it lives in the `cfg` NVS partition).
 
 **Known launch pads** (several may be defined; the on-board GNSS and the host GPS each select the
 nearest one). First site — **HPRC** (Homestead Public Rocketry Club):

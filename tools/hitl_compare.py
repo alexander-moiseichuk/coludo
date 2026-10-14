@@ -46,7 +46,7 @@ _PANELS: tuple = (
     ('health load max',       ('load',), None, 'load', 'max'),
     ('health mem_free min',   ('load',), None, 'mem_free', 'min'),
     ('health rescues',        ('load',), None, 'rescues', 'max'),
-    ('agl min',               ('agl',), None, 'agl', 'min'),
+    ('agl min',               ('agl',), 'laser', 'agl', 'min'),  # the laser's, not a Rust beacon.csv's agl
     ('engine power peak',     ('power_mw',), None, 'power_mw', 'max'),
     ('engine mA peak',        ('power_mw',), None, 'current_ma', 'max'),
     ('gyro gx range',         ('gx', 'gy', 'gz'), 'lsm', 'gx', 'range'),
@@ -113,7 +113,7 @@ def _metrics(path: str) -> dict:
     Every panel quantity for one capture.
 
     Args:
-        path - the capture .txt written by hitl_collect.
+        path - the capture .txt written by hitl_collect, or a Rust board's flight folder (hitl_collect_host's).
 
     Returns:
         {panel label: value or None}; None means the channel was absent, which is itself comparable.
@@ -157,12 +157,18 @@ def _spread(values: list) -> tuple:
     return low, high, (abs(high - low) / abs(mean) if abs(mean) > _SPREAD_FLOOR else None)
 
 
+def _cut(motor_directory: str, scenario: str) -> str:
+    """A Rust board's flight cut for `scenario` (hitl_collect_host's <scenario>/flight/flight/), present or not."""
+    return os.path.join(motor_directory, scenario, 'flight', 'flight')
+
+
 def compare(runs: dict, motors: list) -> dict:
     """
     Compare every scenario in every motor across the named runs.
 
     Args:
-        runs - {run label: directory}; each holds <motor>/<scenario>.txt.
+        runs - {run label: directory}; each holds <motor>/<scenario>.txt (plan B's hitl_collect), or
+            <motor>/<scenario>/flight/ (a Rust board's hitl_collect_host, the cut in it).
         motors - motor subdirectory names to walk.
 
     Returns:
@@ -176,10 +182,13 @@ def compare(runs: dict, motors: list) -> dict:
             here = os.path.join(directory, motor)
             if os.path.isdir(here):
                 scenarios |= {f[:-4] for f in os.listdir(here) if f.endswith('.txt')}
+                scenarios |= {f for f in os.listdir(here) if os.path.isdir(_cut(here, f))}
         for scenario in sorted(scenarios):
             per_run = {}
             for label, directory in runs.items():
                 path = os.path.join(directory, motor, '%s.txt' % scenario)
+                if not os.path.exists(path):
+                    path = _cut(os.path.join(directory, motor), scenario)
                 if not os.path.exists(path):
                     missing.append('%s/%s absent from %s' % (motor, scenario, label))
                     continue

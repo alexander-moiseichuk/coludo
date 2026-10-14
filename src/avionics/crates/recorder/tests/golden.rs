@@ -1,0 +1,98 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
+//! Telemetry decimates as plan B does: src/avionics/golden/recorder.json, which golden/build_recorder.py builds from
+//! src/glider/recorder.py's `Telemetry.due` and `push` on CPython. For each push, whether a row was due before it
+//! and whether it emitted one; the rows are read back from the flash the writer filled, through the block decoder,
+//! so "emitted" means on flash. Every value compares exactly.
+
+mod common;
+
+use common::*;
+
+use flash_ring::{Geometry, MemoryFlash};
+use recorder::{Cell, MERGE_HORIZON_US, Registry, Settings, Telemetry, Writer};
+use serde_json::{Value, json};
+
+/// The fixture, compiled in.
+const FIXTURE: &str = include_str!("../../../golden/recorder.json");
+
+/// One case: the stream's own setting, the global window, and the push uptimes; plan B's answer per push.
+fn decimation(input: &Value) -> Value {
+    let decimate_us = i32::try_from(input["decimate_us"].as_i64().unwrap()).unwrap();
+    let telemetry_ms = u32::try_from(input["telemetry_ms"].as_u64().unwrap()).unwrap();
+    let pushes: Vec<u64> = input["pushes_us"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|push| push.as_u64().unwrap())
+        .collect();
+    let mut registry = Registry::new();
+    let stream = registry.add("imu.csv", &["index"], decimate_us, false).unwrap();
+    let settings = Settings {
+        telemetry_ms,
+        stats_ms: 1000,
+    };
+    let parts = recorder(registry, 1, 1 << 16, settings);
+    let geometry = Geometry::new(64).unwrap();
+    let flash = MemoryFlash::new(geometry.bytes());
+    let scanned = bring_up(&flash, geometry);
+    let mut writer = Writer::new(parts.recorder, ring(&flash, &scanned, BOOT_ID)).unwrap();
+    let _attached = parts.recorder.attach(0).unwrap();
+    let mut telemetry = Telemetry::new(parts.recorder, stream).unwrap();
+    let mut due = Vec::new();
+    for (index, &now) in pushes.iter().enumerate() {
+        due.push(telemetry.due(now));
+        telemetry.push(now, &[Cell::I32(index as i32)]).unwrap();
+    }
+    let end = *pushes.last().unwrap() + MERGE_HORIZON_US;
+    parts.clock.set(end);
+    writer.step(end, EPOCH);
+    let rows = read_back(&flash.image(), geometry, None).file(Some(&format!("{SESSION}_imu.csv")));
+    assert_eq!(rows[0], "uptime;index", "the header first");
+    let emitted: Vec<usize> = rows[1..]
+        .iter()
+        .map(|row| row.split(';').nth(1).unwrap().parse().unwrap())
+        .collect();
+    let answers = due
+        .iter()
+        .enumerate()
+        .map(|(index, &due)| json!({"due": due, "emitted": emitted.contains(&index)}))
+        .collect();
+    Value::Array(answers)
+}
+
+#[test]
+fn telemetry_decimates_as_plan_b_does() {
+    golden::run(FIXTURE, decimation);
+}
+
+#[test]
+fn the_fixture_covers_every_setting() {
+    let document: Value = serde_json::from_str(FIXTURE).unwrap();
+    assert_eq!(
+        document["meta"]["tag"],
+        golden::PLAN_B_TAG,
+        "the fixture says where it came from"
+    );
+    let settings: Vec<i64> = document["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|case| case["input"]["decimate_us"].as_i64().unwrap().signum())
+        .collect();
+    for setting in [-1, 0, 1] {
+        assert!(
+            settings.contains(&setting),
+            "no case with a decimate_us of sign {setting}"
+        );
+    }
+    // negative: the comparison does fail a wrong answer
+    let wrong = std::panic::catch_unwind(|| {
+        golden::run(FIXTURE, |input| {
+            let mut answer = decimation(input);
+            answer[0]["emitted"] = json!(false);
+            answer
+        })
+    });
+    assert!(wrong.is_err(), "a first push that emits nothing must fail the fixture");
+}

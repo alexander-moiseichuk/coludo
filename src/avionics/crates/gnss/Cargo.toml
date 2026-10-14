@@ -1,0 +1,15 @@
+[package]
+name = "gnss"
+description = "The GNSS receiver logic: NMEA checksum and parse, the sky diagnostics and the ATGM336H/NEO-6M command bytes (src/glider gnss.py, drivers/atgm336h.py, drivers/neo6mv2.py)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+control.workspace = true  # Position, the 1e-7 degree integer a fix is held in
+sequencer.workspace = true  # Stage, which decides the sky diagnostics' window
+
+[dev-dependencies]
+golden.workspace = true
+serde_json.workspace = true

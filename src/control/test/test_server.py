@@ -290,7 +290,7 @@ async def _web():
                                       json.dumps({'board': 'glider9', 'command': 'set-config',
                                                   'params': ['board', json.dumps(config)]}))
         assert status == 200 and json.loads(payload) == {'board': 'glider9', 'status': 'ok',
-                                                         'args': [json.dumps({'config_id': 'newcfg'})]}
+                                                         'args': [json.dumps({'config_id': 'newcfg'})], 'named': {}}
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
                                       json.dumps({'board': 'glider9', 'command': 'reboot'}))
         assert status == 200 and json.loads(payload)['status'] == 'ok'
@@ -468,6 +468,21 @@ def _gps_device_resolve():
     assert control_main._resolve_gps_device('/dev/ttyUSB7') == '/dev/ttyUSB7'
     auto = control_main._resolve_gps_device('auto')  # host-dependent: a ttyUSB path or None
     assert auto is None or auto.startswith('/dev/ttyUSB'), auto
+
+
+def _render_keeps_named_params() -> None:
+    """A board reply's named params reach the operator, encoded as the protocol encodes them, and parse back."""
+    reply = cc.parse(cc.build('ok', ['control'], {'schedule_hz': 100, 'lapses': 'imu.accel:0,imu.rate:2'}))
+    line = server._render(reply)
+    assert line.startswith('ok control schedule_hz=100 lapses='), line
+    again = cc.parse(line)
+    assert again.args == ['control'], again
+    assert again.named == {'schedule_hz': '100', 'lapses': 'imu.accel:0,imu.rate:2'}, again
+    spaced = server._render(cc.parse(cc.build('ok', ['video', 'stats'], {'note': 'two words', 'empty': ''})))
+    assert cc.parse(spaced).named == {'note': 'two words', 'empty': ''}, spaced
+    # a reply with no named params renders as before; JSON args stay plain
+    assert server._render(cc.parse(cc.build('ok', ['{"a": 1}']))) == 'ok {"a": 1}'
+    assert server._render(cc.parse('ok')) == 'ok'
 
 
 def _log_drops_are_reported():
@@ -851,6 +866,31 @@ async def _heartbeat():
     assert dead.sent == [], dead.sent
 
 
+def _duplicate_ids():
+    """
+    A second board under a live board's id is refused, a reconnect is not (server.claims_a_live_id).
+
+    2026-10-13: 7C came up with the taster's id while the taster flew a HITL run, the hub replaced the taster's
+    connection, and the run's set-config and arm went to 7C. NEGATIVE: the same address, or an old link gone silent,
+    is the same board reconnecting, and takes the id over as before.
+    """
+    import time
+    import types
+
+    def connection(peer, online=True, silent_s=0.0):
+        return types.SimpleNamespace(peer=peer, online=online, last_seen=time.monotonic() - silent_s)
+
+    live = connection('192.168.102.152:60384')
+    assert server.claims_a_live_id(live, connection('192.168.102.163:51000')), 'another board, live id: refused'
+    assert not server.claims_a_live_id(live, connection('192.168.102.152:60999')), 'the same board reconnecting'
+    silent = connection('192.168.102.152:60384', silent_s=server._LIVE_S + 1.0)
+    assert not server.claims_a_live_id(silent, connection('192.168.102.163:51000')), 'the old link is dead'
+    offline = connection('192.168.102.152:60384', online=False)
+    assert not server.claims_a_live_id(offline, connection('192.168.102.163:51000'))
+    gone = connection('<gone>')
+    assert not server.claims_a_live_id(gone, connection('192.168.102.163:51000')), 'a torn-down socket is no owner'
+
+
 async def main():
     await _heartbeat()
     await _loopback()
@@ -863,12 +903,15 @@ async def main():
     await _clock_sync()
     _gps_device_resolve()
     _glider_roster()
+    _duplicate_ids()
     _log_drops_are_reported()
+    _render_keeps_named_params()
     print('ok: server heartbeat polls health on health age + stops on a dead link '
           '+ accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
           '+ glider roster (persist, same-name-new-ip, absent hint) '
           '+ gps assist/compare + log streaming + gps auto-detect + oversized reply '
-          '+ clock sync on connect (unset + SETTING + CC clock valid; refused/garbled keep the board, silent drops it)')
+          '+ clock sync on connect (unset + SETTING + CC clock valid; refused/garbled keep the board, silent drops it) '
+          '+ replies keep their named params + a live id refused to a second board')
 
 
 asyncio.run(main())

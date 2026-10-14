@@ -1,0 +1,7 @@
+ commons bench -- 30000 calls each, ns/call (incl. fixed loop+call overhead):
+  clamp_int (viper)      bytecode=6137ns  opt=2925ns  2.10x
+  wrap180 (viper)        bytecode=7523ns  opt=2686ns  2.80x
+  between (native)       bytecode=6737ns  opt=4117ns  1.64x
+  magnitude_sq (native)  bytecode=11550ns  opt=9232ns  1.25x
+  bank_demand (native)   bytecode=10693ns  opt=10168ns  1.05x
+ok: bench_commons -- viper(int) + native(float) vs bytecode measured

@@ -4,12 +4,12 @@ Rescheduled from **2026-09-05, cancelled for weather**.
 
 Seven slots: one booster-only structural test, two glide-comparison airframes, one telemetry airframe,
 one servo-equipped airframe, and two airframes on the new main boards: TMS-7E (v1.0) and TMS-7F
-(v1.1), both built.
+(v1.1). 7E flew; 7F was not assembled in time.
 
 ## Manifest
 
-Airframe masses are **as assembled, without the motor**. Motor masses are the measured values from
-`doc/hardware.md` — **F15-4 98.8 g**, **E16 ~82.5 g** loaded.
+Airframe masses are **as assembled, without the motor**. Motor masses are from
+`doc/hardware.md` — **F15-4 98.8 g** (measured), **E16 ~82.5 g** loaded (approximate).
 
 | airframe | glider | booster | motor | + motor | **liftoff** | glide mass |
 |---|---|---|---|---|---|---|
@@ -35,7 +35,8 @@ Airframe masses are **as assembled, without the motor**. Motor masses are the me
   setting the comparison just validated rather than a guess.
   **Result: crashed.** Fins at 0°. The stack lost boost stability just off the rod (roll torque ∝ q,
   up to 9.3 g sideways), looped under thrust and hit the ground; the recorder kept 1.31 s. Hardware to
-  be validated for December; see [TMS-7C](TMS-7C/README.md).
+  be validated for December; see [TMS-7C](TMS-7C/README.md). Onboard video:
+  [`TMS-7C/video.mp4`](TMS-7C/video.mp4).
 * **TMS-7D** — the servo airframe: three SG90s and the full power module.
   **Result: no separation, dropped.** It bent over in a ~4.5 m/s crosswind to a 32° path but stayed
   bounded. Apogee was 91–98 m at 5.4 s; the glider never separated, and the stack came down ~250 m out.
@@ -45,6 +46,7 @@ Airframe masses are **as assembled, without the motor**. Motor masses are the me
   (it heats to 60 °C+, never initialises), so there is no data.
 * **TMS-7F** — the first v1.1 airframe (SEN0697: the board fuses its own attitude and carries a
   magnetometer); see its folder.
+  **Result: did not fly.** It was not assembled in time.
 
 ## What 10-03 measured — summary
 
@@ -54,6 +56,7 @@ recorder dump by `src/logger/flight.py` or `tools/recorder_flight.py` and measur
 accelerometer strapdown. Each was then checked by independent analyses and an adversarial judge,
 recomputing from the data; the details are in each airframe's README. Not much data in total, but
 enough to bound the dynamics and to show which sensors work in flight.
+TMS-7C's onboard camera also filmed its flight and the wreck: [`TMS-7C/video.mp4`](TMS-7C/video.mp4).
 
 ### What happened
 
@@ -197,7 +200,7 @@ Input to sit beside the operator's own ideas, most valuable first:
 ## One thing the flight data already says about 7D's mass
 
 [`TMS-7-preflight`](../../doc/sims/TMS-7-preflight/) flew 90 HITL flights across three load/thrust
-combos last week. Two of them bracket the airframes here:
+combos before the cancelled 2026-09-05 date. Two of them bracket the airframes here:
 
 | study combo | glide mass | median miss | in zone |
 |---|---|---|---|
@@ -250,7 +253,7 @@ stay open. A LANDING that never settles ends in DONE after 10 s (`land_timeout_m
 
 ## Plan — next branch
 
-- [ ] move the breadboard to **MicroPython 1.29** (1.30-pre carries nothing interesting and no fixes we need)
+- [x] move the breadboard to **MicroPython 1.29** (1.30-pre carries nothing interesting and no fixes we need)
 - [ ] possibly update `mpy-cross` alongside it
 - [ ] settle **main board v0.2**:
   - merge **main + power** onto one board
@@ -259,7 +262,7 @@ stay open. A LANDING that never settles ends in DONE after 10 s (`land_timeout_m
 - [ ] rework the board layout for that
 - [ ] rework the pin maps
 - [ ] design the PCB and order it
-- [ ] start building **TMS-7E** on the new main board
+- [x] start building **TMS-7E** on the new main board
 - [ ] disable the devices the new layout drops, in config
 
 ## After the October launch
@@ -267,3 +270,7 @@ stay open. A LANDING that never settles ends in DONE after 10 s (`land_timeout_m
 - analysis session on the flight data
 - possibly a **Rust migration**, staying on the same ESP32-P4 so the hardware is reused
 - further out, a **C6 board** — only if its memory and FPU-emulation speed prove sufficient
+
+Since then: the flight data is analysed above; the Rust migration is Phase 6, on the same ESP32-P4
+([`doc/specs/avionics-port.md`](../../doc/specs/avionics-port.md)); and an ESP32-C6 now serves as the separate
+flight recorder ([`doc/flight_recorder.md`](../../doc/flight_recorder.md)).

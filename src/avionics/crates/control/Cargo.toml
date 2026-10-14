@@ -1,0 +1,17 @@
+[package]
+name = "control"
+description = "The flight math (src/glider commons, pid, mixer, airspeed, governor, navigation, wind, guidance, tasks/attitude), in f32"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+board_config.workspace = true  # attitude::on_backup walks the enabled providers as the bring-up reads them
+databoard.workspace = true  # attitude::assemble reads the filter's inputs from the fused quantities
+sequencer.workspace = true  # guidance dispatches its law on the flight Stage
+serde_json.workspace = true  # guidance, wind, mixer and governor read their config blocks; wind answers inspect/update/stats
+
+[dev-dependencies]
+golden.workspace = true
+serde_json.workspace = true

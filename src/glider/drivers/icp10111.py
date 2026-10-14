@@ -76,10 +76,12 @@ class Icp10111(task.Task):
         soft reset (0x805d) RE-WEDGED the latched bench part; the I2C GENERAL-CALL reset
         (0x00 0x06) fully recovered it (5/5 measures after). So: touch the part plainly (a
         clean boot never needs a reset), drain a possible busy window on the first NAK, and
-        only from the second NAK fire the general call. It also resets peers that honour it
-        (bmp280, ina226) -- acceptable: they re-apply their config-declared state when set up
-        after us, and it fires only when the PRIMARY baro would otherwise be lost.
+        only from the second NAK fire the general call. It also resets every peer on this bus that
+        honours it: a peer set up AFTER us applies its config then, but one set up BEFORE us (on 7C the
+        SEN0697 parts can precede the ICP) would sit in its power-on state -- so _rearm_peers() follows
+        a fired general call here too, as it does in _recover().
         """
+        general_call = False
         for attempt in range(_RESET_TRIES):
             try:
                 await self._bus.writeto(self._addr, _CMD_ID)
@@ -89,6 +91,7 @@ class Icp10111(task.Task):
                 if attempt == _RESET_TRIES - 1:
                     break  # truly absent / dead -- the id read below reports it as before
                 if attempt:  # not just busy -- assume latched, escalate
+                    general_call = True
                     try:
                         await self._bus.writeto(0x00, _GENERAL_CALL_RESET)
                     except OSError:
@@ -113,6 +116,8 @@ class Icp10111(task.Task):
         except Exception as error:
             print('icp10111 :: %r' % error)
             return False
+        if general_call:
+            await self._rearm_peers()  # the peers set up before us were reset with the part
         self._altitude, self._temperature, self._pressure, self._elevation = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
@@ -266,8 +271,8 @@ class Icp10111(task.Task):
         Measured escalation (7/06 OOM soak, unchanged here): a NAK is usually just a conversion still
         draining, so wait one period first; only a PERSISTENT failure gets the I2C GENERAL-CALL reset
         (0x00 0x06), which is what actually recovered the latched bench part when the addressed soft
-        reset re-wedged it. The general call also resets peers that honour it (bmp280, ina226), which do NOT
-        re-apply their own config -- so this re-arms them explicitly afterwards; see below.
+        reset re-wedged it. The general call also resets every peer on the bus that honours it, and those
+        do NOT re-apply their own config -- so _rearm_peers() re-arms them afterwards.
 
         Args:
             (none)
@@ -281,29 +286,47 @@ class Icp10111(task.Task):
         except OSError:
             pass  # nothing honours general call -- nothing lost by asking
         await asyncio.sleep_ms(_RESET_RETRY_MS)
-        """
-        RE-ARM the peers this reset just knocked over.
-
-        The docstring above claimed they "re-apply their config-declared state". They do not: bmp280
-        and ina226 each write their configuration exactly once, in setup(), and never again. So the
-        general call left the BACKUP BARO in its power-on CTRL_MEAS 0x00 -- SLEEP, no longer
-        converting, returning its last sample forever -- and the INA226 with CALIB cleared, so current
-        and power read WRONG rather than absent.
-
-        Recovering the primary baro therefore disabled its own backup, silently, at the moment
-        redundancy mattered most. Each peer now exposes rearm(); this calls it, best-effort, and a
-        peer that is genuinely gone just fails its next read as before.
-        """
-        for name in ('baro_bmp280', 'power_ina226'):
-            peer = inspector.Inspector.get(name)
-            rearm = getattr(peer, 'rearm', None)
-            if rearm is not None:
-                try:
-                    await rearm()
-                except Exception as error:
-                    recorder.Recorder.log(self.name, 'peer %s rearm failed: %r' % (name, error))
+        await self._rearm_peers()
         recorder.Recorder.log(self.name, 'read recovery: general-call reset + peer rearm after %d failures'
                               % _RECOVER_AFTER)
+
+    async def _rearm_peers(self) -> None:
+        """
+        RE-ARM every device on this bus that a general call just knocked over -- found by membership.
+
+        A general call reaches every part on the bus, and a part that honours it drops back to its
+        power-on state: bmp280 into SLEEP (its last sample forever), ina226 with CALIB cleared (current and
+        power read WRONG rather than absent), and on 7C the SEN0697's BMI323, BMM350 and BMP581 likewise.
+        Their drivers write their configuration once, in setup(), so each exposes rearm() to write it again.
+
+        This used to re-arm a fixed list ('baro_bmp280', 'power_ina226'). The SEN0697 came later and was
+        never added, so on 7C a recovery of the primary baro silently left the attitude IMU, the
+        magnetometer and the backup baro unconfigured -- in flight, at the moment redundancy mattered.
+        Walking the registry instead re-arms whatever shares this Bus object today (every I2C driver
+        holds the shared Bus in `_bus`, i2cbus.bind), so a part added to this bus later is covered too.
+
+        A peer without rearm() is logged by name: it has to recover on its own failure path, and the log
+        says which one did not get help. Best-effort throughout: a peer that is genuinely gone just fails
+        its next read as before.
+
+        Args:
+            (none)
+
+        Returns:
+            None.
+        """
+        for name in inspector.Inspector.names():
+            peer = inspector.Inspector.get(name)
+            if peer is self or getattr(peer, '_bus', None) is not self._bus:
+                continue  # not on this bus -- the general call never reached it
+            rearm = getattr(peer, 'rearm', None)
+            if rearm is None:
+                recorder.Recorder.log(self.name, 'peer %s has no rearm -- it recovers on its own' % name)
+                continue
+            try:
+                await rearm()
+            except Exception as error:
+                recorder.Recorder.log(self.name, 'peer %s rearm failed: %r' % (name, error))
 
     def calibration(self) -> str:
         """The ground-reference instruction; '' once a ground zero is held."""

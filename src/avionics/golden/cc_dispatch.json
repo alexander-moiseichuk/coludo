@@ -1,0 +1,735 @@
+{
+ "arguments_kinds": {
+  "any": "the leading arguments listed (the error code) match verbatim, and exactly one more follows: free text (Python repr is never pinned)",
+  "exact": "the decoded arguments, verbatim strings, as many as listed",
+  "json": "each argument parsed as JSON and compared by value (separators and key order are free)",
+  "json_keys": "per argument: a string matches verbatim; an object {key: type} means the argument is a JSON object with exactly these keys (plus the case extra_keys, when sent), each value of that type; a type is one of null, bool, int, float, str, list, object, or several joined by '|' (float|null)"
+ },
+ "cases": [
+  {
+   "arguments_kind": "json",
+   "expected": [
+    [
+     "controller",
+     "mission"
+    ]
+   ],
+   "name": "objects_lists_the_registry",
+   "note": "the Controller and the Mission, as every board registers them; device tasks join as they come up. Runs before any health: plan B registers the databoard on the first parameter read (health does one), and lists it from then on",
+   "request": "objects",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [],
+   "name": "empty_line_no_reply",
+   "request": "",
+   "status": null
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [],
+   "name": "blank_line_no_reply",
+   "request": "   ",
+   "status": null
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [],
+   "name": "ping",
+   "request": "ping",
+   "status": "pong"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [],
+   "name": "command_is_lowercased",
+   "request": "PING",
+   "status": "pong"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badcmd",
+    "frobnicate"
+   ],
+   "name": "unknown_command",
+   "request": "frobnicate",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badcmd",
+    "frob"
+   ],
+   "name": "unknown_command_is_lowercased",
+   "request": "FROB",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "any",
+   "expected": [
+    "badargs"
+   ],
+   "name": "base64_bad_alphabet",
+   "note": "CPython's base64 is lenient: it drops the '@'s, the token decodes to '' and plan B answers 'no object ' instead of a parse error. The code is badargs either way; the Rust parser is strict and answers it as a parse error",
+   "request": "inspect base64:@@@",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "any",
+   "expected": [
+    "badargs"
+   ],
+   "name": "base64_bad_padding",
+   "request": "inspect base64:QQ",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "any",
+   "expected": [
+    "badargs"
+   ],
+   "name": "base64_not_utf8",
+   "request": "inspect base64:/w==",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "any",
+   "expected": [
+    "internal"
+   ],
+   "name": "handler_exception_is_internal",
+   "note": "pins the envelope rule -- a handler that raises answers err internal and the link survives. The trigger is a plan B defect (a JSON number reaches Mission.update, which iterates it); the Rust board refuses properties that are not a JSON object instead",
+   "owed": {
+    "arguments_kind": "any",
+    "expected": [
+     "refused"
+    ],
+    "status": "err"
+   },
+   "request": "update mission 5",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "inspect <object>"
+   ],
+   "name": "inspect_without_arguments",
+   "request": "inspect",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "inspect <object>"
+   ],
+   "name": "inspect_named_only",
+   "note": "a key=value token is named, not positional, so the object is missing",
+   "request": "inspect key=value",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "no object nosuch"
+   ],
+   "name": "inspect_unknown_object",
+   "request": "inspect nosuch",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "update <object> <json>"
+   ],
+   "name": "update_without_arguments",
+   "request": "update",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "update <object> <json>"
+   ],
+   "name": "update_without_json",
+   "request": "update mission",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "no object nosuch"
+   ],
+   "name": "update_unknown_object",
+   "request": "update nosuch base64:e30=",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "any",
+   "expected": [
+    "refused"
+   ],
+   "name": "update_bad_json",
+   "note": "refused, not badargs: plan B parses the JSON inside the guard that turns a driver refusal (ValueError) into err refused, and a JSON decode error is a ValueError",
+   "request": "update mission nojson",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "stats <object>"
+   ],
+   "name": "stats_without_arguments",
+   "request": "stats",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "no object nosuch"
+   ],
+   "name": "stats_unknown_object",
+   "request": "stats nosuch",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "json_keys",
+   "expected": [
+    {
+     "board": "object",
+     "buses": "object",
+     "components": "list",
+     "fins": "object",
+     "pins": "object",
+     "recorder": "object",
+     "sensors": "list",
+     "version": "str",
+     "wifi": "object"
+    }
+   ],
+   "name": "get_config_defaults_to_board",
+   "request": "get-config",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "unknown config nosuch"
+   ],
+   "name": "get_config_unknown_name",
+   "request": "get-config nosuch",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "set-config <name> <json>"
+   ],
+   "name": "set_config_without_arguments",
+   "request": "set-config",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "set-config <name> <json>"
+   ],
+   "name": "set_config_without_json",
+   "request": "set-config launch",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "bad json"
+   ],
+   "name": "set_config_bad_json",
+   "request": "set-config launch nojson",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "log <duration_ms>"
+   ],
+   "name": "log_duration_not_integer",
+   "request": "log abc",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "log <duration_ms>"
+   ],
+   "name": "log_duration_fraction",
+   "request": "log 1.5",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "log <duration_ms>"
+   ],
+   "name": "log_duration_hexadecimal",
+   "request": "log 0x10",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "tlm <duration_ms>"
+   ],
+   "name": "tlm_duration_not_integer",
+   "request": "tlm x",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "dropped": 0,
+     "lines": []
+    }
+   ],
+   "name": "log_stop_when_idle",
+   "request": "log 0",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "dropped": 0,
+     "lines": []
+    }
+   ],
+   "name": "log_duration_negative",
+   "note": "int() takes the sign, and a window of 0 or less stops the tee",
+   "request": "log -1",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "dropped": 0,
+     "lines": []
+    }
+   ],
+   "name": "log_duration_plus_sign",
+   "note": "opens a 5 ms window; the next two cases run inside it on the virtual clock",
+   "request": "log +5",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "dropped": 0,
+     "lines": []
+    }
+   ],
+   "name": "log_duration_underscores",
+   "note": "int() accepts '1_000' on CPython and on the board alike (MicroPython's py/parsenum.c skips every '_'), so a port's duration parse must too. MicroPython also takes '_1000' and '1__000', which CPython refuses: this oracle cannot speak for them, so no case pins them",
+   "request": "log 1_000",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "dropped": 0,
+     "lines": []
+    }
+   ],
+   "name": "log_stop_after_a_window",
+   "note": "returns what the window buffered (nothing: no request logs) and stops it",
+   "request": "log 0",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "dropped": 0,
+     "samples": []
+    }
+   ],
+   "name": "tlm_stop_when_idle",
+   "request": "tlm 0",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "dropped": 0,
+     "samples": []
+    }
+   ],
+   "name": "tlm_window_at_the_ticks_range",
+   "note": "the longest window plan B can arm: 536870000 us is below the 2**29 us ticks_add accepts",
+   "request": "tlm 536870",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "dropped": 0,
+     "samples": []
+    }
+   ],
+   "name": "tlm_stop_after_a_window",
+   "request": "tlm 0",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "any",
+   "expected": [
+    "internal"
+   ],
+   "name": "tlm_window_past_the_ticks_range",
+   "note": "plan B arms the window with time.ticks_add(now, ms * 1000), which raises OverflowError from 2**29 us (8.9 minutes) on, so a longer window answers err internal. The Rust board keeps its window in 64 bits and has no such limit",
+   "owed": {
+    "arguments_kind": "json",
+    "expected": [
+     {
+      "dropped": 0,
+      "samples": []
+     }
+    ],
+    "status": "ok"
+   },
+   "request": "tlm 536871",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "any",
+   "expected": [
+    "internal"
+   ],
+   "name": "tlm_duration_past_64_bits",
+   "note": "plan B takes any integer, then fails arming the window (err internal); the Rust board parses a 64-bit integer and refuses a longer one as badargs",
+   "owed": {
+    "arguments_kind": "exact",
+    "expected": [
+     "badargs",
+     "tlm <duration_ms>"
+    ],
+    "status": "err"
+   },
+   "request": "tlm 99999999999999999999",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "manual": false,
+     "stage": "setting"
+    }
+   ],
+   "name": "stage_read",
+   "request": "stage",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "no stage nosuch"
+   ],
+   "name": "stage_unknown_name",
+   "request": "stage nosuch",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "manual": true,
+     "stage": "done"
+    }
+   ],
+   "name": "stage_hold_on_the_ground",
+   "note": "done is a ground stage, so nothing is gated, but the stage is held (manual)",
+   "request": "stage done",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "any",
+   "expected": [
+    "unsafe"
+   ],
+   "name": "arm_refused_while_held",
+   "note": "a held stage is an arm problem on every board: err unsafe, the problems as JSON",
+   "request": "arm",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "manual": true,
+     "stage": "gliding"
+    }
+   ],
+   "name": "stage_hold_in_flight",
+   "request": "stage gliding",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "unsafe",
+    "refused in flight -- stage is gliding (ground-only: setting/done)"
+   ],
+   "name": "ground_only_refused_in_flight",
+   "note": "the gate text is verbatim: it starts with the word refused, but its code is unsafe",
+   "owed": {
+    "arguments_kind": "exact",
+    "expected": [
+     "unsafe",
+     "refused -- stage is gliding (changes only in setting)"
+    ],
+    "status": "err"
+   },
+   "request": "reset-config",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "changed": []
+    }
+   ],
+   "name": "update_while_held",
+   "note": "plan B leaves update open in every stage; the Rust board refuses every change outside SETTING (the operator's rule, doc/specs/avionics-port.md \u00a76)",
+   "owed": {
+    "arguments_kind": "exact",
+    "expected": [
+     "unsafe",
+     "refused -- stage is gliding (changes only in setting)"
+    ],
+    "status": "err"
+   },
+   "request": "update mission base64:e30=",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "manual": false,
+     "stage": "gliding"
+    }
+   ],
+   "name": "stage_auto_releases_the_hold",
+   "note": "the stage stays where it was held; only the hold (manual) goes",
+   "request": "stage auto",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "manual": false,
+     "stage": "setting"
+    }
+   ],
+   "name": "stage_setting_returns_to_the_ground",
+   "note": "a return to the ground, not a hold: manual stays false",
+   "request": "stage setting",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "armed": false
+    }
+   ],
+   "name": "disarm",
+   "request": "disarm",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "stage": "setting",
+     "tasks": {}
+    }
+   ],
+   "name": "report",
+   "note": "the Controller runs no tasks here, and the Rust board none until its drivers are ported",
+   "request": "report",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "exact",
+   "expected": [
+    "badargs",
+    "no probe for nosuch"
+   ],
+   "name": "probe_unknown_object",
+   "request": "probe nosuch",
+   "status": "err"
+  },
+  {
+   "arguments_kind": "json_keys",
+   "expected": [
+    {
+     "alternatives": "object",
+     "devices": "object",
+     "pass": "bool",
+     "problems": "object",
+     "readiness": "object",
+     "ready": "bool"
+    }
+   ],
+   "name": "verify",
+   "note": "the shape only: which devices are up, and so pass and ready, depend on the hardware",
+   "request": "verify",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "changed": [
+      "epoch"
+     ]
+    }
+   ],
+   "name": "update_mission_sets_the_clock",
+   "note": "the hub syncs a cold board this way (one whose clock reads inside 2000, as this one did until here); epoch is listed whenever the RTC was set",
+   "request": "update mission base64:eyJlcG9jaCI6IDE3OTEyNDQ4MDB9",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json_keys",
+   "expected": [
+    "taster",
+    {
+     "boot_id": "int|null",
+     "config_id": "str",
+     "config_source": "str",
+     "epoch": "int",
+     "firmware_version": "str",
+     "mcu": "str",
+     "session": "str",
+     "stage": "str",
+     "uptime": "int"
+    }
+   ],
+   "name": "whoami",
+   "note": "boot_id is null when nothing counted the boot (an NVS failure)",
+   "request": "whoami",
+   "status": "iam"
+  },
+  {
+   "arguments_kind": "json_keys",
+   "expected": [
+    {
+     "agl": "float|null",
+     "armed": "bool",
+     "clock": "str",
+     "degraded": "list",
+     "epoch": "int",
+     "launchpad": "list|null",
+     "launchpad_set": "bool",
+     "layout": "str",
+     "mem_free": "int",
+     "position": "list|null",
+     "site": "str|null",
+     "stage": "str",
+     "tasks": "list",
+     "temp": "float|null",
+     "uptime": "int"
+    }
+   ],
+   "extra_keys": {
+    "calibration": "object",
+    "flight": "object",
+    "imu_calibration": "list|null",
+    "internal_free": "int",
+    "sd_free_mb": "int|null"
+   },
+   "name": "health",
+   "note": "temp is null when the die sensor fails. position and agl are always present: Databoard.parameter() creates the channel on first read, so they are null until fresh. launchpad is null with no launch point and no fix, site null with no site selected",
+   "request": "health",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json_keys",
+   "expected": [
+    {
+     "altitude": "float",
+     "clock": "str",
+     "distances_m": "object",
+     "epoch": "int",
+     "gates": "list",
+     "in_range": "bool",
+     "latitude": "float",
+     "launch_id": "str",
+     "launch_point": "list",
+     "launch_source": "str",
+     "longitude": "float",
+     "site": "str",
+     "target": "list",
+     "zone": "list"
+    }
+   ],
+   "name": "inspect_mission",
+   "note": "the HPRC default mission: launch point set and zone in range, so the geometry keys are present",
+   "request": "inspect mission",
+   "status": "ok"
+  },
+  {
+   "arguments_kind": "json_keys",
+   "expected": [
+    {
+     "altitude": "float",
+     "latitude": "float",
+     "launch_id": "str",
+     "longitude": "float",
+     "site": "str",
+     "zone": "list"
+    }
+   ],
+   "name": "get_config_launch",
+   "request": "get-config launch",
+   "status": "ok"
+  }
+ ],
+ "meta": {
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
+  "generator": "cc_dispatch",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
+  "python": "3.12",
+  "source": "src/glider/cc_client.py, src/glider/controller.py",
+  "tag": "micropython_plan_B_3"
+ }
+}

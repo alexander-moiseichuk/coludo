@@ -1,0 +1,23 @@
+[package]
+name = "flight_recorder"
+description = "The remote flight recorder on an ESP32-C6: the P4's wire lines from its UART onto its own SD card (M20)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "flight_recorder"
+path = "src/main.rs"
+harness = false
+
+[dependencies]
+recorder_wire.workspace = true
+beacon = { workspace = true, features = ["esp"] }
+base64.workspace = true
+esp-idf-svc = "0.53"
+anyhow = "1"
+log = "0.4"
+
+[build-dependencies]
+embuild = "0.33"

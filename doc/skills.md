@@ -241,12 +241,73 @@ so it must run on both.
   It is not a `deploy.sh` replacement: no wipe, one file at a time, and it cannot rescue a board
   whose new module breaks the boot — the checksum stops a corrupt file being installed, but an
   intact-and-wrong one imports and fails, and that is a USB recovery.
+- **`tools/flash_micropython.sh <image.bin> [port]`** flashes a MicroPython firmware image **without wiping
+  NVS**. The official `ESP32_GENERIC_P4-*.bin` images are merged with 0xFF over nvs (0x9000..0xEFFF), so
+  `esptool write-flash 0x2000 <image>` erases it on every reflash: the boot counter restarts (session ids
+  repeat, capture files collide on the logger) and NVS calibrations (the pitot zero) are lost. The tool
+  writes bootloader, partition table and app only; `tools/deploy.sh` follows as usual.
+- **`tools/provision.sh [--port P] [--launch launch.config] [--ssid NAME]... [--dry-run] <board.config>`**
+  writes a **Rust** board's `cfg` NVS partition (0x7e0000, 0x20000): the board config and launch.config as blobs
+  `board` and `launch` in namespace `config`, and per `--ssid` the password from `src/glider/<NAME>.creds` in
+  namespace `creds`, read as plan B's wifi driver reads it on MicroPython (the first line up to a `\n`, stripped of
+  ASCII whitespace only: a lone `\r` or a no-break space stays), keyed `w` + the 8 hex digits of
+  `zlib.crc32(NAME)` because NVS keys stop at 15 characters. Run it after `src/avionics/firmware/flash.sh` and
+  **before the airframe is sealed**: the first Rust boot carries nothing over from MicroPython's VFS, so a sealed
+  Wi-Fi-only board without it has no network to join. It refuses a board config plan B's `config.validate`
+  rejects or the board's own validate rejects beyond it (a device's `debounce_ms` not an int from 0 to 1000 ms), a
+  board or launch file the board's serde_json cannot read (NaN, a number past the f64 range, a lone surrogate
+  escape: the board would boot its default config), a launch file that is not a JSON object, a missing,
+  empty or over-64-byte password and two SSIDs whose keys collide, and it reads the board's partition table
+  first: a board with no NVS `cfg` there (still on MicroPython, whose filesystem fills the flash past its app) is
+  never written. The write REPLACES everything on `cfg` (a config or launch.config saved over CC since, a password
+  left out) and touches nothing else; if esptool fails during it, run the script again before sealing. Its notes
+  name a network the board tries (plan B's rule: a non-empty `wifi.networks` wins over `wifi.ssid`, disabled
+  entries are dropped) with no password in the image, and a stored password it never uses. The image carries the
+  passwords, so it exists only in a temporary directory removed on every exit; `--dry-run` builds and verifies it
+  and lists its keys, never the values. `CREDS_DIR` points it at another creds directory (the test's made-up
+  ones). Exit 1 is a refusal or a failure (esptool's included), 2 a usage error.
+- **`tools/sd_prepare.sh [--dry-run] [--use PERCENT] [--partitions 1|2] <device>`** prepares a
+  microSD card for a
+  **Rust** board, **destroying everything on it**: a discard of the whole card, an MBR with TWO primary FAT32
+  partitions (type 0x0c, each with a fresh random volume serial) over `--use` 25..100 % of the card (default 75)
+  from 4 MiB, split in halves -- partition 1, label METRICS, the recordings, and partition 2, label VIDEOS, the
+  videos (the operator, 2026-10-10: the logs half, the video half) -- and the rest left unpartitioned as spare area
+  for the card's controller. The firmware mounts partition 1 at `/sdcard` and partition 2 at `/sdcard/videos`, and never formats;
+  a card with one FAT partition (an M4-era card) still runs, with `videos/` a plain directory on it. `--partitions 1`
+  makes such a card on purpose (one METRICS volume over the same area, the same discard, alignment and clusters), to
+  compare the layouts on cards prepared alike. On panda the card goes into its built-in reader (Realtek RTS522A,
+  `/dev/mmcblk0`); run it with sudo. A card too small for two halves of 512 MiB at the share asked is refused, as is
+  a share with a leading zero (bash arithmetic would read it as octal). Partition 1's serial, printed first, is how the
+  board names the card (`sd :: mounted card XXXX-XXXX`): the ring_saver resumes at its saved position only on the
+  same card, so a card prepared again gets everything still in flash.
+  There is no default device; it refuses a partition, a loop/dm/md device, a disk that is not removable, an MMC/SD
+  disk that is not SD media (eMMC is refused), one over 256 GiB, anything mounted, in swap or held by a mapper; it
+  goes on only when the card's size in MiB (the plan's `card:` line) is typed back, and checks again after that
+  answer that the device is still the card it planned for. A plain file is taken as a card image (how its test runs,
+  with no root and no device).
+- **`tools/panic_decode.py <board|URL|file> [--elf ELF]`** decodes a Rust board's panic log (`GET /panic`, the
+  `panic` partition: doc/specs/avionics-port.md §4.8). It prints each record's header, then MEPC, RA and the stack's
+  code words as source lines, through IDF's `riscv32-esp-elf-addr2line`, against the release ELF by default; give
+  `--elf` for another build (the header's `firmware=` says which). On the board itself: `panic log` lists the records.
+- **`tools/board_pull.sh <host>[:port] [session] [outdir]`** pulls a session off a Rust board's card over Wi-Fi
+  (the file server on port 8000, no proxy): `/sd/<session>/recordings/` into `<outdir>/recordings/` and
+  `/sd/videos/<session>/` into `<outdir>/videos/` (default `/tmp/flights/<session>`; the default session is the
+  newest boot id, never a label), still reading a card the M4 firmware wrote (`/sd/recordings/<session>/`,
+  `/sd/video/<session>/`) when the session is not in the new place (a session in both places, the boot that ran when
+  an M4 card's board was reflashed, is refused: pull it by hand); `videos`, `recordings` and `video` (the card
+  root's other names) are refused as a session, and an earlier boot labelled so is pulled as `_<label>`. It checks
+  every file against the size the board's `X-Coludo-Bytes` header says it held when the board opened it (the chunked
+  reply would hide a cut-short body; curl 7.84 or later), lists the session again at the end and fails on any file
+  that appeared or shrank, retries a file the saver holds (503), and flags a 0-byte stream (exit 3). An incomplete
+  pull never replaces an earlier one. Then `assemble_capture.py <session> <outdir>/recordings <capture>` as usual.
 - The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
   one line — the plain password) is gitignored (`*.creds`) and pushed by `tools/deploy.sh`; `wifi.py`
   reads it for the password.
-- **API docs**: `python3 tools/gen_docs.py` regenerates [`doc/api.md`](api.md) from module
-  headers + docstrings by *parsing* the sources (stdlib `ast`, never imports them — so it works
-  for the firmware too). Regenerate it when public signatures or docstrings change.
+- **API docs**: `python3 tools/gen_docs.py` regenerates [`doc/glider_api.md`](glider_api.md) (plan B and the
+  control hub) from module headers + docstrings by *parsing* the sources (stdlib `ast`, never imports them — so it
+  works for the firmware too); `python3 tools/gen_avionics_docs.py` regenerates
+  [`doc/avionics_api.md`](avionics_api.md) from the Rust crates' `//!` and `///` docs, parsing them too (no cargo).
+  Regenerate them when public signatures or docs change; `make docs-check` fails on a stale one.
 
 ## Control Center
 

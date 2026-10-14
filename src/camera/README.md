@@ -1,5 +1,9 @@
 # camera recoding support
 
+Plan B's recorder and camera (TMS-7C stays on plan B). The Rust boards use the C6 flight recorder instead
+([`doc/flight_recorder.md`](../../doc/flight_recorder.md)). Footage from this camera on the 10-03 launch:
+[`launches/20261003/TMS-7C/video.mp4`](../../launches/20261003/TMS-7C/video.mp4).
+
 It seems Luckfox Pico Mini and sc3336 can support out of box decent 2304x1296 30 FPS experience for small weight:
 - board + 64 GB card
 - camera
@@ -50,7 +54,7 @@ It works fine for 921600 bod using single wire to deliver information throgh UAR
 to enable /dev/ttyS3 or /dev/ttyS4. Installation is easy - just required RX pin to be connected from TX pin of microcontoller and enabled duing boot
 ```
 	# adb shell
-	# ln -s /opt/recorded/recorded.sh /etc/init.d/S99recorded
+	# ln -s /opt/recorder/recorderd.sh /etc/init.d/S99recorderd
         # sync
         # poweroff
 ```

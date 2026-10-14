@@ -55,6 +55,11 @@ shared session.csv lists every boot: the report says which of its rows date the 
 its clock was never set, and then names it by boot id, board, firmware and config; a dated boot's
 ignition gets its UTC. A dump from before the wrapper is read exactly as before.
 
+A Rust board's session directory can hold a line twice (doc/specs/avionics-port.md "Duplicates": the ring_saver
+re-saves after a reboot, a flash program is retried after it landed). A wrapped session is read through the
+duplicate filter (recorder_wire.unique), file by file: a duplicate row never reaches recorder/ or flight/, a
+duplicate log line never reaches board.log, and each stream reports how many it dropped.
+
 TWO BOOTS UNDER ONE LABEL lose their salvage, and nothing else. A boot id names one boot, but a label
 session holds every boot that ran under the label, and a watchdog or hard reset restarts the ticks, so
 the boots' spans overlap: a recovered row's time fits both, and it is rejected rather than guessed into
@@ -76,29 +81,60 @@ import sys
 import recorder_wire
 
 """
-The firmware's Telemetry declarations (src/glider), used when a stream's own header row was lost to UART
-corruption -- which is the usual case: the header goes out once, at the start of a session. A hand-kept
-copy: src/control/test/test_tools.py checks the GNSS pair against gnss.py's own declarations.
+The firmware's Telemetry declarations (src/glider; the Rust port's where it appended columns, _APPENDED, and its
+own streams, vetoes), used when a stream's own header row was lost to UART corruption -- which is the usual
+case: the header goes out once, at the start of a session. A hand-kept copy: src/control/test/test_tools.py
+checks the GNSS pair against gnss.py's own declarations, and every stream the Rust port records against both
+its declaration there (src/avionics controller streams.rs, control attitude.rs) and plan B's.
 """
 _FIELDS: dict = {
     'imu_lsm6dso32': ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
+    'imu_bmi323': ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
     'accel_adxl375': ('ax', 'ay', 'az', 'irq_runs'),
     'imu_bno055': ('heading', 'roll', 'pitch', 'ax', 'ay', 'az'),
-    'baro_bmp280': ('altitude', 'temperature', 'pressure', 'elevation'),
-    'baro_icp10111': ('altitude', 'temperature', 'pressure', 'elevation'),
+    'mag_bmm350': ('mx', 'my', 'mz'),
+    'attitude': ('heading_cd', 'roll_cd', 'pitch_cd', 'free', 'mag_known', 'mag_offset_cd'),
+    'baro_bmp280': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
+    'baro_icp10111': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
+    'baro_bmp581': ('altitude', 'temperature', 'pressure', 'elevation', 'change'),
     'airspeed_sdp810': ('dynamic_pressure', 'airspeed_cms', 'temperature'),
     'laser_agl': ('agl', 'irq_runs'),
+    'laser_agl_l1x': ('agl', 'irq_runs'),  # the VL53L1X alternate of the same socket (the Rust port records both)
     'health': ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps', 'rescues', 'rescue_ms'),
+    # the Rust port's own (firmware/src/supervisor.rs RUNTIME_FIELDS): internal and DMA RAM, per-core load, the
+    # control tick's overruns and its per-row lateness and work maxima
+    'runtime': ('internal_free', 'internal_min', 'dma_free', 'dma_min', 'load_core0', 'load_core1', 'overruns',
+                'late_max_us', 'work_max_us'),
+    'gnss': ('lat', 'lon', 'speed_kn', 'course'),
     'gnss_gga': ('altitude_m', 'elevation_m', 'quality', 'satellites', 'hdop_cd'),
     'gnss_sky': ('in_view', 'used', 'mode', 'cn0_1', 'cn0_2', 'cn0_3', 'cn0_4', 'antenna'),
+    'gnss_events': ('event',),
     'power_ina226': ('voltage_mv', 'current_ma', 'power_mw', 'alerts'),
     'servo_eleron_left': ('angle', 'pulse_us', 'done'),
     'servo_eleron_right': ('angle', 'pulse_us', 'done'),
     'servo_yaw': ('angle', 'pulse_us', 'done'),
     'checkpoint': ('stage', 'altitude', 'speed', 'airspeed', 'ticks_ms'),
-    'separation': ('event', 'stage'),
+    'flight': ('stage', 'active', 'airspeed_cms', 'fin_cap', 'roll_sp', 'pitch_sp', 'heading_err', 'roll_cmd',
+               'pitch_cmd', 'yaw_cmd', 'wind_cms', 'wind_from', 'reckoning'),
+    'separation': ('event', 'stage', 'moment', 'duration'),
     'sequencer': ('stage', 'reason'),
     'sequencer_events': ('stage', 'reason'),
+    'vetoes': ('detector', 'edge', 'decider', 'kinds', 'contrary', 'live', 'value'),
+}
+"""
+The columns a later firmware appended to a stream, the tail of its _FIELDS entry: the Rust port's separation
+`moment`, the uptime (us) of the first edge of the contact's episode the row concludes, and `duration`, the us from
+it to the episode's last edge (the contact's wobble; src/avionics controller streams.rs). The port's `event` is
+`separated`, `nested` or `blip` (the contact moved and came back), read as a word like any event. And the Rust port's
+barometer `change`, its climb rate in m/s (src/avionics control change.rs), after plan B's four. A row of the older
+firmware (plan B) stops short of all of them; with the header lost it is kept with those cells empty (_cells). A dump
+from before the wrapper predates every one of them, and is named without them (_before_the_wrapper).
+"""
+_APPENDED: dict = {
+    'separation': ('moment', 'duration'),
+    'baro_icp10111': ('change',),
+    'baro_bmp280': ('change',),
+    'baro_bmp581': ('change',),
 }
 _BOOST_G: float = 3.0
 _BOOST_HOLD_S: float = 0.3
@@ -112,7 +148,7 @@ _WRAP_SLACK_US: int = 60_000_000  # ... give or take the rows a slow stream has 
 _CONFIRM_ROWS: int = 3
 _PROBE_LINES: int = 100       # lines per file _wrapped() reads: one good row decides
 _STATUS = re.compile(r"'session': '([^']*)'")
-_TEXT_FIELDS: tuple = ('stage', 'reason', 'event')  # recorded as words; every other field is a number
+_TEXT_FIELDS: tuple = ('stage', 'reason', 'event', 'detector', 'edge', 'decider', 'kinds')  # words; the rest numbers
 _CODEC: dict = {'encoding': 'utf-8', 'errors': 'surrogateescape'}  # writes give back the bytes _lines() read
 _NO_STREAM: str = '(no stream)'  # the tally of this session's lines that prove no row at all
 _BOARD_LOG: str = '(board.log)'  # the tally of its log lines: recorder.log's part, and those run on into a stream
@@ -456,27 +492,36 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
     every good line board.log holds -- the previous boot's last lines at the head of its part of
     recorder.log too -- so good and salvaged in count exactly its lines that check out.
 
+    Every file is read through the duplicate filter (recorder_wire.unique) before anything else sees it: a
+    duplicate is counted, under its stream or under _BOARD_LOG for this session's part of recorder.log, and
+    is in none of the other counts. A duplicate session.csv row is dropped uncounted: it only repeats an index
+    row.
+
     Args:
         directory - the pulled /userdata/recordings directory.
         session - the session prefix, e.g. '000123'.
 
     Returns:
         (streams {stream: (header or None, boots, wraps)}, tally {stream, _NO_STREAM or _BOARD_LOG: [good,
-        salvaged in, rejected]}, clock [the session.csv payloads, this session's and any other's], elsewhere:
-        the lines of the dump's other junk files and other boots' part of recorder.log that prove no row of
-        this session, board: board.log's lines -- board_log()'s, with the log lines found in the session's
-        files at their time).
+        salvaged in, rejected, duplicates]}, clock [the session.csv payloads, this session's and any other's],
+        elsewhere: the lines of the dump's other junk files and other boots' part of recorder.log that prove no
+        row of this session, board: board.log's lines -- board_log()'s, with the log lines found in the
+        session's files at their time).
     """
     prefix, boot_id = session + '_', session.isdigit()
     names = sorted(name for name in os.listdir(directory) if os.path.isfile(os.path.join(directory, name)))
     headers, rows, places, stranded, clock = {}, {}, {}, [], []
-    tally = {_NO_STREAM: [0, 0, 0], _BOARD_LOG: [0, 0, 0]}
+    tally = {_NO_STREAM: [0, 0, 0, 0], _BOARD_LOG: [0, 0, 0, 0]}
     for name in names:
         if not (name.startswith(prefix) and name.endswith('.csv')):
             continue
         stream, header, kept, at, lost, good = name[len(prefix):-len('.csv')], None, [], [], [], 0
-        for position, line in enumerate(_lines(os.path.join(directory, name))):
-            payload = recorder_wire.verify(name, line)
+        lines = _lines(os.path.join(directory, name))
+        payloads = [recorder_wire.verify(name, line) for line in lines]
+        firsts = recorder_wire.unique([(name, payload) for payload in payloads])
+        for position, (line, payload) in enumerate(zip(lines, payloads)):
+            if not firsts[position]:
+                continue  # a duplicate: counted below, under the stream
             if payload is None:
                 lost.append((position, line))
                 continue
@@ -490,7 +535,7 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
             owner, source = _NO_STREAM, None
         elif boot_id or stream in _FIELDS:
             owner = source = stream
-            rows[stream], places[stream], tally[stream] = kept, at, [good, 0, 0]
+            rows[stream], places[stream], tally[stream] = kept, at, [good, 0, 0, firsts.count(False)]
             if header is not None:
                 headers[stream] = header
         else:
@@ -500,6 +545,10 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
     log, start, valid, logged, end = [], 0, 0, ([], []), 0
     if 'recorder.log' in names:
         log = _lines(os.path.join(directory, 'recorder.log'))
+        firsts = recorder_wire.unique([(None, recorder_wire.verify(None, line)) for line in log])
+        start, _first, end = _session_range(log, session)
+        tally[_BOARD_LOG][3] = firsts[start:end].count(False)  # this session's part, as recorder.log holds it
+        log = [line for line, kept in zip(log, firsts) if kept]
         start, first, end = _session_range(log, session)
         valid, *logged = _log_timeline(log, start, first, end)
         for index, line in enumerate(log):
@@ -519,8 +568,12 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
         if name != recorder_wire.SESSION_INDEX and (
                 not recorder_wire.wrapped(head) or recorder_wire.verify(name, head) is not None):
             continue  # a file from before the wrapper, or a real stream of another session
-        for line in _lines(path):
-            payload = recorder_wire.verify(name, line)
+        lines = _lines(path)
+        payloads = [recorder_wire.verify(name, line) for line in lines]
+        firsts = recorder_wire.unique([(name, payload) for payload in payloads])
+        for line, payload, kept in zip(lines, payloads, firsts):
+            if not kept:
+                continue  # a duplicate index row (or a junk file's: none, nothing checks out there)
             if payload is not None:
                 if name == recorder_wire.SESSION_INDEX:
                     clock.append(payload)
@@ -566,7 +619,7 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
                 continue  # a log line already in recorder.log or perhaps another session's; another session's row
             claimed = True
             stream = routing[len(prefix):-len('.csv')]
-            counts = tally.setdefault(stream, [0, 0, 0])
+            counts = tally.setdefault(stream, [0, 0, 0, 0])
             if payload.startswith('uptime;'):
                 headers.setdefault(stream, tuple(payload.split(';')[1:]))
                 counts[1] += 1
@@ -611,6 +664,40 @@ def _clean(token: str, field: str) -> str:
         return ''
 
 
+def _cells(stream: str, header: tuple | None, tokens: list) -> list | None:
+    """
+    A row's recorded cells under the columns flight/ names: its file's header's, else _FIELDS'.
+
+    Args:
+        stream - the stream's name: a key of _FIELDS when the header was lost.
+        header - the file's own columns after the uptime, None when its header row was lost.
+        tokens - the row's cells after the uptime.
+
+    Returns:
+        The tokens when there is one per column. With the header lost, also a row that stops short of exactly
+        the columns a later firmware appended (_APPENDED), an older firmware's row, padded with an empty cell for
+        each; a file that kept its header names its own firmware's columns, so it gets no such allowance. None
+        for any other count: a cut or a splice.
+    """
+    fields = header or _FIELDS[stream]
+    if len(tokens) == len(fields):
+        return tokens
+    appended = () if header else _APPENDED.get(stream, ())
+    if appended and len(tokens) == len(fields) - len(appended):
+        return tokens + [''] * len(appended)
+    return None
+
+
+def _before_the_wrapper(stream: str) -> tuple:
+    """
+    The columns of a known stream whose header was lost, in a dump from before the wrapper: its _FIELDS less what a
+    later firmware appended (_APPENDED), since every such dump predates those. Its rows are named exactly as before the
+    columns existed, so the 2026-10-03 cuts regenerate byte for byte.
+    """
+    fields, appended = _FIELDS[stream], _APPENDED.get(stream, ())
+    return fields[:len(fields) - len(appended)]
+
+
 def _numbers(line: str, count: int) -> list | None:
     """The fields after the uptime as floats (None where not numeric), or None if the count is wrong."""
     parts = line.split(';')[1:]
@@ -647,6 +734,19 @@ def ignition(rows: list, fields: tuple) -> int:
     raise ValueError('no boost: |a| never held %.1f g for %.1f s' % (_BOOST_G, _BOOST_HOLD_S))
 
 
+def staged(rows: list, fields: tuple) -> int:
+    """
+    Uptime (us) of the stage machine's first BOOSTING row: the flight's anchor when no IMU boost holds _BOOST_G --
+    a HITL boost of ~3 g under its noise (the sim's, where a real motor pulls ~15 g). ValueError if there is none.
+    """
+    column = fields.index('stage')
+    for uptime, line in rows:
+        parts = _payload(line).split(';')[1:]
+        if len(parts) > column and parts[column] == 'boosting':
+            return uptime
+    raise ValueError('no boosting row')
+
+
 def board_log(lines: list, session: str) -> list:
     """
     The session's lines of recorder.log, verbatim.
@@ -668,8 +768,8 @@ def _report_checks(tally: dict, elsewhere: int) -> None:
     Print what the checks found in a wrapped session.
 
     Args:
-        tally - {stream, _NO_STREAM or _BOARD_LOG: [good, salvaged in, rejected]} over the whole session,
-            from _wrapped_streams().
+        tally - {stream, _NO_STREAM or _BOARD_LOG: [good, salvaged in, rejected, duplicates]} over the whole
+            session, from _wrapped_streams(). Duplicates are named only where there are any.
         elsewhere - the lines elsewhere in the dump that prove no row of this session.
 
     Returns:
@@ -677,8 +777,9 @@ def _report_checks(tally: dict, elsewhere: int) -> None:
     """
     print('rows checked over the whole session:')
     for stream in sorted(tally):
-        good, salvaged, rejected = tally[stream]
-        print('  %-18s %6d good, %6d salvaged in, %6d rejected' % (stream, good, salvaged, rejected))
+        good, salvaged, rejected, duplicates = tally[stream]
+        dropped = ', %6d duplicates dropped' % duplicates if duplicates else ''
+        print('  %-18s %6d good, %6d salvaged in, %6d rejected%s' % (stream, good, salvaged, rejected, dropped))
     if elsewhere:
         print('  %d more damaged line(s) in junk files without this prefix or in other boots\' part of '
               'recorder.log prove no row of this session' % elsewhere)
@@ -845,7 +946,8 @@ def main() -> None:
     args = parser.parse_args()
 
     tally, clock, elsewhere, board = None, [], 0, []
-    if _wrapped(args.recordings, args.session):
+    wrapped = _wrapped(args.recordings, args.session)
+    if wrapped:
         found, tally, clock, elsewhere, board = _wrapped_streams(args.recordings, args.session)
     else:
         found = _streams(args.recordings, args.session)
@@ -862,6 +964,17 @@ def main() -> None:
             break
         except ValueError:
             continue
+    if boot is None and args.boot is None and 'sequencer' in found:
+        stage_header, stage_boots, _ = found['sequencer']
+        for index, rows in enumerate(stage_boots):
+            try:
+                boot, zero = index, staged(rows, stage_header or _FIELDS['sequencer'])
+                print('session %s: no |a| held %.1f g on %s -- ignition from the stage machine\'s BOOSTING row'
+                      % (args.session, _BOOST_G, args.accel))
+                break
+            except ValueError:
+                boot = None
+                continue
     if boot is None:
         sys.exit('no boost in %s boot(s) of session %s' % (len(boots), args.session))
     print('session %s: %d boot(s) on %s (%s); the flight is boot %d' % (
@@ -902,6 +1015,8 @@ def main() -> None:
         os.makedirs(os.path.join(args.out, folder), exist_ok=True)
 
     for stream, (header, rows) in sorted(streams.items()):
+        if header is None and not wrapped:
+            header = _before_the_wrapper(stream)  # an unwrapped dump's streams are all known ones (_streams)
         fields = header or _FIELDS.get(stream)
         kept = sorted((uptime, line) for uptime, line in rows if start <= uptime <= end)
         if not kept:
@@ -914,11 +1029,11 @@ def main() -> None:
                 writer = csv.writer(handle, delimiter=';', lineterminator='\n')  # ';' like the device
                 writer.writerow(('t_s',) + tuple(fields) + ('uptime_us',))
                 for uptime, line in kept:
-                    tokens = _payload(line).split(';')[1:]
-                    if len(tokens) != len(fields):
+                    cells = _cells(stream, header, _payload(line).split(';')[1:])
+                    if cells is None:
                         continue
                     writer.writerow(['%.6f' % ((uptime - zero) / 1e6)] +
-                                    [_clean(token, field) for token, field in zip(tokens, fields)] + [uptime])
+                                    [_clean(cell, field) for cell, field in zip(cells, fields)] + [uptime])
                     named += 1
         print('  %-18s %6d original rows, %6d named, last at %+.3f s%s' % (
             stream, len(kept), named, (kept[-1][0] - zero) / 1e6, '' if fields else '  (no field names known)'))

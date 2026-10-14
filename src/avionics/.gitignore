@@ -1,0 +1,4 @@
+target/
+.embuild/
+# the ESP-IDF component manager's working copies (the lock file next to them is tracked)
+firmware/managed_components/

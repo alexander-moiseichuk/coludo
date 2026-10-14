@@ -116,13 +116,14 @@ def test_drag_polar():
     best-glide speed on a real glider -- so flying well off trim costs energy in BOTH directions, which is
     what makes an airspeed-gated bank a genuine trade-off.
     """
-    assert abs(sim_model._polar(sim_model._V_TRIM) - 1.0) < 1e-9  # exactly 1.0 at trim, by construction
-    assert sim_model._polar(30.0) > 3.0  # way fast -> profile drag (v^3) dominates, sink climbs hard
-    assert sim_model._polar(4.0) > 1.5   # way slow -> induced drag (1/v) dominates
-    minimum = min(sim_model._polar(v / 10.0) for v in range(40, 260))  # scan 4..26 m/s
+    trim = sim_model.TRIM_SPEED_MS
+    assert abs(sim_model._polar(trim, trim) - 1.0) < 1e-9  # exactly 1.0 at trim, by construction
+    assert sim_model._polar(30.0, trim) > 3.0  # way fast -> profile drag (v^3) dominates, sink climbs hard
+    assert sim_model._polar(4.0, trim) > 1.5   # way slow -> induced drag (1/v) dominates
+    minimum = min(sim_model._polar(v / 10.0, trim) for v in range(40, 260))  # scan 4..26 m/s
     assert minimum < 1.0, minimum  # min sink is cheaper than trim...
-    assert sim_model._polar(0.76 * sim_model._V_TRIM) < sim_model._polar(sim_model._V_TRIM)  # ...and sits below it
-    assert sim_model._polar(0.0) == sim_model._polar(sim_model._V_POLAR_FLOOR)  # floored, no 1/0
+    assert sim_model._polar(0.76 * trim, trim) < sim_model._polar(trim, trim)  # ...and sits below it
+    assert sim_model._polar(0.0, trim) == sim_model._polar(sim_model._V_POLAR_FLOOR, trim)  # floored, no 1/0
 
 
 def test_gusts():
@@ -154,6 +155,43 @@ def test_faults():
     assert sim_model.Faults('junk@notanumber').active('junk', 0.0)  # a bad time degrades to t=0, never raises
 
 
+def _apogee(airframe):
+    """An F15 climb from the pad, booster and glider together (430 g), to apogee: its height (m)."""
+    body = sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0, airframe=airframe)
+    thrust, burn = sim_model.MOTORS['F15']
+    dt = 0.01
+    step = 0
+    while True:
+        body.boost_step(dt, thrust if step * dt < burn else 0.0)
+        step += 1
+        if step * dt > burn and body.vu <= 0.0:
+            return body.alt
+
+
+def test_airframes():
+    """
+    The airframe profiles: TMS-7 is the default, so every earlier study reproduces; TMS-8 (the fixed-wing flat
+    frame) glides flatter and slower but climbs lower, its open surfaces dragging the boost.
+    """
+    seven = sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0)
+    assert seven.airframe == 'tms7' and seven.trim_speed == sim_model.TRIM_SPEED_MS
+    assert seven.trim_sink == sim_model.TRIM_SPEED_MS / sim_model.AIR_QUALITY and seven.boost_cda == sim_model._CDA
+    eight = sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0, airframe='tms8')
+    assert eight.trim_speed == 12.0 and abs(eight.trim_sink - 1.5) < 1e-9, eight.trim_sink  # 12 m/s / L/D 8
+    assert eight.trim_sink < seven.trim_sink  # flatter glide: longer aloft from the same height
+    eight.begin_glide()
+    assert eight.speed == 12.0  # separation hands over at the airframe's own trim
+    seven_apogee, eight_apogee = _apogee('tms7'), _apogee('tms8')
+    assert 0.5 * seven_apogee < eight_apogee < 0.9 * seven_apogee, (seven_apogee, eight_apogee)  # 2x the drag
+    # NEGATIVE: an unknown airframe is refused by name, never silently TMS-7
+    try:
+        sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0, airframe='tms9')
+    except KeyError:
+        pass
+    else:
+        raise AssertionError('an unknown airframe was flown')
+
+
 test_weathercock_and_control()
 test_speed_sensor()
 test_gyro_rates()
@@ -162,5 +200,6 @@ test_stall()
 test_drag_polar()
 test_gusts()
 test_faults()
-print('ok: sim_model -- boost weathercock vs fin restore, calm stays vertical, speed sensor, gyro rates, '
-      'gnss drift, stall, drag polar, gusts, fault injection')
+test_airframes()
+print('ok: sim_model -- airframe profiles (TMS-7 default, TMS-8), boost weathercock vs fin restore, '
+      'calm stays vertical, speed sensor, gyro rates, gnss drift, stall, drag polar, gusts, fault injection')

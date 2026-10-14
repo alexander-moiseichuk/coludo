@@ -1,0 +1,20 @@
+[package]
+name = "controller"
+description = "The device bring-up's rules: setup retries, the alternatives pass and the device table CC reads (src/glider controller.py)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+board_config.workspace = true  # the device directory, pins, provides and Python's %s over config values
+control.workspace = true  # streams: attitude.csv's file and columns, the filter's own (control::attitude)
+databoard.workspace = true  # the Topology of the board's quantities, the firmware's and the SITL's
+log.workspace = true  # the control core's lines, as the board logs them
+recorder.workspace = true  # the control core's streams (Rows)
+sequencer.workspace = true  # the stage machine's binding, read through the topology (inputs)
+sim_link.workspace = true  # a SENSORS frame published as the hitl source (inputs)
+serde_json.workspace = true
+
+[dev-dependencies]
+golden.workspace = true

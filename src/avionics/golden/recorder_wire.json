@@ -1,0 +1,2476 @@
+{
+ "cells": [
+  {
+   "input": "cc-auto",
+   "name": "a_source",
+   "output": "cc-auto"
+  },
+  {
+   "input": " cc-auto ~",
+   "name": "spaces_and_a_tilde",
+   "output": " cc-auto ~"
+  },
+  {
+   "input": "",
+   "name": "empty",
+   "output": ""
+  },
+  {
+   "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "name": "32_bytes",
+   "output": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "name": "33_bytes",
+   "output": ""
+  },
+  {
+   "input": "2026.09.23.55c494a0c659",
+   "name": "a_firmware_stamp",
+   "output": "2026.09.23.55c494a0c659"
+  },
+  {
+   "input": "a;b",
+   "name": "a_semicolon",
+   "output": ""
+  },
+  {
+   "input": "a\tb",
+   "name": "a_tab",
+   "output": ""
+  },
+  {
+   "input": "a\nb",
+   "name": "a_newline",
+   "output": ""
+  },
+  {
+   "input": "a\u007fb",
+   "name": "a_delete",
+   "output": ""
+  },
+  {
+   "input": "caf\u00e9",
+   "name": "non_ascii",
+   "output": ""
+  },
+  {
+   "input": "~",
+   "name": "the_last_printable",
+   "output": "~"
+  },
+  {
+   "input": 7,
+   "name": "a_number",
+   "output": ""
+  },
+  {
+   "input": null,
+   "name": "nothing",
+   "output": ""
+  }
+ ],
+ "compare": {
+  "kind": "exact"
+ },
+ "crc32": [
+  {
+   "input": {
+    "bytes": "",
+    "previous": 0
+   },
+   "name": "empty",
+   "output": 0
+  },
+  {
+   "input": {
+    "bytes": "123456789",
+    "previous": 0
+   },
+   "name": "check_value",
+   "output": 3421780262
+  },
+  {
+   "input": {
+    "bytes": "a",
+    "previous": 0
+   },
+   "name": "one_byte",
+   "output": 3904355907
+  },
+  {
+   "input": {
+    "bytes": {
+     "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"
+    },
+    "previous": 0
+   },
+   "name": "every_byte",
+   "output": 688229491
+  },
+  {
+   "input": {
+    "bytes": "456789",
+    "previous": 2286445522
+   },
+   "name": "continued",
+   "output": 3421780262
+  },
+  {
+   "input": {
+    "bytes": "x",
+    "previous": 4294967295
+   },
+   "name": "continued_from_all_ones",
+   "output": 2703296241
+  },
+  {
+   "input": {
+    "bytes": "000123_imu_lsm6dso32.csv@884029;0.98;0.05;0.01",
+    "previous": 0
+   },
+   "name": "a_routed_cover",
+   "output": 3409247840
+  }
+ ],
+ "damage": [
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>\n",
+   "name": "a_good_row",
+   "output": {
+    "payload": "884029;0.98;0.05;0.01",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "good"
+   }
+  },
+  {
+   "input": "{fe52ab73};884030 sequencer :: stage -> boosting;<01a029b2>\n",
+   "name": "a_good_log_line",
+   "output": {
+    "payload": "884030 sequencer :: stage -> boosting",
+    "routing": null,
+    "status": "good"
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{229ee3fb};uptime;ax;ay;az;<dd611c04>\n",
+   "name": "a_good_header",
+   "output": {
+    "payload": "uptime;ax;ay;az",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "good"
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>\r\n",
+   "name": "a_good_row_with_crlf",
+   "output": {
+    "payload": "884029;0.98;0.05;0.01",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "good"
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{CB34FE60};884029;0.98;0.05;0.01;<34C67CA2>\n",
+   "name": "uppercase_tags",
+   "output": {
+    "payload": "884029;0.98;0.05;0.01",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "good"
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.99;0.05;0.01;<34c67ca2>\n",
+   "name": "a_payload_digit_flipped",
+   "output": {
+    "payload": "{cb34fe60};884029;0.99;0.05;0.01;<34c67ca2>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884028;0.98;0.05;0.01;<34c67ca2>\n",
+   "name": "the_uptime_flipped",
+   "output": {
+    "payload": "{cb34fe60};884028;0.98;0.05;0.01;<34c67ca2>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{0b34fe60};884029;0.98;0.05;0.01;<34c67ca2>\n",
+   "name": "the_open_tag_flipped",
+   "output": {
+    "payload": "{0b34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca0>\n",
+   "name": "the_close_tag_flipped",
+   "output": {
+    "payload": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca0>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "{fe52ab73};884030 sequencer :: stage -> boostinG;<01a029b2>\n",
+   "name": "a_log_line_flipped",
+   "output": {
+    "payload": "{fe52ab73};884030 sequencer :: stage -> boostinG;<01a029b2>",
+    "routing": null,
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": {
+    "hex": "403030303132335f696d755f6c736d3664736f33322e637376407b63623334666536307d3b3838343032393b302e39383b302eff353b302e30313b3c33346336376361323e0a"
+   },
+   "name": "a_high_byte_in_the_payload",
+   "output": {
+    "payload": {
+     "hex": "7b63623334666536307d3b3838343032393b302e39383b302eff353b302e30313b3c33346336376361323e"
+    },
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso3Z.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>\n",
+   "name": "a_corrupted_routing",
+   "output": {
+    "payload": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+    "routing": "000123_imu_lsm6dso3Z.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 0,
+    "records": [
+     {
+      "payload": "884029;0.98;0.05;0.01",
+      "record": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+      "routing": "000123_imu_lsm6dso32.csv"
+     }
+    ]
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c\n",
+   "name": "the_tail_cut",
+   "output": {
+    "payload": "{cb34fe60};884029;0.98;0.05;0.01;<34c",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.9\n",
+   "name": "cut_in_the_payload",
+   "output": {
+    "payload": "{cb34fe60};884029;0.9",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};\n",
+   "name": "the_head_only",
+   "output": {
+    "payload": "{cb34fe60};",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>@000123_health.csv@{bbf202d1};884031;41.5;8388608;3;None;None;0;0;0;<44008011>\n",
+   "name": "two_rows_merged",
+   "output": {
+    "payload": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>@000123_health.csv@{bbf202d1};884031;41.5;8388608;3;None;None;0;0;0;<44008011>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 0,
+    "records": [
+     {
+      "payload": "884029;0.98;0.05;0.01",
+      "record": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+      "routing": "000123_imu_lsm6dso32.csv"
+     },
+     {
+      "payload": "884031;41.5;8388608;3;None;None;0;0;0",
+      "record": "{bbf202d1};884031;41.5;8388608;3;None;None;0;0;0;<44008011>",
+      "routing": "000123_health.csv"
+     }
+    ]
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>{fe52ab73};884030 sequencer :: stage -> boosting;<01a029b2>\n",
+   "name": "a_row_merged_with_a_log_line",
+   "output": {
+    "payload": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>{fe52ab73};884030 sequencer :: stage -> boosting;<01a029b2>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 0,
+    "records": [
+     {
+      "payload": "884029;0.98;0.05;0.01",
+      "record": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+      "routing": "000123_imu_lsm6dso32.csv"
+     },
+     {
+      "payload": "884030 sequencer :: stage -> boosting",
+      "record": "{fe52ab73};884030 sequencer :: stage -> boosting;<01a029b2>",
+      "routing": null
+     }
+    ]
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0@000123_health.csv@{bbf202d1};884031;41.5;8388608;3;None;None;0;0;0;<44008011>\n",
+   "name": "a_spliced_row",
+   "output": {
+    "payload": "{cb34fe60};884029;0.98;0@000123_health.csv@{bbf202d1};884031;41.5;8388608;3;None;None;0;0;0;<44008011>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": [
+     {
+      "payload": "884031;41.5;8388608;3;None;None;0;0;0",
+      "record": "{bbf202d1};884031;41.5;8388608;3;None;None;0;0;0;<44008011>",
+      "routing": "000123_health.csv"
+     }
+    ]
+   }
+  },
+  {
+   "input": "000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>\n",
+   "name": "the_leading_at_lost",
+   "output": {
+    "payload": "000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+    "routing": null,
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 0,
+    "records": [
+     {
+      "payload": "884029;0.98;0.05;0.01",
+      "record": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+      "routing": "000123_imu_lsm6dso32.csv"
+     }
+    ]
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>\n",
+   "name": "the_second_at_lost",
+   "output": {
+    "payload": "@000123_imu_lsm6dso32.csv{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+    "routing": null,
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 0,
+    "records": [
+     {
+      "payload": "884029;0.98;0.05;0.01",
+      "record": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+      "routing": "000123_imu_lsm6dso32.csv"
+     }
+    ]
+   }
+  },
+  {
+   "input": "000999_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>\n",
+   "name": "another_sessions_name_left",
+   "output": {
+    "payload": "000999_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+    "routing": null,
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 0,
+    "records": [
+     {
+      "payload": "884029;0.98;0.05;0.01",
+      "record": "{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>",
+      "routing": "000123_imu_lsm6dso32.csv"
+     }
+    ]
+   }
+  },
+  {
+   "input": "@@{f9186202};7;x;<06e79dfa>\n",
+   "name": "an_empty_routing",
+   "output": {
+    "payload": "7;x",
+    "routing": "",
+    "status": "good"
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@884029;0.98;0.05;0.01\n",
+   "name": "a_legacy_row",
+   "output": {
+    "payload": "884029;0.98;0.05;0.01",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "legacy"
+   }
+  },
+  {
+   "input": "884030 sequencer :: stage -> boosting\n",
+   "name": "a_legacy_log_line",
+   "output": {
+    "payload": "884030 sequencer :: stage -> boosting",
+    "routing": null,
+    "status": "legacy"
+   }
+  },
+  {
+   "input": "\n",
+   "name": "an_empty_line",
+   "output": {
+    "payload": "",
+    "routing": null,
+    "status": "legacy"
+   }
+  },
+  {
+   "input": "@000123_health.csv@\n",
+   "name": "a_routing_alone",
+   "output": {
+    "payload": "",
+    "routing": "000123_health.csv",
+    "status": "legacy"
+   }
+  },
+  {
+   "divergence": "a wrapper tag is exactly 8 ASCII hex digits; the host reads it with int(tag, 16), which also takes a space, so this damaged line verifies there",
+   "input": "@000123_imu_lsm6dso32.csv@{ d499553};884029;31;<f2bb1791>\n",
+   "name": "a_leading_zero_made_a_space",
+   "oracle": {
+    "payload": "884029;31",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "good"
+   },
+   "output": {
+    "payload": "{ d499553};884029;31;<f2bb1791>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   }
+  },
+  {
+   "divergence": "a wrapper tag is exactly 8 ASCII hex digits; the host reads it with int(tag, 16), which also takes a sign, so this damaged line verifies there",
+   "input": "@000123_imu_lsm6dso32.csv@{fa5cc53e};884029;23;<+5ae47fc>\n",
+   "name": "a_leading_zero_made_a_sign",
+   "oracle": {
+    "payload": "884029;23",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "good"
+   },
+   "output": {
+    "payload": "{fa5cc53e};884029;23;<+5ae47fc>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   }
+  },
+  {
+   "divergence": "a wrapper tag is exactly 8 ASCII hex digits; the host reads it with int(tag, 16), which also takes an underscore between digits, so this damaged line verifies there",
+   "input": "@000123_health.csv@{0_77752e};884029;371;<ff85f7ec>\n",
+   "name": "a_zero_made_an_underscore",
+   "oracle": {
+    "payload": "884029;371",
+    "routing": "000123_health.csv",
+    "status": "good"
+   },
+   "output": {
+    "payload": "{0_77752e};884029;371;<ff85f7ec>",
+    "routing": "000123_health.csv",
+    "status": "bad"
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe6 };884029;0.98;0.05;0.01;<34c67ca2\n",
+   "name": "a_spaced_head_and_no_tail",
+   "output": {
+    "payload": "{cb34fe6 };884029;0.98;0.05;0.01;<34c67ca2",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb34fe6\r};884029;0.98;0.05;0.01;<34c67ca2\n",
+   "name": "a_head_with_a_carriage_return_and_no_tail",
+   "output": {
+    "payload": "{cb34fe6\r};884029;0.98;0.05;0.01;<34c67ca2",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{0x34fe60};884029;0.98;0.05;0.01;<34c67ca2\n",
+   "name": "a_0x_head_and_no_tail",
+   "output": {
+    "payload": "{0x34fe60};884029;0.98;0.05;0.01;<34c67ca2",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb3_fe60};884029;0.98;0.05;0.01;<34c67ca2\n",
+   "name": "an_underscored_head_and_no_tail",
+   "output": {
+    "payload": "{cb3_fe60};884029;0.98;0.05;0.01;<34c67ca2",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@cb34fe60};884029;0.98;0.05;0.01;<+4c67ca2>\n",
+   "name": "a_signed_tail_and_no_head",
+   "output": {
+    "payload": "cb34fe60};884029;0.98;0.05;0.01;<+4c67ca2>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "bad"
+   },
+   "salvage": {
+    "lost": 1,
+    "records": []
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@{cb3 fe60};884029;0.98;0.05;0.01;<34c67ca2\n",
+   "name": "a_head_int_refuses_and_no_tail",
+   "output": {
+    "payload": "{cb3 fe60};884029;0.98;0.05;0.01;<34c67ca2",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "legacy"
+   }
+  },
+  {
+   "input": "@000123_imu_lsm6dso32.csv@cb34fe60};884029;0.98;0.05;0.01;<__c67ca2>\n",
+   "name": "a_tail_int_refuses_and_no_head",
+   "output": {
+    "payload": "cb34fe60};884029;0.98;0.05;0.01;<__c67ca2>",
+    "routing": "000123_imu_lsm6dso32.csv",
+    "status": "legacy"
+   }
+  }
+ ],
+ "labels": [
+  {
+   "input": "A-1",
+   "name": "letters_digits_dash",
+   "output": true
+  },
+  {
+   "input": "x",
+   "name": "one_letter",
+   "output": true
+  },
+  {
+   "input": "catapult-run3",
+   "name": "a_run",
+   "output": true
+  },
+  {
+   "input": "run-xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "name": "32_bytes",
+   "output": true
+  },
+  {
+   "input": "run-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "name": "33_bytes",
+   "output": false
+  },
+  {
+   "input": "",
+   "name": "empty",
+   "output": false
+  },
+  {
+   "input": "-",
+   "name": "a_dash",
+   "output": false
+  },
+  {
+   "input": "20261003",
+   "name": "digits_only",
+   "output": false
+  },
+  {
+   "input": "123-456",
+   "name": "digits_and_dash",
+   "output": false
+  },
+  {
+   "input": "catapult_run3",
+   "name": "an_underscore",
+   "output": false
+  },
+  {
+   "input": "run/3",
+   "name": "a_slash",
+   "output": false
+  },
+  {
+   "input": "r\u00e9union",
+   "name": "non_ascii",
+   "output": false
+  },
+  {
+   "input": "run;3",
+   "name": "a_semicolon",
+   "output": false
+  },
+  {
+   "input": "a b",
+   "name": "a_space",
+   "output": false
+  }
+ ],
+ "logs": [
+  {
+   "input": {
+    "descriptor": "sequencer",
+    "limit": 254,
+    "message": "stage -> boosting",
+    "uptime_us": 10210000
+   },
+   "name": "a_stage_line",
+   "output": "{75efcb5f};10210000 sequencer :: stage -> boosting;<8a8bfe70>\n"
+  },
+  {
+   "input": {
+    "descriptor": "Recorder",
+    "limit": 254,
+    "message": "{'session': '000123', 'tlm': {'count': 1, 'max': 11, 'dropped': 0}, 'log': {'count': 0, 'max': 1, 'dropped': 0}}",
+    "uptime_us": 10210000
+   },
+   "name": "the_status_line",
+   "output": "{78fe1b25};10210000 Recorder :: {'session': '000123', 'tlm': {'count': 1, 'max': 11, 'dropped': 0}, 'log': {'count': 0, 'max': 1, 'dropped': 0}};<879a2e0a>\n"
+  },
+  {
+   "input": {
+    "descriptor": "Mission",
+    "limit": 254,
+    "message": "session.csv row lost; caf\u00e9",
+    "uptime_us": 10210000
+   },
+   "name": "semicolons_and_unicode_stay",
+   "output": "{61dab4d0};10210000 Mission :: session.csv row lost; caf\u00e9;<9ebe81ff>\n"
+  },
+  {
+   "input": {
+    "descriptor": "X",
+    "limit": 254,
+    "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "uptime_us": 10210000
+   },
+   "name": "cut_to_the_default_cell",
+   "output": "{8697a706};10210000 X :: yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;<79f39229>\n"
+  },
+  {
+   "input": {
+    "descriptor": "X",
+    "limit": 62,
+    "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "uptime_us": 10210000
+   },
+   "name": "cut_to_a_small_cell",
+   "output": "{0f450cfa};10210000 X :: yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;<f02139d5>\n"
+  },
+  {
+   "input": {
+    "descriptor": "X",
+    "limit": 62,
+    "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "uptime_us": 10210000
+   },
+   "name": "exactly_fills_a_small_cell",
+   "output": "{0f450cfa};10210000 X :: yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;<f02139d5>\n"
+  },
+  {
+   "input": {
+    "descriptor": "X",
+    "limit": 62,
+    "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "uptime_us": 10210000
+   },
+   "name": "one_byte_past_a_small_cell",
+   "output": "{0f450cfa};10210000 X :: yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy;<f02139d5>\n"
+  },
+  {
+   "input": {
+    "descriptor": "X",
+    "limit": 62,
+    "message": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+    "uptime_us": 10210000
+   },
+   "name": "cut_inside_a_character",
+   "output": {
+    "hex": "7b30323434316263397d3b31303231303030302058203a3a20c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c33b3c66643230326565363e0a"
+   }
+  },
+  {
+   "divergence": "a log line has its control bytes made spaces; plan B kept them, so a newline split its wire line",
+   "input": {
+    "descriptor": "gnss",
+    "limit": 254,
+    "message": "one\ntwo",
+    "uptime_us": 10210000
+   },
+   "name": "an_inner_newline",
+   "oracle": "{9087fcf7};10210000 gnss :: one\ntwo;<6fe3c9d8>\n",
+   "output": "{5f08b3ad};10210000 gnss :: one two;<a06c8682>\n"
+  },
+  {
+   "divergence": "a log line has its control bytes made spaces; plan B kept them, so a newline split its wire line",
+   "input": {
+    "descriptor": "gnss",
+    "limit": 254,
+    "message": "done\n",
+    "uptime_us": 10210000
+   },
+   "name": "a_trailing_newline",
+   "oracle": "{caa6547c};10210000 gnss :: done\n;<35c26153>\n",
+   "output": "{111d9daa};10210000 gnss :: done ;<ee79a885>\n"
+  },
+  {
+   "divergence": "a log line has its control bytes made spaces; plan B kept them, so a newline split its wire line",
+   "input": {
+    "descriptor": "i2c\t0",
+    "limit": 254,
+    "message": "x\ty",
+    "uptime_us": 10210000
+   },
+   "name": "tabs",
+   "oracle": "{6cad74bb};10210000 i2c\t0 :: x\ty;<93c94194>\n",
+   "output": "{06b9dfa8};10210000 i2c 0 :: x y;<f9ddea87>\n"
+  }
+ ],
+ "meta": {
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
+  "generator": "recorder_wire",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
+  "python": "3.12",
+  "source": "src/glider/recorder.py, src/glider/test/test_recorder.py, tools/recorder_wire.py",
+  "tag": "micropython_plan_B_3"
+ },
+ "prefixes": [
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": null,
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "no_label",
+   "output": "000123"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "catapult-run3",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "a_label",
+   "output": "catapult-run3"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "catapult run3",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "spaces_made_dashes",
+   "output": "catapult-run3"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "  padded\t",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "stripped",
+   "output": "padded"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "\u001crun\u001f",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "python_strips_separators",
+   "output": "run"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "\u3000run",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "an_ideographic_space",
+   "output": "run"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "a\u00a0b",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "a_no_break_space_stays",
+   "output": "000123"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "   ",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "blank",
+   "output": "000123"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "empty",
+   "output": "000123"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "catapult_run3",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "an_underscore",
+   "output": "000123"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "20261003",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "digits_only",
+   "output": "000123"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "run-xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "32_bytes",
+   "output": "run-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": "run-xxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "33_bytes",
+   "output": "000123"
+  },
+  {
+   "input": {
+    "boot_id": 1234567,
+    "configured": null,
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "a_wide_boot_id",
+   "output": "1234567"
+  },
+  {
+   "input": {
+    "boot_id": null,
+    "configured": null,
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "the_legacy_date_form",
+   "output": "20000101_000010_618836"
+  },
+  {
+   "input": {
+    "boot_id": null,
+    "configured": "bench",
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "a_label_without_a_boot_id",
+   "output": "bench"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": null,
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "null",
+   "output": "000123"
+  },
+  {
+   "input": {
+    "boot_id": 123,
+    "configured": 5,
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "a_number",
+   "output": "000123"
+  },
+  {
+   "divergence": "a recorder.session value that is not text names no session; plan B took str(value)",
+   "input": {
+    "boot_id": 123,
+    "configured": true,
+    "epoch": 946684810,
+    "random": 518836
+   },
+   "name": "true",
+   "oracle": "True",
+   "output": "000123"
+  }
+ ],
+ "session_rows": [
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "cc-auto",
+    "uptime_us": 10220000,
+    "utc_offset": -240
+   },
+   "name": "a_time_set",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{56ddc5cd};10220000;123;000123;2026-10-03T14:21:07Z;-240;taster;dev;95e1af1d7b1d;cc-auto;;;<a9b9cbd2>\n"
+   ]
+  },
+  {
+   "divergence": "cc_lat/cc_lon print the 1e-7 degree integers with 7 decimals; plan B printed its float degrees",
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": [
+     255000000,
+     -802500000
+    ],
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037500,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "dashboard",
+    "uptime_us": 10230000,
+    "utc_offset": null
+   },
+   "name": "a_set_with_the_cc_position",
+   "oracle": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{e45fe808};10230000;123;000123;2026-10-03T14:25:00Z;;taster;dev;95e1af1d7b1d;dashboard;25.5;-80.25;<1b3c0f07>\n"
+   ],
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{e33b50c0};10230000;123;000123;2026-10-03T14:25:00Z;;taster;dev;95e1af1d7b1d;dashboard;25.5000000;-80.2500000;<1c58b7cf>\n"
+   ]
+  },
+  {
+   "divergence": "cc_lat/cc_lon print the 1e-7 degree integers with 7 decimals; plan B printed its float degrees",
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": [
+     -338688000,
+     1512093000
+    ],
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "cc-auto",
+    "uptime_us": 10240000,
+    "utc_offset": 600
+   },
+   "name": "a_southern_eastern_cc_position",
+   "oracle": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{5ff0febb};10240000;123;000123;2026-10-03T14:21:07Z;600;taster;dev;95e1af1d7b1d;cc-auto;-33.8688;151.2093;<a0934144>\n"
+   ],
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{ec2faa92};10240000;123;000123;2026-10-03T14:21:07Z;600;taster;dev;95e1af1d7b1d;cc-auto;-33.8688000;151.2093000;<134c156d>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "cc-auto",
+    "uptime_us": 10250000,
+    "utc_offset": 0
+   },
+   "name": "utc_offset_zero",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{851829a9};10250000;123;000123;2026-10-03T14:21:07Z;0;taster;dev;95e1af1d7b1d;cc-auto;;;<7a7bb146>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "cc-auto",
+    "uptime_us": 10260000,
+    "utc_offset": -720
+   },
+   "name": "utc_offset_west_edge",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{2527bdaa};10260000;123;000123;2026-10-03T14:21:07Z;-720;taster;dev;95e1af1d7b1d;cc-auto;;;<da44cc75>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "cc-auto",
+    "uptime_us": 10270000,
+    "utc_offset": 840
+   },
+   "name": "utc_offset_east_edge",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{2cd19210};10270000;123;000123;2026-10-03T14:21:07Z;840;taster;dev;95e1af1d7b1d;cc-auto;;;<d3b2d8df>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 946684800,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "dashboard",
+    "uptime_us": 10280000,
+    "utc_offset": -240
+   },
+   "name": "a_power_on_clock",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{c5341430};10280000;123;000123;;;taster;dev;95e1af1d7b1d;dashboard;;;<3a57378f>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 978307199,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "dashboard",
+    "uptime_us": 10290000,
+    "utc_offset": -240
+   },
+   "name": "the_last_unset_second",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{c491bd86};10290000;123;000123;;;taster;dev;95e1af1d7b1d;dashboard;;;<3bf34129>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 978307200,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "dashboard",
+    "uptime_us": 10300000,
+    "utc_offset": -240
+   },
+   "name": "the_first_set_second",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{2901cb6a};10300000;123;000123;2001-01-01T00:00:00Z;-240;taster;dev;95e1af1d7b1d;dashboard;;;<d6631ef5>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "a;b",
+    "uptime_us": 10310000,
+    "utc_offset": null
+   },
+   "name": "a_source_with_a_semicolon",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{76b7f64a};10310000;123;000123;2026-10-03T14:21:07Z;;taster;dev;95e1af1d7b1d;;;;<89d558c5>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "cc\tauto",
+    "uptime_us": 10320000,
+    "utc_offset": null
+   },
+   "name": "a_source_with_a_tab",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{2cf80721};10320000;123;000123;2026-10-03T14:21:07Z;;taster;dev;95e1af1d7b1d;;;;<d39a805e>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": 7,
+    "uptime_us": 10330000,
+    "utc_offset": null
+   },
+   "name": "a_source_that_is_no_text",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{ac1255c7};10330000;123;000123;2026-10-03T14:21:07Z;;taster;dev;95e1af1d7b1d;;;;<537035a8>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "uptime_us": 10340000,
+    "utc_offset": null
+   },
+   "name": "a_source_of_33_bytes",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{9867e5f7};10340000;123;000123;2026-10-03T14:21:07Z;;taster;dev;95e1af1d7b1d;;;;<6705dca8>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "uptime_us": 10350000,
+    "utc_offset": null
+   },
+   "name": "a_source_of_32_bytes",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{9a3cd370};10350000;123;000123;2026-10-03T14:21:07Z;;taster;dev;95e1af1d7b1d;xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx;;;<655ec13f>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "tms;7",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "a2a36ac5a58f",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "cc-auto",
+    "uptime_us": 10360000,
+    "utc_offset": null
+   },
+   "name": "an_unnamed_board_without_a_firmware",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{025ac63b};10360000;123;000123;2026-10-03T14:21:07Z;;;dev;a2a36ac5a58f;cc-auto;;;<fd3b2d04>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "caf\u00e9",
+    "session": "000123",
+    "source": "cc-auto",
+    "uptime_us": 10370000,
+    "utc_offset": null
+   },
+   "name": "a_non_ascii_firmware",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{983d60db};10370000;123;000123;2026-10-03T14:21:07Z;;taster;;95e1af1d7b1d;cc-auto;;;<675ca4f4>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "2026.09.23.55c494a0c659",
+    "session": "000123",
+    "source": "cc-auto",
+    "uptime_us": 10380000,
+    "utc_offset": -240
+   },
+   "name": "a_real_firmware_stamp",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{bd9886f5};10380000;123;000123;2026-10-03T14:21:07Z;-240;taster;2026.09.23.55c494a0c659;95e1af1d7b1d;cc-auto;;;<42f91bea>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": null,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "20000101_000010_618836",
+    "source": "dashboard",
+    "uptime_us": 10390000,
+    "utc_offset": null
+   },
+   "name": "a_boot_nothing_counted",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{01dddc14};10390000;;20000101_000010_618836;2026-10-03T14:21:07Z;;taster;dev;95e1af1d7b1d;dashboard;;;<febcaa1b>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 1234567,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "1234567",
+    "source": "dashboard",
+    "uptime_us": 10400000,
+    "utc_offset": null
+   },
+   "name": "a_wide_boot_id",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{f3afeb6a};10400000;1234567;1234567;2026-10-03T14:21:07Z;;taster;dev;95e1af1d7b1d;dashboard;;;<0ccea595>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 946684810,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "boot",
+    "uptime_us": 10410000,
+    "utc_offset": null
+   },
+   "name": "the_boot_row",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{e06c709b};10410000;123;000123;;;taster;dev;95e1af1d7b1d;boot;;;<1f0d5774>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 1791037267,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "anchor",
+    "uptime_us": 10420000,
+    "utc_offset": null
+   },
+   "name": "a_dated_anchor",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{6ae5a993};10420000;123;000123;2026-10-03T14:21:07Z;;taster;dev;95e1af1d7b1d;anchor;;;<9584a94c>\n"
+   ]
+  },
+  {
+   "input": {
+    "board": "taster",
+    "boot_id": 123,
+    "cc_position": null,
+    "config_id": "95e1af1d7b1d",
+    "epoch": 946684800,
+    "firmware": "dev",
+    "session": "000123",
+    "source": "anchor",
+    "uptime_us": 10430000,
+    "utc_offset": null
+   },
+   "name": "an_undated_anchor",
+   "output": [
+    "@session.csv@{f6dd8849};uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon;<092277b6>\n",
+    "@session.csv@{80d2af10};10430000;123;000123;;;taster;dev;95e1af1d7b1d;anchor;;;<7fb276df>\n"
+   ]
+  }
+ ],
+ "statuses": [
+  {
+   "input": {
+    "log": {
+     "count": 0,
+     "dropped": 0,
+     "max": 0
+    },
+    "members": [],
+    "session": "000123",
+    "tlm": {
+     "count": 0,
+     "dropped": 0,
+     "max": 0
+    }
+   },
+   "name": "fresh",
+   "output": "{'session': '000123', 'tlm': {'count': 0, 'max': 0, 'dropped': 0}, 'log': {'count': 0, 'max': 0, 'dropped': 0}}"
+  },
+  {
+   "input": {
+    "log": {
+     "count": 2,
+     "dropped": 0,
+     "max": 0
+    },
+    "members": [],
+    "session": "000123",
+    "tlm": {
+     "count": 3,
+     "dropped": 0,
+     "max": 0
+    }
+   },
+   "name": "queued",
+   "output": "{'session': '000123', 'tlm': {'count': 3, 'max': 0, 'dropped': 0}, 'log': {'count': 2, 'max': 0, 'dropped': 0}}"
+  },
+  {
+   "input": {
+    "log": {
+     "count": 0,
+     "dropped": 0,
+     "max": 2
+    },
+    "members": [],
+    "session": "000123",
+    "tlm": {
+     "count": 0,
+     "dropped": 0,
+     "max": 3
+    }
+   },
+   "name": "drained",
+   "output": "{'session': '000123', 'tlm': {'count': 0, 'max': 3, 'dropped': 0}, 'log': {'count': 0, 'max': 2, 'dropped': 0}}"
+  },
+  {
+   "input": {
+    "log": {
+     "count": 1,
+     "dropped": 3,
+     "max": 0
+    },
+    "members": [],
+    "session": "000123",
+    "tlm": {
+     "count": 1,
+     "dropped": 2,
+     "max": 0
+    }
+   },
+   "name": "dropped",
+   "output": "{'session': '000123', 'tlm': {'count': 1, 'max': 0, 'dropped': 2}, 'log': {'count': 1, 'max': 0, 'dropped': 3}}"
+  },
+  {
+   "input": {
+    "log": {
+     "count": 0,
+     "dropped": 0,
+     "max": 1
+    },
+    "members": [],
+    "session": "hitl-f15",
+    "tlm": {
+     "count": 0,
+     "dropped": 0,
+     "max": 1
+    }
+   },
+   "name": "labelled",
+   "output": "{'session': 'hitl-f15', 'tlm': {'count': 0, 'max': 1, 'dropped': 0}, 'log': {'count': 0, 'max': 1, 'dropped': 0}}"
+  },
+  {
+   "input": {
+    "log": {
+     "count": 0,
+     "dropped": 0,
+     "max": 1
+    },
+    "members": [],
+    "session": "20000101_000010_618836",
+    "tlm": {
+     "count": 0,
+     "dropped": 0,
+     "max": 0
+    }
+   },
+   "name": "a_boot_nothing_counted",
+   "output": "{'session': '20000101_000010_618836', 'tlm': {'count': 0, 'max': 0, 'dropped': 0}, 'log': {'count': 0, 'max': 1, 'dropped': 0}}"
+  },
+  {
+   "input": {
+    "log": {
+     "count": 0,
+     "dropped": 0,
+     "max": 2
+    },
+    "members": [
+     [
+      "ring",
+      "{'erased': 380, 'unsaved': 4, 'lost': 0, 'writer': (1234, 4040), 'saver': (1230, 0)}"
+     ],
+     [
+      "saver",
+      "{'card': True, 'batches': 3, 'unsaved_s': 1.5}"
+     ]
+    ],
+    "session": "000123",
+    "tlm": {
+     "count": 0,
+     "dropped": 0,
+     "max": 3
+    }
+   },
+   "name": "members_after_the_log",
+   "output": "{'session': '000123', 'tlm': {'count': 0, 'max': 3, 'dropped': 0}, 'log': {'count': 0, 'max': 2, 'dropped': 0}, 'ring': {'erased': 380, 'unsaved': 4, 'lost': 0, 'writer': (1234, 4040), 'saver': (1230, 0)}, 'saver': {'card': True, 'batches': 3, 'unsaved_s': 1.5}}"
+  }
+ ],
+ "telemetry": [
+  {
+   "input": {
+    "fields": [
+     "ax",
+     "ay",
+     "az",
+     "gx",
+     "gy",
+     "gz",
+     "irq_runs"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": 0.984784
+       },
+       {
+        "kind": "f32",
+        "value": 0.065392
+       },
+       {
+        "kind": "f32",
+        "value": -0.005856
+       },
+       {
+        "kind": "i32",
+        "value": -21
+       },
+       {
+        "kind": "i32",
+        "value": 14
+       },
+       {
+        "kind": "i32",
+        "value": -35
+       },
+       {
+        "kind": "i32",
+        "value": 1
+       }
+      ],
+      "uptime_us": 10010000
+     },
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": 0.982832
+       },
+       {
+        "kind": "f32",
+        "value": 0.062464
+       },
+       {
+        "kind": "f32",
+        "value": -0.002928
+       },
+       {
+        "kind": "i32",
+        "value": -28
+       },
+       {
+        "kind": "i32",
+        "value": 14
+       },
+       {
+        "kind": "i32",
+        "value": -21
+       },
+       {
+        "kind": "i32",
+        "value": 2
+       }
+      ],
+      "uptime_us": 10020000
+     }
+    ],
+    "session": "000123",
+    "stream": "imu_lsm6dso32.csv"
+   },
+   "name": "an_imu",
+   "output": [
+    "@000123_imu_lsm6dso32.csv@{547e65b9};uptime;ax;ay;az;gx;gy;gz;irq_runs;<ab819a46>\n",
+    "@000123_imu_lsm6dso32.csv@{9d1b7de3};10010000;0.984784;0.065392;-0.005856;-21;14;-35;1;<627c3f8c>\n",
+    "@000123_imu_lsm6dso32.csv@{65fef6f3};10020000;0.982832;0.062464;-0.002928;-28;14;-21;2;<9a99edac>\n"
+   ]
+  },
+  {
+   "input": {
+    "fields": [
+     "temp",
+     "mem_free",
+     "load",
+     "oom_s",
+     "land_s",
+     "leak_kbps",
+     "rescues",
+     "rescue_ms"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": 41.5
+       },
+       {
+        "kind": "i64",
+        "value": 32549200
+       },
+       {
+        "kind": "i32",
+        "value": 58
+       },
+       {
+        "kind": "none",
+        "value": null
+       },
+       {
+        "kind": "none",
+        "value": null
+       },
+       {
+        "kind": "i32",
+        "value": 0
+       },
+       {
+        "kind": "i32",
+        "value": 0
+       },
+       {
+        "kind": "i32",
+        "value": 0
+       }
+      ],
+      "uptime_us": 10030000
+     },
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": 42.3
+       },
+       {
+        "kind": "i64",
+        "value": 8388608
+       },
+       {
+        "kind": "i32",
+        "value": 15
+       },
+       {
+        "kind": "none",
+        "value": null
+       },
+       {
+        "kind": "i32",
+        "value": 187
+       },
+       {
+        "kind": "i32",
+        "value": 0
+       },
+       {
+        "kind": "i32",
+        "value": 0
+       },
+       {
+        "kind": "i32",
+        "value": 0
+       }
+      ],
+      "uptime_us": 10040000
+     }
+    ],
+    "session": "000123",
+    "stream": "health.csv"
+   },
+   "name": "health",
+   "output": [
+    "@000123_health.csv@{19d51231};uptime;temp;mem_free;load;oom_s;land_s;leak_kbps;rescues;rescue_ms;<e62aedce>\n",
+    "@000123_health.csv@{e0374473};10030000;41.5;32549200;58;None;None;0;0;0;<1f51b03c>\n",
+    "@000123_health.csv@{deb8d8ba};10040000;42.3;8388608;15;None;187;0;0;0;<21de1585>\n"
+   ]
+  },
+  {
+   "input": {
+    "fields": [
+     "altitude",
+     "temp_c",
+     "pressure",
+     "elevation"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": -36.80688
+       },
+       {
+        "kind": "f32",
+        "value": 38.29
+       },
+       {
+        "kind": "f32",
+        "value": 101767.91
+       },
+       {
+        "kind": "f32",
+        "value": 4.244812
+       }
+      ],
+      "uptime_us": 10050000
+     }
+    ],
+    "session": "000123",
+    "stream": "baro_bmp280.csv"
+   },
+   "name": "a_barometer",
+   "output": [
+    "@000123_baro_bmp280.csv@{f296cb00};uptime;altitude;temp_c;pressure;elevation;<0d6934ff>\n",
+    "@000123_baro_bmp280.csv@{cf0ebd23};10050000;-36.80688;38.29;101767.91;4.244812;<30681b0c>\n"
+   ]
+  },
+  {
+   "input": {
+    "fields": [
+     "stage",
+     "reason"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "text",
+        "value": "boosting"
+       },
+       {
+        "kind": "text",
+        "value": "launch: accel>3g for 300ms"
+       }
+      ],
+      "uptime_us": 10060000
+     },
+     {
+      "cells": [
+       {
+        "kind": "text",
+        "value": "gliding"
+       },
+       {
+        "kind": "text",
+        "value": ""
+       }
+      ],
+      "uptime_us": 10070000
+     }
+    ],
+    "session": "000123",
+    "stream": "sequencer.csv"
+   },
+   "name": "the_sequencer",
+   "output": [
+    "@000123_sequencer.csv@{939b5d8c};uptime;stage;reason;<6c64a273>\n",
+    "@000123_sequencer.csv@{47577827};10060000;boosting;launch: accel>3g for 300ms;<b8310738>\n",
+    "@000123_sequencer.csv@{a85b376b};10070000;gliding;;<573d6f64>\n"
+   ]
+  },
+  {
+   "input": {
+    "fields": [
+     "angle",
+     "pulse_us",
+     "done"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "i32",
+        "value": -15
+       },
+       {
+        "kind": "i32",
+        "value": 1333
+       },
+       {
+        "kind": "bool",
+        "value": false
+       }
+      ],
+      "uptime_us": 10080000
+     },
+     {
+      "cells": [
+       {
+        "kind": "i32",
+        "value": -15
+       },
+       {
+        "kind": "i32",
+        "value": 1333
+       },
+       {
+        "kind": "bool",
+        "value": true
+       }
+      ],
+      "uptime_us": 10090000
+     }
+    ],
+    "session": "000123",
+    "stream": "servo_eleron_left.csv"
+   },
+   "name": "a_servo",
+   "output": [
+    "@000123_servo_eleron_left.csv@{9d44c1f0};uptime;angle;pulse_us;done;<62bb3e0f>\n",
+    "@000123_servo_eleron_left.csv@{2a51a223};10080000;-15;1333;0;<d53792dc>\n",
+    "@000123_servo_eleron_left.csv@{f33e0324};10090000;-15;1333;1;<0c580acb>\n"
+   ]
+  },
+  {
+   "input": {
+    "fields": [
+     "a",
+     "b",
+     "c",
+     "d"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "i64",
+        "value": 1099511627776
+       },
+       {
+        "kind": "i64",
+        "value": -9223372036854775808
+       },
+       {
+        "kind": "i32",
+        "value": -2147483648
+       },
+       {
+        "kind": "i32",
+        "value": 2147483647
+       }
+      ],
+      "uptime_us": 10100000
+     }
+    ],
+    "session": "000123",
+    "stream": "counters.csv"
+   },
+   "name": "wide_integers",
+   "output": [
+    "@000123_counters.csv@{055b5321};uptime;a;b;c;d;<faa4acde>\n",
+    "@000123_counters.csv@{02c538f9};10100000;1099511627776;-9223372036854775808;-2147483648;2147483647;<fda0da26>\n"
+   ]
+  },
+  {
+   "input": {
+    "fields": [
+     "eleron_left",
+     "eleron_right",
+     "yaw"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "i32",
+        "value": 1200
+       },
+       {
+        "kind": "i32",
+        "value": -1200
+       },
+       {
+        "kind": "i32",
+        "value": 0
+       }
+      ],
+      "uptime_us": 10110000
+     }
+    ],
+    "session": "catapult-run3",
+    "stream": "fins.csv"
+   },
+   "name": "a_labelled_session",
+   "output": [
+    "@catapult-run3_fins.csv@{7a5a73dc};uptime;eleron_left;eleron_right;yaw;<85a58c23>\n",
+    "@catapult-run3_fins.csv@{444a1e35};10110000;1200;-1200;0;<bb2fa5fa>\n"
+   ]
+  },
+  {
+   "input": {
+    "fields": [],
+    "rows": [
+     {
+      "cells": [],
+      "uptime_us": 10120000
+     }
+    ],
+    "session": "000123",
+    "stream": "empty.csv"
+   },
+   "name": "no_fields",
+   "output": [
+    "@000123_empty.csv@{61121bd4};uptime;;<9eede42b>\n",
+    "@000123_empty.csv@{aa394cca};10120000;;<555cd875>\n"
+   ]
+  },
+  {
+   "divergence": "an E7 cell prints the 1e-7 degree integer with 7 decimals; plan B printed its float degrees",
+   "input": {
+    "fields": [
+     "lat",
+     "lon",
+     "speed_kn",
+     "course"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "e7",
+        "value": 255143790
+       },
+       {
+        "kind": "e7",
+        "value": -803917950
+       },
+       {
+        "kind": "f32",
+        "value": 12.5
+       },
+       {
+        "kind": "f32",
+        "value": 271.25
+       }
+      ],
+      "uptime_us": 10130000
+     },
+     {
+      "cells": [
+       {
+        "kind": "e7",
+        "value": -1
+       },
+       {
+        "kind": "e7",
+        "value": 0
+       },
+       {
+        "kind": "f32",
+        "value": 0.5
+       },
+       {
+        "kind": "f32",
+        "value": 0.25
+       }
+      ],
+      "uptime_us": 10140000
+     }
+    ],
+    "session": "000123",
+    "stream": "gnss.csv"
+   },
+   "name": "gnss_degrees",
+   "oracle": [
+    "@000123_gnss.csv@{9a98d592};uptime;lat;lon;speed_kn;course;<65672a6d>\n",
+    "@000123_gnss.csv@{39793b83};10130000;25.514379;-80.391795;12.5;271.25;<c61c562c>\n",
+    "@000123_gnss.csv@{63b135c4};10140000;-1e-07;0.0;0.5;0.25;<9cd4735b>\n"
+   ],
+   "output": [
+    "@000123_gnss.csv@{9a98d592};uptime;lat;lon;speed_kn;course;<65672a6d>\n",
+    "@000123_gnss.csv@{5e4c0980};10130000;25.5143790;-80.3917950;12.5;271.25;<a129642f>\n",
+    "@000123_gnss.csv@{5e05728f};10140000;-0.0000001;0.0000000;0.5;0.25;<a1603410>\n"
+   ]
+  },
+  {
+   "divergence": "an F32 cell is Rust's Display of the f32 (shortest, never an exponent, no '.0', 'NaN', '-0'); plan B printed str(float), and on CPython that float is an f64",
+   "input": {
+    "fields": [
+     "yaw",
+     "pitch",
+     "roll"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": 1.0
+       },
+       {
+        "kind": "f32",
+        "value": 2.0
+       },
+       {
+        "kind": "f32",
+        "value": 3.0
+       }
+      ],
+      "uptime_us": 10150000
+     }
+    ],
+    "session": "000123",
+    "stream": "attitude.csv"
+   },
+   "name": "integral_floats",
+   "oracle": [
+    "@000123_attitude.csv@{9b0d07ba};uptime;yaw;pitch;roll;<64f2f845>\n",
+    "@000123_attitude.csv@{5ed9adde};10150000;1.0;2.0;3.0;<a1bcb251>\n"
+   ],
+   "output": [
+    "@000123_attitude.csv@{9b0d07ba};uptime;yaw;pitch;roll;<64f2f845>\n",
+    "@000123_attitude.csv@{45ee9660};10150000;1;2;3;<ba8b89ef>\n"
+   ]
+  },
+  {
+   "divergence": "an F32 cell is Rust's Display of the f32 (shortest, never an exponent, no '.0', 'NaN', '-0'); plan B printed str(float), and on CPython that float is an f64",
+   "input": {
+    "fields": [
+     "small",
+     "large",
+     "smallest"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": 1e-05
+       },
+       {
+        "kind": "f32",
+        "value": 1.5e+16
+       },
+       {
+        "kind": "f32",
+        "value": 2.5e-07
+       }
+      ],
+      "uptime_us": 10160000
+     }
+    ],
+    "session": "000123",
+    "stream": "tiny.csv"
+   },
+   "name": "floats_plan_b_writes_with_an_exponent",
+   "oracle": [
+    "@000123_tiny.csv@{4495f394};uptime;small;large;smallest;<bb6a0c6b>\n",
+    "@000123_tiny.csv@{897f78a6};10160000;1e-05;1.5e+16;2.5e-07;<761b80d9>\n"
+   ],
+   "output": [
+    "@000123_tiny.csv@{4495f394};uptime;small;large;smallest;<bb6a0c6b>\n",
+    "@000123_tiny.csv@{73abcdb8};10160000;0.00001;15000000000000000;0.00000025;<8ccf35c7>\n"
+   ]
+  },
+  {
+   "divergence": "an F32 cell is Rust's Display of the f32 (shortest, never an exponent, no '.0', 'NaN', '-0'); plan B printed str(float), and on CPython that float is an f64",
+   "input": {
+    "fields": [
+     "nan",
+     "up",
+     "down",
+     "zero"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": "NaN"
+       },
+       {
+        "kind": "f32",
+        "value": "inf"
+       },
+       {
+        "kind": "f32",
+        "value": "-inf"
+       },
+       {
+        "kind": "f32",
+        "value": -0.0
+       }
+      ],
+      "uptime_us": 10170000
+     }
+    ],
+    "session": "000123",
+    "stream": "odd.csv"
+   },
+   "name": "floats_that_are_no_numbers",
+   "oracle": [
+    "@000123_odd.csv@{84b35d12};uptime;nan;up;down;zero;<7b4ca2ed>\n",
+    "@000123_odd.csv@{4ef73a8a};10170000;nan;inf;-inf;-0.0;<b193ebe5>\n"
+   ],
+   "output": [
+    "@000123_odd.csv@{84b35d12};uptime;nan;up;down;zero;<7b4ca2ed>\n",
+    "@000123_odd.csv@{5ef78d38};10170000;NaN;inf;-inf;-0;<a1935c57>\n"
+   ]
+  },
+  {
+   "divergence": "an F32 cell is Rust's Display of the f32 (shortest, never an exponent, no '.0', 'NaN', '-0'); plan B printed str(float), and on CPython that float is an f64",
+   "input": {
+    "fields": [
+     "sum"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "f32",
+        "value": 0.30000000000000004
+       }
+      ],
+      "uptime_us": 10180000
+     }
+    ],
+    "session": "000123",
+    "stream": "sum.csv"
+   },
+   "name": "f64_digits_no_f32_holds",
+   "oracle": [
+    "@000123_sum.csv@{ea5fd21d};uptime;sum;<15a02de2>\n",
+    "@000123_sum.csv@{e4263f03};10180000;0.30000000000000004;<1b42955c>\n"
+   ],
+   "output": [
+    "@000123_sum.csv@{ea5fd21d};uptime;sum;<15a02de2>\n",
+    "@000123_sum.csv@{4fdd237f};10180000;0.3;<b0b98920>\n"
+   ]
+  },
+  {
+   "divergence": "a Text cell has ';' and control bytes made spaces; plan B wrote them as they came",
+   "input": {
+    "fields": [
+     "event"
+    ],
+    "rows": [
+     {
+      "cells": [
+       {
+        "kind": "text",
+        "value": "stage a;b"
+       }
+      ],
+      "uptime_us": 10190000
+     },
+     {
+      "cells": [
+       {
+        "kind": "text",
+        "value": "two\nlines"
+       }
+      ],
+      "uptime_us": 10200000
+     },
+     {
+      "cells": [
+       {
+        "kind": "text",
+        "value": "tab\there"
+       }
+      ],
+      "uptime_us": 10210000
+     }
+    ],
+    "session": "000123",
+    "stream": "board_events.csv"
+   },
+   "name": "text_with_separators",
+   "oracle": [
+    "@000123_board_events.csv@{b5e85cd9};uptime;event;<4a17a326>\n",
+    "@000123_board_events.csv@{3db573f9};10190000;stage a;b;<c2d1f0b6>\n",
+    "@000123_board_events.csv@{c26cbf44};10200000;two\nlines;<3d08e37b>\n",
+    "@000123_board_events.csv@{b61a810b};10210000;tab\there;<497eb424>\n"
+   ],
+   "output": [
+    "@000123_board_events.csv@{b5e85cd9};uptime;event;<4a17a326>\n",
+    "@000123_board_events.csv@{9483b863};10190000;stage a b;<6be73b2c>\n",
+    "@000123_board_events.csv@{645b9914};10200000;two lines;<9b3fc52b>\n",
+    "@000123_board_events.csv@{7acbcc7e};10210000;tab here;<85aff951>\n"
+   ]
+  }
+ ],
+ "wraps": [
+  {
+   "input": {
+    "payload": "884029;0.98;0.05;0.01",
+    "routing": "000123_imu_lsm6dso32.csv"
+   },
+   "name": "routed_vector_0",
+   "output": "@000123_imu_lsm6dso32.csv@{cb34fe60};884029;0.98;0.05;0.01;<34c67ca2>\n"
+  },
+  {
+   "input": {
+    "payload": "uptime;ax;ay;az",
+    "routing": "000123_imu_lsm6dso32.csv"
+   },
+   "name": "routed_vector_1",
+   "output": "@000123_imu_lsm6dso32.csv@{229ee3fb};uptime;ax;ay;az;<dd611c04>\n"
+  },
+  {
+   "input": {
+    "payload": "884031;123;000123;2026-10-03T14:21:07Z;-240;taster;dev;3f2a91;cc-auto;;",
+    "routing": "session.csv"
+   },
+   "name": "routed_vector_2",
+   "output": "@session.csv@{9b56a10c};884031;123;000123;2026-10-03T14:21:07Z;-240;taster;dev;3f2a91;cc-auto;;;<64a423cc>\n"
+  },
+  {
+   "input": {
+    "payload": "4294967296;0",
+    "routing": "a.csv"
+   },
+   "name": "routed_vector_3",
+   "output": "@a.csv@{0c9ea9b2};4294967296;0;<f361564d>\n"
+  },
+  {
+   "input": {
+    "payload": "884030 sequencer :: stage -> boosting",
+    "routing": null
+   },
+   "name": "log_vector_0",
+   "output": "{fe52ab73};884030 sequencer :: stage -> boosting;<01a029b2>\n"
+  },
+  {
+   "input": {
+    "payload": "123456789",
+    "routing": null
+   },
+   "name": "log_vector_1",
+   "output": "{cbf43926};123456789;<33500bcc>\n"
+  },
+  {
+   "input": {
+    "payload": "99999999999 x :: y",
+    "routing": null
+   },
+   "name": "log_vector_2",
+   "output": "{12085fce};99999999999 x :: y;<a58147ce>\n"
+  },
+  {
+   "input": {
+    "payload": "boot :: no digits here",
+    "routing": null
+   },
+   "name": "log_vector_3",
+   "output": "{7afd6024};boot :: no digits here;<85029fdb>\n"
+  },
+  {
+   "input": {
+    "payload": "1073741823;41.5;None",
+    "routing": "000123_health.csv"
+   },
+   "name": "below_2_30",
+   "output": "@000123_health.csv@{dc53a135};1073741823;41.5;None;<1c53a135>\n"
+  },
+  {
+   "input": {
+    "payload": "1073741824;41.5;None",
+    "routing": "000123_health.csv"
+   },
+   "name": "at_2_30",
+   "output": "@000123_health.csv@{f568b4b6};1073741824;41.5;None;<4a974b49>\n"
+  },
+  {
+   "input": {
+    "payload": "2147483648;41.5;None",
+    "routing": "000123_health.csv"
+   },
+   "name": "at_2_31",
+   "output": "@000123_health.csv@{863f61a5};2147483648;41.5;None;<f9c09e5a>\n"
+  },
+  {
+   "input": {
+    "payload": "4294967295;123;000123;;;taster;dev;95e1af1d7b1d;boot;;",
+    "routing": "session.csv"
+   },
+   "name": "below_2_32",
+   "output": "@session.csv@{7e0163f2};4294967295;123;000123;;;taster;dev;95e1af1d7b1d;boot;;;<7e0163f2>\n"
+  },
+  {
+   "input": {
+    "payload": "4294967297;0.98;0.05;0.01",
+    "routing": "000123_imu_lsm6dso32.csv"
+   },
+   "name": "past_2_32",
+   "output": "@000123_imu_lsm6dso32.csv@{9f8ae7e7};4294967297;0.98;0.05;0.01;<60751819>\n"
+  },
+  {
+   "input": {
+    "payload": "5400000000;0.98;0.05;0.01",
+    "routing": "000123_imu_lsm6dso32.csv"
+   },
+   "name": "ninety_minutes",
+   "output": "@000123_imu_lsm6dso32.csv@{a0f99416};5400000000;0.98;0.05;0.01;<1edb1de9>\n"
+  },
+  {
+   "input": {
+    "payload": "18446744073709551615;41.5",
+    "routing": "000123_health.csv"
+   },
+   "name": "u64_max",
+   "output": "@000123_health.csv@{af8dac86};18446744073709551615;41.5;<af8dac86>\n"
+  },
+  {
+   "input": {
+    "payload": "18446744073709551616;41.5",
+    "routing": "000123_health.csv"
+   },
+   "name": "past_u64",
+   "output": "@000123_health.csv@{2919de28};18446744073709551616;41.5;<d6e621d7>\n"
+  },
+  {
+   "input": {
+    "payload": "0000000000004294967296;1",
+    "routing": "000123_health.csv"
+   },
+   "name": "leading_zeros",
+   "output": "@000123_health.csv@{2f21541a};0000000000004294967296;1;<d0deabe5>\n"
+  },
+  {
+   "input": {
+    "payload": "0;0",
+    "routing": "000123_health.csv"
+   },
+   "name": "zero",
+   "output": "@000123_health.csv@{74860f09};0;0;<8b79f0f6>\n"
+  },
+  {
+   "input": {
+    "payload": "uptime;temp;mem_free",
+    "routing": "000123_health.csv"
+   },
+   "name": "a_header",
+   "output": "@000123_health.csv@{bd58b3da};uptime;temp;mem_free;<42a74c25>\n"
+  },
+  {
+   "input": {
+    "payload": "",
+    "routing": "a.csv"
+   },
+   "name": "an_empty_routed_payload",
+   "output": "@a.csv@{7c06fd3d};;<83f902c2>\n"
+  },
+  {
+   "input": {
+    "payload": "1073741824 sequencer :: stage -> boosting",
+    "routing": null
+   },
+   "name": "log_past_2_30",
+   "output": "{04723498};1073741824 sequencer :: stage -> boosting;<bb8dcb67>\n"
+  },
+  {
+   "input": {
+    "payload": "18446744073709551615 Recorder :: {'session': '000123'}",
+    "routing": null
+   },
+   "name": "log_u64_max",
+   "output": "{6080cacd};18446744073709551615 Recorder :: {'session': '000123'};<6080cacd>\n"
+  },
+  {
+   "input": {
+    "payload": "1234567890123456789012345 x :: y",
+    "routing": null
+   },
+   "name": "log_twenty_five_digits",
+   "output": "{d719c020};1234567890123456789012345 x :: y;<1504e0a6>\n"
+  },
+  {
+   "input": {
+    "payload": "",
+    "routing": null
+   },
+   "name": "an_empty_log_payload",
+   "output": "{00000000};;<ffffffff>\n"
+  }
+ ]
+}

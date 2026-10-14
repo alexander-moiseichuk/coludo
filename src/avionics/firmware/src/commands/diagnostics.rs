@@ -1,0 +1,431 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
+//! probe / verify / calibrate / detect / bustune -- the self-tests and the pre-flight check (src/glider cc_client
+//! `_register_diagnostics`). The I2C parts are probed on their bus owners (crate::owner), the SPI IMU on the control
+//! thread; the separation switch, the bluetooth stub and the recorder's flash ring here, on the executor. `verify`
+//! answers the hardware `pass` and, apart, plan B's flight-readiness verdict over the config (controller::readiness).
+
+use std::collections::BTreeMap;
+
+use cc_protocol::Message;
+use serde::Serialize;
+use serde_json::json;
+
+use super::{Code, Context, Fault, Reply};
+use crate::status::FLIGHT;
+
+/// The parts with a self-test, the one named or every one (plan B's `Inspector.probe_all` over its objects): the SPI
+/// IMU, the separation switch, the I2C parts on both ports' owners in port order, the bluetooth stubs and the
+/// recorder's flash ring (the ring gate); and why a thread did not answer, under its name. `table` is the device table
+/// the stubs are found in.
+fn probe_parts(
+    table: &'static controller::Table<'static>,
+    name: Option<&str>,
+) -> (Vec<crate::owner::Verdict>, Vec<(&'static str, String)>) {
+    let mut verdicts = Vec::new();
+    let mut errors = Vec::new();
+    // the SPI IMU, on the control thread (SPI2's owner): asked only when it is the one named, or for all
+    let imu = crate::control::imu().map(|(imu, ..)| imu);
+    if imu.is_some_and(|imu| name.is_none_or(|name| name == imu)) {
+        match crate::control::probe_imu() {
+            Some(Ok(verdict)) => verdicts.push(verdict),
+            Some(Err(error)) => {
+                log::warn!("probe :: {error}");
+                errors.push(("control", error));
+            }
+            None => {}
+        }
+    }
+    // the separation switch: its pin, read here (plan B separation.py:138-160)
+    if let Some((switch, high)) = crate::control::switch_level()
+        && name.is_none_or(|name| name == switch)
+    {
+        log::info!("{switch} :: probe: separation pin ...");
+        log::info!(
+            "{switch} :: probe: pin ok ({})",
+            if high { "nested" } else { "separated" }
+        );
+        verdicts.push((switch, None));
+    }
+    // the fins: swept one at a time on the control thread, their owner, within the flown deflection range (plan B
+    // sg90.probe sweeps the servos' whole range; the operator, 2026-10-11)
+    match crate::control::probe_fins(name) {
+        Some(Ok(swept)) => {
+            for fin in swept {
+                log_sweep(&fin);
+                let verdict = fin.verdict.map_or_else(
+                    || Some("not swept: the board left SETTING, armed or launched".to_string()),
+                    |verdict| verdict.failure(),
+                );
+                verdicts.push((fin.name, verdict));
+            }
+        }
+        Some(Err(error)) => {
+            log::warn!("probe :: {error}");
+            errors.push(("fins", error));
+        }
+        None => {}
+    }
+    for (port, label) in [(0, "i2c0"), (1, "i2c1")] {
+        match crate::owner::probe_port(port, name) {
+            Ok(probed) => verdicts.extend(probed),
+            Err(error) => {
+                log::warn!("probe :: {error}");
+                errors.push((label, error));
+            }
+        }
+    }
+    // the attitude filter: its gyro rate fresh (plan B tasks/attitude.py probe)
+    verdicts.extend(crate::control::probe_attitude(name));
+    // the GNSS: its NMEA lines advance (plan B gnss.py probe)
+    verdicts.extend(crate::gnss::probe(name));
+    // the bluetooth stubs: plan B's probe on a board with no BLE radio, which passes (bluetooth.py:20-31)
+    for entry in table.entries().iter().filter(|entry| {
+        entry.active() && entry.implementation == "bluetooth" && name.is_none_or(|name| name == entry.name)
+    }) {
+        log::info!("{} :: probe: ble radio ...", entry.name);
+        log::info!("{} :: probe: ble radio ok (active=None)", entry.name);
+        verdicts.push((entry.name, None));
+    }
+    // the recorder's object, whenever a recorder runs
+    if name.is_none_or(|name| name == crate::recorder::NAME)
+        && let Some(verdict) = crate::recorder::probe()
+    {
+        verdicts.push((crate::recorder::NAME, verdict));
+    }
+    (verdicts, errors)
+}
+
+/// A fin sweep's probe lines, plan B's (drivers/sg90.py probe): each stop reached, the power it drew over its
+/// baseline when the INA226 watched, and the failure.
+fn log_sweep(fin: &crate::fins::Swept) {
+    let name = fin.name;
+    for &(label, degrees) in &fin.stops[..fin.reached] {
+        log::info!("{name} :: probe: sweep to {label} {degrees} ...");
+        log::info!("{name} :: probe: at {label} {degrees} ok");
+    }
+    if fin.watching && fin.sampled == 0 {
+        log::info!("{name} :: probe: INA went stale during the sweep -- no closed-loop verdict");
+    } else if fin.watching {
+        let high = matches!(fin.verdict, Some(drivers::sg90::ProbeVerdict::Drew { high: true, .. }));
+        log::info!(
+            "{name} :: probe: peak draw {} mW over {} mW baseline{}",
+            fin.peak_rise_mw,
+            fin.baseline_mw,
+            if high { " (HIGH -- stall/binding?)" } else { "" }
+        );
+    }
+    if let Some(failure) = fin.verdict.and_then(|verdict| verdict.failure()) {
+        log::warn!("{name} :: probe FAILED: {failure}");
+    }
+}
+
+/// `probe [name|all]`: {name: null | problem} for the objects with a self-test, as plan B answers it
+/// (cc_client.py:729-780). `probe all` lists every device that came up (null, or its crash), every one that never
+/// did (its failure line) and the recorder (its ring gate), and, when there are alternatives, their not-fitted lines in
+/// a second map; `probe <alternative>` answers null for it, then that map.
+pub fn probe(message: &Message, context: &mut Context) -> Reply {
+    let table = context.devices;
+    let target = message.args.first().map_or("all", String::as_str);
+    let json = |value: serde_json::Value| value.to_string();
+    if target == "all" {
+        let mut results: BTreeMap<&str, Option<String>> = BTreeMap::new();
+        results.insert("mission", probe_mission(context));
+        let (verdicts, errors) = probe_parts(table, None);
+        for (name, verdict) in verdicts {
+            results.insert(name, table.probed(name, verdict.as_deref()));
+        }
+        // an owner that did not answer leaves its parts unprobed: say so under its port's name
+        for (label, error) in errors {
+            results.insert(label, Some(error));
+        }
+        // the rest that came up have no probe of their own here (plan B's base Task.probe: healthy unless crashed)
+        for (name, _) in table.tasks() {
+            results.entry(name).or_insert_with(|| table.probed(name, None));
+        }
+        for (name, line) in table.failures() {
+            results.entry(name).or_insert(Some(line));
+        }
+        let alternatives: BTreeMap<&str, String> = table.alternatives().into_iter().collect();
+        let first = json(json!(results));
+        return Ok(if alternatives.is_empty() {
+            cc_protocol::build("ok", &[&first], &[])
+        } else {
+            cc_protocol::build("ok", &[&first, &json(json!(alternatives))], &[])
+        });
+    }
+    if target == "mission" {
+        return super::ok_json(&json!({"mission": probe_mission(context)}));
+    }
+    let entry = table.find(target);
+    // an object: a device that came up, or the recorder, which needs no config entry of its own
+    let is_object = entry.is_some_and(|entry| entry.active())
+        || (target == crate::recorder::NAME && crate::recorder::get().is_some());
+    let (verdicts, errors) = if is_object {
+        probe_parts(table, Some(target))
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    if let Some((name, verdict)) = verdicts.into_iter().next() {
+        return super::ok_json(&json!({name: table.probed(name, verdict.as_deref())}));
+    }
+    if is_object {
+        if !errors.is_empty() {
+            let errors: Vec<String> = errors.into_iter().map(|(_, error)| error).collect();
+            return Err(Fault::new(Code::Internal, errors.join("; ")));
+        }
+        return super::ok_json(&json!({target: table.probed(target, None)}));
+    }
+    if let Some(line) = table.failure(target) {
+        return super::ok_json(&json!({target: line}));
+    }
+    if let Some(line) = table.unfitted(target) {
+        return Ok(cc_protocol::build(
+            "ok",
+            &[&json(json!({target: null})), &json(json!({target: line}))],
+            &[],
+        ));
+    }
+    Err(Fault::new(Code::BadArguments, format!("no probe for {target}")))
+}
+
+/// The failing probes of every part with a self-test and of the recorder's ring, named as plan B's verify and arm name
+/// them (`_named`), and a thread that did not answer, under its name.
+pub fn probe_problems(context: &Context) -> Vec<(&'static str, String)> {
+    let (verdicts, errors) = probe_parts(context.devices, None);
+    verdicts
+        .into_iter()
+        .filter_map(|(name, verdict)| Some((name, context.devices.probed(name, Some(&verdict?))?)))
+        .chain(errors)
+        .collect()
+}
+
+/// `verify`: the pre-flight check (plan B cc_client.py:782-845) -- every device's line; the problems: the failures (an
+/// entry the firmware cannot run yet included), the stage problem, and in SETTING the probe sweep with the mission's
+/// and the ring gate's (elsewhere `probe: not run`); `pass` when there is none; and apart from them the config's
+/// flight-readiness verdict (`ready`, `readiness`), which bench and HITL sessions trip on purpose.
+pub fn verify(_message: &Message, context: &mut Context) -> Reply {
+    let devices = context.devices;
+    let mut problems: BTreeMap<&str, String> = devices.failures().into_iter().collect();
+    let flight = crate::status::FLIGHT.load();
+    if let Some(problem) = flight.stage_problem() {
+        problems.insert("stage", problem.to_string());
+    }
+    // a bench mode never rides into a flight (M21)
+    if let Some(problem) = crate::entry::problem() {
+        problems.insert("entry-file", problem);
+    }
+    match flight.stage.change_refused(false) {
+        Some(airborne) => {
+            problems.insert("probe", format!("not run: {airborne} (the probes sweep the fins)"));
+        }
+        None => {
+            if let Some(problem) = probe_mission(context) {
+                problems.insert("mission", problem);
+            }
+            problems.extend(probe_problems(context));
+        }
+    }
+    let mission = &context.mission;
+    let mut readiness = controller::readiness(
+        &context.config.document,
+        mission.zone.is_some(),
+        !mission.sites.is_empty(),
+    );
+    // plan B's `imu_calibration`: a BNO055 that never converged reaches launch with a frozen attitude on healthy
+    // hardware, so it is a readiness item, not a hardware failure (the operator picks the airframe up)
+    if let Some(state) = crate::sensors::absolute_state()
+        && let Some(owed) = state.instruction()
+        && !state.calibrated
+    {
+        readiness.insert("imu_calibration", format!("BNO055 not calibrated -- {owed}"));
+    }
+    // plan B's `fins` check: a control surface with no servo holds its last angle while the others fly
+    if let Some(unbound) = crate::flight::unbound_surfaces().filter(|unbound| !unbound.is_empty()) {
+        readiness.insert(
+            "fins",
+            format!("no driver for {} -- reduced control authority", unbound.join(", ")),
+        );
+    }
+    super::ok_json(&json!({
+        "pass": problems.is_empty(),
+        "devices": devices.devices().into_iter().collect::<BTreeMap<_, _>>(),
+        "problems": problems,
+        "alternatives": devices.alternatives().into_iter().collect::<BTreeMap<_, _>>(),
+        "ready": readiness.is_empty(),
+        "readiness": readiness,
+    }))
+}
+
+/// The mission's self-test (a launch position is set, the zone is in range), logged as plan B's mission.probe logs
+/// it, so an operator's log window shows the check and its verdict.
+pub fn probe_mission(context: &Context) -> Option<String> {
+    log::info!("mission :: probe: launch position ...");
+    // plan B logs the position as soon as it resolves, before the zone range check can fail
+    let fix = crate::gnss::position(context.topology);
+    if let Some(origin) = context.mission.launch_point(fix) {
+        let [latitude, longitude] = origin.degrees();
+        log::info!("mission :: probe: position ok ({latitude:.5}, {longitude:.5})");
+    }
+    let problem = context.mission.probe(fix);
+    if let Some(problem) = &problem {
+        log::warn!("mission :: probe FAILED: {problem}");
+    }
+    problem
+}
+
+/// `calibrate`: what needs calibrating, {name: instruction} (plan B `Inspector.calibration_all()`, possibly {});
+/// `calibrate <device>` runs one, in SETTING (a barometer's also at DONE: the false launch's recovery), answering
+/// {device: null} on success, else why (plan B cc_client.py:873-904). A device that came up with nothing to calibrate
+/// succeeds (plan B's default); one that never came up, or no device, has no calibrate.
+pub fn calibrate(message: &Message, context: &mut Context) -> Reply {
+    let Some(target) = message.args.first() else {
+        return super::ok_json(&crate::owner::calibrations().into_iter().collect::<BTreeMap<_, _>>());
+    };
+    if let Some(refusal) = super::change_refused(context, target) {
+        // a baro calibrate mid-air re-zeroes elevation: the ground, to the stage machine
+        return Err(Fault::new(Code::Unsafe, refusal));
+    }
+    if !context.devices.find(target).is_some_and(|entry| entry.active()) {
+        return Err(Fault::new(Code::BadArguments, format!("no calibrate for {target}")));
+    }
+    // a calibration the owner computed but holds back (the BMM350's) is persisted here, then applied (D9 of the M9 plan)
+    let persist = |key: &'static str, blob: &[u8]| {
+        use warmstart::Nvs;
+        let mut nvs = crate::warm::ColudoNvs::open(&context.nvs).map_err(|error| error.to_string())?;
+        let nvs_error = |error: warmstart::NvsError| format!("NVS error {:#x}", error.0);
+        nvs.set_blob(key, blob).map_err(nvs_error)?;
+        nvs.commit().map_err(nvs_error)
+    };
+    let mut result = crate::owner::calibrate(target, persist)
+        .map_err(|error| Fault::new(Code::Internal, error))?
+        .unwrap_or(None);
+    // a tare the owner captured (the pitot's) is persisted here, off the flight core
+    if let (None, Some(why)) = (&result, crate::sensors::persist_pitot_tare(&context.nvs)) {
+        result = Some(why);
+    }
+    super::ok_json(&json!({ target.as_str(): result }))
+}
+
+/// The `detect` payload, in plan B's key order.
+#[derive(Serialize)]
+struct Detected<'a> {
+    /// The revision the buses look like now, null when undecided.
+    detected: Option<&'static str>,
+    /// The revision this boot runs as (health's `layout`).
+    applied: &'a str,
+    /// The scan's evidence.
+    detail: String,
+}
+
+/// `detect`: scan both I2C buses, on their owners, and answer the revision they look like beside the one this boot
+/// applied, changing nothing (plan B cc_client `detect`): what is wired now, which takes effect only at the next
+/// boot. Scans with the running (post-layout) config's bus specs, as plan B scans the controller's.
+pub fn detect(_message: &Message, context: &mut Context) -> Reply {
+    let (revision, detail) = layout::detect(&context.config.document, |bus, _| {
+        crate::owner::scan(bus).inspect_err(|error| log::warn!("detect :: {error}: no votes from this bus"))
+    });
+    super::ok_json(&Detected {
+        detected: revision.map(layout::Revision::name),
+        applied: &context.layout,
+        detail,
+    })
+}
+
+/// `bustune <kind> <id> <freq>`: run sensor bus `<kind>:<id>` at `<freq>` Hz in place, never saved (the CC sweep
+/// saves the chosen clock with set-config and a reboot), and answer each part's probe (plan B
+/// controller.bustune, cc_client.py:855-870): {kind, id, freq, devices: {name: 'ok' | '<driver> -- <why>'}, all_ok}.
+///
+/// The verdicts are the parts that came up on that bus, probed now (operator, 2026-10-07): plan B also counted every
+/// other config entry on the bus as down -- disabled ones included, and here the parts whose drivers are not ported
+/// yet -- so its sweep never found a ceiling on a bus with one.
+pub fn bustune(message: &Message, context: &mut Context) -> Reply {
+    let [kind, id, freq, ..] = message.args.as_slice() else {
+        return Err(Fault::new(Code::BadArguments, "bustune <kind> <id> <freq>"));
+    };
+    let freq: i64 = freq
+        .trim()
+        .parse()
+        .map_err(|_| Fault::new(Code::BadArguments, "freq must be an int (Hz)"))?;
+    if kind != "i2c" && kind != "spi" {
+        return super::ok_json(&json!({"error": format!("bus kind '{kind}' is not tunable (i2c/spi only)")}));
+    }
+    let defined = context.config.document["buses"][kind.as_str()]
+        .get(id.as_str())
+        .is_some_and(|bus| bus.is_object());
+    if !defined {
+        return super::ok_json(&json!({"error": format!("bus {kind}:{id} not defined")}));
+    }
+    // armed, a rung would hold a bus owner off its parts in the last seconds on the pad (M9): only the way back to
+    // the configured clock runs, so an interrupted sweep can still be undone
+    let configured = context.config.document["buses"][kind.as_str()][id.as_str()]
+        [if kind == "spi" { "baud" } else { "freq" }]
+    .as_i64();
+    if FLIGHT.load().armed && configured != Some(freq) {
+        return Err(Fault::new(
+            Code::Unsafe,
+            format!(
+                "refused -- armed (bustune only back to the configured {} Hz)",
+                configured.map_or_else(|| "?".to_string(), |hz| hz.to_string())
+            ),
+        ));
+    }
+    if kind == "spi" {
+        return bustune_spi(context, id, freq);
+    }
+    let port: u8 = id
+        .parse()
+        .map_err(|_| Fault::new(Code::Internal, format!("i2c port {id} has no owner")))?;
+    let clock_hz = u32::try_from(freq)
+        .ok()
+        .filter(|clock_hz| *clock_hz > 0)
+        .ok_or_else(|| Fault::new(Code::Internal, format!("{freq} Hz is no clock")))?;
+    let verdicts = crate::owner::bustune(port, clock_hz)
+        .map_err(|error| Fault::new(Code::Internal, error))?
+        .map_err(|error| {
+            Fault::new(
+                Code::Internal,
+                format!("i2c:{port} would not run at {clock_hz} Hz: {error}"),
+            )
+        })?;
+    let devices: BTreeMap<&str, String> = verdicts
+        .into_iter()
+        .map(|(name, verdict)| {
+            // 'ok' is the contract the CC sweep reads; anything else names the part, as probe and verify do
+            let line = verdict.map_or_else(
+                || "ok".to_string(),
+                |why| context.devices.probed(name, Some(&why)).unwrap_or(why),
+            );
+            (name, line)
+        })
+        .collect();
+    let all_ok = !devices.is_empty() && devices.values().all(|verdict| verdict == "ok");
+    super::ok_json(&json!({"kind": kind, "id": id, "freq": freq, "devices": devices, "all_ok": all_ok}))
+}
+
+/// `bustune spi 1 <freq>` (D21): the IMU's SPI handle run at `freq` on the control thread, SPI2's owner, and probed
+/// there; plan B's answer shape. SPI2's only device is the IMU, so its verdict is the rung's. A clock above the
+/// LSM6DSO32's 10 MHz is the IMU failing the rung, untried; a clock the driver refuses leaves the handle at the
+/// configured one.
+fn bustune_spi(context: &Context, id: &str, freq: i64) -> Reply {
+    let clock_hz = u32::try_from(freq)
+        .ok()
+        .filter(|clock_hz| *clock_hz > 0)
+        .ok_or_else(|| Fault::new(Code::Internal, format!("{freq} Hz is no clock")))?;
+    let Some(answer) = crate::control::bustune_spi(clock_hz) else {
+        return super::ok_json(&json!({"kind": "spi", "id": id, "freq": freq, "devices": {}, "all_ok": false}));
+    };
+    let rung = answer.map_err(|error| Fault::new(Code::Internal, error))?;
+    if rung.running_hz != clock_hz {
+        log::warn!(
+            "bustune :: spi:{id} runs at {} Hz, not the {clock_hz} Hz asked",
+            rung.running_hz
+        );
+    }
+    let line = rung.verdict.map_or_else(
+        || "ok".to_string(),
+        |why| context.devices.probed(rung.name, Some(&why)).unwrap_or(why),
+    );
+    let all_ok = line == "ok";
+    super::ok_json(&json!({"kind": "spi", "id": id, "freq": freq, "devices": {rung.name: line}, "all_ok": all_ok}))
+}

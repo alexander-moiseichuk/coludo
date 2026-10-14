@@ -75,6 +75,9 @@ altering one.</p>
   <button id="actassist" title="push the CC GNSS fix to the board launch config">sync GNSS</button>
 </p>
 <div id="actmsg" class="actmsg"></div>
+<p><button id="actpreview" title="the selected board's camera once a second; turns the camera on (video preview) when it is off, and off again on close">camera preview</button>
+  <span id="previewmsg" class="muted"></span></p>
+<p><img id="preview" alt="" style="display:none; max-width:100%; width:720px"></p>
 
 <h2>send command to <span class="sel" id="selB">—</span></h2>
 <p>
@@ -1022,6 +1025,83 @@ new EventSource('/logs').onmessage = (event) => {
   if (logPane.textContent.length > 200000) { logPane.textContent = logPane.textContent.slice(-150000); }
   logPane.scrollTop = logPane.scrollHeight;
 };
+
+// The camera preview (M7b): the selected board's /camera/preview.jpg through the hub, once a second while on. The
+// board makes one a second only while its camera runs on the pad, so a board with none (404) is asked for `video
+// preview` once (the camera on, no recording); closing the preview stops the camera again if this button started it.
+// A recording already running keeps running: its previews are shown.
+let previewTimer = null;
+let previewBoard = null;     // the board the open preview shows
+let previewStarted = false;  // this button started its camera (`video preview`), so closing it stops it
+let previewFrames = [];      // the board-uptime (us) of each new frame shown, for the count and the fps meter
+document.getElementById('actpreview').addEventListener('click', async () => {
+  const image = document.getElementById('preview');
+  const line = document.getElementById('previewmsg');
+  if (previewTimer) {
+    clearInterval(previewTimer);
+    previewTimer = null;
+    image.style.display = 'none';
+    line.textContent = '';
+    if (previewStarted && previewBoard) {
+      const stopped = await cmd(previewBoard, 'video', ['stop']);
+      line.textContent = previewBoard + ': camera ' + (stopped.status === 'ok' ? 'off' : 'stop: ' + JSON.stringify(stopped.args || stopped.error));
+    }
+    previewStarted = false;
+    previewBoard = null;
+    return;
+  }
+  if (!selected) { line.textContent = 'pick a board in the table'; return; }
+  previewBoard = selected;
+  previewFrames = [];
+  let asked = false;
+  const look = async () => {
+    try {
+      const reply = await fetch('/api/preview/' + encodeURIComponent(previewBoard) + '?t=' + Date.now());
+      if (reply.status === 404 && !asked) {
+        // no preview: the camera is off -- turn it on for its aim alone, once
+        asked = true;
+        line.textContent = previewBoard + ': starting the camera (video preview)…';
+        const started = await cmd(previewBoard, 'video', ['preview']);
+        if (started.status === 'ok') {
+          previewStarted = true;
+        } else {
+          line.textContent = previewBoard + ': video preview refused: ' + JSON.stringify(started.args || started.error);
+        }
+        return;
+      }
+      if (!reply.ok) {
+        const why = await reply.text();
+        // the camera stopped under the preview (video stop elsewhere, a reboot): the last picture is not live
+        image.style.opacity = '0.35';
+        if (!asked || reply.status !== 404 || image.style.display === '') {
+          line.textContent = previewBoard + ': ' + (why.includes('error') ? JSON.parse(why).error : why) + ' (not live)';
+        }
+        return;
+      }
+      image.style.opacity = '';
+      // a new frame only when the board's frame time moved: a repeated fetch of the same frame counts nothing
+      const uptime = Number(reply.headers.get('X-Coludo-Uptime-Us'));
+      const fresh = !previewFrames.length || uptime !== previewFrames[previewFrames.length - 1];
+      if (fresh) {
+        const old = image.src;
+        image.src = URL.createObjectURL(await reply.blob());
+        if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+        previewFrames.push(uptime);
+      }
+      image.style.display = '';
+      // the rate over the last ten frames, by the board's own clock
+      const recent = previewFrames.slice(-10);
+      const span = (recent[recent.length - 1] - recent[0]) / 1e6;
+      const fps = recent.length > 1 && span > 0 ? ((recent.length - 1) / span).toFixed(2) + ' fps' : '— fps';
+      line.textContent = previewBoard + ' ' + new Date().toLocaleTimeString() + ' · frame ' + previewFrames.length +
+        ' · ' + fps + (previewStarted ? ' (camera on for the preview)' : '');
+    } catch (error) {
+      line.textContent = 'preview: ' + error;
+    }
+  };
+  look();
+  previewTimer = setInterval(look, 1000);
+});
 </script>
 </body>
 </html>

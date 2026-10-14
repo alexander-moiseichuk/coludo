@@ -1,0 +1,11 @@
+[package]
+name = "databoard"
+description = "The shared latest-value store: seqlock channels ranked into parameters, no extrapolation (src/glider databoard.py)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dev-dependencies]
+golden.workspace = true
+serde_json.workspace = true

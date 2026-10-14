@@ -4,12 +4,13 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Host (CPython) test for the flight telemetry parser (tools/flight_telemetry.py): demux a recorder
 capture into streams + logs, against both an explicit fixture and the synthetic flight, and read a
 capture carrying the integrity wrapper (doc/specs/recorder-wire.md) strictly -- good, salvaged and
-rejected lines -- while an unwrapped capture reads as it always did. Stdlib only (no plotly). Run by
-`make test`.
+rejected lines, a duplicate dropped before any verdict -- while an unwrapped capture reads as it always did.
+Stdlib only (no plotly). Run by `make test`.
 """
 
 import os
 import sys
+import tempfile
 import zlib
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -434,6 +435,72 @@ def test_an_unwrapped_line_in_a_wrapped_capture_is_rejected():
     assert len(streams['accel.csv'].rows) == 3 and logs[-1][1] == '{deadbeef};looks wrapped;<00000000>'
 
 
+
+def test_duplicates_are_dropped_before_any_verdict():
+    """
+    A Rust board's session can hold a line twice (doc/specs/avionics-port.md "Duplicates": a re-saved batch, a
+    program retried after it landed). The parser drops the later copy of each exact line before it judges any, so
+    every row and log line counts once and a repeated batch is no splice. A different row at the same uptime
+    stays. NEGATIVE: an unwrapped capture has no CRC to key a duplicate by, and keeps every line.
+    """
+    lines = _wire_lines()
+    other = recorder_wire.wrap('1010000;9.9;9.9;9.9', '000123_accel.csv').rstrip('\n')  # its uptime, other values
+    streams, logs = flight_telemetry.parse('\n'.join(lines + lines[1:4] + lines[6:8] + [other]))
+    assert flight_telemetry.duplicates() == 5
+    assert flight_telemetry.line_counts() == {'good': len(_BOOT) + 1, 'salvaged': 0, 'rejected': 0, 'legacy': 0}
+    assert [row[0] for row in streams['accel.csv'].rows] == [0, 10000, 20000, 10000], streams['accel.csv'].rows
+    assert len(logs) == 2 and flight_telemetry.spliced(streams) == []
+    assert flight_telemetry.line_summary() == '%d good, 0 salvaged, 0 rejected, 5 duplicates dropped' % (len(_BOOT) + 1)
+    # NEGATIVE: the same lines unwrapped are all kept, and the count starts again with every parse
+    streams, logs = flight_telemetry.parse('\n'.join(_legacy_lines() + _legacy_lines()[1:4]))
+    assert flight_telemetry.duplicates() == 0 and flight_telemetry.line_counts()['legacy'] == len(_BOOT) + 3
+    assert len(streams['accel.csv'].rows) == 6 and '5 duplicates' not in flight_telemetry.line_summary()
+
+
+def test_a_rust_cut_reads_as_a_capture():
+    """A Rust board's flight cut (a folder of per-stream CSVs, t_s from ignition) loads as a capture does."""
+    files = {
+        'sequencer.csv': 't_s;stage;reason;uptime_us\n-2.000000;setting;external;1000000\n'
+                         '0.000000;boosting;launch;3000000\n7.000000;gliding;apogee 119m;10000000\n',
+        'attitude.csv': 't_s;heading_cd;roll_cd;pitch_cd;free;uptime_us\n1.000000;2853;-150;8010;0;4000000\n',
+        'servo_eleron_left.csv': 't_s;angle;pulse_us;done;uptime_us\n0.5;93;1533;0;3500000\n',
+        'servo_yaw.csv': 't_s;angle;pulse_us;done;uptime_us\n1.5;87;1467;0;4500000\n',
+        'health.csv': 't_s;temp;mem_free;load;oom_s;uptime_us\n2.0;37.3;23157407;60;None;5000000\n',
+    }
+    with tempfile.TemporaryDirectory() as root:
+        cut = os.path.join(root, 'flight')
+        os.mkdir(cut)
+        for name, text in files.items():
+            with open(os.path.join(cut, name), 'w') as handle:
+                handle.write(text)
+        streams, logs = flight_telemetry.load(root)  # the -o folder above the cut, as hitl_collect_host's
+        again, again_logs = flight_telemetry.load_cut(cut)
+        # repr: a text cell (sequencer.csv's stage, reason) reads as nan, as a capture's does, and nan != nan
+        assert logs == again_logs and repr({name: (stream.fields, stream.rows) for name, stream in streams.items()}) \
+            == repr({name: (stream.fields, stream.rows) for name, stream in again.items()})
+        # the clocks are the stamp (t_s, microseconds from ignition), never fields; 'None' is a blank cell
+        assert streams['health.csv'].fields == ['temp', 'mem_free', 'load', 'oom_s']
+        assert streams['health.csv'].rows == [[2000000.0, 37.3, 23157407.0, 60.0, '']]
+        # the filter's centidegrees in plan B's names: heading in degrees, roll and pitch the fixnums
+        attitude = streams['attitude.csv']
+        assert attitude.fields[:3] == ['heading', 'roll', 'pitch']
+        assert attitude.rows[0][1:4] == [28.53, -150.0, 8010.0]
+        assert flight_telemetry.find_stream(streams, 'roll', 'pitch') is attitude
+        # the per-servo streams fuse into fins.csv, each fin held until its next write
+        assert streams['fins.csv'].fields == ['eleron_left', 'yaw']
+        assert streams['fins.csv'].rows == [[500000.0, 93.0, ''], [1500000.0, 93.0, 87.0]]
+        # the stage changes are the log lines the renderers mark
+        assert logs == [(-2000000, 'sequencer :: stage -> setting'), (0, 'sequencer :: stage -> boosting'),
+                        (7000000, 'sequencer :: stage -> gliding')]
+        # NEGATIVE: a folder with no cut in it is refused, not read as an empty flight
+        try:
+            flight_telemetry.load_cut(os.path.join(root, 'nothing'))
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError('a folder with no sequencer.csv loaded')
+
+
 test_fixture()
 test_synthetic_flight()
 test_wire_vectors()
@@ -446,9 +513,11 @@ test_a_sparse_stream_times_nothing_past_a_wrap_it_missed()
 test_the_session_index_reads_as_rows()
 test_an_unwrapped_line_in_a_wrapped_capture_is_rejected()
 test_load_reads_the_bytes_the_board_sent()
+test_duplicates_are_dropped_before_any_verdict()
+test_a_rust_cut_reads_as_a_capture()
 print('ok: flight telemetry parser — streams + logs from fixture and synthetic flight; wrapped captures: '
       'wire vectors, legacy twin, salvage/reject per damage kind, recovered rows placed by time (across a '
       'wrap too; two boots rejected, log lines merged back, a junk row by its stream span, nothing by a '
       'sparse stream past a wrap it missed), the session '
       'index (boot/anchor rows, a clock never set, a label "session"), unwrapped lines in a wrapped '
-      'capture, load() on damaged bytes')
+      'capture, load() on damaged bytes, duplicates dropped before any verdict, a Rust flight cut')

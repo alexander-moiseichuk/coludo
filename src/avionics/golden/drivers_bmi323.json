@@ -1,0 +1,7628 @@
+{
+ "decode": {
+  "cases": [
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000000000000008e80318fc0000",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008e80318fc0000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "test_bmi323_gravity_and_a_rate_each_way",
+    "output": {
+     "accel_g": [
+      0.0,
+      0.0,
+      1.0
+     ],
+     "rate_cd_s": [
+      6103,
+      -6104,
+      0
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000ff7f00800000ff7f00800000",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55aff7f00800000ff7f00800000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "test_bmi323_the_rails",
+    "output": {
+     "accel_g": [
+      15.99951171875,
+      -16.0,
+      0.0
+     ],
+     "rate_cd_s": [
+      199993,
+      -200000,
+      0
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0000100ffff00000100ffff0000",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0100ffff00000100ffff0000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "one_count_each_way",
+    "output": {
+     "accel_g": [
+      0.00048828125,
+      -0.00048828125,
+      0.0
+     ],
+     "rate_cd_s": [
+      6,
+      -7,
+      0
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000000000000000000000000000",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000000000000000000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "zero",
+    "output": {
+     "accel_g": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "rate_cd_s": [
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0002c010cfe005074ffd007ddff",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a2c010cfe005074ffd007ddff",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "a_boost_at_10_g",
+    "output": {
+     "accel_g": [
+      0.146484375,
+      -0.244140625,
+      10.0
+     ],
+     "rate_cd_s": [
+      -855,
+      12207,
+      -214
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000567da2a9bb12cf13efe465f7",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a567da2a9bb12cf13efe465f7",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_00",
+    "output": {
+     "accel_g": [
+      15.6669921875,
+      -10.7958984375,
+      2.34130859375
+     ],
+     "rate_cd_s": [
+      30950,
+      -42292,
+      -13447
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000739028b7e0857cf8a5bb24a9",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a739028b7e0857cf8a5bb24a9",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_01",
+    "output": {
+     "accel_g": [
+      -13.94384765625,
+      -9.10546875,
+      -15.265625
+     ],
+     "rate_cd_s": [
+      -11744,
+      -106806,
+      -135718
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000c303626c895ab33c78efdb82",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac303626c895ab33c78efdb82",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_02",
+    "output": {
+     "accel_g": [
+      0.47021484375,
+      13.5478515625,
+      11.31689453125
+     ],
+     "rate_cd_s": [
+      94842,
+      -25831,
+      -195539
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000fbabb5d34f7fbac49dec91c1",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55afbabb5d34f7fbac49dec91c1",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_03",
+    "output": {
+     "accel_g": [
+      -10.50244140625,
+      -5.53662109375,
+      15.91357421875
+     ],
+     "rate_cd_s": [
+      -92615,
+      -30292,
+      -97553
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00009d5656ab19ef98ef7b1485f",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a09d5656ab19ef98ef7b1485f",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_04",
+    "output": {
+     "accel_g": [
+      -5.37060546875,
+      13.29931640625,
+      -12.16357421875
+     ],
+     "rate_cd_s": [
+      -176606,
+      -121930,
+      148876
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0003fa082ddcb0b0fbf3b460578",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a3fa082ddcb0b0fbf3b460578",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_05",
+    "output": {
+     "accel_g": [
+      -11.96923828125,
+      -4.3115234375,
+      1.47412109375
+     ],
+     "rate_cd_s": [
+      -101471,
+      109735,
+      187530
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000b4f462d1b73629f4b493eb7d",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ab4f462d1b73629f4b493eb7d",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_06",
+    "output": {
+     "accel_g": [
+      -1.412109375,
+      -5.8271484375,
+      6.83935546875
+     ],
+     "rate_cd_s": [
+      -18500,
+      -169214,
+      196746
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000058020fd3deb05b208bfa094",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a058020fd3deb05b208bfa094",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_07",
+    "output": {
+     "accel_g": [
+      -15.99755859375,
+      -0.359375,
+      -2.59521484375
+     ],
+     "rate_cd_s": [
+      -121845,
+      -101514,
+      -167774
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0005352027ed6d6b694805ada33",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a5352027ed6d6b694805ada33",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_08",
+    "output": {
+     "accel_g": [
+      10.29052734375,
+      15.7509765625,
+      -5.1455078125
+     ],
+     "rate_cd_s": [
+      -167640,
+      141406,
+      81018
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000f4bb61296d93f61d30162377",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55af4bb61296d93f61d30162377",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_09",
+    "output": {
+     "accel_g": [
+      -8.505859375,
+      5.17236328125,
+      -13.57177734375
+     ],
+     "rate_cd_s": [
+      46813,
+      34667,
+      186151
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000b6de897eebce69975cc236b9",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ab6de897eebce69975cc236b9",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_10",
+    "output": {
+     "accel_g": [
+      -4.1611328125,
+      15.81689453125,
+      -6.13525390625
+     ],
+     "rate_cd_s": [
+      -163422,
+      -96314,
+      -110608
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000706d3d916ab6eb7c7ff56d77",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a706d3d916ab6eb7c7ff56d77",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_11",
+    "output": {
+     "accel_g": [
+      13.6796875,
+      -13.84521484375,
+      -9.1982421875
+     ],
+     "rate_cd_s": [
+      195184,
+      -16413,
+      186602
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000261a4bc826a428a598a19663",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a261a4bc826a428a598a19663",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_12",
+    "output": {
+     "accel_g": [
+      3.2685546875,
+      -6.96337890625,
+      -11.4814453125
+     ],
+     "rate_cd_s": [
+      -141944,
+      -147510,
+      155603
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0001fbac06ebdda71ef4302e2b5",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a1fbac06ebdda71ef4302e2b5",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_13",
+    "output": {
+     "accel_g": [
+      -8.73486328125,
+      13.84375,
+      -4.65771484375
+     ],
+     "rate_cd_s": [
+      -25873,
+      3533,
+      -115809
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00038a6465437ddba8b334e1c84",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a38a6465437ddba8b334e1c84",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_14",
+    "output": {
+     "accel_g": [
+      -11.22265625,
+      10.5341796875,
+      -4.34814453125
+     ],
+     "rate_cd_s": [
+      -181678,
+      122186,
+      -193580
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000b06a28b7553ec3bab1713aa1",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ab06a28b7553ec3bab1713aa1",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_15",
+    "output": {
+     "accel_g": [
+      13.3359375,
+      -9.10546875,
+      7.79150390625
+     ],
+     "rate_cd_s": [
+      -108185,
+      177642,
+      -148084
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000595deed6bc258b7bc3f456a6",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a595deed6bc258b7bc3f456a6",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_16",
+    "output": {
+     "accel_g": [
+      11.66845703125,
+      -5.1337890625,
+      4.716796875
+     ],
+     "rate_cd_s": [
+      193035,
+      -17560,
+      -140101
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0008d5359799068c137cd9b8714",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a8d5359799068c137cd9b8714",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_17",
+    "output": {
+     "accel_g": [
+      10.44384765625,
+      15.16845703125,
+      13.0703125
+     ],
+     "rate_cd_s": [
+      87115,
+      -156562,
+      32073
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000c354dda0dbebcf63f4ade6aa",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac354dda0dbebcf63f4ade6aa",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_18",
+    "output": {
+     "accel_g": [
+      10.59521484375,
+      -11.89208984375,
+      -2.51806640625
+     ],
+     "rate_cd_s": [
+      155950,
+      -128199,
+      -132972
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0003c4fc611c5730a5d59bad762",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a3c4fc611c5730a5d59bad762",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_19",
+    "output": {
+     "accel_g": [
+      9.904296875,
+      2.2216796875,
+      14.47119140625
+     ],
+     "rate_cd_s": [
+      145373,
+      -108832,
+      154437
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00007c545770f87377d5b830969",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a07c545770f87377d5b830969",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_20",
+    "output": {
+     "accel_g": [
+      -7.37158203125,
+      14.90869140625,
+      -15.11767578125
+     ],
+     "rate_cd_s": [
+      195648,
+      -194758,
+      164117
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000ccce9a60d05a4d362ab2dad0",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55accce9a60d05a4d362ab2dad0",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_21",
+    "output": {
+     "accel_g": [
+      -6.150390625,
+      12.0751953125,
+      11.3515625
+     ],
+     "rate_cd_s": [
+      84844,
+      -121619,
+      -73670
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000d41d1b864b55a993bb5cc58f",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ad41d1b864b55a993bb5cc58f",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_22",
+    "output": {
+     "accel_g": [
+      3.728515625,
+      -15.23681640625,
+      10.66162109375
+     ],
+     "rate_cd_s": [
+      -169282,
+      144891,
+      -175361
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000c7080710fb6a07fc59b9afc8",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac7080710fb6a07fc59b9afc8",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_23",
+    "output": {
+     "accel_g": [
+      1.09716796875,
+      2.00341796875,
+      13.37255859375
+     ],
+     "rate_cd_s": [
+      -6208,
+      -110395,
+      -86432
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000da4caca2fadbcf5c373bf48c",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ada4caca2fadbcf5c373bf48c",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_24",
+    "output": {
+     "accel_g": [
+      9.6064453125,
+      -11.666015625,
+      -4.5029296875
+     ],
+     "rate_cd_s": [
+      145013,
+      92523,
+      -179761
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0003b0a1778ceec705290a05230",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a3b0a1778ceec705290a05230",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_25",
+    "output": {
+     "accel_g": [
+      1.27880859375,
+      15.01123046875,
+      -2.3994140625
+     ],
+     "rate_cd_s": [
+      128808,
+      -149122,
+      75500
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00056d3835929ee915aef711dc4",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a56d3835929ee915aef711dc4",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_26",
+    "output": {
+     "accel_g": [
+      -5.5830078125,
+      11.18896484375,
+      -2.22998046875
+     ],
+     "rate_cd_s": [
+      141510,
+      178021,
+      -93573
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000ddf47810b27933b156054e58",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55addf47810b27933b156054e58",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_27",
+    "output": {
+     "accel_g": [
+      -1.39208984375,
+      2.05859375,
+      15.2119140625
+     ],
+     "rate_cd_s": [
+      -123127,
+      8337,
+      137976
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000141f38a7cc5536061648f38f",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a141f38a7cc5536061648f38f",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_28",
+    "output": {
+     "accel_g": [
+      3.884765625,
+      -11.09765625,
+      10.724609375
+     ],
+     "rate_cd_s": [
+      9704,
+      112634,
+      -175080
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0009cd2320a56ca98c8c2f655d6",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a9cd2320a56ca98c8c2f655d6",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_29",
+    "output": {
+     "accel_g": [
+      -5.673828125,
+      1.2744140625,
+      -6.7080078125
+     ],
+     "rate_cd_s": [
+      -86573,
+      -14441,
+      -65107
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000016f52077dfabe71ddfd42f2",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a016f52077dfabe71ddfd42f2",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_30",
+    "output": {
+     "accel_g": [
+      13.87548828125,
+      0.9150390625,
+      -0.68896484375
+     ],
+     "rate_cd_s": [
+      177722,
+      -3339,
+      -21473
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000225b58429bbe84803b6dc5b8",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a225b58429bbe84803b6dc5b8",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_31",
+    "output": {
+     "accel_g": [
+      11.3916015625,
+      8.29296875,
+      -8.17431640625
+     ],
+     "rate_cd_s": [
+      -199195,
+      170672,
+      -111298
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000fc66d7ce92aa2f21194b3680",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55afc66d7ce92aa2f21194b3680",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_32",
+    "output": {
+     "accel_g": [
+      12.873046875,
+      -6.14501953125,
+      -10.6787109375
+     ],
+     "rate_cd_s": [
+      51849,
+      117340,
+      -199671
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0004c969de9a9f7f7a6afe580cc",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a4c969de9a9f7f7a6afe580cc",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_33",
+    "output": {
+     "accel_g": [
+      -13.212890625,
+      -2.79833984375,
+      -1.04248046875
+     ],
+     "rate_cd_s": [
+      -139118,
+      -41120,
+      -80469
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000d73a6c60c0c6f6dc6c4c1e80",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ad73a6c60c0c6f6dc6c4c1e80",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_34",
+    "output": {
+     "accel_g": [
+      7.35498046875,
+      12.052734375,
+      -7.15625
+     ],
+     "rate_cd_s": [
+      -54749,
+      119409,
+      -199817
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac0000f84a8e72dfcf5925cbbc240",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0f84a8e72dfcf5925cbbc240",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_35",
+    "output": {
+     "accel_g": [
+      -15.49267578125,
+      -3.04296875,
+      -0.47802734375
+     ],
+     "rate_cd_s": [
+      -170380,
+      -107251,
+      101184
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000609e785868fe1af2b3b81e61",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a609e785868fe1af2b3b81e61",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_36",
+    "output": {
+     "accel_g": [
+      -12.203125,
+      11.05859375,
+      -0.19921875
+     ],
+     "rate_cd_s": [
+      -21717,
+      -111408,
+      151745
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000f4c2b915834d713b8b3f2be2",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55af4c2b915834d713b8b3f2be2",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_37",
+    "output": {
+     "accel_g": [
+      -7.630859375,
+      2.71533203125,
+      9.68896484375
+     ],
+     "rate_cd_s": [
+      92877,
+      99285,
+      -46613
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac000115e68cb0bffcb2e445c9af7",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a115e68cb0bffcb2e445c9af7",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_38",
+    "output": {
+     "accel_g": [
+      11.75830078125,
+      -6.57421875,
+      -0.11962890625
+     ],
+     "rate_cd_s": [
+      73114,
+      144165,
+      -13123
+     ]
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads its run burst from STATUS 0x02 (avionics-port.md M9 D1b): the same frame behind the STATUS word, both flags set",
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac00079ee578e271c2c8dfaea6484",
+       "write": "02"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a79ee578e271c2c8dfaea6484",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_39",
+    "output": {
+     "accel_g": [
+      -2.19091796875,
+      -14.20751953125,
+      3.51904296875
+     ],
+     "rate_cd_s": [
+      -179419,
+      -32850,
+      -193140
+     ]
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "_read(): the accel in g (raw / 2048, exact) and the gyro in centidegrees per second (floored); each case's divergence is the port's STATUS burst of the same frame, owing the same output"
+ },
+ "diagnose": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      }
+     ]
+    },
+    "name": "present",
+    "output": "present and answering, but setup did not complete"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000050",
+       "write": "00"
+      }
+     ]
+    },
+    "name": "another_part",
+    "output": "wrong device at i2c:0 0x69: id 0x50, expected 0x43"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "434300",
+       "write": "00"
+      }
+     ]
+    },
+    "name": "the_dummy_byte_is_not_the_identity",
+    "output": "wrong device at i2c:0 0x69: id 0x00, expected 0x43"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "fails": true,
+       "op": "write_read",
+       "read": "000000",
+       "write": "00"
+      }
+     ]
+    },
+    "name": "absent",
+    "output": "no ack at i2c:0 0x69"
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "diagnose() on i2c:0 at 0x69: the verdict, up to ' -- ' (the error's repr is the runtime's own)"
+ },
+ "meta": {
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
+  "generator": "drivers_bmi323",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
+  "python": "3.12",
+  "source": "src/glider/drivers/bmi323.py, src/glider/i2cbus.py, src/glider/task.py, src/glider/test/test_bmi323.py",
+  "tag": "micropython_plan_B_3"
+ },
+ "probe": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "passes",
+    "output": {
+     "failed": null
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000050",
+       "write": "00"
+      }
+     ]
+    },
+    "name": "another_part",
+    "output": {
+     "failed": "chip id"
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "fails": true,
+       "op": "write_read",
+       "read": "000000",
+       "write": "00"
+      }
+     ]
+    },
+    "name": "the_identity_naks",
+    "output": {
+     "failed": "chip id"
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000000000000000000000000000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "the_read_naks",
+    "output": {
+     "failed": "read"
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "probe(): the transcript and the step that failed ('chip id', 'read'), null when it passed"
+ },
+ "rate": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008e80318fc0000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "test_bmi323_gravity_and_a_rate_each_way",
+    "output": [
+     61.03,
+     -61.04,
+     0.0
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55aff7f00800000ff7f00800000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "test_bmi323_the_rails",
+    "output": [
+     1999.93,
+     -2000.0,
+     0.0
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0100ffff00000100ffff0000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "one_count_each_way",
+    "output": [
+     0.06,
+     -0.07,
+     0.0
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000000000000000000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "zero",
+    "output": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a2c010cfe005074ffd007ddff",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "a_boost_at_10_g",
+    "output": [
+     -8.55,
+     122.07,
+     -2.14
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a567da2a9bb12cf13efe465f7",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_00",
+    "output": [
+     309.5,
+     -422.92,
+     -134.47
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a739028b7e0857cf8a5bb24a9",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_01",
+    "output": [
+     -117.44,
+     -1068.06,
+     -1357.18
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac303626c895ab33c78efdb82",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_02",
+    "output": [
+     948.42,
+     -258.31,
+     -1955.39
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55afbabb5d34f7fbac49dec91c1",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_03",
+    "output": [
+     -926.15,
+     -302.92,
+     -975.53
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a09d5656ab19ef98ef7b1485f",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_04",
+    "output": [
+     -1766.06,
+     -1219.3,
+     1488.76
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a3fa082ddcb0b0fbf3b460578",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_05",
+    "output": [
+     -1014.71,
+     1097.35,
+     1875.3
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ab4f462d1b73629f4b493eb7d",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_06",
+    "output": [
+     -185.0,
+     -1692.14,
+     1967.46
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a058020fd3deb05b208bfa094",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_07",
+    "output": [
+     -1218.45,
+     -1015.14,
+     -1677.74
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a5352027ed6d6b694805ada33",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_08",
+    "output": [
+     -1676.4,
+     1414.06,
+     810.18
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55af4bb61296d93f61d30162377",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_09",
+    "output": [
+     468.13,
+     346.67,
+     1861.51
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ab6de897eebce69975cc236b9",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_10",
+    "output": [
+     -1634.22,
+     -963.14,
+     -1106.08
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a706d3d916ab6eb7c7ff56d77",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_11",
+    "output": [
+     1951.84,
+     -164.13,
+     1866.02
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a261a4bc826a428a598a19663",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_12",
+    "output": [
+     -1419.44,
+     -1475.1,
+     1556.03
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a1fbac06ebdda71ef4302e2b5",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_13",
+    "output": [
+     -258.73,
+     35.33,
+     -1158.09
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a38a6465437ddba8b334e1c84",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_14",
+    "output": [
+     -1816.78,
+     1221.86,
+     -1935.8
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ab06a28b7553ec3bab1713aa1",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_15",
+    "output": [
+     -1081.85,
+     1776.42,
+     -1480.84
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a595deed6bc258b7bc3f456a6",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_16",
+    "output": [
+     1930.35,
+     -175.6,
+     -1401.01
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a8d5359799068c137cd9b8714",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_17",
+    "output": [
+     871.15,
+     -1565.62,
+     320.73
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac354dda0dbebcf63f4ade6aa",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_18",
+    "output": [
+     1559.5,
+     -1281.99,
+     -1329.72
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a3c4fc611c5730a5d59bad762",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_19",
+    "output": [
+     1453.73,
+     -1088.32,
+     1544.37
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a07c545770f87377d5b830969",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_20",
+    "output": [
+     1956.48,
+     -1947.58,
+     1641.17
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55accce9a60d05a4d362ab2dad0",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_21",
+    "output": [
+     848.44,
+     -1216.19,
+     -736.7
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ad41d1b864b55a993bb5cc58f",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_22",
+    "output": [
+     -1692.82,
+     1448.91,
+     -1753.61
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ac7080710fb6a07fc59b9afc8",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_23",
+    "output": [
+     -62.08,
+     -1103.95,
+     -864.32
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ada4caca2fadbcf5c373bf48c",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_24",
+    "output": [
+     1450.13,
+     925.23,
+     -1797.61
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a3b0a1778ceec705290a05230",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_25",
+    "output": [
+     1288.08,
+     -1491.22,
+     755.0
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a56d3835929ee915aef711dc4",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_26",
+    "output": [
+     1415.1,
+     1780.21,
+     -935.73
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55addf47810b27933b156054e58",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_27",
+    "output": [
+     -1231.27,
+     83.37,
+     1379.76
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a141f38a7cc5536061648f38f",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_28",
+    "output": [
+     97.04,
+     1126.34,
+     -1750.8
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a9cd2320a56ca98c8c2f655d6",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_29",
+    "output": [
+     -865.73,
+     -144.41,
+     -651.07
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a016f52077dfabe71ddfd42f2",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_30",
+    "output": [
+     1777.22,
+     -33.39,
+     -214.73
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a225b58429bbe84803b6dc5b8",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_31",
+    "output": [
+     -1991.95,
+     1706.72,
+     -1112.98
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55afc66d7ce92aa2f21194b3680",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_32",
+    "output": [
+     518.49,
+     1173.4,
+     -1996.71
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a4c969de9a9f7f7a6afe580cc",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_33",
+    "output": [
+     -1391.18,
+     -411.2,
+     -804.69
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55ad73a6c60c0c6f6dc6c4c1e80",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_34",
+    "output": [
+     -547.49,
+     1194.09,
+     -1998.17
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0f84a8e72dfcf5925cbbc240",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_35",
+    "output": [
+     -1703.8,
+     -1072.51,
+     1011.84
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a609e785868fe1af2b3b81e61",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_36",
+    "output": [
+     -217.17,
+     -1114.08,
+     1517.45
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55af4c2b915834d713b8b3f2be2",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_37",
+    "output": [
+     928.77,
+     992.85,
+     -466.13
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a115e68cb0bffcb2e445c9af7",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_38",
+    "output": [
+     731.14,
+     1441.65,
+     -131.23
+    ]
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a79ee578e271c2c8dfaea6484",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_39",
+    "output": [
+     -1794.19,
+     -328.5,
+     -1931.4
+    ]
+   }
+  ],
+  "compare": {
+   "kind": "abs",
+   "tol": 0.01
+  },
+  "note": "the gyro in degrees per second: plan B's to_float of its floored centidegree integer; the port's exact 2000/32768 dps a count lies within the floor's 0.01"
+ },
+ "rearm": {
+  "cases": [
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ],
+     "setup": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "restores_both_sensors",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "fails": true,
+       "op": "write"
+      }
+     ],
+     "setup": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "a_dead_part_is_logged",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000000000000000000000000000",
+       "write": "03"
+      }
+     ],
+     "setup": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "the_start_up_read_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port routes data-ready to INT1 again and clears it, as setup did: plan B re-armed the sensors only, so INT1 stayed unrouted and the driver fell back to polling",
+     "ok": true,
+     "script": [
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      },
+      {
+       "address": 105,
+       "bytes": "380500",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "3b0004",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "input": {
+     "interrupt_wired": true,
+     "script": [
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ],
+     "setup": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      },
+      {
+       "address": 105,
+       "bytes": "380500",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "3b0004",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "with_int1_wired",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reports a gyro that never leaves start-up after the re-arm; plan B dropped the verdict",
+     "ok": false,
+     "script": [
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      }
+     ]
+    },
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      }
+     ],
+     "setup": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "the_gyro_never_starts_again",
+    "output": {
+     "ok": true
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "rearm() after a healthy setup (its transcript in `setup`): the re-arm transcript and ok (plan B logs a failure); a case with a divergence owes its script and ok instead"
+ },
+ "setup": {
+  "cases": [
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "healthy",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "the_gyro_starts_after_two_looks",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008050000800500",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "one_axis_still_starting",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a008000000000010002000300",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "the_accel_rail_is_not_a_marker",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "the_gyro_never_starts",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "434300",
+       "write": "00"
+      }
+     ]
+    },
+    "name": "the_dummy_byte_is_not_the_identity",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "fails": true,
+       "op": "write_read",
+       "read": "000000",
+       "write": "00"
+      }
+     ]
+    },
+    "name": "the_identity_read_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_soft_reset_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_gyro_configuration_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000000000000000000000000000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "the_start_up_read_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000000000000000000000000000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "a_later_start_up_read_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a000000000008008000800080",
+       "write": "03"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      },
+      {
+       "address": 105,
+       "bytes": "380500",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "3b0004",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "int1_wired",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      },
+      {
+       "address": 105,
+       "bytes": "380500",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "3b0004",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "int1_route_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "script": [
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "000043",
+       "write": "00"
+      },
+      {
+       "address": 105,
+       "bytes": "7eafde",
+       "op": "write"
+      },
+      {
+       "ms": 5,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "bytes": "203870",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "214870",
+       "op": "write"
+      },
+      {
+       "ms": 10,
+       "op": "delay_ms"
+      },
+      {
+       "address": 105,
+       "op": "write_read",
+       "read": "a55a0000000000080300feff0100",
+       "write": "03"
+      },
+      {
+       "address": 105,
+       "bytes": "380500",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "bytes": "3b0004",
+       "op": "write"
+      },
+      {
+       "address": 105,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000000000000000000000000000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "int1_clearing_read_naks",
+    "output": {
+     "ok": false
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "setup() over a scripted part: input whether INT1 is wired and the transcript; output ok"
+ },
+ "wake": {
+  "cases": [
+   {
+    "input": {
+     "interrupt_wired": true,
+     "irq_runs": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "name": "healthy",
+    "output": [
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     }
+    ]
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "irq_runs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "name": "dead_from_the_start",
+    "output": [
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": true,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     }
+    ]
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "irq_runs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "name": "an_edge_resumes",
+    "output": [
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": true,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": true,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     }
+    ]
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "irq_runs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "name": "no_wire_is_polled_by_design",
+    "output": [
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     }
+    ]
+   },
+   {
+    "input": {
+     "interrupt_wired": false,
+     "irq_runs": [
+      0,
+      1,
+      0,
+      2,
+      0,
+      1,
+      0,
+      2,
+      0,
+      1,
+      0,
+      2,
+      0,
+      1,
+      0,
+      2,
+      0,
+      1,
+      0,
+      2,
+      0,
+      1,
+      0,
+      2
+     ]
+    },
+    "name": "no_wire_and_stray_counts",
+    "output": [
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     },
+     {
+      "noted": false,
+      "silent": null
+     }
+    ]
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "irq_runs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "name": "sweep_00",
+    "output": [
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": true,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     }
+    ]
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "irq_runs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "name": "sweep_01",
+    "output": [
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": true,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": true,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     }
+    ]
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "irq_runs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "name": "sweep_02",
+    "output": [
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": true,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     }
+    ]
+   },
+   {
+    "input": {
+     "interrupt_wired": true,
+     "irq_runs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "name": "sweep_03",
+    "output": [
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": true,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": true
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     },
+     {
+      "noted": false,
+      "silent": false
+     }
+    ]
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "run() with wait() answering the scripted irq_runs: after each wake, whether the INT line is called silent (null with no wire) and whether the note fired (once, at 20 timed-out wakes)"
+ }
+}

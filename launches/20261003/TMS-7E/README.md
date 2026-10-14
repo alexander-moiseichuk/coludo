@@ -14,7 +14,13 @@ that prediction.
 | liftoff | **443.6 g** |
 | board | **main board v1.0** — detected at boot, no config edit |
 | config | [`tms7e.config`](tms7e.config) — passive (`flight` off), `fins.concurrency` **3** |
-| status | **built, bench bring-up done** — 21 devices up, 0 down; engines not yet fitted |
+| status | **flown 2026-10-03: no separation, dropped, no data** (below); bench bring-up before it: 21 devices up, 0 down |
+
+## Flight — 2026-10-03: no separation, dropped
+
+Like [7D](../TMS-7D/README.md), it went up and came down without separating. The PCB broke in two, and the
+recorder's SD card is electrically dead (it heats to 60 °C+ and never initialises), so there is no data. See the
+[launch summary](../README.md).
 
 ## What the v1.0 board changes against 7D's v0.1
 

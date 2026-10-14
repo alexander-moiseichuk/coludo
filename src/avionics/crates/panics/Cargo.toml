@@ -1,0 +1,10 @@
+[package]
+name = "panics"
+description = "The panic log of the panic partition: tagged text records of panics, fatal (a reset) or not (an oops the board recovered from), round-robin over 8 KiB slots, as Linux's mtdoops keeps oopses (doc/specs/avionics-port.md, Panic log)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+flash_ring.workspace = true

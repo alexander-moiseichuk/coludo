@@ -1,0 +1,16 @@
+[package]
+name = "recorder"
+description = "The recorder: stream registry, Telemetry, per-thread PSRAM SPSC rings of binary records, the ring_writer that copies them verbatim into flash chunks, CC tees, and the block decoder back to wire lines (src/glider recorder.py; doc/specs/avionics-port.md, Storage design)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+flash_ring.workspace = true
+log.workspace = true  # the refused rows' log line (Rows)
+recorder_wire.workspace = true
+
+[dev-dependencies]
+golden.workspace = true
+serde_json.workspace = true

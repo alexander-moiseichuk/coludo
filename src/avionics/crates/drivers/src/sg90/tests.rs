@@ -1,0 +1,258 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
+//! Unit tests of the servo logic beyond its golden fixture (tests/golden_servo.rs): the probe verdict, the
+//! compare-and-set and its step's grid, the floored pulse map below the range, and the refusals.
+
+use super::{Command, ProbeVerdict, Refusal, SG90, Servo, Settings, round_half_even};
+use serde_json::json;
+
+/// An SG90 from a component block.
+fn fin(config: serde_json::Value) -> Servo {
+    Servo::new(&SG90, &Settings::from_config(&config, &SG90))
+}
+
+#[test]
+fn neutral_at_setup_is_the_mid_pulse() {
+    let yaw = fin(json!({}));
+    assert_eq!(
+        yaw.command(),
+        Command {
+            angle: 90,
+            pulse_us: 1500
+        }
+    );
+    assert_eq!(
+        fin(json!({"trim": 9})).pulse_us(),
+        1600,
+        "+9 degrees over 0..180 / 500..2500 us is +100 us"
+    );
+}
+
+#[test]
+fn compare_and_set_writes_only_a_change() {
+    // step 1: plan B's compare-and-set, any change written
+    let mut yaw = fin(json!({"step_deg": 1}));
+    assert_eq!(yaw.set_angle(45.0).map(|command| command.pulse_us), Some(1000));
+    assert_eq!(yaw.set_angle(45.0), None, "a held fin costs nothing");
+    assert_eq!(yaw.set_angle(45.4), None, "it rounds to the same whole degree");
+    assert_eq!(yaw.set_angle(999.0).map(|command| command.angle), Some(180));
+    assert_eq!(yaw.set_angle(180.0), None, "clamp-equal is unchanged");
+}
+
+#[test]
+fn the_step_holds_the_fin_on_its_grid() {
+    // step 5 about the neutral 90: the fin leaves a grid point only past half a step and a degree (4 here)
+    let mut yaw = fin(json!({"step_deg": 5}));
+    assert_eq!(yaw.set_angle(93.0), None, "3 deg is within the hysteresis");
+    assert_eq!(
+        yaw.set_angle(94.0).map(|command| command.angle),
+        Some(95),
+        "4 deg: onto the grid point nearest the command"
+    );
+    assert_eq!(
+        yaw.set_angle(92.0),
+        None,
+        "a boundary's noise (92-93) does not toggle it back"
+    );
+    assert_eq!(yaw.set_angle(98.0), None, "nor forward");
+    assert_eq!(
+        yaw.set_angle(91.0).map(|command| command.angle),
+        Some(90),
+        "4 back: home to the exact neutral"
+    );
+    assert_eq!(
+        yaw.set_angle(122.0).map(|command| command.angle),
+        Some(120),
+        "a big move goes to its grid point"
+    );
+    assert_eq!(
+        yaw.set_angle(57.0).map(|command| command.angle),
+        Some(55),
+        "below the neutral too: symmetric"
+    );
+    // a grid point past the range stands at the range's end
+    let mut narrow = fin(json!({"step_deg": 10, "min_deg": 45, "max_deg": 135}));
+    assert_eq!(
+        narrow.set_angle(140.0).map(|command| command.angle),
+        Some(135),
+        "135 rounds to the point 140, past the range"
+    );
+    assert_eq!(narrow.set_angle(133.0), None, "within the hysteresis of the end");
+    // step 0: every command goes out, an unchanged one too
+    let mut all = fin(json!({"step_deg": 0}));
+    assert!(all.set_angle(90.0).is_some() && all.set_angle(90.0).is_some());
+    // the default is the 3-degree grid (the operator, 2026-10-13); step 1 is plan B's any change
+    let mut plain = fin(json!({}));
+    assert_eq!(plain.set_angle(91.0), None, "the default grid holds a degree's move");
+    assert_eq!(plain.set_angle(93.0).map(|command| command.angle), Some(93));
+    let mut plan_b = fin(json!({"step_deg": 1}));
+    assert_eq!(plan_b.set_angle(91.0).map(|command| command.angle), Some(91));
+    assert_eq!(plan_b.set_angle(91.0), None);
+    // NEGATIVE: a negative step reads as 0
+    let mut negative = fin(json!({"step_deg": -4}));
+    assert!(
+        negative.set_angle(90.0).is_some(),
+        "a negative step is 0: every command"
+    );
+}
+
+#[test]
+fn the_pulse_map_floors_below_the_range() {
+    // a trim that takes the command under min_deg: Python's // floors toward minus infinity, then the bound holds
+    let yaw = fin(json!({"trim": -1}));
+    assert_eq!(
+        yaw.pulse(0),
+        500,
+        "500 + (-1 x 2000) // 180 = 500 - 12 = 488, bounded to 500"
+    );
+    assert_eq!(
+        yaw.pulse(1),
+        500,
+        "500 + 0 = 500: the trim moved the whole map a degree"
+    );
+    assert_eq!(yaw.pulse(2), 511, "500 + 2000 // 180 = 511, floored like Python's //");
+    assert_eq!(
+        fin(json!({"min_deg": 90, "max_deg": 90})).pulse(90),
+        500,
+        "a zero span is min_us"
+    );
+}
+
+#[test]
+fn halves_round_to_even() {
+    let pairs = [
+        (0.5, 0),
+        (1.5, 2),
+        (2.5, 2),
+        (-0.5, 0),
+        (-1.5, -2),
+        (90.5, 90),
+        (91.5, 92),
+        (2.6, 3),
+        (-1.4, -1),
+    ];
+    for (degrees, rounded) in pairs {
+        assert_eq!(round_half_even(degrees), rounded, "{degrees}");
+    }
+}
+
+#[test]
+fn a_trim_alone_re_drives_the_fin() {
+    let mut yaw = fin(json!({"trim": 9}));
+    let (applied, command) = yaw.update(&json!({"trim": 0})).unwrap();
+    assert_eq!(
+        (applied, command.map(|command| command.pulse_us)),
+        (vec!["trim"], Some(1500))
+    );
+    let (applied, command) = yaw.update(&json!({})).unwrap();
+    assert!(applied.is_empty() && command.is_none());
+}
+
+#[test]
+fn a_non_numeric_update_changes_nothing() {
+    // NEGATIVE: refused as a whole, the trim untouched though it came first
+    let mut yaw = fin(json!({"trim": 2}));
+    let refusal = yaw.update(&json!({"trim": 5, "angle": "left"})).unwrap_err();
+    assert_eq!(refusal, Refusal::NotANumber("angle"));
+    assert_eq!((yaw.trim(), yaw.angle(), yaw.pulse_us()), (2, 90, 1522));
+}
+
+#[test]
+fn the_probe_sweeps_min_max_neutral() {
+    let elevon = fin(json!({"min_deg": -30, "max_deg": 30}));
+    assert_eq!(elevon.probe_targets(None), [("min", -30), ("max", 30), ("neutral", 0)]);
+    // the board config's fin limit bounds the sweep, never past the servo's own range
+    assert_eq!(
+        elevon.probe_targets(Some(20)),
+        [("min", -20), ("max", 20), ("neutral", 0)]
+    );
+    assert_eq!(
+        elevon.probe_targets(Some(45)),
+        [("min", -30), ("max", 30), ("neutral", 0)]
+    );
+    assert_eq!(elevon.probe_targets(Some(-5)), [("min", 0), ("max", 0), ("neutral", 0)]);
+}
+
+#[test]
+fn the_probe_verdict_judges_the_rise_over_the_baseline() {
+    let yaw = fin(json!({}));
+    assert_eq!(yaw.probe_verdict(false, 0, 0), ProbeVerdict::OpenLoop);
+    assert_eq!(
+        yaw.probe_verdict(true, 0, 0),
+        ProbeVerdict::Stale,
+        "no reading is not a dead servo"
+    );
+    assert_eq!(
+        yaw.probe_verdict(true, 72, 1200),
+        ProbeVerdict::Drew {
+            peak_rise_mw: 1200,
+            high: false
+        }
+    );
+    assert_eq!(
+        yaw.probe_verdict(true, 72, 3501),
+        ProbeVerdict::Drew {
+            peak_rise_mw: 3501,
+            high: true
+        }
+    );
+    // NEGATIVE: a dead servo, a lost PWM pin or an unpowered rail draws under the floor
+    let dead = yaw.probe_verdict(true, 72, 499);
+    assert_eq!(dead, ProbeVerdict::NoDraw { peak_rise_mw: 499 });
+    assert_eq!(
+        dead.failure().as_deref(),
+        Some("no current draw (499 mW rise) -- servo dead / PWM pin lost / rail unpowered?")
+    );
+    assert_eq!(
+        yaw.probe_verdict(true, 72, 500).failure(),
+        None,
+        "the floor itself passes"
+    );
+    // a component's own window overrides the type's
+    let tuned = fin(json!({"engine_min_mw": 800}));
+    assert!(matches!(tuned.probe_verdict(true, 1, 700), ProbeVerdict::NoDraw { .. }));
+}
+
+#[test]
+fn a_move_estimates_from_where_the_horn_was() {
+    let mut yaw = fin(json!({}));
+    let moved = yaw.begin_move(120.0);
+    assert_eq!((moved.command.angle, moved.travel_ms), (120, 30 * 150 / 60 + 60));
+    assert_eq!(moved.command.row(false), [120, 1833, 0]);
+    assert_eq!(moved.command.row(true), [120, 1833, 1]);
+    // NEGATIVE: a move to where the horn already is still waits the settle margin, never less
+    assert_eq!(yaw.begin_move(120.0).travel_ms, 60);
+}
+
+#[test]
+fn the_mixer_drives_the_fins_through_compare_and_set() {
+    use control::mixer::{Fin, Mixer};
+    let mut mixer = Mixer::default();
+    // step 1, plan B's compare-and-set: the mixer's whole degrees reach the fins as they are
+    let mut fins = [
+        Some(fin(json!({"step_deg": 1}))),
+        Some(fin(json!({"trim": 9, "step_deg": 1}))),
+        Some(fin(json!({"step_deg": 1}))),
+    ];
+    mixer.actuate(&mut fins, 0.0, 10.0, 0.0);
+    let angles: Vec<Option<i32>> = fins.iter().map(|servo| servo.as_ref().and_then(Fin::angle)).collect();
+    assert_eq!(
+        angles,
+        [Some(90), Some(100), Some(100)],
+        "pitch moves both elevons together"
+    );
+    assert_eq!(
+        fins[1].as_ref().unwrap().pulse_us(),
+        1711,
+        "the trim rides on the mixer's angle"
+    );
+    // NEGATIVE: the same mix again writes nothing: every angle is the one already commanded
+    let before: Vec<Command> = fins.iter().map(|servo| servo.as_ref().unwrap().command()).collect();
+    mixer.actuate(&mut fins, 0.0, 10.0, 0.0);
+    let after: Vec<Command> = fins.iter().map(|servo| servo.as_ref().unwrap().command()).collect();
+    assert_eq!(before, after);
+    // and a missing fin is skipped while the bound ones still drive
+    let mut partial: [Option<Servo>; 3] = [None, Some(fin(json!({"step_deg": 1}))), None];
+    mixer.actuate(&mut partial, 10.0, 0.0, 0.0);
+    assert_eq!(partial[1].as_ref().and_then(Fin::angle), Some(100));
+}

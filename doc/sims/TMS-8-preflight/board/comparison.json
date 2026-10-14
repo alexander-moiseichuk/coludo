@@ -1,0 +1,3443 @@
+{
+ "rows": [
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "accel |a| peak",
+   "values": [
+    3.3866801,
+    3.4082417,
+    3.3993363
+   ],
+   "low": 3.3866801,
+   "high": 3.4082417,
+   "spread": 0.0063452189816540164
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "accel |a| mean",
+   "values": [
+    1.026655348725363,
+    1.028527172688139,
+    1.0280130283394813
+   ],
+   "low": 1.026655348725363,
+   "high": 1.028527172688139,
+   "spread": 0.0018213155142814265
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "altitude peak",
+   "values": [
+    233.55763,
+    233.55649,
+    233.62663
+   ],
+   "low": 233.55649,
+   "high": 233.62663,
+   "spread": 0.00030028223704705
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "elevation peak",
+   "values": [
+    231.38666,
+    231.50699,
+    231.58243
+   ],
+   "low": 231.38666,
+   "high": 231.58243,
+   "spread": 0.0008456878745196599
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "elevation final",
+   "values": [
+    0.004020017,
+    0.004168414,
+    -0.0030197292
+   ],
+   "low": -0.0030197292,
+   "high": 0.004168414,
+   "spread": 4.172117184241506
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "speed max",
+   "values": [
+    25.851336,
+    25.851328,
+    25.851698
+   ],
+   "low": 25.851328,
+   "high": 25.851698,
+   "spread": 1.4312541182410998e-05
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "attitude roll range",
+   "values": [
+    5390.0,
+    5093.0,
+    5011.0
+   ],
+   "low": 5011.0,
+   "high": 5390.0,
+   "spread": 0.07338324512714599
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "attitude pitch range",
+   "values": [
+    10840.0,
+    10661.0,
+    11513.0
+   ],
+   "low": 10661.0,
+   "high": 11513.0,
+   "spread": 0.07742169988489732
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "health mem_free min",
+   "values": [
+    23115175.0,
+    23163843.0,
+    23155183.0
+   ],
+   "low": 23115175.0,
+   "high": 23163843.0,
+   "spread": 0.0021027677700215775
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "engine power peak",
+   "values": [
+    3375.0,
+    3475.0,
+    3525.0
+   ],
+   "low": 3375.0,
+   "high": 3525.0,
+   "spread": 0.043373493975903614
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "engine mA peak",
+   "values": [
+    841.0,
+    874.0,
+    903.0
+   ],
+   "low": 841.0,
+   "high": 903.0,
+   "spread": 0.07104660045836517
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "gyro gx range",
+   "values": [
+    15582.0,
+    16847.0,
+    17271.0
+   ],
+   "low": 15582.0,
+   "high": 17271.0,
+   "spread": 0.1019517102615694
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "gyro gz range",
+   "values": [
+    6374.0,
+    6626.0,
+    6427.0
+   ],
+   "low": 6374.0,
+   "high": 6626.0,
+   "spread": 0.03891491223554846
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "fin cap min",
+   "values": [
+    13.0,
+    13.0,
+    13.0
+   ],
+   "low": 13.0,
+   "high": 13.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "heading_err max",
+   "values": [
+    178.0,
+    180.0,
+    180.0
+   ],
+   "low": 178.0,
+   "high": 180.0,
+   "spread": 0.011152416356877323
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "duration s",
+   "values": [
+    0.00012501357,
+    0.00012506029,
+    0.000124138121
+   ],
+   "low": 0.000124138121,
+   "high": 0.00012506029,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_spike",
+   "panel": "rows total",
+   "values": [
+    49972,
+    50491,
+    49915
+   ],
+   "low": 49915,
+   "high": 50491,
+   "spread": 0.011491042572716754
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "accel |a| peak",
+   "values": [
+    4.930569,
+    4.910757,
+    4.9588885
+   ],
+   "low": 4.910757,
+   "high": 4.9588885,
+   "spread": 0.0097562437355214
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "accel |a| mean",
+   "values": [
+    1.0019547263764965,
+    1.0180850877110408,
+    1.005330027044607
+   ],
+   "low": 1.0019547263764965,
+   "high": 1.0180850877110408,
+   "spread": 0.015995096978134758
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "altitude peak",
+   "values": [
+    237.68167,
+    237.53015,
+    238.33383
+   ],
+   "low": 237.53015,
+   "high": 238.33383,
+   "spread": 0.003378956903458163
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "elevation peak",
+   "values": [
+    235.60153,
+    236.06248,
+    234.84354
+   ],
+   "low": 234.84354,
+   "high": 236.06248,
+   "spread": 0.005175910717443869
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "elevation final",
+   "values": [
+    0.0031592662,
+    -0.021916186,
+    0.018728245
+   ],
+   "low": -0.021916186,
+   "high": 0.018728245,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "speed max",
+   "values": [
+    43.541668,
+    43.327515,
+    43.95171
+   ],
+   "low": 43.327515,
+   "high": 43.95171,
+   "spread": 0.01431411265477297
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "attitude roll range",
+   "values": [
+    6308.0,
+    6392.0,
+    6883.0
+   ],
+   "low": 6308.0,
+   "high": 6883.0,
+   "spread": 0.08808660572945923
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "attitude pitch range",
+   "values": [
+    35996.0,
+    35985.0,
+    35986.0
+   ],
+   "low": 35985.0,
+   "high": 35996.0,
+   "spread": 0.0003056489482897552
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "health mem_free min",
+   "values": [
+    23144035.0,
+    23121443.0,
+    23132139.0
+   ],
+   "low": 23121443.0,
+   "high": 23144035.0,
+   "spread": 0.0009766329584487028
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "engine power peak",
+   "values": [
+    3675.0,
+    3775.0,
+    3675.0
+   ],
+   "low": 3675.0,
+   "high": 3775.0,
+   "spread": 0.026966292134831458
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "engine mA peak",
+   "values": [
+    949.0,
+    958.0,
+    940.0
+   ],
+   "low": 940.0,
+   "high": 958.0,
+   "spread": 0.018967334035827187
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "gyro gx range",
+   "values": [
+    25754.0,
+    26418.0,
+    24208.0
+   ],
+   "low": 24208.0,
+   "high": 26418.0,
+   "spread": 0.08680282796543598
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "gyro gz range",
+   "values": [
+    6067.0,
+    6022.0,
+    6380.0
+   ],
+   "low": 6022.0,
+   "high": 6380.0,
+   "spread": 0.0581514971032541
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "fin cap min",
+   "values": [
+    14.0,
+    14.0,
+    14.0
+   ],
+   "low": 14.0,
+   "high": 14.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "heading_err max",
+   "values": [
+    90.0,
+    90.0,
+    91.0
+   ],
+   "low": 90.0,
+   "high": 91.0,
+   "spread": 0.011070110701107012
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "duration s",
+   "values": [
+    0.00013102308,
+    0.000128121489,
+    0.000128005129
+   ],
+   "low": 0.000128005129,
+   "high": 0.00013102308,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "corner_stress",
+   "panel": "rows total",
+   "values": [
+    75395,
+    73686,
+    73535
+   ],
+   "low": 73535,
+   "high": 75395,
+   "spread": 0.025065583785532038
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "accel |a| peak",
+   "values": [
+    3.186283,
+    3.149614,
+    3.183452
+   ],
+   "low": 3.149614,
+   "high": 3.186283,
+   "spread": 0.011556147379405832
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "accel |a| mean",
+   "values": [
+    1.029046740244474,
+    1.0266915903856864,
+    1.026140118970458
+   ],
+   "low": 1.026140118970458,
+   "high": 1.029046740244474,
+   "spread": 0.002829399006043949
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "altitude peak",
+   "values": [
+    233.05037,
+    233.0391,
+    233.12337
+   ],
+   "low": 233.0391,
+   "high": 233.12337,
+   "spread": 0.0003615637264327281
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "elevation peak",
+   "values": [
+    231.1474,
+    231.12671,
+    231.15067
+   ],
+   "low": 231.12671,
+   "high": 231.15067,
+   "spread": 0.00010365940484556181
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "elevation final",
+   "values": [
+    0.0023112595,
+    0.0017774818,
+    -0.0015114493
+   ],
+   "low": -0.0015114493,
+   "high": 0.0023112595,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "speed max",
+   "values": [
+    24.58938,
+    24.588633,
+    24.589334
+   ],
+   "low": 24.588633,
+   "high": 24.58938,
+   "spread": 3.037929505572206e-05
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "attitude roll range",
+   "values": [
+    5193.0,
+    4878.0,
+    4878.0
+   ],
+   "low": 4878.0,
+   "high": 5193.0,
+   "spread": 0.06321493076459964
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "attitude pitch range",
+   "values": [
+    10159.0,
+    10195.0,
+    10143.0
+   ],
+   "low": 10143.0,
+   "high": 10195.0,
+   "spread": 0.005115257238416894
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "health mem_free min",
+   "values": [
+    23141687.0,
+    23151567.0,
+    23121131.0
+   ],
+   "low": 23121131.0,
+   "high": 23151567.0,
+   "spread": 0.0013154045807652118
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "engine power peak",
+   "values": [
+    3150.0,
+    3175.0,
+    3375.0
+   ],
+   "low": 3150.0,
+   "high": 3375.0,
+   "spread": 0.06958762886597938
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "engine mA peak",
+   "values": [
+    784.0,
+    787.0,
+    826.0
+   ],
+   "low": 784.0,
+   "high": 826.0,
+   "spread": 0.052565707133917394
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "gyro gx range",
+   "values": [
+    10778.0,
+    13568.0,
+    8574.0
+   ],
+   "low": 8574.0,
+   "high": 13568.0,
+   "spread": 0.45510328068043737
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "gyro gz range",
+   "values": [
+    5006.0,
+    4565.0,
+    4618.0
+   ],
+   "low": 4565.0,
+   "high": 5006.0,
+   "spread": 0.09324124321657622
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "fin cap min",
+   "values": [
+    5.0,
+    5.0,
+    5.0
+   ],
+   "low": 5.0,
+   "high": 5.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "heading_err max",
+   "values": [
+    180.0,
+    179.0,
+    178.0
+   ],
+   "low": 178.0,
+   "high": 180.0,
+   "spread": 0.0111731843575419
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "duration s",
+   "values": [
+    0.00012023805199999999,
+    0.000122550732,
+    0.000120963507
+   ],
+   "low": 0.00012023805199999999,
+   "high": 0.000122550732,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise05",
+   "panel": "rows total",
+   "values": [
+    44238,
+    44828,
+    44628
+   ],
+   "low": 44238,
+   "high": 44828,
+   "spread": 0.01323918799646955
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "accel |a| peak",
+   "values": [
+    3.4107325,
+    3.3688734,
+    3.4020877
+   ],
+   "low": 3.3688734,
+   "high": 3.4107325,
+   "spread": 0.012333635732271475
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "accel |a| mean",
+   "values": [
+    1.0261946521437573,
+    1.0289713747338451,
+    1.030855584004116
+   ],
+   "low": 1.0261946521437573,
+   "high": 1.030855584004116,
+   "spread": 0.004531010259866981
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "altitude peak",
+   "values": [
+    233.63565,
+    233.30624,
+    233.50844
+   ],
+   "low": 233.30624,
+   "high": 233.63565,
+   "spread": 0.0014108495030618192
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "elevation peak",
+   "values": [
+    231.52843,
+    231.68439,
+    231.634
+   ],
+   "low": 231.52843,
+   "high": 231.68439,
+   "spread": 0.000673357042923597
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "elevation final",
+   "values": [
+    -0.0029360491,
+    0.0032772901,
+    0.0045390856
+   ],
+   "low": -0.0029360491,
+   "high": 0.0045390856,
+   "spread": 4.5950621624380625
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "speed max",
+   "values": [
+    25.85285,
+    25.847363,
+    25.852598
+   ],
+   "low": 25.847363,
+   "high": 25.85285,
+   "spread": 0.00021225536234909732
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "attitude roll range",
+   "values": [
+    5468.0,
+    5145.0,
+    5478.0
+   ],
+   "low": 5145.0,
+   "high": 5478.0,
+   "spread": 0.06208439500341806
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "attitude pitch range",
+   "values": [
+    10600.0,
+    10951.0,
+    10609.0
+   ],
+   "low": 10600.0,
+   "high": 10951.0,
+   "spread": 0.03274253731343284
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    96.0
+   ],
+   "low": 96.0,
+   "high": 100.0,
+   "spread": 0.040540540540540536
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "health mem_free min",
+   "values": [
+    23124647.0,
+    23133831.0,
+    23110507.0
+   ],
+   "low": 23110507.0,
+   "high": 23133831.0,
+   "spread": 0.0010086928618027206
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "engine power peak",
+   "values": [
+    3650.0,
+    3625.0,
+    3600.0
+   ],
+   "low": 3600.0,
+   "high": 3650.0,
+   "spread": 0.013793103448275862
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "engine mA peak",
+   "values": [
+    939.0,
+    938.0,
+    906.0
+   ],
+   "low": 906.0,
+   "high": 939.0,
+   "spread": 0.03557312252964427
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "gyro gx range",
+   "values": [
+    16453.0,
+    15435.0,
+    15595.0
+   ],
+   "low": 15435.0,
+   "high": 16453.0,
+   "spread": 0.06431775582840174
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "gyro gz range",
+   "values": [
+    7188.0,
+    5999.0,
+    6940.0
+   ],
+   "low": 5999.0,
+   "high": 7188.0,
+   "spread": 0.17722462363988672
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "fin cap min",
+   "values": [
+    14.0,
+    13.0,
+    14.0
+   ],
+   "low": 13.0,
+   "high": 14.0,
+   "spread": 0.07317073170731708
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "heading_err max",
+   "values": [
+    171.0,
+    179.0,
+    177.0
+   ],
+   "low": 171.0,
+   "high": 179.0,
+   "spread": 0.04554079696394687
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "duration s",
+   "values": [
+    0.000124584587,
+    0.00012439374699999998,
+    0.00012413285700000001
+   ],
+   "low": 0.00012413285700000001,
+   "high": 0.000124584587,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise10",
+   "panel": "rows total",
+   "values": [
+    50049,
+    50145,
+    50091
+   ],
+   "low": 50049,
+   "high": 50145,
+   "spread": 0.0019163589180556941
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "accel |a| peak",
+   "values": [
+    3.9811757,
+    4.004656,
+    3.8898273
+   ],
+   "low": 3.8898273,
+   "high": 4.004656,
+   "spread": 0.029007746012242326
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "accel |a| mean",
+   "values": [
+    1.022685900818486,
+    1.029906146415429,
+    1.027814419578265
+   ],
+   "low": 1.022685900818486,
+   "high": 1.029906146415429,
+   "spread": 0.00703177876822375
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "altitude peak",
+   "values": [
+    235.4415,
+    235.28497,
+    235.0166
+   ],
+   "low": 235.0166,
+   "high": 235.4415,
+   "spread": 0.0018061813911965708
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "elevation peak",
+   "values": [
+    233.25827,
+    233.13176,
+    233.24963
+   ],
+   "low": 233.13176,
+   "high": 233.25827,
+   "spread": 0.000542464959747977
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "elevation final",
+   "values": [
+    0.0123961065,
+    0.0018211122,
+    0.011536619
+   ],
+   "low": 0.0018211122,
+   "high": 0.0123961065,
+   "spread": 1.231854579094439
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "speed max",
+   "values": [
+    29.642916,
+    29.63782,
+    29.639826
+   ],
+   "low": 29.63782,
+   "high": 29.642916,
+   "spread": 0.0001719287379222214
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "attitude roll range",
+   "values": [
+    6194.0,
+    5947.0,
+    5663.0
+   ],
+   "low": 5663.0,
+   "high": 6194.0,
+   "spread": 0.08947427544372051
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "attitude pitch range",
+   "values": [
+    13324.0,
+    12111.0,
+    12633.0
+   ],
+   "low": 12111.0,
+   "high": 13324.0,
+   "spread": 0.09559209835032048
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "health mem_free min",
+   "values": [
+    23103367.0,
+    23105471.0,
+    23110723.0
+   ],
+   "low": 23103367.0,
+   "high": 23110723.0,
+   "spread": 0.0003183516987362341
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "engine power peak",
+   "values": [
+    3675.0,
+    3575.0,
+    3700.0
+   ],
+   "low": 3575.0,
+   "high": 3700.0,
+   "spread": 0.03424657534246575
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "engine mA peak",
+   "values": [
+    953.0,
+    922.0,
+    934.0
+   ],
+   "low": 922.0,
+   "high": 953.0,
+   "spread": 0.03310786756852972
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "gyro gx range",
+   "values": [
+    20526.0,
+    14664.0,
+    17645.0
+   ],
+   "low": 14664.0,
+   "high": 20526.0,
+   "spread": 0.33284754424150653
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "gyro gz range",
+   "values": [
+    7650.0,
+    5692.0,
+    7590.0
+   ],
+   "low": 5692.0,
+   "high": 7650.0,
+   "spread": 0.2806229696158991
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "fin cap min",
+   "values": [
+    14.0,
+    14.0,
+    13.0
+   ],
+   "low": 13.0,
+   "high": 14.0,
+   "spread": 0.07317073170731708
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "heading_err max",
+   "values": [
+    180.0,
+    180.0,
+    180.0
+   ],
+   "low": 180.0,
+   "high": 180.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "duration s",
+   "values": [
+    0.000129199972,
+    0.000129847992,
+    0.000130913996
+   ],
+   "low": 0.000129199972,
+   "high": 0.000130913996,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "noise25",
+   "panel": "rows total",
+   "values": [
+    59069,
+    59194,
+    59771
+   ],
+   "low": 59069,
+   "high": 59771,
+   "spread": 0.01182920116382264
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "accel |a| peak",
+   "values": [
+    3.3542278,
+    3.3490543,
+    3.383617
+   ],
+   "low": 3.3490543,
+   "high": 3.383617,
+   "spread": 0.010279482224621423
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "accel |a| mean",
+   "values": [
+    1.029411937928363,
+    1.0229552458177156,
+    1.0275994230644208
+   ],
+   "low": 1.0229552458177156,
+   "high": 1.029411937928363,
+   "spread": 0.006289054007634638
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "altitude peak",
+   "values": [
+    233.65938,
+    233.56367,
+    233.52568
+   ],
+   "low": 233.52568,
+   "high": 233.65938,
+   "spread": 0.0005723877658686784
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "elevation peak",
+   "values": [
+    231.59938,
+    231.68271,
+    231.52313
+   ],
+   "low": 231.52313,
+   "high": 231.68271,
+   "spread": 0.0006890276385660012
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "elevation final",
+   "values": [
+    -0.002599135,
+    0.0014488499,
+    0.0023544126
+   ],
+   "low": -0.002599135,
+   "high": 0.0023544126,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "speed max",
+   "values": [
+    25.852972,
+    25.852367,
+    25.852371
+   ],
+   "low": 25.852367,
+   "high": 25.852972,
+   "spread": 2.340192870574139e-05
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "attitude roll range",
+   "values": [
+    5466.0,
+    5270.0,
+    5179.0
+   ],
+   "low": 5179.0,
+   "high": 5466.0,
+   "spread": 0.05409990574929312
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "attitude pitch range",
+   "values": [
+    10635.0,
+    10617.0,
+    10644.0
+   ],
+   "low": 10617.0,
+   "high": 10644.0,
+   "spread": 0.0025395033860045146
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "health mem_free min",
+   "values": [
+    23159723.0,
+    23141579.0,
+    23124023.0
+   ],
+   "low": 23124023.0,
+   "high": 23159723.0,
+   "spread": 0.001542664726452487
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "engine power peak",
+   "values": [
+    3450.0,
+    3575.0,
+    3475.0
+   ],
+   "low": 3450.0,
+   "high": 3575.0,
+   "spread": 0.03571428571428571
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "engine mA peak",
+   "values": [
+    854.0,
+    907.0,
+    875.0
+   ],
+   "low": 854.0,
+   "high": 907.0,
+   "spread": 0.06031866464339909
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "gyro gx range",
+   "values": [
+    15231.0,
+    16165.0,
+    15435.0
+   ],
+   "low": 15231.0,
+   "high": 16165.0,
+   "spread": 0.05983216245649249
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "gyro gz range",
+   "values": [
+    7334.0,
+    7339.0,
+    6265.0
+   ],
+   "low": 6265.0,
+   "high": 7339.0,
+   "spread": 0.15388289234883945
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "fin cap min",
+   "values": [
+    14.0,
+    14.0,
+    13.0
+   ],
+   "low": 13.0,
+   "high": 14.0,
+   "spread": 0.07317073170731708
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "heading_err max",
+   "values": [
+    176.0,
+    179.0,
+    180.0
+   ],
+   "low": 176.0,
+   "high": 180.0,
+   "spread": 0.022429906542056073
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "duration s",
+   "values": [
+    0.00012449124800000002,
+    0.000125092889,
+    0.00012509501
+   ],
+   "low": 0.00012449124800000002,
+   "high": 0.00012509501,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00",
+   "panel": "rows total",
+   "values": [
+    50208,
+    50292,
+    49969
+   ],
+   "low": 49969,
+   "high": 50292,
+   "spread": 0.006439864689736756
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "accel |a| peak",
+   "values": [
+    3.4143736,
+    null,
+    3.3991058
+   ],
+   "low": 3.3991058,
+   "high": 3.4143736,
+   "spread": 0.004481645603859819
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "accel |a| mean",
+   "values": [
+    1.0342604549205603,
+    null,
+    1.0294222079416315
+   ],
+   "low": 1.0294222079416315,
+   "high": 1.0342604549205603,
+   "spread": 0.004688944735542268
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "altitude peak",
+   "values": [
+    233.4885,
+    null,
+    233.51775
+   ],
+   "low": 233.4885,
+   "high": 233.51775,
+   "spread": 0.00012526598948094965
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "elevation peak",
+   "values": [
+    231.62827,
+    null,
+    231.43718
+   ],
+   "low": 231.43718,
+   "high": 231.62827,
+   "spread": 0.0008253260959113846
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "elevation final",
+   "values": [
+    0.0031546566,
+    null,
+    0.00022099062
+   ],
+   "low": 0.00022099062,
+   "high": 0.0031546566,
+   "spread": 1.7381354085928447
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "speed max",
+   "values": [
+    25.851051,
+    null,
+    25.851404
+   ],
+   "low": 25.851051,
+   "high": 25.851404,
+   "spread": 1.3655057579006328e-05
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "attitude roll range",
+   "values": [
+    5496.0,
+    null,
+    5455.0
+   ],
+   "low": 5455.0,
+   "high": 5496.0,
+   "spread": 0.007487900648342617
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "attitude pitch range",
+   "values": [
+    11675.0,
+    null,
+    10940.0
+   ],
+   "low": 10940.0,
+   "high": 11675.0,
+   "spread": 0.06500110546097723
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    null,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    null,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    null,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "health mem_free min",
+   "values": [
+    9612071.0,
+    null,
+    9606551.0
+   ],
+   "low": 9606551.0,
+   "high": 9612071.0,
+   "spread": 0.0005744428502730321
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    null,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    null,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "engine power peak",
+   "values": [
+    3475.0,
+    null,
+    3300.0
+   ],
+   "low": 3300.0,
+   "high": 3475.0,
+   "spread": 0.05166051660516605
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "engine mA peak",
+   "values": [
+    890.0,
+    null,
+    828.0
+   ],
+   "low": 828.0,
+   "high": 890.0,
+   "spread": 0.07217694994179279
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "gyro gx range",
+   "values": [
+    17065.0,
+    null,
+    15542.0
+   ],
+   "low": 15542.0,
+   "high": 17065.0,
+   "spread": 0.09341552427392891
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "gyro gz range",
+   "values": [
+    6232.0,
+    null,
+    6808.0
+   ],
+   "low": 6232.0,
+   "high": 6808.0,
+   "spread": 0.08834355828220859
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    null,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "fin cap min",
+   "values": [
+    10.0,
+    null,
+    13.0
+   ],
+   "low": 10.0,
+   "high": 13.0,
+   "spread": 0.2608695652173913
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "heading_err max",
+   "values": [
+    180.0,
+    null,
+    180.0
+   ],
+   "low": 180.0,
+   "high": 180.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "duration s",
+   "values": [
+    0.000123577023,
+    null,
+    0.000125951645
+   ],
+   "low": 0.000123577023,
+   "high": 0.000125951645,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "rows total",
+   "values": [
+    48895,
+    null,
+    50193
+   ],
+   "low": 48895,
+   "high": 50193,
+   "spread": 0.026198934280639432
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "accel |a| peak",
+   "values": [
+    3.3522024,
+    3.3982625,
+    3.343722
+   ],
+   "low": 3.343722,
+   "high": 3.3982625,
+   "spread": 0.01620947795210723
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "accel |a| mean",
+   "values": [
+    1.0309157385113816,
+    1.0350064893443691,
+    1.0304941521378592
+   ],
+   "low": 1.0304941521378592,
+   "high": 1.0350064893443691,
+   "spread": 0.004371831807567698
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "altitude peak",
+   "values": [
+    233.70442,
+    233.51042,
+    233.53969
+   ],
+   "low": 233.51042,
+   "high": 233.70442,
+   "spread": 0.0008305333395418296
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "elevation peak",
+   "values": [
+    231.70378,
+    231.66364,
+    231.70058
+   ],
+   "low": 231.66364,
+   "high": 231.70378,
+   "spread": 0.00017324923604600438
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "elevation final",
+   "values": [
+    0.0020752675,
+    -8.542299e-05,
+    0.0018760202
+   ],
+   "low": -8.542299e-05,
+   "high": 0.0020752675,
+   "spread": 1.6767455553301036
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "speed max",
+   "values": [
+    31.942142,
+    31.988142,
+    32.00569
+   ],
+   "low": 31.942142,
+   "high": 32.00569,
+   "spread": 0.0019872003384257346
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "attitude roll range",
+   "values": [
+    5478.0,
+    5453.0,
+    5478.0
+   ],
+   "low": 5453.0,
+   "high": 5478.0,
+   "spread": 0.004570662441343165
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "attitude pitch range",
+   "values": [
+    10647.0,
+    10647.0,
+    10658.0
+   ],
+   "low": 10647.0,
+   "high": 10658.0,
+   "spread": 0.0010327991987981973
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "health mem_free min",
+   "values": [
+    23101935.0,
+    23145059.0,
+    23126475.0
+   ],
+   "low": 23101935.0,
+   "high": 23145059.0,
+   "spread": 0.0018648627762869981
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "engine power peak",
+   "values": [
+    3475.0,
+    3325.0,
+    3400.0
+   ],
+   "low": 3325.0,
+   "high": 3475.0,
+   "spread": 0.04411764705882353
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "engine mA peak",
+   "values": [
+    844.0,
+    846.0,
+    837.0
+   ],
+   "low": 837.0,
+   "high": 846.0,
+   "spread": 0.010684606252473288
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "gyro gx range",
+   "values": [
+    13226.0,
+    12604.0,
+    14965.0
+   ],
+   "low": 12604.0,
+   "high": 14965.0,
+   "spread": 0.17362421865424685
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "gyro gz range",
+   "values": [
+    7553.0,
+    7829.0,
+    7339.0
+   ],
+   "low": 7339.0,
+   "high": 7829.0,
+   "spread": 0.06469785660842392
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "fin cap min",
+   "values": [
+    14.0,
+    11.0,
+    13.0
+   ],
+   "low": 11.0,
+   "high": 14.0,
+   "spread": 0.2368421052631579
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "heading_err max",
+   "values": [
+    159.0,
+    159.0,
+    163.0
+   ],
+   "low": 159.0,
+   "high": 163.0,
+   "spread": 0.024948024948024946
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "duration s",
+   "values": [
+    0.000123696653,
+    0.000125148911,
+    0.000121414774
+   ],
+   "low": 0.000121414774,
+   "high": 0.000125148911,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind03",
+   "panel": "rows total",
+   "values": [
+    50201,
+    51160,
+    49515
+   ],
+   "low": 49515,
+   "high": 51160,
+   "spread": 0.03270897955937326
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "accel |a| peak",
+   "values": [
+    3.3994102,
+    3.4092171,
+    3.3564234
+   ],
+   "low": 3.3564234,
+   "high": 3.4092171,
+   "spread": 0.015580945405417292
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "accel |a| mean",
+   "values": [
+    1.0200801069242291,
+    1.0243623753977427,
+    1.0199886080985612
+   ],
+   "low": 1.0199886080985612,
+   "high": 1.0243623753977427,
+   "spread": 0.004281806805368176
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "altitude peak",
+   "values": [
+    233.56621,
+    233.50557,
+    233.71185
+   ],
+   "low": 233.50557,
+   "high": 233.71185,
+   "spread": 0.0008830685728203688
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "elevation peak",
+   "values": [
+    231.70454,
+    231.55669,
+    231.62619
+   ],
+   "low": 231.55669,
+   "high": 231.70454,
+   "spread": 0.0006383048350479796
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "elevation final",
+   "values": [
+    0.0047615524,
+    0.0014321698,
+    0.0035625086
+   ],
+   "low": 0.0014321698,
+   "high": 0.0047615524,
+   "spread": 1.0237711678571606
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "speed max",
+   "values": [
+    36.64228,
+    36.693485,
+    36.53481
+   ],
+   "low": 36.53481,
+   "high": 36.693485,
+   "spread": 0.00433259769506082
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "attitude roll range",
+   "values": [
+    5464.0,
+    5495.0,
+    5455.0
+   ],
+   "low": 5455.0,
+   "high": 5495.0,
+   "spread": 0.007310832216400634
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "attitude pitch range",
+   "values": [
+    11143.0,
+    11825.0,
+    10671.0
+   ],
+   "low": 10671.0,
+   "high": 11825.0,
+   "spread": 0.10291625791492018
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "health mem_free min",
+   "values": [
+    23124135.0,
+    23132335.0,
+    23117447.0
+   ],
+   "low": 23117447.0,
+   "high": 23132335.0,
+   "spread": 0.0006438154558866844
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "engine power peak",
+   "values": [
+    3300.0,
+    3325.0,
+    3525.0
+   ],
+   "low": 3300.0,
+   "high": 3525.0,
+   "spread": 0.0665024630541872
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "engine mA peak",
+   "values": [
+    870.0,
+    830.0,
+    910.0
+   ],
+   "low": 830.0,
+   "high": 910.0,
+   "spread": 0.09195402298850575
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "gyro gx range",
+   "values": [
+    14617.0,
+    15608.0,
+    15742.0
+   ],
+   "low": 14617.0,
+   "high": 15742.0,
+   "spread": 0.07342223769225749
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "gyro gz range",
+   "values": [
+    5235.0,
+    7610.0,
+    6187.0
+   ],
+   "low": 5235.0,
+   "high": 7610.0,
+   "spread": 0.37436948297604034
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "fin cap min",
+   "values": [
+    14.0,
+    13.0,
+    14.0
+   ],
+   "low": 13.0,
+   "high": 14.0,
+   "spread": 0.07317073170731708
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "heading_err max",
+   "values": [
+    133.0,
+    136.0,
+    137.0
+   ],
+   "low": 133.0,
+   "high": 137.0,
+   "spread": 0.029556650246305417
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "duration s",
+   "values": [
+    0.000123403813,
+    0.000124300601,
+    0.00012487346099999998
+   ],
+   "low": 0.000123403813,
+   "high": 0.00012487346099999998,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind06",
+   "panel": "rows total",
+   "values": [
+    49141,
+    49511,
+    50200
+   ],
+   "low": 49141,
+   "high": 50200,
+   "spread": 0.021343347754816864
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "accel |a| peak",
+   "values": [
+    3.40893,
+    3.3957593,
+    3.4150386
+   ],
+   "low": 3.3957593,
+   "high": 3.4150386,
+   "spread": 0.005659436392626461
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "accel |a| mean",
+   "values": [
+    1.0082370193956096,
+    1.0107714697949415,
+    1.0093968359976113
+   ],
+   "low": 1.0082370193956096,
+   "high": 1.0107714697949415,
+   "spread": 0.0025106781891962183
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "altitude peak",
+   "values": [
+    233.55058,
+    233.48996,
+    233.67467
+   ],
+   "low": 233.48996,
+   "high": 233.67467,
+   "spread": 0.0007908062963268437
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "elevation peak",
+   "values": [
+    231.59097,
+    231.5632,
+    231.60657
+   ],
+   "low": 231.5632,
+   "high": 231.60657,
+   "spread": 0.0001872731035435744
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "elevation final",
+   "values": [
+    -0.00014568919,
+    -0.0019199321,
+    -0.0039370456
+   ],
+   "low": -0.0039370456,
+   "high": -0.00014568919,
+   "spread": 1.8948359851432637
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "speed max",
+   "values": [
+    35.907867,
+    35.855843,
+    36.326855
+   ],
+   "low": 35.855843,
+   "high": 36.326855,
+   "spread": 0.01307270435675866
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "attitude roll range",
+   "values": [
+    5438.0,
+    5439.0,
+    5432.0
+   ],
+   "low": 5432.0,
+   "high": 5439.0,
+   "spread": 0.0012876325954994175
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "attitude pitch range",
+   "values": [
+    10713.0,
+    11131.0,
+    10785.0
+   ],
+   "low": 10713.0,
+   "high": 11131.0,
+   "spread": 0.038432069631309566
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "health mem_free min",
+   "values": [
+    23109323.0,
+    23152907.0,
+    23144679.0
+   ],
+   "low": 23109323.0,
+   "high": 23152907.0,
+   "spread": 0.0018838470389165437
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "engine power peak",
+   "values": [
+    3650.0,
+    3400.0,
+    3650.0
+   ],
+   "low": 3400.0,
+   "high": 3650.0,
+   "spread": 0.07009345794392524
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "engine mA peak",
+   "values": [
+    933.0,
+    860.0,
+    939.0
+   ],
+   "low": 860.0,
+   "high": 939.0,
+   "spread": 0.08674963396778917
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "gyro gx range",
+   "values": [
+    11269.0,
+    11342.0,
+    11585.0
+   ],
+   "low": 11269.0,
+   "high": 11585.0,
+   "spread": 0.02772254064802901
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "gyro gz range",
+   "values": [
+    5230.0,
+    5253.0,
+    5271.0
+   ],
+   "low": 5230.0,
+   "high": 5271.0,
+   "spread": 0.007807540941982989
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "fin cap min",
+   "values": [
+    12.0,
+    7.0,
+    13.0
+   ],
+   "low": 7.0,
+   "high": 13.0,
+   "spread": 0.5625
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "heading_err max",
+   "values": [
+    100.0,
+    102.0,
+    104.0
+   ],
+   "low": 100.0,
+   "high": 104.0,
+   "spread": 0.0392156862745098
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "duration s",
+   "values": [
+    0.00013055838500000003,
+    0.00013026720699999998,
+    0.000128903337
+   ],
+   "low": 0.000128903337,
+   "high": 0.00013055838500000003,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind09",
+   "panel": "rows total",
+   "values": [
+    49535,
+    49233,
+    48883
+   ],
+   "low": 48883,
+   "high": 49535,
+   "spread": 0.013247455147611598
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "accel |a| peak",
+   "values": [
+    3.3760996,
+    3.3918784,
+    3.3803396
+   ],
+   "low": 3.3760996,
+   "high": 3.3918784,
+   "spread": 0.0046644578801909265
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "accel |a| mean",
+   "values": [
+    1.009979878647027,
+    1.0103538567210155,
+    1.0100266008922456
+   ],
+   "low": 1.009979878647027,
+   "high": 1.0103538567210155,
+   "spread": 0.00037023129181720647
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "altitude peak",
+   "values": [
+    233.61833,
+    233.62949,
+    233.66728
+   ],
+   "low": 233.61833,
+   "high": 233.66728,
+   "spread": 0.00020951182247330304
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "elevation peak",
+   "values": [
+    231.49776,
+    231.51028,
+    231.6898
+   ],
+   "low": 231.49776,
+   "high": 231.6898,
+   "spread": 0.0008293101933352414
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "elevation final",
+   "values": [
+    -0.0021312775,
+    -0.0011534238,
+    0.0019528875
+   ],
+   "low": -0.0021312775,
+   "high": 0.0019528875,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "speed max",
+   "values": [
+    31.57157,
+    31.53235,
+    31.650059
+   ],
+   "low": 31.53235,
+   "high": 31.650059,
+   "spread": 0.003726777531949276
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "attitude roll range",
+   "values": [
+    5051.0,
+    5004.0,
+    5117.0
+   ],
+   "low": 5004.0,
+   "high": 5117.0,
+   "spread": 0.0223437911943053
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "attitude pitch range",
+   "values": [
+    12157.0,
+    11778.0,
+    12149.0
+   ],
+   "low": 11778.0,
+   "high": 12157.0,
+   "spread": 0.0315098104423013
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "fin eleron_left range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "fin yaw range",
+   "values": [
+    90.0,
+    90.0,
+    90.0
+   ],
+   "low": 90.0,
+   "high": 90.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "health load max",
+   "values": [
+    100.0,
+    100.0,
+    100.0
+   ],
+   "low": 100.0,
+   "high": 100.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "health mem_free min",
+   "values": [
+    23121147.0,
+    23141535.0,
+    23150595.0
+   ],
+   "low": 23121147.0,
+   "high": 23150595.0,
+   "spread": 0.00127272481315066
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "health rescues",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "agl min",
+   "values": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "low": 0.0,
+   "high": 0.0,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "engine power peak",
+   "values": [
+    3550.0,
+    3575.0,
+    3425.0
+   ],
+   "low": 3425.0,
+   "high": 3575.0,
+   "spread": 0.04265402843601896
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "engine mA peak",
+   "values": [
+    908.0,
+    917.0,
+    860.0
+   ],
+   "low": 860.0,
+   "high": 917.0,
+   "spread": 0.06368715083798883
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "gyro gx range",
+   "values": [
+    14798.0,
+    14665.0,
+    14359.0
+   ],
+   "low": 14359.0,
+   "high": 14798.0,
+   "spread": 0.030053397836703025
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "gyro gz range",
+   "values": [
+    4817.0,
+    4553.0,
+    4812.0
+   ],
+   "low": 4553.0,
+   "high": 4817.0,
+   "spread": 0.05584543787900156
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "airspeed pitot max",
+   "values": [
+    2985.0,
+    2985.0,
+    2985.0
+   ],
+   "low": 2985.0,
+   "high": 2985.0,
+   "spread": 0.0
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "fin cap min",
+   "values": [
+    12.0,
+    13.0,
+    14.0
+   ],
+   "low": 12.0,
+   "high": 14.0,
+   "spread": 0.15384615384615385
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "heading_err max",
+   "values": [
+    91.0,
+    91.0,
+    92.0
+   ],
+   "low": 91.0,
+   "high": 92.0,
+   "spread": 0.010948905109489052
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "duration s",
+   "values": [
+    0.00013023199800000002,
+    0.000132272931,
+    0.00013104075
+   ],
+   "low": 0.00013023199800000002,
+   "high": 0.000132272931,
+   "spread": null
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind12",
+   "panel": "rows total",
+   "values": [
+    53744,
+    54740,
+    53951
+   ],
+   "low": 53744,
+   "high": 54740,
+   "spread": 0.018395050327823438
+  }
+ ],
+ "anomalies": [
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "accel |a| peak",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "accel |a| mean",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "altitude peak",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "elevation peak",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "elevation final",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "speed max",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "attitude roll range",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "attitude pitch range",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "fin eleron_left range",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "fin yaw range",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "health load max",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "health mem_free min",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "health rescues",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "agl min",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "engine power peak",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "engine mA peak",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "gyro gx range",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "gyro gz range",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "airspeed pitot max",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "fin cap min",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "heading_err max",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "duration s",
+   "kind": "channel present in r1,r3, absent in r2"
+  },
+  {
+   "motor": "F15",
+   "scenario": "wind00_video",
+   "panel": "rows total",
+   "kind": "channel present in r1,r3, absent in r2"
+  }
+ ],
+ "missing": [
+  "F15/noise10_video absent from r1",
+  "F15/noise10_video absent from r3",
+  "F15/wind00_video absent from r2"
+ ],
+ "labels": [
+  "r1",
+  "r2",
+  "r3"
+ ]
+}

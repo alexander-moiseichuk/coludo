@@ -1,0 +1,5373 @@
+{
+ "clamp": {
+  "cases": [
+   {
+    "input": {
+     "angle": 90.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_90.5",
+    "output": 90
+   },
+   {
+    "input": {
+     "angle": 91.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_91.5",
+    "output": 92
+   },
+   {
+    "input": {
+     "angle": -0.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-0.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 0.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_0.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 1.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_1.5",
+    "output": 2
+   },
+   {
+    "input": {
+     "angle": 2.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_2.5",
+    "output": 2
+   },
+   {
+    "input": {
+     "angle": 179.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_179.5",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 180.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_180.5",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -0.49,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-0.49",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 89.5000001,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_89.5000001",
+    "output": 90
+   },
+   {
+    "input": {
+     "angle": 45,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_45",
+    "output": 45
+   },
+   {
+    "input": {
+     "angle": 0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_0",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 180,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_180",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 999,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_999",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -50,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-50",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 1000000000.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_1000000000.0",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -1000000000.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-1000000000.0",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 29.5,
+     "max_deg": 30,
+     "min_deg": -30
+    },
+    "name": "range_-30_30_angle_29.5",
+    "output": 30
+   },
+   {
+    "input": {
+     "angle": 30.5,
+     "max_deg": 30,
+     "min_deg": -30
+    },
+    "name": "range_-30_30_angle_30.5",
+    "output": 30
+   },
+   {
+    "input": {
+     "angle": -29.5,
+     "max_deg": 30,
+     "min_deg": -30
+    },
+    "name": "range_-30_30_angle_-29.5",
+    "output": -30
+   },
+   {
+    "input": {
+     "angle": -30.5,
+     "max_deg": 30,
+     "min_deg": -30
+    },
+    "name": "range_-30_30_angle_-30.5",
+    "output": -30
+   },
+   {
+    "input": {
+     "angle": 0.5,
+     "max_deg": 30,
+     "min_deg": -30
+    },
+    "name": "range_-30_30_angle_0.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": -0.5,
+     "max_deg": 30,
+     "min_deg": -30
+    },
+    "name": "range_-30_30_angle_-0.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 135,
+     "max_deg": 270,
+     "min_deg": -90
+    },
+    "name": "range_-90_270_angle_135",
+    "output": 135
+   },
+   {
+    "input": {
+     "angle": 269.5,
+     "max_deg": 270,
+     "min_deg": -90
+    },
+    "name": "range_-90_270_angle_269.5",
+    "output": 270
+   },
+   {
+    "input": {
+     "angle": 270.5,
+     "max_deg": 270,
+     "min_deg": -90
+    },
+    "name": "range_-90_270_angle_270.5",
+    "output": 270
+   },
+   {
+    "input": {
+     "angle": -90.5,
+     "max_deg": 270,
+     "min_deg": -90
+    },
+    "name": "range_-90_270_angle_-90.5",
+    "output": -90
+   },
+   {
+    "input": {
+     "angle": -89.5,
+     "max_deg": 270,
+     "min_deg": -90
+    },
+    "name": "range_-90_270_angle_-89.5",
+    "output": -90
+   },
+   {
+    "input": {
+     "angle": 90,
+     "max_deg": 0,
+     "min_deg": 180
+    },
+    "name": "range_180_0_angle_90",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 200,
+     "max_deg": 0,
+     "min_deg": 180
+    },
+    "name": "range_180_0_angle_200",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": -10,
+     "max_deg": 0,
+     "min_deg": 180
+    },
+    "name": "range_180_0_angle_-10",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 53.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_53.5",
+    "output": 54
+   },
+   {
+    "input": {
+     "angle": 145.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_145.25",
+    "output": 145
+   },
+   {
+    "input": {
+     "angle": 269.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_269.25",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 60.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_60.5",
+    "output": 60
+   },
+   {
+    "input": {
+     "angle": 200.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_200.0",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -81.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-81.0",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 120.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_120.0",
+    "output": 120
+   },
+   {
+    "input": {
+     "angle": 162.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_162.0",
+    "output": 162
+   },
+   {
+    "input": {
+     "angle": 240.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_240.5",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -144.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-144.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": -79.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-79.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": -158.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-158.75",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 36.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_36.0",
+    "output": 36
+   },
+   {
+    "input": {
+     "angle": 18.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_18.25",
+    "output": 18
+   },
+   {
+    "input": {
+     "angle": 247.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_247.5",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -197.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-197.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": -116.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-116.25",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": -132.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-132.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": -135.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-135.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 284.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_284.75",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -169.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-169.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 141.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_141.5",
+    "output": 142
+   },
+   {
+    "input": {
+     "angle": 164.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_164.75",
+    "output": 165
+   },
+   {
+    "input": {
+     "angle": -168.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-168.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 287.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_287.25",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -136.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-136.25",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 47.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_47.5",
+    "output": 48
+   },
+   {
+    "input": {
+     "angle": -118.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-118.75",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": -83.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-83.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 61.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_61.75",
+    "output": 62
+   },
+   {
+    "input": {
+     "angle": -200.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-200.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 134.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_134.5",
+    "output": 134
+   },
+   {
+    "input": {
+     "angle": 235.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_235.5",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -136.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-136.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 280.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_280.75",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 53.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_53.5",
+    "output": 54
+   },
+   {
+    "input": {
+     "angle": -179.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-179.25",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 165.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_165.0",
+    "output": 165
+   },
+   {
+    "input": {
+     "angle": 202.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_202.25",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 147.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_147.5",
+    "output": 148
+   },
+   {
+    "input": {
+     "angle": 71.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_71.25",
+    "output": 71
+   },
+   {
+    "input": {
+     "angle": 96.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_96.5",
+    "output": 96
+   },
+   {
+    "input": {
+     "angle": -42.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-42.75",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 46.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_46.5",
+    "output": 46
+   },
+   {
+    "input": {
+     "angle": 90.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_90.75",
+    "output": 91
+   },
+   {
+    "input": {
+     "angle": -122.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-122.0",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 257.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_257.5",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -133.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-133.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 37.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_37.5",
+    "output": 38
+   },
+   {
+    "input": {
+     "angle": 70.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_70.5",
+    "output": 70
+   },
+   {
+    "input": {
+     "angle": 51.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_51.5",
+    "output": 52
+   },
+   {
+    "input": {
+     "angle": 47.25,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_47.25",
+    "output": 47
+   },
+   {
+    "input": {
+     "angle": -128.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-128.0",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 256.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_256.5",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": -162.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_-162.5",
+    "output": 0
+   },
+   {
+    "input": {
+     "angle": 183.75,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_183.75",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 248.0,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_248.0",
+    "output": 180
+   },
+   {
+    "input": {
+     "angle": 103.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_103.5",
+    "output": 104
+   },
+   {
+    "input": {
+     "angle": 37.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_37.5",
+    "output": 38
+   },
+   {
+    "input": {
+     "angle": 214.5,
+     "max_deg": 180,
+     "min_deg": 0
+    },
+    "name": "range_0_180_angle_214.5",
+    "output": 180
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "_clamp(angle) with _min_deg / _max_deg: round half even, then clamp_int"
+ },
+ "meta": {
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
+  "generator": "servo",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
+  "python": "3.12",
+  "source": "src/glider/drivers/sg90.py, src/glider/drivers/mg90s.py, src/glider/commons.py, src/glider/test/test_sg90.py, src/glider/test/test_mg90s.py",
+  "tag": "micropython_plan_B_3"
+ },
+ "scenarios": {
+  "cases": [
+   {
+    "init": {
+     "config": {},
+     "type": "sg90"
+    },
+    "name": "test_sg90_default_range",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 1500,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 45
+       }
+      },
+      "out": {
+       "angle": 45,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1000,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 999
+       }
+      },
+      "out": {
+       "angle": 180,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 2500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -50
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {}
+      },
+      "out": {
+       "angle": 0,
+       "applied": [],
+       "neutral": 90,
+       "pulse_us": 500,
+       "trim": 0,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 90
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 45
+      },
+      "out": {
+       "angle": 45,
+       "neutral": 90,
+       "pulse_us": 1000,
+       "returned": 45,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 45
+      },
+      "out": {
+       "angle": 45,
+       "neutral": 90,
+       "pulse_us": 1000,
+       "returned": 45,
+       "trim": 0,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 999
+      },
+      "out": {
+       "angle": 180,
+       "neutral": 90,
+       "pulse_us": 2500,
+       "returned": 180,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 180
+      },
+      "out": {
+       "angle": 180,
+       "neutral": 90,
+       "pulse_us": 2500,
+       "returned": 180,
+       "trim": 0,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 179.5
+      },
+      "out": {
+       "angle": 180,
+       "neutral": 90,
+       "pulse_us": 2500,
+       "returned": 180,
+       "trim": 0,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 178.5
+      },
+      "out": {
+       "angle": 178,
+       "neutral": 90,
+       "pulse_us": 2477,
+       "returned": 178,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 60,
+       "settle": true
+      },
+      "out": {
+       "angle": 178,
+       "neutral": 90,
+       "pulse_us": 2477,
+       "travel_ms": 210,
+       "trim": 0
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 60,
+       "settle": false
+      },
+      "out": {
+       "angle": 178,
+       "neutral": 90,
+       "pulse_us": 2477,
+       "travel_ms": 150,
+       "trim": 0
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": -60,
+       "settle": false
+      },
+      "out": {
+       "angle": 178,
+       "neutral": 90,
+       "pulse_us": 2477,
+       "travel_ms": 150,
+       "trim": 0
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 3,
+       "settle": false
+      },
+      "out": {
+       "angle": 178,
+       "neutral": 90,
+       "pulse_us": 2477,
+       "travel_ms": 7,
+       "trim": 0
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "angle": 0,
+      "max_deg": 30,
+      "min_deg": -30
+     },
+     "type": "sg90"
+    },
+    "name": "test_sg90_limited_throw",
+    "setup": {
+     "angle": 0,
+     "neutral": 0,
+     "pulse_us": 1500,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 90
+       }
+      },
+      "out": {
+       "angle": 30,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 2500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -12.5
+      },
+      "out": {
+       "angle": -12,
+       "neutral": 0,
+       "pulse_us": 1100,
+       "returned": -12,
+       "trim": 0,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "trim": 9
+     },
+     "type": "sg90"
+    },
+    "name": "test_sg90_trim_9",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 1600,
+     "trim": 9
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 0
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 1500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 90,
+        "trim": 4
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim",
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1544,
+       "trim": 4,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "trim": 2.6
+     },
+     "type": "sg90"
+    },
+    "name": "test_sg90_fractional_trims",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 1533,
+     "trim": 3
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -1.4
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 1488,
+       "trim": -1,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 2.5
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 1522,
+       "trim": 2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -2.5
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 1477,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 3.5
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 1544,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 0.5
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 1500,
+       "trim": 0,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {},
+     "type": "sg90"
+    },
+    "name": "test_sg90_move",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 1500,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "move",
+       "angle": 120
+      },
+      "out": {
+       "angle": 120,
+       "neutral": 90,
+       "pulse_us": 1833,
+       "rows": [
+        [
+         120,
+         1833,
+         0
+        ],
+        [
+         120,
+         1833,
+         1
+        ]
+       ],
+       "target": 120,
+       "travel_ms": 135,
+       "trim": 0
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 999
+      },
+      "out": {
+       "angle": 180,
+       "neutral": 90,
+       "pulse_us": 2500,
+       "rows": [
+        [
+         180,
+         2500,
+         0
+        ],
+        [
+         180,
+         2500,
+         1
+        ]
+       ],
+       "target": 180,
+       "travel_ms": 210,
+       "trim": 0
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 119
+      },
+      "out": {
+       "angle": 119,
+       "neutral": 90,
+       "pulse_us": 1822,
+       "rows": [
+        [
+         119,
+         1822,
+         0
+        ],
+        [
+         119,
+         1822,
+         1
+        ]
+       ],
+       "target": 119,
+       "travel_ms": 212,
+       "trim": 0
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 270,
+      "min_deg": -90
+     },
+     "type": "mg90s"
+    },
+    "name": "test_mg90s_centred_360",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 1500,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 135
+       }
+      },
+      "out": {
+       "angle": 135,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1750,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 45
+       }
+      },
+      "out": {
+       "angle": 45,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1250,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 999
+       }
+      },
+      "out": {
+       "angle": 270,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 2500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -999
+       }
+      },
+      "out": {
+       "angle": -90,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 90,
+        "trim": 9
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim",
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1550,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 60,
+       "settle": true
+      },
+      "out": {
+       "angle": 90,
+       "neutral": 90,
+       "pulse_us": 1550,
+       "travel_ms": 160,
+       "trim": 9
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {},
+     "type": "mg90s"
+    },
+    "name": "test_mg90s_stock",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 1500,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "move",
+       "angle": 135
+      },
+      "out": {
+       "angle": 135,
+       "neutral": 90,
+       "pulse_us": 2000,
+       "rows": [
+        [
+         135,
+         2000,
+         0
+        ],
+        [
+         135,
+         2000,
+         1
+        ]
+       ],
+       "target": 135,
+       "travel_ms": 135,
+       "trim": 0
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 45,
+       "settle": true
+      },
+      "out": {
+       "angle": 135,
+       "neutral": 90,
+       "pulse_us": 2000,
+       "travel_ms": 135,
+       "trim": 0
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "angle": 45.5
+     },
+     "type": "sg90"
+    },
+    "name": "a_setup_angle_of_a_half",
+    "setup": {
+     "angle": 46,
+     "neutral": 90,
+     "pulse_us": 1011,
+     "trim": 0
+    },
+    "steps": []
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 0,
+      "min_deg": 180
+     },
+     "type": "sg90"
+    },
+    "name": "an_upside_down_range",
+    "setup": {
+     "angle": 180,
+     "neutral": 90,
+     "pulse_us": 500,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 90
+       }
+      },
+      "out": {
+       "angle": 180,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 200
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 2500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -10
+      },
+      "out": {
+       "angle": 180,
+       "neutral": 90,
+       "pulse_us": 500,
+       "returned": 180,
+       "trim": 0,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 90,
+      "min_deg": 90
+     },
+     "type": "sg90"
+    },
+    "name": "a_zero_span",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 500,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 30
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 500,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 5
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 500,
+       "trim": 5,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "trim": -100
+     },
+     "type": "sg90"
+    },
+    "name": "a_trim_past_the_pulse_range",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 500,
+     "trim": -100
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 0
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 500,
+       "trim": -100,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 100
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 1611,
+       "trim": 100,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 45,
+      "max_us": 2000,
+      "min_deg": -45,
+      "min_us": 1000,
+      "trim": -3
+     },
+     "type": "sg90"
+    },
+    "name": "custom_pulse_range",
+    "setup": {
+     "angle": 0,
+     "neutral": 0,
+     "pulse_us": 1466,
+     "trim": -3
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 7
+       }
+      },
+      "out": {
+       "angle": 7,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 1544,
+       "trim": -3,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -44.5
+      },
+      "out": {
+       "angle": -44,
+       "neutral": 0,
+       "pulse_us": 1000,
+       "returned": -44,
+       "trim": -3,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 10
+      },
+      "out": {
+       "angle": 10,
+       "neutral": 0,
+       "pulse_us": 1577,
+       "rows": [
+        [
+         10,
+         1577,
+         0
+        ],
+        [
+         10,
+         1577,
+         1
+        ]
+       ],
+       "target": 10,
+       "travel_ms": 195,
+       "trim": -3
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 150,
+      "max_us": 2449,
+      "min_deg": -30,
+      "min_us": 439,
+      "trim": 9.0
+     },
+     "type": "sg90"
+    },
+    "name": "seeded_00",
+    "setup": {
+     "angle": 60,
+     "neutral": 60,
+     "pulse_us": 1544,
+     "trim": 9
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 158.5
+      },
+      "out": {
+       "angle": 150,
+       "neutral": 60,
+       "pulse_us": 2449,
+       "returned": 150,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 160
+       }
+      },
+      "out": {
+       "angle": 150,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 60,
+       "pulse_us": 2449,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 71
+      },
+      "out": {
+       "angle": 71,
+       "neutral": 60,
+       "pulse_us": 1667,
+       "rows": [
+        [
+         71,
+         1667,
+         0
+        ],
+        [
+         71,
+         1667,
+         1
+        ]
+       ],
+       "target": 71,
+       "travel_ms": 257,
+       "trim": 9
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 134
+       }
+      },
+      "out": {
+       "angle": 134,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 60,
+       "pulse_us": 2370,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": -220,
+       "settle": true
+      },
+      "out": {
+       "angle": 134,
+       "neutral": 60,
+       "pulse_us": 2370,
+       "travel_ms": 610,
+       "trim": 9
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 42.3
+       }
+      },
+      "out": {
+       "angle": 42,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 60,
+       "pulse_us": 1343,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": -50.5
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 60,
+       "pulse_us": 539,
+       "rows": [
+        [
+         -30,
+         539,
+         0
+        ],
+        [
+         -30,
+         539,
+         1
+        ]
+       ],
+       "target": -30,
+       "travel_ms": 240,
+       "trim": 9
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 89
+      },
+      "out": {
+       "angle": 89,
+       "neutral": 60,
+       "pulse_us": 1868,
+       "returned": 89,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -36
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 60,
+       "pulse_us": 539,
+       "returned": -30,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -9.0
+       }
+      },
+      "out": {
+       "angle": -30,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 60,
+       "pulse_us": 439,
+       "trim": -9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -43.7
+       }
+      },
+      "out": {
+       "angle": -30,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 60,
+       "pulse_us": 439,
+       "trim": -9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 167.5
+      },
+      "out": {
+       "angle": 150,
+       "neutral": 60,
+       "pulse_us": 2348,
+       "returned": 150,
+       "trim": -9,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 180,
+      "max_us": 2325,
+      "min_deg": 0,
+      "min_us": 427,
+      "trim": 4.5
+     },
+     "type": "sg90"
+    },
+    "name": "seeded_01",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 1418,
+     "trim": 4
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 77.3
+       }
+      },
+      "out": {
+       "angle": 77,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1281,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 117.3
+      },
+      "out": {
+       "angle": 117,
+       "neutral": 90,
+       "pulse_us": 1702,
+       "returned": 117,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 15
+       }
+      },
+      "out": {
+       "angle": 15,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 627,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 140.5
+       }
+      },
+      "out": {
+       "angle": 140,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1945,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 97.5
+      },
+      "out": {
+       "angle": 98,
+       "neutral": 90,
+       "pulse_us": 1502,
+       "returned": 98,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 135
+      },
+      "out": {
+       "angle": 135,
+       "neutral": 90,
+       "pulse_us": 1892,
+       "returned": 135,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -3.0
+       }
+      },
+      "out": {
+       "angle": 135,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 1818,
+       "trim": -3,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 29.5
+       }
+      },
+      "out": {
+       "angle": 30,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 711,
+       "trim": -3,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 86
+      },
+      "out": {
+       "angle": 86,
+       "neutral": 90,
+       "pulse_us": 1302,
+       "rows": [
+        [
+         86,
+         1302,
+         0
+        ],
+        [
+         86,
+         1302,
+         1
+        ]
+       ],
+       "target": 86,
+       "travel_ms": 200,
+       "trim": -3
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 187
+       }
+      },
+      "out": {
+       "angle": 180,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 2293,
+       "trim": -3,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 13.5
+      },
+      "out": {
+       "angle": 14,
+       "neutral": 90,
+       "pulse_us": 542,
+       "returned": 14,
+       "trim": -3,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 105
+       }
+      },
+      "out": {
+       "angle": 105,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 1502,
+       "trim": -3,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 90,
+      "max_us": 2490,
+      "min_deg": 0,
+      "min_us": 537,
+      "trim": -10.0
+     },
+     "type": "mg90s"
+    },
+    "name": "seeded_02",
+    "setup": {
+     "angle": 45,
+     "neutral": 45,
+     "pulse_us": 1296,
+     "trim": -10
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 17
+      },
+      "out": {
+       "angle": 17,
+       "neutral": 45,
+       "pulse_us": 688,
+       "returned": 17,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 15.5
+      },
+      "out": {
+       "angle": 16,
+       "neutral": 45,
+       "pulse_us": 667,
+       "returned": 16,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 108.5
+      },
+      "out": {
+       "angle": 90,
+       "neutral": 45,
+       "pulse_us": 2273,
+       "rows": [
+        [
+         90,
+         2273,
+         0
+        ],
+        [
+         90,
+         2273,
+         1
+        ]
+       ],
+       "target": 90,
+       "travel_ms": 183,
+       "trim": -10
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 87.3
+      },
+      "out": {
+       "angle": 87,
+       "neutral": 45,
+       "pulse_us": 2207,
+       "rows": [
+        [
+         87,
+         2207,
+         0
+        ],
+        [
+         87,
+         2207,
+         1
+        ]
+       ],
+       "target": 87,
+       "travel_ms": 65,
+       "trim": -10
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 110
+      },
+      "out": {
+       "angle": 90,
+       "neutral": 45,
+       "pulse_us": 2273,
+       "returned": 90,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 84
+      },
+      "out": {
+       "angle": 84,
+       "neutral": 45,
+       "pulse_us": 2142,
+       "returned": 84,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 22.5
+      },
+      "out": {
+       "angle": 22,
+       "neutral": 45,
+       "pulse_us": 797,
+       "returned": 22,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -4
+      },
+      "out": {
+       "angle": 0,
+       "neutral": 45,
+       "pulse_us": 537,
+       "returned": 0,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 49,
+       "settle": true
+      },
+      "out": {
+       "angle": 0,
+       "neutral": 45,
+       "pulse_us": 537,
+       "travel_ms": 141,
+       "trim": -10
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 24.5
+       }
+      },
+      "out": {
+       "angle": 24,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 45,
+       "pulse_us": 840,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -6
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 45,
+       "pulse_us": 537,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 47.3
+      },
+      "out": {
+       "angle": 47,
+       "neutral": 45,
+       "pulse_us": 1339,
+       "returned": 47,
+       "trim": -10,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 0,
+      "max_us": 2562,
+      "min_deg": -90,
+      "min_us": 659,
+      "trim": -5.5
+     },
+     "type": "mg90s"
+    },
+    "name": "seeded_03",
+    "setup": {
+     "angle": -45,
+     "neutral": -45,
+     "pulse_us": 1483,
+     "trim": -6
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "move",
+       "angle": -4.5
+      },
+      "out": {
+       "angle": -4,
+       "neutral": -45,
+       "pulse_us": 2350,
+       "rows": [
+        [
+         -4,
+         2350,
+         0
+        ],
+        [
+         -4,
+         2350,
+         1
+        ]
+       ],
+       "target": -4,
+       "travel_ms": 128,
+       "trim": -6
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 4.5
+       }
+      },
+      "out": {
+       "angle": -4,
+       "applied": [
+        "trim"
+       ],
+       "neutral": -45,
+       "pulse_us": 2562,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -106.5
+      },
+      "out": {
+       "angle": -90,
+       "neutral": -45,
+       "pulse_us": 743,
+       "returned": -90,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -41.7
+      },
+      "out": {
+       "angle": -42,
+       "neutral": -45,
+       "pulse_us": 1758,
+       "returned": -42,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -20.7
+      },
+      "out": {
+       "angle": -21,
+       "neutral": -45,
+       "pulse_us": 2202,
+       "returned": -21,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -75.5
+      },
+      "out": {
+       "angle": -76,
+       "neutral": -45,
+       "pulse_us": 1039,
+       "returned": -76,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 3
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "angle"
+       ],
+       "neutral": -45,
+       "pulse_us": 2562,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -3.5
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "trim"
+       ],
+       "neutral": -45,
+       "pulse_us": 2477,
+       "trim": -4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 9
+      },
+      "out": {
+       "angle": 0,
+       "neutral": -45,
+       "pulse_us": 2477,
+       "returned": 0,
+       "trim": -4,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -77
+       }
+      },
+      "out": {
+       "angle": -77,
+       "applied": [
+        "angle"
+       ],
+       "neutral": -45,
+       "pulse_us": 849,
+       "trim": -4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -33.5
+       }
+      },
+      "out": {
+       "angle": -34,
+       "applied": [
+        "angle"
+       ],
+       "neutral": -45,
+       "pulse_us": 1758,
+       "trim": -4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -49.7
+      },
+      "out": {
+       "angle": -50,
+       "neutral": -45,
+       "pulse_us": 1420,
+       "returned": -50,
+       "trim": -4,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 30,
+      "max_us": 2306,
+      "min_deg": -30,
+      "min_us": 551,
+      "trim": -0.5
+     },
+     "type": "sg90"
+    },
+    "name": "seeded_04",
+    "setup": {
+     "angle": 0,
+     "neutral": 0,
+     "pulse_us": 1428,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -15.5
+      },
+      "out": {
+       "angle": -16,
+       "neutral": 0,
+       "pulse_us": 960,
+       "returned": -16,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 48.3
+      },
+      "out": {
+       "angle": 30,
+       "neutral": 0,
+       "pulse_us": 2306,
+       "returned": 30,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 12.5
+      },
+      "out": {
+       "angle": 12,
+       "neutral": 0,
+       "pulse_us": 1779,
+       "returned": 12,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -42.5
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 0,
+       "pulse_us": 551,
+       "returned": -30,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 13.5
+      },
+      "out": {
+       "angle": 14,
+       "neutral": 0,
+       "pulse_us": 1838,
+       "rows": [
+        [
+         14,
+         1838,
+         0
+        ],
+        [
+         14,
+         1838,
+         1
+        ]
+       ],
+       "target": 14,
+       "travel_ms": 170,
+       "trim": 0
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 32.5
+       }
+      },
+      "out": {
+       "angle": 30,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 2306,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 40
+      },
+      "out": {
+       "angle": 30,
+       "neutral": 0,
+       "pulse_us": 2306,
+       "returned": 30,
+       "trim": 0,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -23.5
+      },
+      "out": {
+       "angle": -24,
+       "neutral": 0,
+       "pulse_us": 726,
+       "returned": -24,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -9.5
+       }
+      },
+      "out": {
+       "angle": -24,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 0,
+       "pulse_us": 551,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 31.3
+      },
+      "out": {
+       "angle": 30,
+       "neutral": 0,
+       "pulse_us": 2013,
+       "returned": 30,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": -288,
+       "settle": false
+      },
+      "out": {
+       "angle": 30,
+       "neutral": 0,
+       "pulse_us": 2013,
+       "travel_ms": 720,
+       "trim": -10
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -18
+       }
+      },
+      "out": {
+       "angle": -18,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 609,
+       "trim": -10,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 315,
+      "max_us": 2499,
+      "min_deg": -45,
+      "min_us": 502,
+      "trim": 5.5
+     },
+     "type": "sg90"
+    },
+    "name": "seeded_05",
+    "setup": {
+     "angle": 135,
+     "neutral": 135,
+     "pulse_us": 1533,
+     "trim": 6
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "travel",
+       "degrees": -326,
+       "settle": false
+      },
+      "out": {
+       "angle": 135,
+       "neutral": 135,
+       "pulse_us": 1533,
+       "travel_ms": 815,
+       "trim": 6
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 175.3
+      },
+      "out": {
+       "angle": 175,
+       "neutral": 135,
+       "pulse_us": 1755,
+       "returned": 175,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 177.3
+      },
+      "out": {
+       "angle": 177,
+       "neutral": 135,
+       "pulse_us": 1766,
+       "returned": 177,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 177.3
+       }
+      },
+      "out": {
+       "angle": 177,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 135,
+       "pulse_us": 1766,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 190.3
+       }
+      },
+      "out": {
+       "angle": 190,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 135,
+       "pulse_us": 1838,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 282.3
+      },
+      "out": {
+       "angle": 282,
+       "neutral": 135,
+       "pulse_us": 2349,
+       "returned": 282,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 55
+       }
+      },
+      "out": {
+       "angle": 55,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 135,
+       "pulse_us": 1090,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 12,
+       "settle": true
+      },
+      "out": {
+       "angle": 55,
+       "neutral": 135,
+       "pulse_us": 1090,
+       "travel_ms": 90,
+       "trim": 6
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 143.5
+       }
+      },
+      "out": {
+       "angle": 144,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 135,
+       "pulse_us": 1583,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 145.5
+      },
+      "out": {
+       "angle": 146,
+       "neutral": 135,
+       "pulse_us": 1594,
+       "returned": 146,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -3.7
+      },
+      "out": {
+       "angle": -4,
+       "neutral": 135,
+       "pulse_us": 762,
+       "returned": -4,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -3.0
+       }
+      },
+      "out": {
+       "angle": -4,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 135,
+       "pulse_us": 712,
+       "trim": -3,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 180,
+      "max_us": 2362,
+      "min_deg": 0,
+      "min_us": 432,
+      "trim": 0.5
+     },
+     "type": "mg90s"
+    },
+    "name": "seeded_06",
+    "setup": {
+     "angle": 90,
+     "neutral": 90,
+     "pulse_us": 1397,
+     "trim": 0
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -13.7
+      },
+      "out": {
+       "angle": 0,
+       "neutral": 90,
+       "pulse_us": 432,
+       "returned": 0,
+       "trim": 0,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 6.0
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 90,
+       "pulse_us": 496,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 13,
+       "settle": true
+      },
+      "out": {
+       "angle": 0,
+       "neutral": 90,
+       "pulse_us": 496,
+       "travel_ms": 81,
+       "trim": 6
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -17.7
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 496,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 84.5
+      },
+      "out": {
+       "angle": 84,
+       "neutral": 90,
+       "pulse_us": 1397,
+       "returned": 84,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 198
+      },
+      "out": {
+       "angle": 180,
+       "neutral": 90,
+       "pulse_us": 2362,
+       "returned": 180,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 174.5
+       }
+      },
+      "out": {
+       "angle": 174,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 90,
+       "pulse_us": 2362,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 164.3
+      },
+      "out": {
+       "angle": 164,
+       "neutral": 90,
+       "pulse_us": 2254,
+       "returned": 164,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -4.7
+      },
+      "out": {
+       "angle": 0,
+       "neutral": 90,
+       "pulse_us": 496,
+       "returned": 0,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 50.5
+      },
+      "out": {
+       "angle": 50,
+       "neutral": 90,
+       "pulse_us": 1032,
+       "returned": 50,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 39.5
+      },
+      "out": {
+       "angle": 40,
+       "neutral": 90,
+       "pulse_us": 925,
+       "returned": 40,
+       "trim": 6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 31.5
+      },
+      "out": {
+       "angle": 32,
+       "neutral": 90,
+       "pulse_us": 839,
+       "returned": 32,
+       "trim": 6,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 30,
+      "max_us": 2310,
+      "min_deg": -30,
+      "min_us": 699,
+      "trim": 4.0
+     },
+     "type": "sg90"
+    },
+    "name": "seeded_07",
+    "setup": {
+     "angle": 0,
+     "neutral": 0,
+     "pulse_us": 1611,
+     "trim": 4
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 12.5
+      },
+      "out": {
+       "angle": 12,
+       "neutral": 0,
+       "pulse_us": 1934,
+       "returned": 12,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -1
+      },
+      "out": {
+       "angle": -1,
+       "neutral": 0,
+       "pulse_us": 1585,
+       "returned": -1,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 2.5
+       }
+      },
+      "out": {
+       "angle": -1,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 0,
+       "pulse_us": 1531,
+       "trim": 2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": -43.5
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 0,
+       "pulse_us": 752,
+       "rows": [
+        [
+         -30,
+         752,
+         0
+        ],
+        [
+         -30,
+         752,
+         1
+        ]
+       ],
+       "target": -30,
+       "travel_ms": 132,
+       "trim": 2
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 5.3
+      },
+      "out": {
+       "angle": 5,
+       "neutral": 0,
+       "pulse_us": 1692,
+       "rows": [
+        [
+         5,
+         1692,
+         0
+        ],
+        [
+         5,
+         1692,
+         1
+        ]
+       ],
+       "target": 5,
+       "travel_ms": 147,
+       "trim": 2
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": -28
+      },
+      "out": {
+       "angle": -28,
+       "neutral": 0,
+       "pulse_us": 806,
+       "rows": [
+        [
+         -28,
+         806,
+         0
+        ],
+        [
+         -28,
+         806,
+         1
+        ]
+       ],
+       "target": -28,
+       "travel_ms": 142,
+       "trim": 2
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -0.5
+       }
+      },
+      "out": {
+       "angle": 0,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 1558,
+       "trim": 2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 44
+      },
+      "out": {
+       "angle": 30,
+       "neutral": 0,
+       "pulse_us": 2310,
+       "returned": 30,
+       "trim": 2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -5.7
+      },
+      "out": {
+       "angle": -6,
+       "neutral": 0,
+       "pulse_us": 1397,
+       "returned": -6,
+       "trim": 2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -49.5
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 0,
+       "pulse_us": 752,
+       "returned": -30,
+       "trim": 2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 2.3
+      },
+      "out": {
+       "angle": 2,
+       "neutral": 0,
+       "pulse_us": 1611,
+       "returned": 2,
+       "trim": 2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -39.7
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 0,
+       "pulse_us": 752,
+       "returned": -30,
+       "trim": 2,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 60,
+      "max_us": 2326,
+      "min_deg": -30,
+      "min_us": 604,
+      "trim": -3.0
+     },
+     "type": "mg90s"
+    },
+    "name": "seeded_08",
+    "setup": {
+     "angle": 15,
+     "neutral": 15,
+     "pulse_us": 1407,
+     "trim": -3
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -30.5
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 15,
+       "pulse_us": 604,
+       "returned": -30,
+       "trim": -3,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": -28.5
+      },
+      "out": {
+       "angle": -28,
+       "neutral": 15,
+       "pulse_us": 604,
+       "rows": [
+        [
+         -28,
+         604,
+         0
+        ],
+        [
+         -28,
+         604,
+         1
+        ]
+       ],
+       "target": -28,
+       "travel_ms": 63,
+       "trim": -3
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 9.0
+       }
+      },
+      "out": {
+       "angle": -28,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 15,
+       "pulse_us": 814,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -10.0
+       }
+      },
+      "out": {
+       "angle": -28,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 15,
+       "pulse_us": 604,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 61.5
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2134,
+       "returned": 60,
+       "trim": -10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -2.0
+       }
+      },
+      "out": {
+       "angle": 60,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 15,
+       "pulse_us": 2287,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 58.5
+      },
+      "out": {
+       "angle": 58,
+       "neutral": 15,
+       "pulse_us": 2249,
+       "returned": 58,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 38.5
+      },
+      "out": {
+       "angle": 38,
+       "neutral": 15,
+       "pulse_us": 1866,
+       "returned": 38,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 103,
+       "settle": true
+      },
+      "out": {
+       "angle": 38,
+       "neutral": 15,
+       "pulse_us": 1866,
+       "travel_ms": 231,
+       "trim": -2
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -43
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 15,
+       "pulse_us": 604,
+       "returned": -30,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 9.0
+       }
+      },
+      "out": {
+       "angle": -30,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 15,
+       "pulse_us": 776,
+       "trim": 9,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 60
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2326,
+       "returned": 60,
+       "trim": 9,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 90,
+      "max_us": 2520,
+      "min_deg": -90,
+      "min_us": 670,
+      "trim": -7.5
+     },
+     "type": "sg90"
+    },
+    "name": "seeded_09",
+    "setup": {
+     "angle": 0,
+     "neutral": 0,
+     "pulse_us": 1512,
+     "trim": -8
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 93.5
+      },
+      "out": {
+       "angle": 90,
+       "neutral": 0,
+       "pulse_us": 2437,
+       "returned": 90,
+       "trim": -8,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 57.3
+       }
+      },
+      "out": {
+       "angle": 57,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 2098,
+       "trim": -8,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 109.3
+       }
+      },
+      "out": {
+       "angle": 90,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 2437,
+       "trim": -8,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 81.5
+      },
+      "out": {
+       "angle": 82,
+       "neutral": 0,
+       "pulse_us": 2355,
+       "rows": [
+        [
+         82,
+         2355,
+         0
+        ],
+        [
+         82,
+         2355,
+         1
+        ]
+       ],
+       "target": 82,
+       "travel_ms": 80,
+       "trim": -8
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -87.5
+       }
+      },
+      "out": {
+       "angle": -88,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 670,
+       "trim": -8,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 49.5
+      },
+      "out": {
+       "angle": 50,
+       "neutral": 0,
+       "pulse_us": 2026,
+       "returned": 50,
+       "trim": -8,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 10.0
+       }
+      },
+      "out": {
+       "angle": 50,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 0,
+       "pulse_us": 2211,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 17.5
+      },
+      "out": {
+       "angle": 18,
+       "neutral": 0,
+       "pulse_us": 1882,
+       "returned": 18,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": -102
+      },
+      "out": {
+       "angle": -90,
+       "neutral": 0,
+       "pulse_us": 772,
+       "rows": [
+        [
+         -90,
+         772,
+         0
+        ],
+        [
+         -90,
+         772,
+         1
+        ]
+       ],
+       "target": -90,
+       "travel_ms": 330,
+       "trim": 10
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -110
+       }
+      },
+      "out": {
+       "angle": -90,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 772,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 45.5
+       }
+      },
+      "out": {
+       "angle": 46,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 2170,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -58
+      },
+      "out": {
+       "angle": -58,
+       "neutral": 0,
+       "pulse_us": 1101,
+       "returned": -58,
+       "trim": 10,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 60,
+      "max_us": 2361,
+      "min_deg": -30,
+      "min_us": 555,
+      "trim": -2.5
+     },
+     "type": "mg90s"
+    },
+    "name": "seeded_10",
+    "setup": {
+     "angle": 15,
+     "neutral": 15,
+     "pulse_us": 1417,
+     "trim": -2
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -44.7
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 15,
+       "pulse_us": 555,
+       "returned": -30,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 51.5
+      },
+      "out": {
+       "angle": 52,
+       "neutral": 15,
+       "pulse_us": 2160,
+       "rows": [
+        [
+         52,
+         2160,
+         0
+        ],
+        [
+         52,
+         2160,
+         1
+        ]
+       ],
+       "target": 52,
+       "travel_ms": 196,
+       "trim": -2
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 76
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2320,
+       "returned": 60,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": -363,
+       "settle": true
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2320,
+       "travel_ms": 665,
+       "trim": -2
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -34.5
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 15,
+       "pulse_us": 555,
+       "returned": -30,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 69.3
+       }
+      },
+      "out": {
+       "angle": 60,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 15,
+       "pulse_us": 2320,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 43.5
+       }
+      },
+      "out": {
+       "angle": 44,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 15,
+       "pulse_us": 1999,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": -104,
+       "settle": false
+      },
+      "out": {
+       "angle": 44,
+       "neutral": 15,
+       "pulse_us": 1999,
+       "travel_ms": 173,
+       "trim": -2
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": -20,
+       "settle": false
+      },
+      "out": {
+       "angle": 44,
+       "neutral": 15,
+       "pulse_us": 1999,
+       "travel_ms": 33,
+       "trim": -2
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 24.5
+      },
+      "out": {
+       "angle": 24,
+       "neutral": 15,
+       "pulse_us": 1598,
+       "returned": 24,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 30
+       }
+      },
+      "out": {
+       "angle": 30,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 15,
+       "pulse_us": 1718,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 48
+       }
+      },
+      "out": {
+       "angle": 48,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 15,
+       "pulse_us": 2080,
+       "trim": -2,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 15,
+      "max_us": 2581,
+      "min_deg": -45,
+      "min_us": 658,
+      "trim": -6.5
+     },
+     "type": "mg90s"
+    },
+    "name": "seeded_11",
+    "setup": {
+     "angle": -15,
+     "neutral": -15,
+     "pulse_us": 1427,
+     "trim": -6
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "travel",
+       "degrees": -277,
+       "settle": true
+      },
+      "out": {
+       "angle": -15,
+       "neutral": -15,
+       "pulse_us": 1427,
+       "travel_ms": 521,
+       "trim": -6
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": -6.5
+      },
+      "out": {
+       "angle": -6,
+       "neutral": -15,
+       "pulse_us": 1715,
+       "rows": [
+        [
+         -6,
+         1715,
+         0
+        ],
+        [
+         -6,
+         1715,
+         1
+        ]
+       ],
+       "target": -6,
+       "travel_ms": 75,
+       "trim": -6
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 196,
+       "settle": true
+      },
+      "out": {
+       "angle": -6,
+       "neutral": -15,
+       "pulse_us": 1715,
+       "travel_ms": 386,
+       "trim": -6
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -7.5
+       }
+      },
+      "out": {
+       "angle": -8,
+       "applied": [
+        "angle"
+       ],
+       "neutral": -15,
+       "pulse_us": 1651,
+       "trim": -6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 21.5
+       }
+      },
+      "out": {
+       "angle": 15,
+       "applied": [
+        "angle"
+       ],
+       "neutral": -15,
+       "pulse_us": 2388,
+       "trim": -6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -47.5
+      },
+      "out": {
+       "angle": -45,
+       "neutral": -15,
+       "pulse_us": 658,
+       "returned": -45,
+       "trim": -6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -39.5
+      },
+      "out": {
+       "angle": -40,
+       "neutral": -15,
+       "pulse_us": 658,
+       "returned": -40,
+       "trim": -6,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 1.5
+       }
+      },
+      "out": {
+       "angle": -40,
+       "applied": [
+        "trim"
+       ],
+       "neutral": -15,
+       "pulse_us": 882,
+       "trim": 2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": -3
+      },
+      "out": {
+       "angle": -3,
+       "neutral": -15,
+       "pulse_us": 2068,
+       "rows": [
+        [
+         -3,
+         2068,
+         0
+        ],
+        [
+         -3,
+         2068,
+         1
+        ]
+       ],
+       "target": -3,
+       "travel_ms": 121,
+       "trim": 2
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -2.0
+       }
+      },
+      "out": {
+       "angle": -3,
+       "applied": [
+        "trim"
+       ],
+       "neutral": -15,
+       "pulse_us": 1940,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 16,
+       "settle": false
+      },
+      "out": {
+       "angle": -3,
+       "neutral": -15,
+       "pulse_us": 1940,
+       "travel_ms": 26,
+       "trim": -2
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 10.3
+       }
+      },
+      "out": {
+       "angle": 10,
+       "applied": [
+        "angle"
+       ],
+       "neutral": -15,
+       "pulse_us": 2356,
+       "trim": -2,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 60,
+      "max_us": 2570,
+      "min_deg": -30,
+      "min_us": 545,
+      "trim": -6.5
+     },
+     "type": "mg90s"
+    },
+    "name": "seeded_12",
+    "setup": {
+     "angle": 15,
+     "neutral": 15,
+     "pulse_us": 1422,
+     "trim": -6
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 8.5
+       }
+      },
+      "out": {
+       "angle": 15,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 15,
+       "pulse_us": 1737,
+       "trim": 8,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 10.0
+       }
+      },
+      "out": {
+       "angle": 15,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 15,
+       "pulse_us": 1782,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -30
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 15,
+       "pulse_us": 770,
+       "returned": -30,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 209,
+       "settle": false
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 15,
+       "pulse_us": 770,
+       "travel_ms": 348,
+       "trim": 10
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 68.5
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2570,
+       "returned": 60,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -24.7
+       }
+      },
+      "out": {
+       "angle": -25,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 15,
+       "pulse_us": 882,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 58.5
+       }
+      },
+      "out": {
+       "angle": 58,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 15,
+       "pulse_us": 2570,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 29.5
+      },
+      "out": {
+       "angle": 30,
+       "neutral": 15,
+       "pulse_us": 2120,
+       "returned": 30,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 67
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2570,
+       "returned": 60,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 64.5
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2570,
+       "returned": 60,
+       "trim": 10,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 71.3
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2570,
+       "rows": [
+        [
+         60,
+         2570,
+         0
+        ],
+        [
+         60,
+         2570,
+         1
+        ]
+       ],
+       "target": 60,
+       "travel_ms": 60,
+       "trim": 10
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -37.5
+      },
+      "out": {
+       "angle": -30,
+       "neutral": 15,
+       "pulse_us": 770,
+       "returned": -30,
+       "trim": 10,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 315,
+      "max_us": 2375,
+      "min_deg": -45,
+      "min_us": 438,
+      "trim": 4.0
+     },
+     "type": "sg90"
+    },
+    "name": "seeded_13",
+    "setup": {
+     "angle": 135,
+     "neutral": 135,
+     "pulse_us": 1428,
+     "trim": 4
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "move",
+       "angle": 154.3
+      },
+      "out": {
+       "angle": 154,
+       "neutral": 135,
+       "pulse_us": 1530,
+       "rows": [
+        [
+         154,
+         1530,
+         0
+        ],
+        [
+         154,
+         1530,
+         1
+        ]
+       ],
+       "target": 154,
+       "travel_ms": 107,
+       "trim": 4
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 172.5
+      },
+      "out": {
+       "angle": 172,
+       "neutral": 135,
+       "pulse_us": 1627,
+       "returned": 172,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 171.3
+       }
+      },
+      "out": {
+       "angle": 171,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 135,
+       "pulse_us": 1621,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 125.5
+       }
+      },
+      "out": {
+       "angle": 126,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 135,
+       "pulse_us": 1379,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 191.5
+      },
+      "out": {
+       "angle": 192,
+       "neutral": 135,
+       "pulse_us": 1734,
+       "returned": 192,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -43.5
+       }
+      },
+      "out": {
+       "angle": -44,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 135,
+       "pulse_us": 464,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": 270.5
+       }
+      },
+      "out": {
+       "angle": 270,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 135,
+       "pulse_us": 2154,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 317.5
+      },
+      "out": {
+       "angle": 315,
+       "neutral": 135,
+       "pulse_us": 2375,
+       "returned": 315,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 95
+      },
+      "out": {
+       "angle": 95,
+       "neutral": 135,
+       "pulse_us": 1212,
+       "returned": 95,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 164.5
+      },
+      "out": {
+       "angle": 164,
+       "neutral": 135,
+       "pulse_us": 1584,
+       "returned": 164,
+       "trim": 4,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": 9.5
+       }
+      },
+      "out": {
+       "angle": 164,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 135,
+       "pulse_us": 1616,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -4.5
+       }
+      },
+      "out": {
+       "angle": 164,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 135,
+       "pulse_us": 1541,
+       "trim": -4,
+       "written": true
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 90,
+      "max_us": 2586,
+      "min_deg": -90,
+      "min_us": 454,
+      "trim": 7.0
+     },
+     "type": "sg90"
+    },
+    "name": "seeded_14",
+    "setup": {
+     "angle": 0,
+     "neutral": 0,
+     "pulse_us": 1602,
+     "trim": 7
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 4.5
+      },
+      "out": {
+       "angle": 4,
+       "neutral": 0,
+       "pulse_us": 1650,
+       "returned": 4,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -48.7
+       }
+      },
+      "out": {
+       "angle": -49,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 0,
+       "pulse_us": 1022,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -56.7
+      },
+      "out": {
+       "angle": -57,
+       "neutral": 0,
+       "pulse_us": 927,
+       "returned": -57,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -11
+      },
+      "out": {
+       "angle": -11,
+       "neutral": 0,
+       "pulse_us": 1472,
+       "returned": -11,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 71.5
+      },
+      "out": {
+       "angle": 72,
+       "neutral": 0,
+       "pulse_us": 2455,
+       "returned": 72,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 104
+      },
+      "out": {
+       "angle": 90,
+       "neutral": 0,
+       "pulse_us": 2586,
+       "returned": 90,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 32.5
+      },
+      "out": {
+       "angle": 32,
+       "neutral": 0,
+       "pulse_us": 1981,
+       "returned": 32,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -13.5
+      },
+      "out": {
+       "angle": -14,
+       "neutral": 0,
+       "pulse_us": 1437,
+       "returned": -14,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 25.5
+      },
+      "out": {
+       "angle": 26,
+       "neutral": 0,
+       "pulse_us": 1910,
+       "rows": [
+        [
+         26,
+         1910,
+         0
+        ],
+        [
+         26,
+         1910,
+         1
+        ]
+       ],
+       "target": 26,
+       "travel_ms": 160,
+       "trim": 7
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -77
+      },
+      "out": {
+       "angle": -77,
+       "neutral": 0,
+       "pulse_us": 690,
+       "returned": -77,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 43
+      },
+      "out": {
+       "angle": 43,
+       "neutral": 0,
+       "pulse_us": 2112,
+       "returned": 43,
+       "trim": 7,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "travel",
+       "degrees": 379,
+       "settle": true
+      },
+      "out": {
+       "angle": 43,
+       "neutral": 0,
+       "pulse_us": 2112,
+       "travel_ms": 1007,
+       "trim": 7
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "config": {
+      "max_deg": 60,
+      "max_us": 2559,
+      "min_deg": -30,
+      "min_us": 650,
+      "trim": 10.0
+     },
+     "type": "mg90s"
+    },
+    "name": "seeded_15",
+    "setup": {
+     "angle": 15,
+     "neutral": 15,
+     "pulse_us": 1816,
+     "trim": 10
+    },
+    "steps": [
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 68.5
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2559,
+       "returned": 60,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 71
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2559,
+       "returned": 60,
+       "trim": 10,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 63.5
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2559,
+       "returned": 60,
+       "trim": 10,
+       "written": false
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "angle": -14.5
+       }
+      },
+      "out": {
+       "angle": -14,
+       "applied": [
+        "angle"
+       ],
+       "neutral": 15,
+       "pulse_us": 1201,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 60.5
+      },
+      "out": {
+       "angle": 60,
+       "neutral": 15,
+       "pulse_us": 2559,
+       "returned": 60,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 53.5
+      },
+      "out": {
+       "angle": 54,
+       "neutral": 15,
+       "pulse_us": 2559,
+       "returned": 54,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -25.7
+      },
+      "out": {
+       "angle": -26,
+       "neutral": 15,
+       "pulse_us": 946,
+       "returned": -26,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": 58.5
+      },
+      "out": {
+       "angle": 58,
+       "neutral": 15,
+       "pulse_us": 2559,
+       "returned": 58,
+       "trim": 10,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "trim": -2.5
+       }
+      },
+      "out": {
+       "angle": 58,
+       "applied": [
+        "trim"
+       ],
+       "neutral": 15,
+       "pulse_us": 2474,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 30
+      },
+      "out": {
+       "angle": 30,
+       "neutral": 15,
+       "pulse_us": 1880,
+       "rows": [
+        [
+         30,
+         1880,
+         0
+        ],
+        [
+         30,
+         1880,
+         1
+        ]
+       ],
+       "target": 30,
+       "travel_ms": 106,
+       "trim": -2
+      }
+     },
+     {
+      "in": {
+       "action": "set_angle",
+       "angle": -16.7
+      },
+      "out": {
+       "angle": -17,
+       "neutral": 15,
+       "pulse_us": 883,
+       "returned": -17,
+       "trim": -2,
+       "written": true
+      }
+     },
+     {
+      "in": {
+       "action": "move",
+       "angle": 47
+      },
+      "out": {
+       "angle": 47,
+       "neutral": 15,
+       "pulse_us": 2240,
+       "rows": [
+        [
+         47,
+         2240,
+         0
+        ],
+        [
+         47,
+         2240,
+         1
+        ]
+       ],
+       "target": 47,
+       "travel_ms": 166,
+       "trim": -2
+      }
+     }
+    ]
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "stateful: init {type, config}, setup (the state after setup()), then steps: update(properties) -> applied and written, set_angle(angle) -> returned and written, move(angle) -> target, the travel_ms it waited and its two rows [angle, pulse_us, done], travel(degrees, settle) -> travel_ms; every out carries angle, pulse_us, trim and neutral after the step"
+ }
+}

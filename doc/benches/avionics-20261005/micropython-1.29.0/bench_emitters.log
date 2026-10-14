@@ -1,0 +1,4 @@
+ emitter bench -- 30000 calls each, ns/call:
+  clamp_int  bytecode=6136  viper=2953 ns (int)
+  pid-axis   bytecode=11422  native=9116 ns (float mul-chain)
+ok: bench_emitters -- native + viper measured against bytecode (asm_rv32 unavailable on firmware)

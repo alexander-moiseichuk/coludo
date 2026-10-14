@@ -1,0 +1,61 @@
+# Coludo avionics: the Rust flight firmware (Phase 6). src/glider stays the MicroPython plan B.
+#
+# One workspace, many crates:
+#  * crates/<name> -- portable crates, named after the src/glider module they port (cc_protocol, ...). They
+#    build and test on the host with stable Rust: `cargo test` here.
+#  * firmware -- the ESP-IDF binary. Its directory carries the nightly toolchain, the target and build-std,
+#    so build it from there: `cd firmware && cargo build --release` (`cargo run --release` flashes).
+[workspace]
+resolver = "3"
+members = ["crates/*", "firmware", "recorder", "sitl"]
+default-members = ["crates/*", "sitl"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Alexander Moiseichuk"]
+
+[workspace.dependencies]
+cc_protocol = { path = "crates/cc_protocol" }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+sequencer = { path = "crates/sequencer" }
+golden = { path = "crates/golden" }
+control = { path = "crates/control" }
+mission = { path = "crates/mission" }
+board_config = { path = "crates/board_config" }
+recorder_wire = { path = "crates/recorder_wire" }
+flash_ring = { path = "crates/flash_ring" }
+panics = { path = "crates/panics" }
+recorder = { path = "crates/recorder" }
+warmstart = { path = "crates/warmstart" }
+gnss = { path = "crates/gnss" }
+databoard = { path = "crates/databoard" }
+layout = { path = "crates/layout" }
+drivers = { path = "crates/drivers" }
+controller = { path = "crates/controller" }
+sim_link = { path = "crates/sim_link" }
+beacon = { path = "crates/beacon" }
+parts = { path = "crates/parts" }
+# the device traits the drivers are written over (I2c, SpiDevice, DelayNs); esp-idf-hal implements the same 1.0
+embedded-hal = "1"
+# the logging facade every crate logs through; the firmware installs the logger
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+# float_roundtrip: a JSON number parses to the exact f64 Python's json reads (config_id hashes the repr)
+serde_json = { version = "1", features = ["float_roundtrip"] }
+# config_id is sha256 over the canon text; no std or asm features are needed for a few kilobytes at boot
+sha2 = { version = "0.10", default-features = false }
+
+[profile.release]
+debug = true  # symbols stay on the host (the .elf); the flashed image is unaffected
+# Measured on our own flight code (src/bin/cases.rs, doc/benches/avionics-20261005): O3 + fat LTO + one codegen
+# unit is the fastest of seven flag sets (geomean 415 ns vs 458 for plain O3; navigation up to 3x) AND smaller
+# than plain O3 (749 KB vs 784 KB text). The size levels (s, z) cost 1.4-1.8x, up to 15x on bit loops.
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.dev]
+debug = true
+opt-level = "z"

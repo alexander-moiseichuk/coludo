@@ -17,7 +17,8 @@ link did to them, so a CRC sees what the board sent.
 damaged, or a legacy line from before the wrapper. `recover()` gets back every record a damaged line still
 proves: `salvage()` finds the routing a stranded record belongs to among the routings its boot is known to
 use, and `pieces()` cuts a line holding several records apart. `fit()` places a recovered record's uptime
-across the ticks_us wrap, and `session_files()` picks one session's files out of a dump listing.
+across the ticks_us wrap, and `session_files()` picks one session's files out of a dump listing. `unique()` is
+the duplicate filter every reader of a Rust board's session runs (doc/specs/avionics-port.md "Duplicates").
 
     python3 tools/recorder_wire.py files <session> < listing   # the session's own names, one per line
 """
@@ -279,6 +280,48 @@ def fit(recorded: int, low: int, high: int) -> int | None:
     """
     first = recorded + max(0, -((recorded - low) // TICKS_PERIOD)) * TICKS_PERIOD
     return first if first <= high < first + TICKS_PERIOD else None
+
+
+def unique(lines: list) -> list:
+    """
+    The duplicate filter (doc/specs/avionics-port.md "Duplicates"): which lines of a capture, or of one file,
+    to keep.
+
+    The Rust board keeps a record in two places until its SD copy is safe ("better duplicates in both than
+    lost data"), so a reader can meet the same line twice: the ring_saver re-saving from a stale position
+    after a reboot or onto a new card, a flash program that failed after its chunk had landed and was
+    programmed again, a `/ring` pull overlapping a session already on the card. The board never removes them;
+    the readers drop them here. A line is keyed by (routing, uptime, OPEN): its stream (None for recorder.log),
+    its payload's leading decimal, and the CRC over both. The first line of each key is kept and every later
+    one dropped, so two different lines with one uptime, which differ in their CRC, both stay.
+
+    Only a stamped line that checks out is keyed; every other line is kept, for the reader to judge:
+      * a damaged line has no CRC to prove it a duplicate, so it stays damage;
+      * a line with no uptime of its own, a stream's header, is never a duplicate. A stream's second header is
+        what flight_telemetry flags as two boots appended into one file (a label reused across boots), and
+        nothing in the header itself tells a re-printed one from a new boot's.
+    Plan B stamped with ticks_us, which wraps every 2**30 us: two of its lines a wrap apart share a key only
+    when they carry the same microsecond and the same values, which measurements never repeat.
+
+    Args:
+        lines - [(routing, payload)] in order: each line's routing (None for a log line) and its payload when
+            the line checks out under that routing, else None.
+
+    Returns:
+        [bool], one per line: False for a duplicate, True for a line to keep.
+    """
+    keep, seen = [], set()
+    for routing, payload in lines:
+        digits = 0
+        while payload is not None and digits < len(payload) and '0' <= payload[digits] <= '9':
+            digits += 1
+        if not digits:
+            keep.append(True)
+            continue
+        key = (routing, payload[:digits], checks(routing, payload)[0])  # the uptime as its digits
+        keep.append(key not in seen)
+        seen.add(key)
+    return keep
 
 
 def session_files(session: str, names: list) -> list:

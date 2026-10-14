@@ -43,6 +43,16 @@ import preflight  # noqa: E402 -- install + data-consistency gates, run before a
 import sim_model  # noqa: E402
 
 _STAGE = controller_module.Stage
+
+"""
+TRACE, when set to a callable, is handed every control tick's inputs as the handles present them, before the
+control pipeline runs: src/avionics/golden/build_control_trace.py records them to replay plan B's own flight task
+(tasks/flight.py) and the Rust port open-loop on the same inputs. A dict per tick: t (s), stage (id), accel (|a| g on
+the boost axis), heading/roll/pitch (deg), rate (roll/pitch/yaw deg/s), and speed, position (lat, lon), pitot, agl,
+elevation -- each None while its handle has no source -- and course: the body's clean ground track on a tick that
+published a GNSS sample, else None (this loop feeds no wind estimator; the trace gives plan B's flight task one).
+"""
+TRACE = None
 _FINS = ('servo_eleron_left', 'servo_eleron_right', 'servo_yaw')
 _SPIKE_S = 3.0  # a transient 2x sensor glitch fires once every this many seconds (within 2-5 s)
 _GNSS_S = 0.1  # GNSS fix cadence (~10 Hz), for both the injected handles and the capture rows
@@ -413,6 +423,14 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
 
         # --- the REAL control pipeline (mirrors flight._step): governor -> gate -> guidance -> PID ---
         stage_id = _STAGE.NAMES[stage]
+        if TRACE is not None:
+            def fresh(handle):
+                return handle.value_now if handle.source is not None else None
+            TRACE({'t': t, 'stage': stage_id, 'accel': accel_m, 'heading': heading_m, 'roll': roll_m, 'pitch': pitch_m,
+                   'rate': (roll_rate_dps, pitch_rate_dps, yaw_rate_dps), 'speed': fresh(speed_handle),
+                   'position': fresh(position_handle), 'pitot': fresh(pitot_handle) if pitot_on else None,
+                   'agl': fresh(agl_handle), 'elevation': fresh(elevation_handle),
+                   'course': body.track() if last_gnss == t else None})  # a GNSS sample's track, clean
         roll_deg = pitch_deg = yaw_deg = 0  # per-axis demands for flight.csv (0 whenever fins are neutral)
         roll_cd = fixed.from_float(roll_m)
         pitch_cd = fixed.from_float(pitch_m)

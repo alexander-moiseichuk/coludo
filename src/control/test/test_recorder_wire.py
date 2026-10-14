@@ -5,7 +5,9 @@ Host (CPython) test for the recorder wire wrapper's host reference (tools/record
 doc/specs/recorder-wire.md) at the LINE level: the reference vectors the board is held to, the raw-byte
 CRC, and every kind of link damage, each judged on one line -- good, rejected or salvaged, never guessed.
 The same matrix runs end to end through flight_telemetry (test_flight_telemetry.py) and recorder_flight
-(test_tools.py). Stdlib only. Run by `make test`.
+(test_tools.py). Then the duplicate filter every reader of a Rust board's session runs (unique(),
+doc/specs/avionics-port.md "Duplicates"), on its own; test_ring_split.py runs it through the readers. Stdlib
+only. Run by `make test`.
 """
 
 import binascii
@@ -231,6 +233,48 @@ def test_session_files_leave_out_another_label():
     assert bad.returncode != 0 and not bad.stdout
 
 
+def test_the_duplicate_filter_keeps_the_first_of_each_line():
+    """
+    unique() keeps the first line of each (routing, uptime, OPEN) key and drops every later one, a re-saved log
+    line and an index row too. A different line at the same uptime stays, and so does the same payload in
+    another stream. NEGATIVE, never dropped: a header or any line with no uptime of its own (a stream's second
+    header is the splice flight_telemetry reports), a damaged line, which no CRC proves a duplicate, and a line
+    whose OPEN collides with another stream's at the same uptime, or with the same stream's at another uptime:
+    the routing and the uptime are in the key.
+    """
+    imu, baro = '000123_imu.csv', '000123_baro.csv'
+    lines = [
+        (imu, 'uptime;ax'),
+        (imu, '884029;0.98'),
+        (None, '884030 seq :: go'),
+        (imu, '884029;0.98'),  # a duplicate
+        (imu, '884029;0.99'),  # the same uptime, other values
+        (None, '884030 seq :: go'),  # a duplicate log line
+        (baro, '884029;0.98'),  # the same payload in another stream
+        (imu, 'uptime;ax'),  # a second header
+        (None, 'boot :: no digits here'),
+        (None, 'boot :: no digits here'),  # no uptime of its own
+        (imu, None),  # damaged
+        (imu, None),
+        (imu, '884029;0.98'),  # a third copy
+        ('session.csv', '884031;123;000123'),
+        ('session.csv', '884031;123;000123'),  # a re-saved index row
+        (imu, '18884029;0.98'),  # a later uptime ending in the same digits
+    ]
+    keep = recorder_wire.unique(lines)
+    dropped = [index for index, kept in enumerate(keep) if not kept]
+    assert dropped == [3, 5, 12, 14], dropped
+    assert len(keep) == len(lines) and recorder_wire.unique([]) == []
+    # two streams, one uptime, one OPEN (found by search): only the routing tells them apart
+    collide = [(imu, '884029;rivaxpzd'), (baro, '884029;ynyywwjy')]
+    assert recorder_wire.checks(*collide[0])[0] == recorder_wire.checks(*collide[1])[0] == 0x574716B4
+    assert recorder_wire.unique(collide) == [True, True]
+    # one stream, one OPEN, two uptimes (found by a birthday search): only the uptime tells them apart
+    collide = [(imu, '884030;pouwfnfv'), (imu, '884029;hlgroqkh')]
+    assert recorder_wire.checks(*collide[0])[0] == recorder_wire.checks(*collide[1])[0] == 0x91AD42B6
+    assert recorder_wire.unique(collide) == [True, True]
+
+
 test_reference_vectors()
 test_the_crc_covers_the_raw_bytes()
 test_empty_payload_and_empty_routing()
@@ -238,6 +282,7 @@ test_every_kind_of_damage_on_one_line()
 test_a_leftover_name_proves_only_this_session()
 test_fit_places_a_time_only_when_it_is_unique()
 test_session_files_leave_out_another_label()
+test_the_duplicate_filter_keeps_the_first_of_each_line()
 print('ok: recorder wire -- reference vectors, raw-byte CRC, empty payload/routing, every damage kind '
       'on one line, leftover names, fit across the wrap, session files under a label (junk tails kept, '
-      'a byte-safe pull list)')
+      'a byte-safe pull list), the duplicate filter (headers, damage and two CRC collisions kept)')

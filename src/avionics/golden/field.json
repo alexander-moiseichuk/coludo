@@ -1,0 +1,8643 @@
+{
+ "cases": [
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {},
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "the_nearest_site_in_range_is_picked",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {},
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.4988,
+       -73.5
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "between_two_sites_the_nearer_wins",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "fallback_bearing_deg": 135.0,
+     "fallback_depth_m": 80.0,
+     "fallback_near_m": 40.0,
+     "fallback_width_m": 120.0
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.52,
+       -73.47
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.52,
+       -73.47
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "no_site_in_range_synthesizes_the_fallback",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51985116293124,
+       -73.47004398750806
+      ],
+      [
+       45.519132513991245,
+       -73.46850549053468
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51985116293124,
+       -73.47004398750806
+      ],
+      [
+       45.519132513991245,
+       -73.46850549053468
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {},
+    "max_range_m": 200.0,
+    "settings": {},
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.52,
+       -73.47
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "the_fallback_defaults_face_north",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.521257635644986,
+       -73.47064105591836
+      ],
+      [
+       45.5204491555875,
+       -73.46935894408163
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ],
+     "zone": [
+      [
+       48.103,
+       11.498
+      ],
+      [
+       48.102,
+       11.501
+      ]
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "site_select": false
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "site_select_off_keeps_the_mission",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": [
+      [
+       48.103,
+       11.498
+      ],
+      [
+       48.102,
+       11.501
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": [
+      [
+       48.103,
+       11.498
+      ],
+      [
+       48.102,
+       11.501
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {},
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "no_fix_decides_nothing_until_one_comes",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 5000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 6000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 7000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 8000,
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "off_the_pad_decides_nothing",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 9000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "a_still_dwell_arms_once",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.9,
+       0.0,
+       1.2
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 9000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 10000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 11000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 12000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "moving_restarts_the_dwell",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 9000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 10000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 11000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 12000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 13000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 14000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 15000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 16000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "a_stale_accel_or_fix_restarts_the_dwell",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {},
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5,
+     "site_select": false
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 9000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "no_zone_never_arms",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": true,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": true,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": true,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": true,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": true,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": true,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": true,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 9000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": true,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 10000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "the_operator_armed_first",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": false
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 9000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "auto_arm_off_never_arms",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5,
+     "still_g": 0.3
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.31
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.31
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.31
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       0.69
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       0.69
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       0.69
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.29
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.29
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.29
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 9000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.29
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 10000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.29
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 11000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.29
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 12000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.29
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 13000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "the_still_band_edges",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 2.5
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 1500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": [
+       45.5001,
+       -73.5001
+      ],
+      "now_ms": 3500,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "a_fractional_dwell",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 3,
+     "fallback_bearing_deg": 5.271341904570455,
+     "fallback_depth_m": 65.20209034096084,
+     "fallback_near_m": 73.26927243238787,
+     "fallback_width_m": 113.7031765850096,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": [
+       -0.01137115514636793,
+       0.002015952567305338,
+       1.0130251559423067
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.10416454359346371,
+       0.021007322327460543,
+       0.9491034487382423
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.16424558024514924,
+       0.2,
+       0.7606845470919357
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.28742303685844073,
+       0.2,
+       0.37197769508543144
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.42302754044119784,
+       0.2,
+       0.9412539943998073
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 6500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 7500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.00339774857757539,
+       0.10098937124349153,
+       1.042562577176544
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.35286586282329413,
+       0.2,
+       1.7815093304674514
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 9000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.08936376327950324,
+       -0.0055427964894728165,
+       0.9614034855536254
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 10000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.029664456174755188,
+       0.11262253897513573,
+       0.9542764575074575
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 11000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       -0.03992885396862983,
+       0.02322964076132706,
+       1.0500338107207638
+      ],
+      "armed": false,
+      "fix": [
+       45.494693225927584,
+       -73.48032398582579
+      ],
+      "now_ms": 12000,
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_00",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49593310747106,
+       -73.4809279127244
+      ],
+      [
+       45.49534738980719,
+       -73.479470763685
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": false,
+     "auto_arm_dwell_s": 2.5,
+     "fallback_bearing_deg": 176.9277256948112,
+     "fallback_depth_m": 73.15311589527859,
+     "fallback_near_m": 46.776888019617665,
+     "fallback_width_m": 72.22094287088575,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    "steps": [
+     {
+      "accel": [
+       -0.0025688431992178986,
+       -0.05399074441504658,
+       0.9775963473629689
+      ],
+      "armed": false,
+      "fix": [
+       45.51082327548588,
+       -73.49946699380583
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.05575653152641063,
+       0.03392173890588782,
+       0.94315331073272
+      ],
+      "armed": false,
+      "fix": [
+       45.51082327548588,
+       -73.49946699380583
+      ],
+      "now_ms": 1500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.014011465990812206,
+       0.059454179955346936,
+       0.9591909811945889
+      ],
+      "armed": false,
+      "fix": [
+       45.51082327548588,
+       -73.49946699380583
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.46128176011371913,
+       0.2,
+       1.6058851873909155
+      ],
+      "armed": false,
+      "fix": [
+       45.51082327548588,
+       -73.49946699380583
+      ],
+      "now_ms": 3500,
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_01",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51040414966861,
+       -73.49987261518761
+      ],
+      [
+       45.50974700705367,
+       -73.49894683925562
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51040414966861,
+       -73.49987261518761
+      ],
+      [
+       45.50974700705367,
+       -73.49894683925562
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51040414966861,
+       -73.49987261518761
+      ],
+      [
+       45.50974700705367,
+       -73.49894683925562
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51040414966861,
+       -73.49987261518761
+      ],
+      [
+       45.50974700705367,
+       -73.49894683925562
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": false,
+     "auto_arm_dwell_s": 5,
+     "fallback_bearing_deg": 111.53985319898233,
+     "fallback_depth_m": 89.34211339617814,
+     "fallback_near_m": 71.19662953112586,
+     "fallback_width_m": 136.2065792423531,
+     "site_select": false,
+     "still_g": 0.3
+    },
+    "steps": [
+     {
+      "accel": [
+       0.016248553901911773,
+       0.07778052265782681,
+       0.9222529085093478
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.03004625791415587,
+       -0.08636651868796875,
+       1.0317838125023528
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.04436319481270021,
+       0.06567767624341869,
+       0.9628555159707919
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 3500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.05443701537771609,
+       -0.06802944460965003,
+       0.9525086964490412
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.8310899071030751,
+       0.2,
+       0.8535907999771994
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.03534502851550455,
+       -0.06753157811752998,
+       0.9877480626669322
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 7500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.027398551992203188,
+       -0.05751330023059317,
+       1.1251567838232266
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 8500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.07213276944177963,
+       0.067004882870395,
+       1.0073503245863047
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 9500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.011851110899562744,
+       0.0068065270863541544,
+       1.019998354958063
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 10500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 11500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.2688963069396926,
+       0.2,
+       0.9451799312584808
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 12500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.08369201522459357,
+       -0.06746722651029725,
+       0.9924754145798531
+      ],
+      "armed": false,
+      "fix": [
+       45.50088720248946,
+       -73.49968301685138
+      ],
+      "now_ms": 14000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_02",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": false,
+     "auto_arm_dwell_s": 5,
+     "fallback_bearing_deg": 180.53271170563,
+     "fallback_depth_m": 68.22797146096846,
+     "fallback_near_m": 62.5180882468923,
+     "fallback_width_m": 116.86515522871112,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": [
+       0.03271533373904853,
+       -0.08853297863273307,
+       1.039368520966537
+      ],
+      "armed": false,
+      "fix": [
+       45.4953367973858,
+       -73.47973951757649
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.055983225134146886,
+       -0.08543804440435451,
+       1.0436745818913034
+      ],
+      "armed": false,
+      "fix": [
+       45.4953367973858,
+       -73.47973951757649
+      ],
+      "now_ms": 2000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.5355114105413505,
+       0.2,
+       1.416878514898577
+      ],
+      "armed": false,
+      "fix": [
+       45.4953367973858,
+       -73.47973951757649
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.008353310408691122,
+       -0.006059966480215975,
+       0.9461257770063957
+      ],
+      "armed": false,
+      "fix": [
+       45.4953367973858,
+       -73.47973951757649
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.21282795068644655,
+       0.2,
+       0.256164858332045
+      ],
+      "armed": false,
+      "fix": [
+       45.4953367973858,
+       -73.47973951757649
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.003996178355961346,
+       -0.015677316550890316,
+       0.9658348610045053
+      ],
+      "armed": false,
+      "fix": [
+       45.4953367973858,
+       -73.47973951757649
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 6500,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_03",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49477522793193,
+       -73.48049985116008
+      ],
+      [
+       45.494162328439835,
+       -73.47900221132811
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49477522793193,
+       -73.48049985116008
+      ],
+      [
+       45.494162328439835,
+       -73.47900221132811
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49477522793193,
+       -73.48049985116008
+      ],
+      [
+       45.494162328439835,
+       -73.47900221132811
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49477522793193,
+       -73.48049985116008
+      ],
+      [
+       45.494162328439835,
+       -73.47900221132811
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49477522793193,
+       -73.48049985116008
+      ],
+      [
+       45.494162328439835,
+       -73.47900221132811
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49477522793193,
+       -73.48049985116008
+      ],
+      [
+       45.494162328439835,
+       -73.47900221132811
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49477522793193,
+       -73.48049985116008
+      ],
+      [
+       45.494162328439835,
+       -73.47900221132811
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 3,
+     "fallback_bearing_deg": 316.1098624038829,
+     "fallback_depth_m": 119.36662033544992,
+     "fallback_near_m": 36.97966269449073,
+     "fallback_width_m": 108.27425572847181,
+     "site_select": false,
+     "still_g": 0.3
+    },
+    "steps": [
+     {
+      "accel": [
+       -0.1218402605328483,
+       -0.06460701193385407,
+       0.9837177257231559
+      ],
+      "armed": false,
+      "fix": [
+       45.499511722674704,
+       -73.50090321751213
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.04508006585968312,
+       0.0008380048481791502,
+       0.919291512859035
+      ],
+      "armed": false,
+      "fix": [
+       45.499511722674704,
+       -73.50090321751213
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.01777836056866234,
+       0.009891228466590338,
+       1.0861421719542577
+      ],
+      "armed": false,
+      "fix": [
+       45.499511722674704,
+       -73.50090321751213
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.09320534156925188,
+       0.033176263120985754,
+       0.9863228803442058
+      ],
+      "armed": false,
+      "fix": [
+       45.499511722674704,
+       -73.50090321751213
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       9.131767847284532e-05,
+       -0.01036995109060352,
+       0.9816876352425279
+      ],
+      "armed": false,
+      "fix": [
+       45.499511722674704,
+       -73.50090321751213
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.026627634440322095,
+       0.04698146370096996,
+       0.9999326663030743
+      ],
+      "armed": false,
+      "fix": [
+       45.499511722674704,
+       -73.50090321751213
+      ],
+      "now_ms": 6500,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_04",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5,
+     "fallback_bearing_deg": 125.01497645957285,
+     "fallback_depth_m": 92.3677050889097,
+     "fallback_near_m": 59.53783346497321,
+     "fallback_width_m": 95.77389795529609,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    "steps": [
+     {
+      "accel": [
+       0.06122993189705564,
+       0.13071528614245545,
+       0.9868226156643483
+      ],
+      "armed": false,
+      "fix": [
+       45.49426638357459,
+       -73.48011205471911
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.08369130315048229,
+       0.017733731217524668,
+       1.0647329993306136
+      ],
+      "armed": false,
+      "fix": [
+       45.49426638357459,
+       -73.48011205471911
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.12570361572767327,
+       0.021162748082318456,
+       0.9039466171615349
+      ],
+      "armed": false,
+      "fix": [
+       45.49426638357459,
+       -73.48011205471911
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0801019072734433,
+       0.00584266024902526,
+       1.0054309011535345
+      ],
+      "armed": false,
+      "fix": [
+       45.49426638357459,
+       -73.48011205471911
+      ],
+      "now_ms": 4500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.02223462561501308,
+       0.07991968319947469,
+       0.9437109808756998
+      ],
+      "armed": false,
+      "fix": [
+       45.49426638357459,
+       -73.48011205471911
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_05",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.494136323836045,
+       -73.47961611435218
+      ],
+      [
+       45.49330657441915,
+       -73.4783887775917
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.494136323836045,
+       -73.47961611435218
+      ],
+      [
+       45.49330657441915,
+       -73.4783887775917
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.494136323836045,
+       -73.47961611435218
+      ],
+      [
+       45.49330657441915,
+       -73.4783887775917
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.494136323836045,
+       -73.47961611435218
+      ],
+      [
+       45.49330657441915,
+       -73.4783887775917
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.494136323836045,
+       -73.47961611435218
+      ],
+      [
+       45.49330657441915,
+       -73.4783887775917
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": false,
+     "auto_arm_dwell_s": 5,
+     "fallback_bearing_deg": 77.53742399835116,
+     "fallback_depth_m": 113.6479009161123,
+     "fallback_near_m": 72.79221670308965,
+     "fallback_width_m": 67.1195300042248,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.008666374746568808,
+       -0.00620513989271924,
+       0.9756629713072835
+      ],
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.4318412787664707,
+       0.2,
+       1.6030934256760458
+      ],
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 3500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.05433542960186304,
+       -0.04553784143333934,
+       1.0183974806228093
+      ],
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 4000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.9100967778169153,
+       0.2,
+       1.7894086208672284
+      ],
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0066795006843288415,
+       -0.002442100770318462,
+       1.000676796327996
+      ],
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.05349117072133147,
+       0.2,
+       0.7566098333675764
+      ],
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 6500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.042386382052691934,
+       0.02758558403704749,
+       1.0178135358795222
+      ],
+      "armed": false,
+      "fix": [
+       45.50989823307992,
+       -73.49908370977874
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_06",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51065995930009,
+       -73.49789155058316
+      ],
+      [
+       45.50963904750602,
+       -73.49703116681378
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": false,
+     "auto_arm_dwell_s": 3,
+     "fallback_bearing_deg": 249.72291101885725,
+     "fallback_depth_m": 99.62733414239563,
+     "fallback_near_m": 30.229240830059197,
+     "fallback_width_m": 84.25990037331921,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": [
+       0.009367061164693616,
+       -0.009410854386441578,
+       0.9899408932826265
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.06038358520737548,
+       -0.08362979626129474,
+       1.0473875614440915
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 1500,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.07276526202308861,
+       -0.06400768865084387,
+       1.0225087333894571
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.06336348814656177,
+       0.059280795185144335,
+       0.969122596702181
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.008125276204333745,
+       0.013408024856425164,
+       1.0179750806726786
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 7500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.2288642505062808,
+       0.2,
+       0.7693809169452928
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 9000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.028712743182104407,
+       -0.04439365789997394,
+       1.0689158477580925
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 10000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.023319168208621895,
+       0.0923831851012318,
+       0.9904851276271573
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 10500,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 11000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.01474014264908958,
+       -0.04647956817537233,
+       1.0394230631215693
+      ],
+      "armed": false,
+      "fix": [
+       45.49523725069333,
+       -73.48066295725401
+      ],
+      "now_ms": 12000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 13500,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_07",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.495435543451784,
+       -73.48216506525358
+      ],
+      [
+       45.49454057997584,
+       -73.4810852553957
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ],
+     "zone": [
+      [
+       48.103,
+       11.498
+      ],
+      [
+       48.102,
+       11.501
+      ]
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5,
+     "fallback_bearing_deg": 309.81387814898426,
+     "fallback_depth_m": 82.6305508598388,
+     "fallback_near_m": 67.5103769525625,
+     "fallback_width_m": 95.17171296856348,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    "steps": [
+     {
+      "accel": [
+       -0.021537090754789986,
+       -0.013424309183791647,
+       1.0621580103988622
+      ],
+      "armed": false,
+      "fix": [
+       45.49995398463976,
+       -73.49977981022688
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.08029668302368725,
+       0.017241925213322216,
+       1.0024588257140343
+      ],
+      "armed": false,
+      "fix": [
+       45.49995398463976,
+       -73.49977981022688
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.04412341792170886,
+       0.016871617108229434,
+       1.0049268256919541
+      ],
+      "armed": false,
+      "fix": [
+       45.49995398463976,
+       -73.49977981022688
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.011958029107687852,
+       -0.007746933782617151,
+       1.0125065387595025
+      ],
+      "armed": false,
+      "fix": [
+       45.49995398463976,
+       -73.49977981022688
+      ],
+      "now_ms": 4500,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.49995398463976,
+       -73.49977981022688
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.49995398463976,
+       -73.49977981022688
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.019190990510694936,
+       -0.028940995672391945,
+       1.0130380863780353
+      ],
+      "armed": false,
+      "fix": [
+       45.49995398463976,
+       -73.49977981022688
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0883075032990835,
+       0.039844292826399876,
+       0.9724010805515199
+      ],
+      "armed": false,
+      "fix": [
+       45.49995398463976,
+       -73.49977981022688
+      ],
+      "now_ms": 9000,
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_08",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 2.5,
+     "fallback_bearing_deg": 254.77125252460715,
+     "fallback_depth_m": 90.73585384929397,
+     "fallback_near_m": 57.8225738956521,
+     "fallback_width_m": 133.7973381822828,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    "steps": [
+     {
+      "accel": [
+       -0.04487377929899588,
+       -0.010926496591325996,
+       1.03849045483843
+      ],
+      "armed": false,
+      "fix": [
+       45.49778907851567,
+       -73.49993291009518
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.005472914247483397,
+       0.018675503041710565,
+       1.0029259304643947
+      ],
+      "armed": false,
+      "fix": [
+       45.49778907851567,
+       -73.49993291009518
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.031356144450026165,
+       -0.03162648172880685,
+       0.9104601906110403
+      ],
+      "armed": false,
+      "fix": [
+       45.49778907851567,
+       -73.49993291009518
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.10279590963579577,
+       0.02873237289630598,
+       1.0206362016492048
+      ],
+      "armed": false,
+      "fix": [
+       45.49778907851567,
+       -73.49993291009518
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.021189934815025298,
+       -0.0017121024822649503,
+       1.072713264633763
+      ],
+      "armed": false,
+      "fix": [
+       45.49778907851567,
+       -73.49993291009518
+      ],
+      "now_ms": 6500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.03452043169838467,
+       -0.031295095360130414,
+       1.0045683352064407
+      ],
+      "armed": false,
+      "fix": [
+       45.49778907851567,
+       -73.49993291009518
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_09",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 5,
+     "fallback_bearing_deg": 24.573346375559307,
+     "fallback_depth_m": 109.75987035023267,
+     "fallback_near_m": 62.35070325021073,
+     "fallback_width_m": 65.56699535989611,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": [
+       -0.03422493767203353,
+       -0.033264352105881155,
+       1.0442005366357814
+      ],
+      "armed": false,
+      "fix": [
+       45.4995224190176,
+       -73.49985281986491
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.09832367040152395,
+       0.03930182289433091,
+       0.9736822988467634
+      ],
+      "armed": false,
+      "fix": [
+       45.4995224190176,
+       -73.49985281986491
+      ],
+      "now_ms": 1500,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       -0.06187668400637078,
+       0.030675910793362116,
+       0.9605858775059809
+      ],
+      "armed": false,
+      "fix": [
+       45.4995224190176,
+       -73.49985281986491
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.060403168141389185,
+       0.0014998660808075112,
+       1.0680643551309554
+      ],
+      "armed": false,
+      "fix": [
+       45.4995224190176,
+       -73.49985281986491
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.03527046044238213,
+       0.015919554163284753,
+       1.0119149043940845
+      ],
+      "armed": false,
+      "fix": [
+       45.4995224190176,
+       -73.49985281986491
+      ],
+      "now_ms": 5500,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       -0.07228063706074637,
+       0.02285327491951929,
+       0.9520965288910206
+      ],
+      "armed": false,
+      "fix": [
+       45.4995224190176,
+       -73.49985281986491
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.696073307179081,
+       0.2,
+       1.7077937849075464
+      ],
+      "armed": false,
+      "fix": [
+       45.4995224190176,
+       -73.49985281986491
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.015729647616316355,
+       0.019669407808597064,
+       0.925381881204691
+      ],
+      "armed": false,
+      "fix": [
+       45.4995224190176,
+       -73.49985281986491
+      ],
+      "now_ms": 7500,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_10",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "north_field",
+     "zone": [
+      [
+       45.503,
+       -73.502
+      ],
+      [
+       45.502,
+       -73.5005
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 3,
+     "fallback_bearing_deg": 145.75074565373572,
+     "fallback_depth_m": 69.94405788995104,
+     "fallback_near_m": 63.39391470717829,
+     "fallback_width_m": 113.7878271355341,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": [
+       0.03568713593058497,
+       -0.012313007319648857,
+       1.0003642242750546
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.01186698894621728,
+       0.008632150424735049,
+       0.9975744351705313
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 1500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.048693231033689464,
+       -0.06926254178260147,
+       1.0357939920735433
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.8365531082354589,
+       0.2,
+       0.5163883341660749
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 3000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       -0.014777302343487751,
+       0.0452959458610058,
+       0.9987116778525247
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0065576899779869946,
+       -0.005562402147577967,
+       0.9943900589167683
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 5000,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.013282881172286536,
+       -0.03433113275208001,
+       0.9815668043266587
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 7000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       0.11824049742008709,
+       -0.0012115295173245264,
+       1.01920434008194
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 7500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.02174938217577628,
+       0.017226931101445478,
+       0.9871609342642372
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 9000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.0230742017598813,
+       0.02198869468454109,
+       0.9661615914647708
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 10500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.01089762658165832,
+       0.051166093639900136,
+       0.9608812435447064
+      ],
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 11000,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.49773610505936,
+       -73.49988364263633
+      ],
+      "now_ms": 11500,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_11",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": true,
+     "arms": 1,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": false,
+     "auto_arm_dwell_s": 5,
+     "fallback_bearing_deg": 245.89326518317944,
+     "fallback_depth_m": 54.14583194528028,
+     "fallback_near_m": 60.09668485178878,
+     "fallback_width_m": 110.92689317324488,
+     "site_select": false,
+     "still_g": 0.3
+    },
+    "steps": [
+     {
+      "accel": [
+       -0.020584012813142497,
+       0.03544301658390014,
+       0.9346505627568417
+      ],
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.00870155757378422,
+       -0.04472391069525331,
+       0.9494155567159415
+      ],
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.04065653010828102,
+       0.06785272980384578,
+       0.9755548101182056
+      ],
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 3500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.04078293470223852,
+       -0.008712024442951041,
+       1.0437609710844378
+      ],
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 4500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.03151100844319338,
+       0.050210402173411633,
+       1.0129204290833322
+      ],
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.08049815578073949,
+       0.10726403747868207,
+       1.0484270159079594
+      ],
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.12457765421313689,
+       -0.05934224421420541,
+       0.9986763659351726
+      ],
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.04646467691596331,
+       -0.01819739239346556,
+       0.9549012722539264
+      ],
+      "armed": false,
+      "fix": [
+       45.49447901457321,
+       -73.47973616194035
+      ],
+      "now_ms": 8500,
+      "stage": "boosting"
+     }
+    ]
+   },
+   "name": "seeded_12",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": null
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ],
+     "zone": [
+      [
+       48.103,
+       11.498
+      ],
+      [
+       48.102,
+       11.501
+      ]
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 2.5,
+     "fallback_bearing_deg": 354.1994753154995,
+     "fallback_depth_m": 66.54649192978948,
+     "fallback_near_m": 76.39740798605175,
+     "fallback_width_m": 90.43901445649598,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.7609266028261106,
+       0.2,
+       1.4594052418108354
+      ],
+      "armed": false,
+      "fix": [
+       45.49868333482123,
+       -73.50031021742768
+      ],
+      "now_ms": 1500,
+      "stage": "setting"
+     },
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.49868333482123,
+       -73.50031021742768
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 4000,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       -0.014246126606971932,
+       -0.06032563822523055,
+       1.0011715952230045
+      ],
+      "armed": false,
+      "fix": [
+       45.49868333482123,
+       -73.50031021742768
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.0263551231594351,
+       -0.001702377377258969,
+       0.9432866214803004
+      ],
+      "armed": false,
+      "fix": [
+       45.49868333482123,
+       -73.50031021742768
+      ],
+      "now_ms": 7000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_13",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "",
+     "zone": [
+      [
+       48.103,
+       11.498
+      ],
+      [
+       48.102,
+       11.501
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "south_field",
+     "zone": [
+      [
+       45.498,
+       -73.499
+      ],
+      [
+       45.497,
+       -73.4975
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ],
+     "zone": [
+      [
+       48.103,
+       11.498
+      ],
+      [
+       48.102,
+       11.501
+      ]
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 3,
+     "fallback_bearing_deg": 3.3822351075285395,
+     "fallback_depth_m": 78.07567056811432,
+     "fallback_near_m": 39.288963929733775,
+     "fallback_width_m": 118.5506611115876,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": [
+       -0.08153449642260237,
+       0.03461835599573692,
+       0.9328014817822153
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.025282396875232774,
+       0.0864536894509177,
+       0.9578141640171685
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 2000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.01206921350130113,
+       0.03325903276416459,
+       0.9213099821667927
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.4033691624274176,
+       0.2,
+       0.4978865755649487
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 4000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.020473838389504166,
+       0.04363138288770282,
+       0.9522748425602122
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 4500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.03601860851648627,
+       -0.0034054081680983126,
+       0.9522525950916156
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 5500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.059780409936575456,
+       0.053128654546681434,
+       1.0062981082232345
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 6000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.7836825090783663,
+       0.2,
+       1.2191747476366321
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 7500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.020364955621199343,
+       -0.008438112966249594,
+       1.028125616728806
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 8000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.02903995374260583,
+       -0.059841717734696355,
+       1.0322297997705498
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 8500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0021483920573399664,
+       0.04148233176512253,
+       0.9537928547870738
+      ],
+      "armed": false,
+      "fix": [
+       45.51089647898643,
+       -73.50094627018404
+      ],
+      "now_ms": 9500,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_14",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.51194955302875,
+       -73.50164688488087
+      ],
+      [
+       45.51124819055509,
+       -73.50012718277151
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "input": {
+    "launch": {
+     "sites": [
+      {
+       "name": "north_field",
+       "pad": [
+        45.5,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.503,
+         -73.502
+        ],
+        [
+         45.502,
+         -73.5005
+        ]
+       ]
+      },
+      {
+       "name": "south_field",
+       "pad": [
+        45.49865,
+        -73.5
+       ],
+       "zone": [
+        [
+         45.498,
+         -73.499
+        ],
+        [
+         45.497,
+         -73.4975
+        ]
+       ]
+      },
+      {
+       "name": "far_field",
+       "pad": [
+        48.1,
+        11.5
+       ],
+       "zone": [
+        [
+         48.103,
+         11.498
+        ],
+        [
+         48.102,
+         11.501
+        ]
+       ]
+      }
+     ],
+     "zone": [
+      [
+       48.103,
+       11.498
+      ],
+      [
+       48.102,
+       11.501
+      ]
+     ]
+    },
+    "max_range_m": 200.0,
+    "settings": {
+     "auto_arm": true,
+     "auto_arm_dwell_s": 2.5,
+     "fallback_bearing_deg": 340.57449461002903,
+     "fallback_depth_m": 75.07537283180848,
+     "fallback_near_m": 70.58137548222851,
+     "fallback_width_m": 139.4943817173693,
+     "site_select": true,
+     "still_g": 0.1
+    },
+    "steps": [
+     {
+      "accel": null,
+      "armed": false,
+      "fix": [
+       45.49453192179624,
+       -73.48010309768546
+      ],
+      "now_ms": 1000,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       0.0,
+       0.0,
+       1.0
+      ],
+      "armed": false,
+      "fix": null,
+      "now_ms": 1500,
+      "stage": "boosting"
+     },
+     {
+      "accel": [
+       -0.018677157647820252,
+       -0.005120032802932481,
+       1.043170994766606
+      ],
+      "armed": false,
+      "fix": [
+       45.49453192179624,
+       -73.48010309768546
+      ],
+      "now_ms": 2500,
+      "stage": "setting"
+     },
+     {
+      "accel": [
+       -0.011313325083350402,
+       0.003333194696510753,
+       0.9470262688021628
+      ],
+      "armed": false,
+      "fix": [
+       45.49453192179624,
+       -73.48010309768546
+      ],
+      "now_ms": 3000,
+      "stage": "setting"
+     }
+    ]
+   },
+   "name": "seeded_15",
+   "output": [
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49578508419735,
+       -73.48145774180145
+      ],
+      [
+       45.495110673733535,
+       -73.47967007485965
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49578508419735,
+       -73.48145774180145
+      ],
+      [
+       45.495110673733535,
+       -73.47967007485965
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49578508419735,
+       -73.48145774180145
+      ],
+      [
+       45.495110673733535,
+       -73.47967007485965
+      ]
+     ]
+    },
+    {
+     "armed": false,
+     "arms": 0,
+     "site": "fallback",
+     "zone": [
+      [
+       45.49578508419735,
+       -73.48145774180145
+      ],
+      [
+       45.495110673733535,
+       -73.47967007485965
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "compare": {
+  "kind": "abs",
+  "tol": 1e-06
+ },
+ "meta": {
+  "commit": "f5e46558d4a1cf4166cf212935d6f98885345340",
+  "generator": "field",
+  "glider_tree": "6e4c83223975b8448637a16ae975ebc37ce9cf38",
+  "python": "3.12",
+  "source": "src/glider/tasks/field.py, src/glider/mission.py",
+  "tag": "micropython_plan_B_3"
+ },
+ "note": "per case: input {launch (the launch.config the Mission loads), settings (the field entry), max_range_m, steps}, a step per _tick(): {now_ms, stage, armed (the operator arms before the tick; false keeps the arming the field made), fix [lat, lon] fresh or null, accel [x, y, z] g fresh or null}; output after each tick: {site, zone [[lat, lon], [lat, lon]] degrees or null, armed, arms (the arm() calls so far)}"
+}

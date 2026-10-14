@@ -1,0 +1,11 @@
+# The flight recorder (ESP32-C6 SuperMini): the console on its native USB, the card on SPI with long file names.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# the SuperMini's 4 MB flash (partitions.csv's factory slot ends past 2 MB; flash.sh writes the table)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+# the first card init traces each SPI command and the card's answer (main.rs `TRACE_TAGS`)
+CONFIG_LOG_MAXIMUM_LEVEL_VERBOSE=y

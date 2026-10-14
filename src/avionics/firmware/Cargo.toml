@@ -1,0 +1,90 @@
+[package]
+name = "firmware"
+description = "The Coludo flight firmware for the ESP32-P4 (ESP-IDF, Rust std)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "firmware"
+path = "src/lib.rs"
+harness = false
+
+[[bin]]
+name = "avionics"
+path = "src/main.rs"
+harness = false  # no libtest on the board; on-board tests are their own binaries
+
+[dependencies]
+base64.workspace = true
+board_config.workspace = true
+cc_protocol.workspace = true
+control.workspace = true
+controller.workspace = true
+databoard.workspace = true
+drivers.workspace = true
+parts.workspace = true  # the I2C parts: their runs, published state and calibrations (R2)
+flash_ring.workspace = true
+gnss.workspace = true
+sha2.workspace = true
+sim_link.workspace = true
+beacon = { workspace = true, features = ["esp"] }
+embedded-hal.workspace = true
+layout.workspace = true
+panics.workspace = true
+mission.workspace = true
+recorder.workspace = true
+recorder_wire.workspace = true
+sequencer.workspace = true
+warmstart.workspace = true
+esp-idf-svc = "0.53"
+anyhow = "1"
+log = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+
+# esp-idf-sys hands every enabled sdkconfig option to this crate as an `esp_idf_<option>` cfg
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(esp_idf_spiram_xip_from_psram)", "cfg(esp_idf_heap_task_tracking)"] }
+
+# a function over clippy.toml's 80 lines is split, or allowed where it stands with its reason
+# (doc/specs/avionics-refactor.md R5; tools/function_lengths.py measures the same in `make lengths`)
+[lints.clippy]
+too_many_lines = "warn"
+
+[build-dependencies]
+embuild = "0.33"
+
+# Wi-Fi rides the on-board ESP32-C6 over SDIO (esp_hosted). Pinned to the exact pair MicroPython v1.29.0
+# ships. The host compares major.minor only, so a C6 reflashed with esp-hosted-mcu 2.7.x slave firmware pairs
+# with both; components/hosted_no_reboot keeps a failing link from rebooting the P4.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_wifi_remote", version = "0.15.2" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp_hosted", version = "2.7.0" }
+
+# Espressif's DSP kernels: the only route to the P4's PIE SIMD and hardware loops (upstream LLVM, so Rust,
+# cannot emit them)
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp-dsp", version = "1.8.2" }
+
+# EEMBC CoreMark, Espressif's port: the standard figure to compare MCUs by (src/bin/peak.rs)
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/coremark", version = "1.1.0~2" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = [
+    "components/coremark_entry",
+    "components/hosted_no_reboot",
+    "components/sd_card",
+    "components/coludo_video",
+    "components/log_hook",
+    "components/panic_capture",
+    "components/safe_restart",
+    "components/flash_wait",
+]
+
+[[package.metadata.esp-idf-sys.extra_components]]
+bindings_header = "bindings.h"

@@ -1,54 +1,148 @@
-# coludo
+<div align="center">
 
-This repository is to represent and control the rocket powered glider.
-Since I do not know C/C++, it will be less complex than [HPR Rocket Flight Computer](https://github.com/SparkyVT/HPR-Rocket-Flight-Computer) this project will be written with MicroPython.
-The composion of [hardware components](doc/hardware.md) is in progress with weight/power consumption restrictions in the account.
+# Coludo
 
-**Board revisions.** One firmware runs three of them and decides which it is on at boot, by I²C scan
-([`layout.py`](src/glider/layout.py)) — no config edit when a board is rewired:
+### A rocket-boosted glider that flies itself home
 
-| rev | attitude module | also |
-| --- | --- | --- |
-| **v0.1** | sen0253 (BNO055 `0x28` + BMP280 `0x76`) | ADXL375 ±200 g on SPI |
-| **v1.0** | sen0253 | ADXL375 removed; the ICP-10111, pitot and laser move to their own 100 kHz bus |
-| **v1.1** | **sen0697** (BMI323 `0x69` + BMP581 `0x47` + **BMM350 `0x15`**) | first board with a magnetometer; the board fuses attitude itself |
+<img src="doc/photos/TMS-7_glider_turntable.png" width="520" alt="The TMS-7 glider, rendered from its 3D-printing model">
 
-The v1.1 change is measured in [TMS-7-board_v1.1_sen0697](doc/sims/TMS-7-board_v1.1_sen0697/):
-across 60 board flights the two revisions fly the **same aircraft** — landing accuracy, fin activity
-and in-flight health are all within run-to-run noise. What separates them is redundancy, not
-performance: v1.1 gains a magnetometer and a second gyro source and gives up its second attitude
-source. The magnetometer's value looked clear over 12 paired flights and did not survive 24.
+[![flight firmware: Rust](https://img.shields.io/badge/flight%20firmware-Rust-dea584?logo=rust&logoColor=white)](src/avionics/README.md)
+[![born in MicroPython](https://img.shields.io/badge/born%20in-MicroPython-2b2728?logo=micropython&logoColor=white)](#micropython-first-rust-now)
+[![board: ESP32-P4](https://img.shields.io/badge/board-ESP32--P4-e7352c?logo=espressif&logoColor=white)](doc/hardware.md)
+[![next launch: 2026-12-05](https://img.shields.io/badge/next%20launch-2026--12--05-38bdf8)](launches/README.md)
 
-The old glider version TMS-4 can be ![found in here](https://github.com/alexander-moiseichuk/coludo/blob/main/doc/photos/TMS-4%20with%20electronics.jpg)
+</div>
 
-The glider version TMS-7 ![avaliable there](https://github.com/alexander-moiseichuk/coludo/blob/main/doc/photos/TMS-7_glider_static_burn.jpg)
+A small model rocket carries a 3D-printed glider a few hundred metres up. Near the top the two part, and the glider
+finds its own way back down to a marked strip of field: no pilot, no one steering it, just the flight computer on
+board, its GNSS, barometers, a pitot tube and an attitude filter it runs itself.
+
+Everything here is home-built: the airframes (designed and printed, TMS-1 to TMS-7 so far), the flight computer's
+firmware, the ground station, the simulator it is tested in, and the flight recorders.
+
+## How a flight goes
+
+```mermaid
+flowchart LR
+    S(["🧭 SETTING<br/>on the pad, armed"]) --> B(["🚀 BOOSTING<br/>~2.7 s of F15 thrust"])
+    B --> G(["✈️ GLIDING<br/>separate, home in, orbit the zone"])
+    G --> L(["🎯 LANDING<br/>the last metres down"])
+    L --> D(["📡 DONE<br/>beacon for the recovery"])
+```
+
+<p align="center">
+  <img src="doc/photos/TMS-8_sitl_flight.svg" width="860" alt="A simulated TMS-8 flight: the ground track over the landing zone, and the altitude">
+</p>
+
+That card is the real flight firmware flying the simulator: boost to 274 m, separate, glide out, and orbit down onto
+the zone in a crosswind. The same code flies the boards hardware-in-the-loop, with the simulator feeding their
+sensors over Wi-Fi ([`doc/sims/`](doc/sims/README.md) holds a few hundred of those flights).
+
+## First launch day — 3 October 2026
+
+<table>
+<tr>
+<td width="48%">
+<a href="launches/20261003/TMS-7C/video.mp4"><img src="doc/photos/TMS-7C_onboard_20261003.jpg" alt="TMS-7C's on-board camera: play the video"></a>
+</td>
+<td>
+
+**[TMS-7](launches/20261003/TMS-7/README.md)**, the booster alone on the strongest motor, flew clean and came down
+under its chute with a nose logger aboard:
+
+| | |
+|---|---|
+| peak acceleration | **14.9 g** |
+| top speed | **125 m/s**, Mach 0.36 |
+| apogee | **464–479 m** |
+
+**[TMS-7C](launches/20261003/TMS-7C/README.md)**, the first instrumented glider, lost its boost stability just off
+the rod, looped and was down within five seconds. Its on-board camera saw all of it (▶ the picture).
+
+</td>
+</tr>
+</table>
+
+## From TMS-4 to TMS-7
+
+<table>
+<tr>
+<td align="center"><img src="doc/photos/readme/tms4_electronics.jpg" width="260" alt="TMS-4 with its electronics"><br/><sub><b>TMS-4</b> with its electronics</sub></td>
+<td align="center"><img src="doc/photos/readme/tms6_gliders.jpg" width="260" alt="TMS-6a and 6b gliders"><br/><sub><b>TMS-6</b> — the 6a/6b/6c campaign (<a href="doc/videos/tms-6/6a_demo.mp4">video</a>)</sub></td>
+<td align="center"><img src="doc/photos/readme/tms7_electronics.jpg" width="260" alt="TMS-7 glider with its flight computer"><br/><sub><b>TMS-7</b> — folding wings and a flight computer</sub></td>
+</tr>
+</table>
+
+Next is **TMS-8**: a new glider with fixed wings, for the [launch on **5 December 2026**](launches/README.md).
+
+## MicroPython first, Rust now
+
+Coludo's flight firmware was born in **MicroPython** (`src/glider`, now called *plan B*): quick to write, easy to test
+on the board, and it flew the first launch day. Its garbage collector, a ~10 ms scheduling floor and a tight heap kept
+shaping the design, so in October 2026 the firmware was rewritten in **Rust** on the same ESP32-P4 board
+([`src/avionics`](src/avionics/README.md)), milestone by milestone, each one held to plan B's own behaviour: golden
+vectors, the simulator, and flights on the boards. MicroPython stays for the tools, the tests and TMS-7C.
+
+- **100 Hz control loop** on its own core, paced by a timer interrupt, with no locks in its path.
+- **Its own attitude filter** (a quaternion, the gyro's bias learned on the pad), and a lean law that holds the boost
+  near vertical.
+- **Back in control about a second after a reset**, and a mid-air reset resumes the flight where it was (a *warm
+  start*) instead of falling out of the sky.
+- **A separate flight recorder** (ESP32-C6, own battery and SD card) that keeps the log and a radio beacon going even
+  if the main board is lost ([`doc/flight_recorder.md`](doc/flight_recorder.md)).
 
 ## Where things live
 
-**Specifications — [`doc/specs/`](doc/specs/)**
-- [Architecture overview](doc/specs/coludo.md) — the **main description**: flight lifecycle (Setting → Boosting → Gliding → Landing), flight controller, sensors, telemetry and logging. Authoritative for flight behaviour.
-- [Board configuration](doc/specs/board-config.md) — the controller's config schema, the three config layers, and the save/reboot activation lifecycle.
-- [Control Center ↔ board protocol](doc/specs/cc-protocol.md) — the wire protocol between the ground station and the boards, plus the browser bridge.
+**Specifications** (`doc/specs/`)
+- [Architecture overview](doc/specs/coludo.md) — the **main description**: the flight lifecycle (Setting → Boosting →
+  Gliding → Landing → Done), the flight controller, sensors, telemetry and logging. Authoritative for flight behaviour;
+  the Rust firmware's deliberate differences are listed in the port plan.
+- [Rust avionics port](doc/specs/avionics-port.md) — the plan B → Rust port: milestones, decisions, proofs.
+- [Avionics refactor](doc/specs/avionics-refactor.md) and [boost control](doc/specs/boost-control.md) — the port's
+  structure, and control in BOOSTING (the lean law).
+- [Board configuration](doc/specs/board-config.md) — the config schema, the three config layers, and the save/reboot
+  activation lifecycle.
+- [Control Center ↔ board protocol](doc/specs/cc-protocol.md), [recorder wire format](doc/specs/recorder-wire.md) and
+  [sim-link](doc/specs/sim-link.md) — what goes over the wires: commands, logs, and the simulator's frames.
 
-**Documentation — [`doc/`](doc/)**
-- [Hardware](doc/hardware.md) — parts list, weights, power budget, and candidate build configurations.
-- [Data sources](doc/datasources.md) — every measured quantity with its primary source, backups and rates, per board revision, and which channels lose redundancy where.
-- [WaveShare ESP32-P4-WIFI6 pin map](doc/waveshare_esp32p4_pins.md) — reserved vs free GPIOs and the recommended `board.config` pin assignment.
-- [Tasks & plans](doc/plan.md) — required hardware checklist and the phased development roadmap.
-- [Development & testing guide](doc/skills.md) — tooling (`ampy`/`mpremote`/`rshell`, `mpy-cross`), source layout, the `panda` test network, and the testing rules.
-- [Flight simulations](doc/sims/) — closed-loop host + on-board HITL flights (noise/wind/corner sweeps) with interactive reports.
-- [Benchmarks](doc/benches/) — board performance logs (BeagleBone, RPi4, StarFive).
-- [Photos](doc/photos/) — build and electronics photos.
-- [Videos](doc/videos/) — flight footage (e.g. the TMS-6 campaign).
+**Documentation** (`doc/`)
+- [Hardware](doc/hardware.md) — parts, weights, power budget and the main-board revisions.
+- [Flight recorder](doc/flight_recorder.md) — the separate ESP32-C6 recorder: log, beacon, battery.
+- [Field checks](doc/field_checks.md) — what a launch day verifies on the Rust stack (GNSS fix, beacon range, battery).
+- [Data sources](doc/datasources.md) — every measured quantity with its primary source, backups and rates.
+- [Pin map](doc/waveshare_esp32p4_pins.md) — generated from the board config: the bus and GPIO maps, reserved pins.
+- [Tasks & plans](doc/plan.md) — required hardware and the phased roadmap.
+- [Development & testing guide](doc/skills.md) — plan B and Rust board tooling, `tools/cc.py` scripting, the `panda`
+  test network, the coding conventions and testing rules.
+- [Flight simulations](doc/sims/README.md) — closed-loop flights of plan B and of the Rust firmware (HITL over the
+  sim-link, SITL), with interactive reports; newest first.
+- Generated references: [Rust API](doc/avionics_api.md), [plan B API](doc/glider_api.md),
+  [architecture](doc/architecture.md), [telemetry](doc/telemetry.md) (`make docs`).
+- Benchmarks: [the ESP32-P4 on Rust](doc/benches/avionics-20261005/README.md), [on
+  MicroPython](doc/benches/WaveShare_esp32p4-micropython-findings.md), [the GNSS
+  bench](doc/benches/gnss-20261004/README.md).
+- Photos and videos (`doc/photos/`, `doc/videos/`) — builds and the TMS-6 campaign; launch-day footage sits with its
+  launch.
 
-**Models — [`models/`](models/)** — 3D-printable STL parts for the booster and glider prototypes (TMS-1 … TMS-7).
+**Launches — [`launches/`](launches/README.md)** — one folder per launch day: the manifest, every board config as it
+flew, and afterwards the flight data, plots and video (the first, [2026-10-03](launches/20261003/README.md); next,
+TMS-8 on 2026-12-05).
 
-**Source — [`src/`](src/)**
-- [`src/glider/`](src/glider/) — Main Controller flight firmware (MicroPython), with tests in `src/glider/test/`. *(implemented)*
-- [`src/control/`](src/control/) — Control Center ground station (Python) + browser dashboard. *(implemented)*
-- [`src/camera/`](src/camera/) — Recorder module (Luckfox Pico): 2304×1296 video + UART telemetry/log sink. *(implemented)*
-- [`src/logger/`](src/logger/) — standalone nose logger (ESP32-C6 + SEN0697 + 120 mAh LiPo): a self-contained
-  payload that records boost acceleration and apogee altitude for a flight the main controller is not on. *(implemented)*
+**Models** (`models/`) — 3D-printable STL parts (TMS-1 … TMS-7, the catapult; [TMS-7's notes](models/TMS-7/README.md))
+and the main-board PCBs.
 
-**Tools — [`tools/`](tools/)** — various tools which helps in development and setup.
+**Source** (`src/`)
+- [`src/avionics/`](src/avionics/README.md) — the flight firmware in Rust: the ESP32-P4 board firmware, the
+  host-tested crates, the SITL, and the C6 flight recorder.
+- `src/glider/` — plan B, the MicroPython flight firmware (frozen at tag `micropython_plan_B_3`, still
+  flown by TMS-7C), the reference the port was checked against, and the simulator's physics (`sim_model.py`).
+- `src/control/` — the Control Center ground station (Python) and its browser dashboard.
+- [`src/logger/`](src/logger/README.md) — the standalone nose logger (ESP32-C6 + SEN0697 + LiPo, MicroPython), flown
+  on TMS-7.
+- [`src/camera/`](src/camera/README.md) — plan B's Luckfox Pico recorder (TMS-7C).
+- [`src/gnss_bench/`](src/gnss_bench/README.md) — a GNSS field checker (ESP32-C6, MicroPython).
 
+**Tools** (`tools/`) — board operations (`cc.py`, `deploy.sh`, `provision.sh`, `ota.py`), simulation
+(`hitl_host.py`, `sitl_matrix.py`, `virtual_flight.py`, `boost_sweep.py`), flight data (`recorder_flight.py`,
+`flight_report.py`, `board_pull.sh`), and the pictures above (`render_model.py`, `render_flight_card.py`).
+`make check` runs every local gate (there is no CI).

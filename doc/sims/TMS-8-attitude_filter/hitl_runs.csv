@@ -1,0 +1,11 @@
+board;run;attitude;boost;noise;outcome;miss_m;inside;aloft_s;apogee_m;path_min_deg;lean_max_deg;looped;free_rows;attitude_rows
+taster;base_vertical;sim;vertical;0.1;done;88.6;False;99.2;273;;;;23;5259
+taster;filter_vertical;filter;vertical;0.1;done;96.9;False;75.4;273;;;;4499;4573
+taster;filter_vertical_n0;filter;vertical;0.0;done;26.6;True;84.1;273;;;;4924;4998
+taster;base_6dof;sim;6dof;0.1;done;88.1;False;68.7;182;86.4;4.8;False;21;3728
+taster;filter_6dof;filter;6dof;0.1;done;48.5;False;55.2;183;89.9;0.2;False;3483;3558
+TMS-7F;base_vertical;sim;vertical;0.1;done;92.2;False;97.7;273;;;;20;5136
+TMS-7F;filter_vertical;filter;vertical;0.1;done;99.5;False;73.4;273;;;;4343;4418
+TMS-7F;filter_vertical_n0;filter;vertical;0.0;done;55.0;False;80.5;273;;;;4702;4777
+TMS-7F;base_6dof;sim;6dof;0.1;done;90.8;False;69.1;182;88.5;3.6;False;22;3709
+TMS-7F;filter_6dof;filter;6dof;0.1;done;76.6;False;51.2;183;89.7;0.4;False;3236;3311

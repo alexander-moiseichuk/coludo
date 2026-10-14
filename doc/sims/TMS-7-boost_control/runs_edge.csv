@@ -1,0 +1,13 @@
+law;margin_cal;wind_ms;run;outcome;path_min_deg;tilt_max_deg;looped;burnout_ms;apogee_m;aloft_s;miss_m;inside;board;scenario
+lean@20;1.0;6.0;1;done;51.9;171.8;True;16.4;73;32.2;24.2;True;TMS-7F;m1_w6_r1
+lean;1.0;6.0;1;done;60.5;28.8;False;47.1;159;62.6;74.4;False;taster;m1_w6_r1
+lean@15;1.0;6.0;1;done;45.9;168.1;True;17.5;75;32.8;2.4;True;TMS-7F;m1_w6_r1
+lean;1.0;6.0;2;done;62.8;26.6;False;50.3;169;66.0;72.1;False;taster;m1_w6_r2
+lean@20;1.0;6.0;2;done;58.8;30.9;False;48.5;162;63.2;77.7;False;TMS-7F;m1_w6_r2
+lean@15;1.0;6.0;2;done;45.7;175.8;True;16.6;72;31.9;6.9;True;taster;m1_w6_r2
+lean;1.0;6.0;3;done;59.0;30.0;False;44.6;148;59.4;67.3;True;TMS-7F;m1_w6_r3
+lean@20;1.0;6.0;3;done;57.8;31.9;False;47.8;159;63.5;79.2;False;taster;m1_w6_r3
+lean@15;1.0;6.0;3;done;38.9;143.7;True;20.9;75;32.6;11.4;True;TMS-7F;m1_w6_r3
+lean;1.0;6.0;4;done;62.4;27.3;False;49.7;167;65.8;76.7;False;taster;m1_w6_r4
+lean@20;1.0;6.0;4;done;58.2;31.6;False;47.7;159;63.2;75.1;False;TMS-7F;m1_w6_r4
+lean@15;1.0;6.0;4;done;40.9;167.0;True;19.8;73;32.5;0.6;True;taster;m1_w6_r4

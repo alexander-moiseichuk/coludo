@@ -174,6 +174,11 @@ async def main():
     # used to get the plain 10 s, and a timeout drops the link
     assert board_module.timeout_for('arm') >= 30.0 and board_module.timeout_for('probe servo_yaw') >= 30.0
     assert board_module.timeout_for('ping') == 10.0 and board_module.timeout_for('armed') == 10.0
+    # the card's `rm` frees whole sessions (>10 s for 128 MB): its deadline is long, and a tool's HTTP client waits
+    # past the hub's longest, so the hub always answers first (never the client giving up on a running rm)
+    assert board_module.timeout_for('rm confirm path=000374') >= 60.0
+    from contract import transports
+    assert transports._HTTP_TIMEOUT_S > max(board_module._SLOW_TIMEOUT_S.values()), transports._HTTP_TIMEOUT_S
 
     """
     health_seen tracks HEALTH replies only. last_seen moves on any reply, and the heartbeat used to

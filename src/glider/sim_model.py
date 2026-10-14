@@ -26,20 +26,21 @@ def _unit_noise() -> float:
     return (random.random() + random.random() + random.random() - 1.5) * 2.0
 
 
-def _polar(speed: float) -> float:
+def _polar(speed: float, trim: float) -> float:
     """
-    The sink multiplier at `speed`, relative to sink at trim (1.0 at _V_TRIM).
+    The sink multiplier at `speed`, relative to sink at trim (1.0 at `trim`, the airframe's trim speed).
 
     Profile drag grows as v^3 and induced drag as 1/v; their half-sum is normalised so trim reads 1.0.
 
     Args:
         speed - the airspeed (m/s).
+        trim - the airframe's trim speed (m/s).
 
     Returns:
         The multiplier to apply to trim_sink.
     """
     v = speed if speed > _V_POLAR_FLOOR else _V_POLAR_FLOOR
-    ratio = v / _V_TRIM
+    ratio = v / trim
     return 0.5 * (ratio * ratio * ratio + 1.0 / ratio)
 
 
@@ -56,7 +57,6 @@ endgame bank (in guidance) is gated to respect -- the sim PENALISES a gate that 
 """
 _V_STALL_1G = 9.0       # m/s -- 1-g stall speed (below the 14 m/s trim)
 TRIM_SPEED_MS: float = 14.0  # public: the host tools derive a sink from it (glide_polar, flight_predict)
-_V_TRIM = TRIM_SPEED_MS      # legacy in-module alias (the physics below reads _V_TRIM throughout)
 """
 AIR QUALITY is the glide L/D, and it is the ONE number the whole sim's energy budget hangs on:
 `trim_sink = TRIM_SPEED_MS / AIR_QUALITY`, so it sets how long a flight lasts and therefore how much
@@ -79,7 +79,7 @@ AIR_QUALITY: float = 5.5
 """
 DRAG POLAR: sink varies with AIRSPEED, not just bank. `trim_sink` is the sink AT trim;
 away from it the classic decomposition applies -- profile/parasite drag grows as v^3, induced drag as
-1/v -- so `_polar()` is normalised to exactly 1.0 at _V_TRIM. Note its MINIMUM sits at ~0.76*_V_TRIM
+1/v -- so `_polar()` is normalised to exactly 1.0 at the trim speed. Note its MINIMUM sits at ~0.76x trim
 (~10.6 m/s), not at trim: minimum-sink speed is below best-glide speed on any real glider, so trimming
 at 14 m/s buys range at a small cost in sink. Flying well off trim now costs energy either way, which
 makes an airspeed-gated bank a real trade-off instead of a free one (it unblocks turn-radius #5.2).
@@ -93,6 +93,25 @@ _ROLL_MAX = 70.0        # deg -- structural bank clamp (raised from 60 to give t
 _BOOST_COCK = 2.0       # deg/s^2 per (kPa * deg AoA) -- passive tilt of the nose toward the relative wind
 _BOOST_FIN = 2.0        # deg/s^2 per (kPa * deg deflection) -- corrective fin authority
 _BOOST_DAMP = 3.0       # 1/s -- aero angular-rate damping
+
+"""
+AIRFRAMES: the airframe the physics flies, by name (`Body(..., airframe=)`; the HITL host's --airframe). The
+numbers above are TMS-7's and stay the default, so every study before 2026-10-11 reproduces exactly.
+ * 'tms7': the measured L/D 5.5 (a floor), 14 m/s trim, 9 m/s 1-g stall, the 46 mm stack's boost drag with the
+   wings folded.
+ * 'tms8': version 8 (operator, 2026-10-11), a flat triangle frame pushed by today's booster, its tips and tail
+   FIXED (no folding wings: they stressed the frame and changed the mass between stages). L/D 8 at a 12 m/s trim
+   are the operator's planning figures, not a measurement; everything else is TMS-7's ("all params the same as
+   now", the operator), the 1-g stall included (9 m/s).
+   Its boost drag is the frame's front: ~5 x 5 cm of body around the 43 mm obturation ring (~25 cm^2) and the
+   2 cm-high tips and wing across the rest of the ~20 cm span (~30 cm^2), ~55 cm^2 behind a pointed triangle
+   front, Cd ~0.35: ~0.0019 m^2, taken as 0.0020, about 2x TMS-7's. An estimate, which the v8 study sweeps.
+Each entry: air_quality (L/D), trim_ms, stall_ms (1-g), boost_cda (Cd x frontal area, m^2).
+"""
+AIRFRAMES: dict = {
+    'tms7': {'air_quality': AIR_QUALITY, 'trim_ms': TRIM_SPEED_MS, 'stall_ms': _V_STALL_1G, 'boost_cda': _CDA},
+    'tms8': {'air_quality': 8.0, 'trim_ms': 12.0, 'stall_ms': _V_STALL_1G, 'boost_cda': 0.0020},
+}
 
 # average thrust (N), burn (s) per motor -- from the coludo.md flight envelope
 MOTORS: dict = {'E16': (16.1, 1.77), 'F15': (14.4, 3.45)}
@@ -177,7 +196,12 @@ class Body:
     """
 
     def __init__(self, mass: float, launch: tuple, elevation_m: float, glide_heading: float,
-                 glide_mass: float = None):
+                 glide_mass: float = None, airframe: str = 'tms7'):
+        frame = AIRFRAMES[airframe]  # the airframe's aerodynamics (AIRFRAMES above); a KeyError names a typo
+        self.airframe = airframe
+        self.trim_speed = frame['trim_ms']   # m/s -- the glide relaxes to it; the polar is 1.0 there
+        self.stall_1g = frame['stall_ms']    # m/s -- the 1-g stall speed
+        self.boost_cda = frame['boost_cda']  # m^2 -- Cd x frontal area in the climb
         self.mass = mass  # boost mass (whole stack: booster + glider); drops to glide_mass at separation
         self.glide_mass = glide_mass if glide_mass else mass  # glider-only mass after the booster ejects
         self.lat0, self.lon0 = launch
@@ -193,7 +217,7 @@ class Body:
         self.pn = 0.0          # position north (m from pad)
         self.alt = 0.0         # altitude above the pad (m)
         self.vu = 0.0          # vertical speed (m/s)
-        self.trim_sink = TRIM_SPEED_MS / AIR_QUALITY  # trim sink (m/s) at load 1; see AIR_QUALITY above
+        self.trim_sink = self.trim_speed / frame['air_quality']  # trim sink (m/s) at load 1; see AIR_QUALITY above
         self.speed = 0.0       # horizontal airspeed (m/s)
         self.heading = glide_heading  # deg (0 = north)
         self.roll = 0.0        # deg
@@ -254,7 +278,7 @@ class Body:
         Returns:
             None. Advances the vertical + attitude state in place.
         """
-        drag = 0.5 * _RHO * self.vu * abs(self.vu) * _CDA
+        drag = 0.5 * _RHO * self.vu * abs(self.vu) * self.boost_cda
         specific = (thrust - drag) / self.mass         # what the accelerometer measures (up +)
         self.accel_g = specific / _G if thrust else max(0.0, -drag / self.mass / _G + 0.0)
         self.vu += (specific - _G) * dt                # kinematic accel = specific - g
@@ -293,7 +317,7 @@ class Body:
         self.roll_rate = 0.0
         self.yaw_rate = 0.0
         self.heading = self.glide_heading
-        self.speed = 14.0                              # trim airspeed (m/s)
+        self.speed = self.trim_speed                   # trim airspeed (m/s)
         self.vu = self.speed * math.sin(math.radians(self.pitch))
 
     def _advance_gust(self, dt: float) -> tuple:
@@ -339,7 +363,7 @@ class Body:
         # STALL check for THIS step, from the bank we are flying: load n = 1/cos(roll), stall speed rises
         # as sqrt(n). A stalled wing loses lift (a sink break, below) and bites at half control authority.
         load0 = 1.0 / max(0.3, math.cos(math.radians(roll0)))
-        stall_speed = _V_STALL_1G * load0 ** 0.5
+        stall_speed = self.stall_1g * load0 ** 0.5
         stalled = self.speed < stall_speed
         authority = 0.5 if stalled else 1.0                        # mushy controls in the stall
         self.roll += (1.2 * authority * roll_cmd - 2.0 * self.roll) * dt   # ailerons -> bank, leveling
@@ -352,7 +376,7 @@ class Body:
         self.pitch_rate = (self.pitch - pitch0) / dt
         self.heading = (self.heading + self.yaw_rate * dt) % 360.0
         heading_rad = math.radians(self.heading)  # cached: pe + pn reuse it (was 2 radians() calls)
-        self.speed += (14.0 - self.speed) * 0.5 * dt
+        self.speed += (self.trim_speed - self.speed) * 0.5 * dt
         """
         sink: the straight-TRIM glide settles at -TRIM_SPEED_MS/AIR_QUALITY, so at the measured
         quality 5.5 that is ~-2.5 m/s (200 m of altitude buys ~1100 m of air path, against the
@@ -366,7 +390,7 @@ class Body:
         """
         load = 1.0 / max(0.3, math.cos(roll_rad))  # load factor n (clamped); the accel_g below reuses it
         # sink = trim sink x the POLAR at this airspeed x the bank's induced-drag cost (n^1.5)
-        self.vu += -0.1 * (self.vu + self.trim_sink * _polar(self.speed) * load ** 1.5) * dt
+        self.vu += -0.1 * (self.vu + self.trim_sink * _polar(self.speed, self.trim_speed) * load ** 1.5) * dt
         if stalled:  # lift lost -> a hard sink break on TOP of induced drag; deeper deficit, harder drop
             self.vu -= _STALL_SINK * (stall_speed - self.speed) * dt
         """

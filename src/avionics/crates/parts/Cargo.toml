@@ -1,0 +1,22 @@
+[package]
+name = "parts"
+description = "The I2C parts as their bus owner runs them: each driver's run (its channels, its stream, its health), its published state for inspect, and the calibrations it keeps, over embedded-hal (doc/specs/avionics-refactor.md R2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+board_config.workspace = true  # the entry a part is built from, and its wired pins
+control.workspace = true  # change: a barometer's climb rate
+controller.workspace = true  # the Topology's writers, the device table's health, an entry's binding
+databoard.workspace = true  # the channels' writers
+drivers.workspace = true  # the parts' drivers
+embedded-hal.workspace = true  # the I2c bus, the DelayNs waits and the XSHUT OutputPin a part runs over
+log.workspace = true  # each run's lines, as plan B's tasks note them
+recorder.workspace = true  # each part's stream (Rows)
+serde.workspace = true  # the inspect keys, typed: f32 stays f32
+serde_json.workspace = true  # a part's config block and its `update`
+
+[dev-dependencies]
+serde_json.workspace = true

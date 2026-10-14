@@ -1,0 +1,243 @@
+# Coludo avionics -- ESP-IDF v5.5.5 configuration for the WaveShare ESP32-P4-WIFI6 (ESP32-P4 + ESP32-C6).
+
+# Silicon: the fleet's P4 is revision v1.3. IDF 5.5 defaults to v3.x, which is NOT compatible with v0.x/v1.x,
+# so select the pre-3 line. v1.0 as the floor drops the v0.x workarounds; the max is then v1.99.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+# 360 MHz is the ceiling for rev < 3 (400 MHz only on chips Espressif qualified)
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+
+# Flash: the part is a 32 MB GigaDevice (0xc8 0x4019, GD25Q256-class): declared in full. Above 16 MB IDF uses
+# 4-byte addressing through esp_flash (data only -- cache-mapping that range is experimental and never needed:
+# the code runs from PSRAM and the telemetry ring is read with esp_flash_read, never mmap).
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+
+# PSRAM (32 MB hex, on its own bus from the flash): on, in the heap for large allocations
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# the boot-time PSRAM test costs 0.9 s of every boot (and of every warm start)
+CONFIG_SPIRAM_MEMTEST=n
+# Execute from PSRAM (the image is copied there at boot): flash erase/program then no longer freezes the caches,
+# because the P4's flash and PSRAM sit on separate buses -- the telemetry ring in flash depends on it (B4: a 1 kHz
+# loop kept max 19 us lateness, 0 missed, while the other core erased and programmed). Also a little faster than
+# flash XIP (control step -5%, pacing max 41 -> 19 us). Costs ~0.75 MB of PSRAM and ~10 KB internal RAM.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+# lwIP's heap (pbufs, PCBs) in PSRAM first. Internal RAM is the scarce kind here: the camera pipeline holds ~160 KB
+# of it from its first recording until reboot (components/coludo_video), and esp_hosted copies every outgoing frame
+# into a fresh INTERNAL|DMA buffer and ASSERTS when it gets none (transport_drv.c:267 "copy_buff") -- the taster
+# rebooted mid-download right after a recording (2026-10-06) with lwIP's 64 KB send window of pbufs also in internal
+# RAM. The radio is on the C6, so no DMA reads lwIP's buffers: esp_hosted's copy is the only one that must be internal.
+# Side effect: esp_wifi_remote's Kconfig then switches the C6's TX buffers from dynamic to static (16 static + 32
+# cache; esp_hosted hands the init config to the C6), which leaves WIFI_RMT_DYNAMIC_TX_BUFFER_NUM below unused.
+# Measured unchanged: 14 MB downloads at 3.3-4.4 MB/s, nine in a row, no assert.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# The internal DMA budget (M4, measured on the taster 2026-10-06; doc/specs/avionics-port.md "Internal RAM budget").
+# Internal DMA memory is what runs out: the encoder holds ~138 KB, the camera's stream takes ~13 KB, esp_hosted's frame
+# pool ~25 KB at its peak, and esp_hosted ASSERTS when it gets none (transport_drv.c:267 copy_buff on TX,
+# sdio_drv.c:862 pkt_rxbuff on RX) -- both hit under FHD video + the ring_saver + a 32 MB Wi-Fi download before this.
+# - A 64 KB internal pool (IDF default 32 KB). NOT a DMA reserve, whatever its name suggests: IDF carves it out of the
+#   existing internal RAM (esp_psram.c:644-654) and registers it at the head of the heap list with the INTERNAL|DMA caps
+#   at priority 1 (heap_caps_init.c:339), so every internal request -- task stacks and malloc of 4 KB or less too --
+#   takes from it after the main RAM heap and before RETENT_RAM (heap_caps_base.c:144). On the P4 every L2 memory heap
+#   is DMA-capable anyway (heap/port/esp32p4/memory_layout.c:48), so the pool adds and protects no DMA memory; it only
+#   keeps DEFAULT-only requests (the over-4 KB malloc fallback after PSRAM fails) out. Kept: changing it is DMA-neutral.
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+# - Plain malloc above 4 KB goes to PSRAM, so ordinary buffers (the ring_saver's staging, the decoder's maps) stop
+#   taking DMA-capable RAM (-15.7 KB of DMA memory under saver load at the IDF default 16 KB, -5.2 KB at 4 KB). 4 KB
+#   itself stays internal: esp_flash reads straight into internal RAM only and borrows an internal temp buffer of up
+#   to 16 KB per read otherwise, so the ring's 4 KB block buffers stay where they are (on the PSRAM-stack threads,
+#   whose Rust allocations go to PSRAM, src/allocator.rs, the file server asks for internal ones by name). SD writes
+#   from PSRAM bounce through components/sd_card's persistent buffer, with no allocation.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+# Internal RAM optimization, stage 1 (avionics-port.md §4.7). Every byte of .iram0.text is internal, DMA-capable
+# memory the heap does not get: the RETENT_RAM heap starts right after the statics. With XIP from PSRAM, SPI1 flash
+# operations take a mutex and leave the cache on (spi_flash_os_func_app.c:29), so code kept in IRAM only for
+# cache-off windows can leave. The one runtime cache-off window left is esp_mmu_map/unmap (the first partition-table
+# load, on main at boot; OTA's image checks at M15), and no interrupt allocated in IRAM reaches the code moved here.
+# - Ring buffers serve only the UART and USB-serial-JTAG drivers, whose interrupts are not IRAM ones (UART_ISR_IN_IRAM
+#   off, and the JTAG driver is never installed): ~5.4 KB.
+CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH=y
+CONFIG_RINGBUF_PLACE_ISR_FUNCTIONS_INTO_FLASH=y
+# - newlib's lock API: its only IRAM callers are spi1_start/spi1_end, in task context with the cache on: ~1.4 KB.
+CONFIG_LIBC_LOCKS_PLACE_IN_IRAM=n
+# - Light-sleep code, selected by esp_wifi_remote for the C6's Wi-Fi 6. The P4 never sleeps (no PM_ENABLE) and nothing
+#   on this side reads it (nothing reaches the C6 over RPC): ~1.8 KB. The RTC clock code and esp_timer stay in IRAM.
+CONFIG_WIFI_RMT_SLP_IRAM_OPT=n
+CONFIG_PM_SLEEP_FUNC_IN_IRAM=n
+CONFIG_PM_SLP_IRAM_OPT=n
+# - The SPI master: SPI2 is polled (buses/spi.rs), so no SPI interrupt ever runs, and the polled path runs in task
+#   context with the cache on. With the option on, the driver's whole transaction path and the GDMA helpers it
+#   references went to IRAM: +10.9 KB at M5 stage 4, measured. No SPI slave is used, and its default would keep
+#   selecting the same GDMA options (as would esp_cam_sensor's SPI camera, off below, and PARLIO, off here). The
+#   camera's DMA is DW-GDMA, under its own options (CAM_CTLR_MIPI_CSI_ISR_*).
+CONFIG_SPI_MASTER_ISR_IN_IRAM=n
+CONFIG_SPI_SLAVE_ISR_IN_IRAM=n
+# - The parallel IO driver, unused: its ISR handlers' IRAM default selects the GDMA control functions into IRAM too.
+CONFIG_PARLIO_TX_ISR_HANDLER_IN_IRAM=n
+CONFIG_PARLIO_RX_ISR_HANDLER_IN_IRAM=n
+# NOT here, each for its reason (avionics-port.md §4.7): SPI_FLASH_AUTO_SUSPEND (this GD part, 0xC84019, is not on
+# IDF's suspend list: esp_flash_init aborts every boot), FREERTOS_PLACE_FUNCTIONS_INTO_FLASH (it moves part of every
+# interrupt-exit context switch into PSRAM, on both cores), HEAP_PLACE_FUNCTION_INTO_FLASH (malloc and free run on
+# every hot path, Wi-Fi's and lwIP's included; not evaluated).
+
+# FreeRTOS: a 1 ms tick so sleeps and timeouts resolve at 1 ms, not 10
+CONFIG_FREERTOS_HZ=1000
+# Rust std main needs more than the C default
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=8192
+
+# A panic prints its backtrace and reboots -- a wedged board must come back on its own
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+
+# Console on UART0 (the board's CH343P USB-serial port)
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# Logs: the IDF startup's own lines at WARN (~35 INFO lines, each a blocking write at 115200 baud before main: ~0.3 s of
+# every reset); main raises the level to INFO first thing (logging::install), so every line after it prints as before
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+
+# Wi-Fi through the ESP32-C6 over SDIO (esp_hosted + esp_wifi_remote), as MicroPython v1.29.0 configures it
+CONFIG_ESP_HOSTED_ENABLED=y
+CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y
+CONFIG_ESP_WIFI_REMOTE_ENABLED=y
+CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
+# esp_hosted's own debug CLI would register commands next to our console
+CONFIG_ESP_HOSTED_CLI_ENABLED=n
+# SDIO queues 10 (esp_hosted's default 20). Its frame buffers are in PSRAM now (components/hosted_no_reboot), but the
+# queues' own storage is internal: 20/20 with a 64 KB send buffer cost ~1.4 KB of internal RAM for 11-21 % more Wi-Fi
+# throughput, and the operator puts internal RAM, CPU and SD before Wi-Fi speed (~1 MB/s is enough; measured
+# 2.6-2.9 MB/s idle at 10/10, ~0.7-1 MB/s under FHD video and the saver)
+# esp_hosted's DMA buffers come from PSRAM (components/hosted_no_reboot), aligned to the cache line: 64 B, pinned here.
+# The SDMMC host refuses a buffer whose address or length is not a multiple of the line (sdmmc_host.c:1289), and
+# esp-hosted-mcu #219 lost half its TX frames that way with a 128 B L2 line, IDF's default for a 512 KB L2.
+CONFIG_CACHE_L2_CACHE_LINE_64B=y
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=10
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=10
+CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM=16
+CONFIG_WIFI_RMT_DYNAMIC_RX_BUFFER_NUM=64
+# unused while CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y (static TX buffers, see above)
+CONFIG_WIFI_RMT_DYNAMIC_TX_BUFFER_NUM=64
+# 32 KB (64 before the internal RAM work): fewer frames in flight; see the queues above for what 64 KB buys
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+CONFIG_LWIP_TCP_WND_DEFAULT=65534
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=64
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
+CONFIG_LWIP_TCP_SACK_OUT=y
+# lwIP copies each received frame into its own pbuf (lwIP's heap: PSRAM first, SPIRAM_TRY_ALLOCATE_WIFI_LWIP) and
+# frees esp_hosted's copy at once (esp_netif wlanif.c:159). Without it lwIP holds esp_hosted's per-frame copy -- a
+# plain malloc of the payload, internal under 4 KB, ASSERTED when it fails (sdio_drv.c:1139 copy_payload) -- until
+# the receiving socket reads it: 40 refused 1 MB uploads with four pulls took internal free from 132 KB to 4 KB on 7F.
+CONFIG_LWIP_L2_TO_L3_COPY=y
+
+# FatFs on the microSD: long file names (session files like 000135_flight.csv); FatFs defaults to 8.3 only
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+# FatFs's file lock table, one entry per open file or directory, ONE table for every volume: at least the sum of
+# components/sd_card's max_files, 32 on the recordings volume and 8 on the videos volume (40 on a one-partition card's
+# only volume; sd_card.c refuses to build below). The video writer, the ring_saver's appends and the HTTP reads share
+# the card. IDF's default 0 has no table, so FatFs lets the saver append to a file an HTTP pull is reading through a
+# second handle (FatFs calls that an illegal open: the read sees the size before the batch, at best). With the table
+# a file open for writing refuses every other open (FR_LOCKED, EACCES through the VFS): files.rs answers 503, and the
+# saver goes on with that file at its next step. A table smaller than max_files would answer FR_TOO_MANY_OPEN_FILES
+# (ENFILE) before the VFS ran out of handles. Its cost is 16 B a file of internal RAM.
+CONFIG_FATFS_FS_LOCK=40
+# Two FatFs volumes, one card (components/sd_card): partition 1 (the recordings) at /sdcard, partition 2 (the videos)
+# at /sdcard/videos. IDF's default, stated because the two-partition mount depends on it.
+CONFIG_FATFS_VOLUME_COUNT=2
+# The VFS's table of mounted file systems (IDF default 8, 4 B an entry). Counted on the taster: /dev/uart,
+# /dev/secondary, /dev/null, /dev/console and lwIP's sockets at boot, /sdcard, then /dev/video0 and /dev/video20 at
+# `video start`: 8, the table full. The videos partition's /sdcard/videos is a ninth, which would leave esp_video no
+# entry and fail `video start` on a two-partition card. 12 leaves room.
+CONFIG_VFS_MAX_COUNT=12
+# f_getlabel, for the card's FAT volume serial (components/sd_card): the session-start record names the card, and the
+# next boot trusts the ring_saver's position hint only for that same card
+CONFIG_FATFS_USE_LABEL=y
+
+# ---------------------------------------------------------------------------------------------------------
+# Camera recorder (components/coludo_video): OV5647 on the 22-pin MIPI-CSI connector -> ISP -> H.264 HW
+# encoder -> Annex-B file on SD. esp_video 2.5.0 / esp_cam_sensor 2.6.0 / esp_ipa 2.4.0 / esp_h264 1.4.1.
+# ---------------------------------------------------------------------------------------------------------
+
+# esp_video's SCCB uses the new i2c_master driver while esp-idf-hal links the legacy one (the boot log's
+# "i2c: This driver is an old driver"); without this IDF aborts at boot. Safe only while the two never
+# drive the same port: the camera shares the firmware's own i2c_master bus on port 0 (SDA 7 / SCL 8).
+CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK=y
+
+# Sensor: OV5647 only. Its stock auto-detect entry is replaced by coludo_video's (stream-on fix for
+# esp-video-components #97). Both RAW10 modes are compiled in so the mode is a runtime choice:
+# 1920x1080 (30 fps native, 408 Mbit/s/lane at 25 MHz) and 1280x960 binned (45 fps native).
+CONFIG_CAMERA_OV5647=y
+# CONFIG_CAMERA_OV5647_AUTO_DETECT_MIPI_INTERFACE_SENSOR is not set
+# CONFIG_CAMERA_OV5647_MIPI_RAW8_800X800_50FPS is not set
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1920X1080_30FPS=y
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1280X960_BINNING_45FPS=y
+CONFIG_CAMERA_OV5647_MIPI_DEFAULT_FMT_RAW10_1920X1080_30FPS=y
+# line-start/end short packets: the ISP is told to expect them (mipi_info.line_sync_en) and 0x4800 sends them
+CONFIG_CAMERA_OV5647_CSI_LINESYNC_ENABLE=y
+# fixed-focus lens, no VCM
+# CONFIG_CAMERA_OV5647_ENABLE_MOTOR_BY_GPIO0 is not set
+
+# esp_video: MIPI-CSI + ISP only; the H.264 encoder is driven through esp_h264 directly (force-IDR, frame
+# type), so the /dev/video11 M2M device is not built.
+CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_DISABLE_MIPI_CSI_DRIVER_BACKUP_BUFFER=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_VIDEO_DEVICE=y
+# The IPA (auto white balance, CCM, gamma) runs a task per frame; off: the OV5647 runs its own AEC/AGC,
+# static ISP tuning goes through /dev/video20. esp_ipa 2.4.0 (registry) has no rev<3 library; its v5.5
+# libesp_ipa.a carries no Zb*/esp.* opcodes (scanned), but the v6.0+ one does (sh1add/sh2add/sh3add).
+# CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER is not set
+CONFIG_ESP_VIDEO_DISABLE_ISP_ERROR_INTERRUPT=y
+# CONFIG_ESP_VIDEO_ENABLE_HW_H264_VIDEO_DEVICE is not set
+# CONFIG_ESP_VIDEO_ENABLE_HW_JPEG_ENC_VIDEO_DEVICE is not set
+# CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE is not set
+# CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE is not set
+# esp_cam_sensor's SPI-camera controller (the OV5647 is MIPI-CSI): off, and with it its cache-safe ISR option, which
+# would select SPI_SLAVE_ISR_IN_IRAM and through it the AHB/AXI GDMA IRAM options (~1.2 KB of IRAM with SPI2 linked)
+# CONFIG_CAM_CTRL_SPI_ENABLE is not set
+
+# Keep the CSI frame-done interrupt alive while flash is erased/programmed (telemetry ring).
+# CONFIG_ISP_ISR_IRAM_SAFE=y does NOT compile on v5.5.5 (isp_core.c etc.: esp_ptr_in_iram undeclared,
+# no on_env_change member) -- leave it off; the ISP interrupt only feeds statistics, not frame delivery.
+CONFIG_CAM_CTLR_MIPI_CSI_ISR_CACHE_SAFE=y
+
+# No IPA pipeline: keep its algorithms out of the image (they are force-linked with -u otherwise)
+# CONFIG_ESP_IPA_IAN_ALGORITHM is not set
+# CONFIG_ESP_IPA_ADN_ALGORITHM is not set
+# CONFIG_ESP_IPA_AWB_ALGORITHM is not set
+# CONFIG_ESP_IPA_ACC_ALGORITHM is not set
+# CONFIG_ESP_IPA_AGC_ALGORITHM is not set
+# CONFIG_ESP_IPA_AEN_ALGORITHM is not set
+# CONFIG_ESP_IPA_AF_ALGORITHM is not set
+# CONFIG_ESP_IPA_ATC_ALGORITHM is not set
+# CONFIG_ESP_IPA_EXT_CONFIG is not set
+
+# Run-time statistics (console `load`): per-task CPU time from esp_timer, 64-bit so it never wraps; cheap
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+
+# lwIP's TCP/IP task on core 0: unpinned at priority 18 it can run on core 1, the flight core, beside the bus
+# owners (port plan §4.2). esp_hosted's own tasks are unpinned too; they need the OS-table hook (hosted_no_reboot).
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+
+# No OTA app rollback, ever: with it, a build that has not yet confirmed itself is reverted at the next reset -- a
+# reboot in flight would come back on the OLD build. A reset always boots the slot otadata selects; the slot changes
+# only by an explicit OTA in SETTING (doc/specs/avionics-port.md M15), and flash.sh erases otadata + ota_1.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
+
+# The fast warm boot (operator 2026-10-11: a reset resumes control in about a second). The bootloader never re-hashes
+# the 2.2 MB app (~0.28 s of every reset): with no rollback and ota_1 invalidated there is no other image to fall
+# back to, so a validation failure would leave the board unbootable all the same; flash.sh and the OTA verify on
+# write. Its log at WARN: ~40 INFO lines at 115200 baud were ~0.2 s.
+CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

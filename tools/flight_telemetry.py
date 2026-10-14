@@ -10,7 +10,11 @@ Since doc/specs/recorder-wire.md every line also carries the integrity wrapper `
 (tools/recorder_wire.py). A capture holding wrapped lines is read strictly: a line counts only when its
 checks pass, or when salvage proves which routing it belongs to, and a salvaged record is placed by its
 time, never where it happened to sit. An older capture, with no wrapper at all, is read on trust as it
-always was. line_counts() says how each line of the last capture was judged.
+always was. line_counts() says how each line of the last capture was judged. A wrapped capture is read through
+the duplicate filter first (recorder_wire.unique: a Rust board's session can hold a line twice), and
+duplicates() says how many lines it dropped.
+load() also takes a Rust board's flight cut (a folder, tools/recorder_flight.py's), so every renderer draws a Rust
+flight as it draws a capture (load_cut).
 parse() reads a raw capture (both kinds interleaved) and returns the streams + logs; load() reads a
 capture file into it as UTF-8 with errors='surrogateescape', so the checks see the bytes the board sent
 and a byte the link damaged costs its row, never the whole read. Stdlib only, so it stays importable in
@@ -18,7 +22,9 @@ the test suite; the plotly rendering lives in flight_report.py.
 """
 
 import bisect
+import csv
 import itertools
+import os
 import re
 
 import recorder_wire
@@ -34,6 +40,11 @@ loses only its date to the boot-id branch.
 """
 _SESSION = re.compile(r'^(?:\d{8}_\d{6}_|\d{6,}_)')
 _SERVO = re.compile(r'^servo_(.+)\.csv$')  # a board's per-servo stream -> the surface name it drives
+"""A Rust cut's attitude stream in the capture's names: (column, its name here, the factor on its value). The
+filter records centidegrees; plan B's heading is degrees, and its roll and pitch the centidegree fixnums every
+renderer scales."""
+_CUT_ATTITUDE: tuple = (('heading_cd', 'heading', 0.01), ('roll_cd', 'roll', 1.0), ('pitch_cd', 'pitch', 1.0))
+_CUT_CLOCKS: tuple = ('t_s', 'uptime_us')  # a cut row's two clocks: the row's stamp, not fields
 
 
 class Stream:
@@ -301,6 +312,7 @@ _PLACE_SLACK: int = 60_000_000  # us a recovered record may lie past the good li
                                 # drained; logs flushed in batches) -- any window under a wrap still places uniquely
 _SPLICED: list = []      # stream names whose line was found spliced, reset per parse()
 _COUNTS: dict = dict.fromkeys(('good', 'salvaged', 'rejected', 'legacy'), 0)  # line verdicts, per parse()
+_DUPLICATES: list = []   # the routing of each duplicate line the duplicate filter dropped, reset per parse()
 
 
 def name_hint(tag: str) -> str:
@@ -330,11 +342,20 @@ def line_counts() -> dict:
     return dict(_COUNTS)
 
 
+def duplicates() -> int:
+    """
+    How many lines the LAST parse() dropped as duplicates (recorder_wire.unique), before any verdict: they are
+    in none of line_counts(). 0 on a capture with none, and on an unwrapped one, which has no CRC to key them by.
+    """
+    return len(_DUPLICATES)
+
+
 def line_summary() -> str:
     """The LAST parse()'s line verdicts as one phrase, for the capture-health lines a tool prints."""
     if _COUNTS['legacy']:
         return '%d unchecked (a capture from before the integrity wrapper)' % _COUNTS['legacy']
-    return '%(good)d good, %(salvaged)d salvaged, %(rejected)d rejected' % _COUNTS
+    dropped = ', %d duplicates dropped' % len(_DUPLICATES) if _DUPLICATES else ''
+    return '%(good)d good, %(salvaged)d salvaged, %(rejected)d rejected' % _COUNTS + dropped
 
 
 def _entry(line: str) -> tuple:
@@ -655,13 +676,73 @@ def load(path: str) -> tuple:
     Read and parse a capture file -- the one way every tool reads one.
 
     Args:
-        path - the capture file.
+        path - the capture file, or a Rust board's flight cut (a folder: load_cut).
 
     Returns:
         parse()'s ({file -> Stream}, logs) for the file's bytes, decoded as UTF-8 with surrogateescape.
     """
+    if os.path.isdir(path):
+        return load_cut(path)
     with open(path, encoding='utf-8', errors='surrogateescape') as handle:
         return parse(handle.read())
+
+
+def load_cut(folder: str) -> tuple:
+    """
+    Read a Rust board's flight cut as a parsed capture, so every renderer draws it as it draws plan B's.
+
+    tools/recorder_flight.py cuts a session into <stream>.csv files, ';', each row stamped twice: `t_s` (seconds
+    from the stage machine's BOOSTING entry) and `uptime_us`. Here each stream keeps its other columns and its rows
+    are stamped by t_s, so every chart's time axis reads from the launch. The attitude filter's columns take plan
+    B's names (_CUT_ATTITUDE), the per-servo streams fuse into 'fins.csv' as a board capture's do, and
+    sequencer.csv's stage changes become the `stage ->` log lines the renderers mark. A 'None' cell is blank.
+
+    Args:
+        folder - the cut (the folder holding sequencer.csv), or recorder_flight.py's -o folder above it.
+
+    Returns:
+        ({file -> Stream}, logs) as parse() returns them; logs holds the stage changes only.
+
+    Raises:
+        FileNotFoundError - the folder holds no sequencer.csv, nor a flight/ folder that does.
+    """
+    if not os.path.exists(os.path.join(folder, 'sequencer.csv')):
+        folder = os.path.join(folder, 'flight')
+    if not os.path.exists(os.path.join(folder, 'sequencer.csv')):
+        raise FileNotFoundError('no flight cut (sequencer.csv) under %s' % folder)
+    streams = {}
+    logs = []
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith('.csv'):
+            continue
+        with open(os.path.join(folder, name), newline='') as handle:
+            rows = list(csv.reader(handle, delimiter=';'))
+        if not rows or 't_s' not in rows[0]:
+            continue
+        header = rows[0]
+        stamp = header.index('t_s')
+        kept = [index for index, field in enumerate(header) if field not in _CUT_CLOCKS]
+        stream = Stream(name)
+        stream.fields = [header[index] for index in kept]
+        for row in rows[1:]:
+            if len(row) != len(header):
+                continue
+            cells = ['' if row[index] in ('', 'None') else _number(row[index]) for index in kept]
+            stream.rows.append([float(row[stamp]) * 1e6] + cells)
+        if name == 'attitude.csv':
+            for column, renamed, factor in _CUT_ATTITUDE:
+                if column in stream.fields:
+                    index = stream.fields.index(column)
+                    stream.fields[index] = renamed
+                    for row in stream.rows:
+                        if row[index + 1] != '':
+                            row[index + 1] *= factor
+        if name == 'sequencer.csv' and 'stage' in header:
+            logs = [(round(float(row[stamp]) * 1e6), 'sequencer :: stage -> %s' % row[header.index('stage')])
+                    for row in rows[1:] if len(row) == len(header)]
+        streams[name] = stream
+    _synthesise_fins(streams)
+    return streams, logs
 
 
 def parse(text: str) -> tuple:
@@ -681,6 +762,7 @@ def parse(text: str) -> tuple:
     streams = {}
     logs = []
     del _SPLICED[:]          # per-parse, so spliced_rows() describes THIS capture
+    del _DUPLICATES[:]       # and duplicates() too
     _COUNTS.update(dict.fromkeys(_COUNTS, 0))
     queue = [_entry(line) for line in (raw.strip() for raw in text.splitlines()) if line]
     good = {routing for _line, status, routing, _text in queue if status == recorder_wire.GOOD}
@@ -693,6 +775,14 @@ def parse(text: str) -> tuple:
     """
     wrapped = bool(good)
     if wrapped:
+        """
+        A duplicate goes before anything else sees it: filed twice, a row would sit twice in its stream and
+        a log line twice in the logs. Only lines that check out can be duplicates (recorder_wire.unique).
+        """
+        keep = recorder_wire.unique([(routing, text if status == recorder_wire.GOOD else None)
+                                     for _line, status, routing, text in queue])
+        _DUPLICATES.extend(entry[2] for entry, kept in zip(queue, keep) if not kept)
+        queue = [entry for entry, kept in zip(queue, keep) if kept]
         known = sorted((good - {None}) | {recorder_wire.SESSION_INDEX})
         tags = known
     else:

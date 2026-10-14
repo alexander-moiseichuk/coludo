@@ -1,0 +1,10 @@
+[package]
+name = "cc_protocol"
+description = "The CC <-> board line protocol (doc/specs/cc-protocol.md), wire-identical to src/glider/cc_protocol.py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+base64.workspace = true

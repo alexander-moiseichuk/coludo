@@ -14,6 +14,7 @@ bug, because it corrupts the answer rather than announcing itself. The §26 scan
 tools; every one of them is pinned below so it cannot come back. Run by `make test` / `make check`.
 """
 
+import argparse
 import json
 import os
 import re
@@ -24,6 +25,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.
 sys.path.insert(0, os.path.join(_ROOT, 'tools'))
 import airspeed_calibrate  # noqa: E402
 import assemble_capture  # noqa: E402
+import board_clean  # noqa: E402
+import boost_sweep  # noqa: E402
 import cc  # noqa: E402
 import flight_campaign  # noqa: E402
 import flight_kpi  # noqa: E402
@@ -32,11 +35,18 @@ import flight_report  # noqa: E402
 import flight_svg  # noqa: E402
 import flight_synth_capture  # noqa: E402
 import flight_telemetry  # noqa: E402
+import gen_avionics_docs  # noqa: E402
 import gen_schema  # noqa: E402
 import glide_polar  # noqa: E402
 import hitl_compare  # noqa: E402
+import hitl_host  # noqa: E402
+import hitl_matrix_compare  # noqa: E402
+import partition_ab  # noqa: E402
+import recorder_console  # noqa: E402
 import recorder_flight  # noqa: E402
 import recorder_wire  # noqa: E402
+import sitl_matrix  # noqa: E402
+import stack_compare  # noqa: E402
 
 _ZONE = ((25.514944, -80.392972), (25.514583, -80.391111))  # the HPRC strip (TL, BR)
 _SCRATCH: tempfile.TemporaryDirectory = tempfile.TemporaryDirectory()  # every folder a test writes; gone at exit
@@ -804,8 +814,8 @@ def test_recorder_flight_salvages_a_wrapped_dump():
                          baro_routing + '@' + stranded['1700000'],   # a lost leading '@'
                          '3_baro_bmp280.csv@' + stranded['1900000'],  # ... and part of the name with it
                          recorder_wire.wrap('1500000 sequencer :: stage -> boosting').rstrip('\n')],
-        '000123_attitude.csv': [_body('uptime;heading_cd;roll_cd', '000123_attitude.csv'),
-                                _body('1600000;100;5', '000123_attitude.csv')],  # not a stream it knows of
+        '000123_undeclared.csv': [_body('uptime;heading_cd;roll_cd', '000123_undeclared.csv'),
+                                  _body('1600000;100;5', '000123_undeclared.csv')],  # not a stream it knows of
         other: [_body(row, other) for row in imu[:5]],             # another session: left alone
         'session.csv': [_body(row, 'session.csv') for row in clock],
     })
@@ -820,11 +830,13 @@ def test_recorder_flight_salvages_a_wrapped_dump():
     assert len(recorded) == 20, len(recorded)  # 21 rows, less the corrupted one
     assert all(recorder_wire.verify(baro_routing, line) for line in recorded), 'recorder/ must keep proven rows'
     flown = _read(os.path.join(out, 'flight', 'baro_bmp280.csv'))
-    assert flown[0] == 't_s;altitude;temperature;pressure;elevation;uptime_us', flown[0]  # the _FIELDS fallback
+    # the _FIELDS fallback: the Rust port's `change` after plan B's four, empty in plan B's rows
+    assert flown[0] == 't_s;altitude;temperature;pressure;elevation;change;uptime_us', flown[0]
+    assert all(line.split(';')[-2] == '' for line in flown[1:]), flown[1:3]
     assert [line.split(';')[-1] for line in flown[1:]] == [str(row.split(';')[0]) for row in baro
                                                            if not row.startswith('1200000;')]
     assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + 200  # less the spliced row
-    assert _read(os.path.join(out, 'flight', 'attitude.csv'))[0] == 't_s;heading_cd;roll_cd;uptime_us'
+    assert _read(os.path.join(out, 'flight', 'undeclared.csv'))[0] == 't_s;heading_cd;roll_cd;uptime_us'
     assert not any('000122' in name for name in os.listdir(os.path.join(out, 'recorder')))
     assert status in _read(os.path.join(out, 'recorder', 'board.log'))
 
@@ -844,7 +856,7 @@ def test_recorder_flight_reads_an_unwrapped_dump_as_before():
     _write_dump(recordings, {
         '%s_imu_lsm6dso32.csv' % session: ['uptime;ax;ay;az;gx;gy;gz;irq_runs'] + imu,
         '%s_baro_bmp280.csv' % session: baro_file,
-        '%s_attitude.csv' % session: ['uptime;heading_cd;roll_cd', '1600000;100;5'],  # not a known stream
+        '%s_undeclared.csv' % session: ['uptime;heading_cd;roll_cd', '1600000;100;5'],  # not a known stream
         '%s_baro_bmXX280.csv' % session: [_body(baro[1], 'x')],  # a wrapper-shaped junk row decides nothing
     })
     status = ("900000 recorder :: {'session': '%s'}\n" % session).encode()
@@ -856,7 +868,7 @@ def test_recorder_flight_reads_an_unwrapped_dump_as_before():
         assert handle.read() == status + '1500000 sequencer :: z\ufffd\ufffdndung\n'.encode('utf-8')
     assert _read(os.path.join(out, 'recorder', 'baro_bmp280.csv')) == baro  # the corrupted uptime dropped
     assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + len(imu)
-    assert not os.path.exists(os.path.join(out, 'flight', 'attitude.csv')), 'only known streams on an old dump'
+    assert not os.path.exists(os.path.join(out, 'flight', 'undeclared.csv')), 'only known streams on an old dump'
 
 
 def test_assemble_capture_keeps_a_wrapped_capture_strict():
@@ -1008,14 +1020,295 @@ def test_recorder_flight_error_matrix():
     imu_kept = [line.split(';')[-1] for line in _read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))[1:]]
     lost = {'1100000', '1110000', '1120000', '1130000', '1140000', '1800000'}
     assert imu_kept == [row.split(';')[0] for row in imu if row.split(';')[0] not in lost], len(imu_kept)
-    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [
-        't_s;event;stage;uptime_us', '0.100000;deployed;gliding;1600000']  # a stream no good row named
+    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [  # a stream no good row named, header lost
+        't_s;event;stage;moment;duration;uptime_us',
+        '0.100000;deployed;gliding;;;1600000']  # plan B's row: no moment, no duration
     # the raw bytes survive: a non-ASCII payload in recorder/ and flight/, a damaged byte in board.log
     with open(os.path.join(out, 'recorder', 'sequencer.csv'), 'rb') as handle:
         assert handle.read() == (_body('1500000;boosting;zündung', sequencer_routing) + '\n').encode('utf-8')
     assert _read(os.path.join(out, 'flight', 'sequencer.csv'))[1].startswith('0.000000;boosting;zündung;')
     with open(os.path.join(out, 'recorder', 'board.log'), 'rb') as handle:
         assert damaged in handle.read()
+
+
+def test_recorder_flight_reads_separation_with_and_without_the_port_s_columns():
+    """
+    The Rust port appended `moment` and `duration` to separation.csv (the uptime the pads first parted, and the us
+    they wobbled before the open held); plan B's rows have two cells. With the header lost -- the usual case --
+    recorder_flight names both: a Rust row in full, a plan B row with both cells empty. A file that kept its header
+    is read by it alone, so a row cut short there is damage, not plan B; a row short of one appended column only is
+    neither firmware's, a stream nothing was appended to gets no allowance, nor does any other count.
+    """
+    rust, plan_b = ['separated', 'gliding', '1570000', '3217'], ['deployed', 'gliding']
+    rust_header = ('event', 'stage', 'moment', 'duration')
+    assert recorder_flight._cells('separation', None, rust) == rust
+    assert recorder_flight._cells('separation', None, plan_b) == plan_b + ['', '']
+    assert recorder_flight._cells('separation', ('event', 'stage'), plan_b) == plan_b
+    assert recorder_flight._cells('separation', rust_header, rust) == rust
+    # NEGATIVE: a Rust file's row cut short, the moment without the duration (no firmware wrote it), one cell, five
+    # cells, and a stream with nothing appended
+    assert recorder_flight._cells('separation', rust_header, plan_b) is None
+    assert recorder_flight._cells('separation', rust_header, rust[:3]) is None
+    assert recorder_flight._cells('separation', None, rust[:3]) is None
+    assert recorder_flight._cells('separation', None, ['separated']) is None
+    assert recorder_flight._cells('separation', None, rust + ['1']) is None
+    assert recorder_flight._cells('sequencer', None, ['gliding']) is None
+
+    # end to end: a Rust session whose separation.csv lost its header names its row's moment and duration
+    session, imu_routing, routing = '000123', '000123_imu_lsm6dso32.csv', '000123_separation.csv'
+    status = recorder_wire.wrap("900000 recorder :: {'session': '000123', 'lines': 9}").rstrip('\n')
+    recordings = _folder()
+    _write_dump(recordings, {
+        imu_routing: [_body('uptime;ax;ay;az;gx;gy;gz;irq_runs', imu_routing)]
+        + [_body(row, imu_routing) for row in _imu_rows()],
+        routing: [_body('1600000;separated;gliding;1570000;3217', routing)],
+        'recorder.log': [status],
+    })
+    printed, out = _cut(recordings, session)
+    assert re.search(r'separation\s+1 original rows,\s+1 named', printed), printed
+    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [
+        't_s;event;stage;moment;duration;uptime_us', '0.100000;separated;gliding;1570000;3217;1600000']
+
+
+def test_every_reader_takes_a_separation_blip_as_a_word():
+    """
+    The Rust port's separation.csv records `blip` too, beside `separated` and `nested`: an episode of the contact that
+    ended on the level the latch already held. recorder_flight names a blip row like any other, its header kept or
+    lost, and files it in flight/ in time order; flight_telemetry parses the stream with its moment and duration as
+    numbers and every event, a blip as a separation, as a word it does not plot. NEGATIVE: a blip row cut short is
+    damage, as for any event, and a word in the moment's place is no number.
+    """
+    blip = ['blip', 'boosting', '1570000', '6000']
+    rust_header = ('event', 'stage', 'moment', 'duration')
+    assert recorder_flight._cells('separation', None, blip) == blip
+    assert recorder_flight._cells('separation', rust_header, blip) == blip
+    assert recorder_flight._cells('separation', rust_header, blip[:3]) is None
+    assert recorder_flight._cells('separation', None, blip[:3]) is None
+
+    # end to end: a boost blip, the separation, and a blip after it, in a Rust session whose separation.csv lost its
+    # header
+    session, imu_routing, routing = '000123', '000123_imu_lsm6dso32.csv', '000123_separation.csv'
+    rows = ['1580000;blip;boosting;1570000;6000', '1600000;separated;gliding;1588000;277',
+            '1700000;blip;gliding;1650000;40000']
+    status = recorder_wire.wrap("900000 recorder :: {'session': '000123', 'lines': 9}").rstrip('\n')
+    recordings = _folder()
+    _write_dump(recordings, {
+        imu_routing: [_body('uptime;ax;ay;az;gx;gy;gz;irq_runs', imu_routing)]
+        + [_body(row, imu_routing) for row in _imu_rows()],
+        routing: [_body(row, routing) for row in rows],
+        'recorder.log': [status],
+    })
+    printed, out = _cut(recordings, session)
+    assert re.search(r'separation\s+3 original rows,\s+3 named', printed), printed
+    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [
+        't_s;event;stage;moment;duration;uptime_us',
+        '0.080000;blip;boosting;1570000;6000;1580000',
+        '0.100000;separated;gliding;1588000;277;1600000',
+        '0.200000;blip;gliding;1650000;40000;1700000']
+
+    capture = '\n'.join(['@000123_separation.csv@uptime;event;stage;moment;duration']
+                        + ['@000123_separation.csv@' + row for row in rows + ['1800000;blip;gliding;oops;0']])
+    streams, _logs = flight_telemetry.parse(capture)
+    separation = streams['separation.csv']
+    assert separation.fields == list(rust_header)
+    assert separation.column('moment')[1][:3] == [1570000.0, 1588000.0, 1650000.0]
+    assert separation.column('duration')[1] == [6000.0, 277.0, 40000.0, 0.0]
+    events = separation.column('event')[1]
+    assert len(events) == 4 and all(event != event for event in events), events  # a word is NaN: never plotted
+    assert separation.column('moment')[1][3] != separation.column('moment')[1][3], 'a word as the moment is no number'
+
+
+_AVIONICS: str = os.path.join(_ROOT, 'src', 'avionics', 'crates')  # the Rust port's portable crates
+"""
+Every stream the Rust port records: the source under crates/ that declares its columns, and the constant there.
+"""
+_RUST_STREAMS: dict = {
+    'imu_lsm6dso32': ('controller/src/streams.rs', 'IMU_FIELDS'),
+    'imu_bmi323': ('controller/src/streams.rs', 'IMU_FIELDS'),
+    'baro_icp10111': ('controller/src/streams.rs', 'BAROMETER_FIELDS'),
+    'baro_bmp581': ('controller/src/streams.rs', 'BAROMETER_FIELDS'),
+    'baro_bmp280': ('controller/src/streams.rs', 'BAROMETER_FIELDS'),
+    'imu_bno055': ('controller/src/streams.rs', 'ABSOLUTE_FIELDS'),
+    'mag_bmm350': ('controller/src/streams.rs', 'MAGNETOMETER_FIELDS'),
+    'airspeed_sdp810': ('controller/src/streams.rs', 'PITOT_FIELDS'),
+    'power_ina226': ('controller/src/streams.rs', 'POWER_FIELDS'),
+    'laser_agl': ('controller/src/streams.rs', 'LASER_FIELDS'),
+    'laser_agl_l1x': ('controller/src/streams.rs', 'LASER_FIELDS'),
+    'gnss': ('controller/src/streams.rs', 'GNSS_FIELDS'),
+    'servo_eleron_left': ('controller/src/streams.rs', 'SERVO_FIELDS'),
+    'servo_eleron_right': ('controller/src/streams.rs', 'SERVO_FIELDS'),
+    'servo_yaw': ('controller/src/streams.rs', 'SERVO_FIELDS'),
+    'gnss_gga': ('controller/src/streams.rs', 'GGA_FIELDS'),
+    'gnss_sky': ('controller/src/streams.rs', 'SKY_FIELDS'),
+    'gnss_events': ('controller/src/streams.rs', 'EVENT_FIELDS'),
+    'attitude': ('control/src/attitude.rs', 'FIELDS'),
+    'separation': ('controller/src/streams.rs', 'SEPARATION_FIELDS'),
+    'sequencer': ('controller/src/streams.rs', 'SEQUENCER_FIELDS'),
+    'checkpoint': ('controller/src/streams.rs', 'CHECKPOINT_FIELDS'),
+    'flight': ('controller/src/streams.rs', 'FLIGHT_FIELDS'),
+    'vetoes': ('controller/src/streams.rs', 'VETOES_FIELDS'),
+}
+"""
+The plan B file declaring each of those streams but the port's own (vetoes), under src/glider: the Rust port keeps
+plan B's columns first, then what it appended (recorder_flight._APPENDED).
+"""
+_PLAN_B_STREAMS: dict = {
+    'imu_lsm6dso32': 'drivers/lsm6dso32.py',
+    'imu_bmi323': 'drivers/bmi323.py',
+    'baro_icp10111': 'drivers/icp10111.py',
+    'baro_bmp581': 'drivers/bmp581.py',
+    'baro_bmp280': 'drivers/bmp280.py',
+    'imu_bno055': 'drivers/bno055.py',
+    'mag_bmm350': 'drivers/bmm350.py',
+    'attitude': 'tasks/attitude.py',
+    'separation': 'drivers/separation.py',
+    'sequencer': 'tasks/sequencer.py',
+    'checkpoint': 'warmstart.py',
+    'flight': 'tasks/flight.py',
+}
+
+
+def _rust_fields(path: str) -> dict:
+    """
+    The string-array constants of one Rust source, as its column lists are declared.
+
+    Args:
+        path - the .rs file to read.
+
+    Returns:
+        {constant: (field, ...)} for every `pub const NAME: [&str; N] = [...];` in it.
+    """
+    with open(path) as handle:
+        text = handle.read()
+    return {name: tuple(re.findall(r'"([^"]*)"', body))
+            for name, body in re.findall(r'pub const (\w+): \[&str; \d+\] = \[(.*?)\];', text, re.DOTALL)}
+
+
+def _rust_mismatches(sources: dict) -> list:
+    """
+    Where recorder_flight's field lists differ from the Rust port's declarations (_RUST_STREAMS).
+
+    Args:
+        sources - {source under crates/: the path to read it from}, so a doctored copy can stand in for one.
+
+    Returns:
+        [(stream, recorder_flight's fields, the declared fields or None when not declared)], empty when every stream
+        agrees.
+    """
+    declared = {source: _rust_fields(path) for source, path in sources.items()}
+    mismatches = []
+    for stream, (source, constant) in _RUST_STREAMS.items():
+        fields = declared[source].get(constant)
+        if recorder_flight._FIELDS.get(stream) != fields:
+            mismatches.append((stream, recorder_flight._FIELDS.get(stream), fields))
+    return mismatches
+
+
+def test_recorder_flight_knows_the_rust_streams_as_declared():
+    """
+    recorder_flight._FIELDS names a stream's columns when its header was lost, the usual case on a damaged link. The
+    Rust port declares its streams in crates/controller streams.rs (and the attitude filter's in crates/control
+    attitude.rs); nothing tied the copy here to them, nor to plan B's, whose rows the same readers take.
+
+    Every Rust stream's list matches its declaration, every *_FIELDS constant in streams.rs is some stream's (a new
+    Rust stream must be added here too), and the plan B part of each list -- all but what the port appended -- matches
+    plan B's Telemetry declaration. NEGATIVE: a doctored streams.rs -- two barometer columns swapped, the vetoes' edge
+    dropped -- is caught, so the check cannot pass vacuously.
+    """
+    sources = {source: os.path.join(_AVIONICS, source) for source, _constant in _RUST_STREAMS.values()}
+    assert _rust_mismatches(sources) == [], _rust_mismatches(sources)
+    streams_rs = sources['controller/src/streams.rs']
+    constants = {constant for source, constant in _RUST_STREAMS.values() if source == 'controller/src/streams.rs'}
+    assert set(_rust_fields(streams_rs)) == constants, sorted(set(_rust_fields(streams_rs)) ^ constants)
+
+    for stream, relative in _PLAN_B_STREAMS.items():
+        declared = [fields for name, fields, pattern in gen_schema._streams_in(os.path.join(_ROOT, 'src', 'glider',
+                                                                                            relative))
+                    if name == stream + '.csv' or pattern == '<name>.csv']
+        assert len(declared) == 1, (stream, declared)
+        fields, appended = recorder_flight._FIELDS[stream], recorder_flight._APPENDED.get(stream, ())
+        assert fields[:len(fields) - len(appended)] == tuple(declared[0]), (stream, fields, appended, declared)
+        assert fields[len(fields) - len(appended):] == appended, (stream, fields, appended)
+    assert 'vetoes' not in _PLAN_B_STREAMS and 'vetoes' not in recorder_flight._APPENDED, 'the port\'s own stream'
+
+    with open(streams_rs) as handle:
+        text = handle.read()
+    for original, doctored, broken in (('"pressure", "elevation", "change"', '"elevation", "pressure", "change"',
+                                        ['baro_icp10111', 'baro_bmp581', 'baro_bmp280']),
+                                       ('"detector", "edge", "decider"', '"detector", "decider"', ['vetoes'])):
+        assert text.count(original) == 1, original  # the doctoring below must hit the declaration itself
+        path = os.path.join(_folder(), 'streams.rs')
+        with open(path, 'w') as handle:
+            handle.write(text.replace(original, doctored))
+        found = _rust_mismatches(dict(sources, **{'controller/src/streams.rs': path}))
+        assert [mismatch[0] for mismatch in found] == broken, doctored
+
+
+def test_recorder_flight_reads_a_barometer_with_and_without_its_change():
+    """
+    The Rust port appended `change` to every barometer's row (its climb rate, m/s; 'None' until its window fills);
+    plan B's rows have four cells. With the header lost, recorder_flight names both: a Rust row in full, a plan B row
+    with the change empty. A file that kept its header is read by it alone; the BMP280 (M18) alike. NEGATIVE: a Rust
+    file's row cut short, a row of three or of six cells.
+    Then a Rust session end to end: a BMP581 whose header was lost, its change 'None' at first, and the stage
+    machine's vetoes.csv with its words verbatim and a word in its value's place blanked. And a dump from before the
+    wrapper, which predates the change: its ICP-10111 rows are named by plan B's four, as the 2026-10-03 cuts were
+    (they regenerate byte for byte), and a five-cell row there is damage.
+    """
+    rust, plan_b = ['1234.56', '21.5', '87500.25', '3.21', '0.12'], ['1234.56', '21.5', '87500.25', '3.21']
+    header = ('altitude', 'temperature', 'pressure', 'elevation', 'change')
+    for stream in ('baro_icp10111', 'baro_bmp581', 'baro_bmp280'):
+        assert recorder_flight._cells(stream, None, rust) == rust
+        assert recorder_flight._cells(stream, None, plan_b) == plan_b + ['']
+        assert recorder_flight._cells(stream, header[:4], plan_b) == plan_b
+        assert recorder_flight._cells(stream, header, rust) == rust
+        assert recorder_flight._cells(stream, header, plan_b) is None, stream
+        assert recorder_flight._cells(stream, None, plan_b[:3]) is None, stream
+        assert recorder_flight._cells(stream, None, rust + ['1']) is None, stream
+
+    session, imu_routing = '000123', '000123_imu_lsm6dso32.csv'
+    baro_routing, vetoes_routing = '000123_baro_bmp581.csv', '000123_vetoes.csv'
+    baro = ['1400000;250.10;21.5;98300.5;0.00;None', '1420000;250.11;21.5;98300.4;0.01;None',
+            '1600000;251.20;21.5;98287.1;1.10;4.85']
+    vetoes = ['1450000;launch_altitude;begin;baro_icp10111;peer+at_rest;1;2;15.3',
+              '1500000;launch_altitude;end;baro_icp10111;at_rest;0;2;oops']
+    status = recorder_wire.wrap("900000 recorder :: {'session': '000123', 'lines': 9}").rstrip('\n')
+    recordings = _folder()
+    _write_dump(recordings, {
+        imu_routing: [_body('uptime;ax;ay;az;gx;gy;gz;irq_runs', imu_routing)]
+        + [_body(row, imu_routing) for row in _imu_rows()],
+        baro_routing: [_body(row, baro_routing) for row in baro],
+        vetoes_routing: [_body(row, vetoes_routing) for row in vetoes],
+        'recorder.log': [status],
+    })
+    printed, out = _cut(recordings, session)
+    assert re.search(r'baro_bmp581\s+3 original rows,\s+3 named', printed), printed
+    assert re.search(r'vetoes\s+2 original rows,\s+2 named', printed), printed
+    assert _read(os.path.join(out, 'flight', 'baro_bmp581.csv')) == [
+        't_s;altitude;temperature;pressure;elevation;change;uptime_us',
+        '-0.100000;250.10;21.5;98300.5;0.00;None;1400000',
+        '-0.080000;250.11;21.5;98300.4;0.01;None;1420000',
+        '0.100000;251.20;21.5;98287.1;1.10;4.85;1600000']
+    assert _read(os.path.join(out, 'flight', 'vetoes.csv')) == [
+        't_s;detector;edge;decider;kinds;contrary;live;value;uptime_us',
+        '-0.050000;launch_altitude;begin;baro_icp10111;peer+at_rest;1;2;15.3;1450000',
+        '0.000000;launch_altitude;end;baro_icp10111;at_rest;0;2;;1500000']
+
+    session = '20000101_000006_898573'
+    recordings = _folder()
+    _write_dump(recordings, {
+        '%s_imu_lsm6dso32.csv' % session: ['uptime;ax;ay;az;gx;gy;gz;irq_runs'] + _imu_rows(),
+        '%s_baro_icp10111.csv' % session: ['1400000;250.10;21.5;98300.5;0.00', '1600000;251.20;21.5;98287.1;1.10',
+                                           '1700000;251.30;21.5;98287.0;1.20;0.50'],
+    })
+    with open(os.path.join(recordings, 'recorder.log'), 'wb') as handle:
+        handle.write(("900000 recorder :: {'session': '%s'}\n" % session).encode())
+    printed, out = _cut(recordings, session)
+    assert re.search(r'baro_icp10111\s+3 original rows,\s+2 named', printed), printed
+    assert _read(os.path.join(out, 'flight', 'baro_icp10111.csv')) == [
+        't_s;altitude;temperature;pressure;elevation;uptime_us',
+        '-0.100000;250.10;21.5;98300.5;0.00;1400000',
+        '0.100000;251.20;21.5;98287.1;1.10;1600000']
 
 
 def test_recorder_flight_places_salvage_across_a_wrap():
@@ -1089,7 +1382,7 @@ def test_a_label_never_takes_another_sessions_files():
         files[baro_routing] = [_body(row, baro_routing) for row in _baro_rows()]
         files[prefix + '_health.csv'] = [_body('1000000;35;31480912;10;0;0;0;0;0', prefix + '_health.csv')]
         files[prefix + '_sequencer.csv'] = [_body('1500000;boosting;launch', prefix + '_sequencer.csv')]
-    files['hitl_attitude.csv'] = [_body('1600000;100;5', 'hitl_attitude.csv')]  # this session's, but undeclared
+    files['hitl_undeclared.csv'] = [_body('1600000;100;5', 'hitl_undeclared.csv')]  # this session's, but undeclared
     files['recorder.log'] = [_log("900000 recorder :: {'session': 'hitl'}")]
     recordings = _folder()
     _write_dump(recordings, files)
@@ -1100,8 +1393,8 @@ def test_a_label_never_takes_another_sessions_files():
     capture = os.path.join(_folder(), 'capture.txt')
     assemble_capture.assemble(session, recordings, capture)
     streams, _logs = flight_telemetry.parse('\n'.join(_read(capture)))
-    assert sorted(streams) == ['attitude.csv', 'baro_bmp280.csv', 'health.csv', 'imu_lsm6dso32.csv',
-                               'sequencer.csv'], sorted(streams)
+    assert sorted(streams) == ['baro_bmp280.csv', 'health.csv', 'imu_lsm6dso32.csv', 'sequencer.csv',
+                               'undeclared.csv'], sorted(streams)
     # NEGATIVE: the other label is still its own session, whole, and only that
     assemble_capture.assemble(foreign, recordings, capture)
     assert sorted({line[1:].partition('@')[0] for line in _read(capture) if line.startswith('@')}) == [
@@ -1294,9 +1587,11 @@ def test_recorder_flight_times_the_log_from_this_boot_only():
         # the previous boot's stranded row is not this session's to count as rejected
         assert re.search(r'\(no stream\)\s+0 good,\s+0 salvaged in,\s+0 rejected', printed.getvalue()), tail
         assert '  1 more damaged line(s) in junk files' in printed.getvalue(), printed.getvalue()
+        # each row's elevation is its uptime in ms, the witness of where it was filed; the port's `change` (empty in
+        # these plan B rows) sits between it and the uptime
         flown = [line.split(';') for line in _read(os.path.join(recordings, 'flight', 'baro_bmp280.csv'))[1:]]
-        assert ['200500000', '200500'] in [cells[-1:] + cells[-2:-1] for cells in flown], (tail, flown[80:82])
-        assert all(int(cells[-1]) // 1000 == int(cells[-2]) for cells in flown), 'a row filed at another time'
+        assert ['200500000', '200500'] in [cells[-1:] + cells[-3:-2] for cells in flown], (tail, flown[80:82])
+        assert all(int(cells[-1]) // 1000 == int(cells[-3]) for cells in flown), 'a row filed at another time'
 
 
 def test_recorder_flight_files_a_log_line_found_in_a_stream():
@@ -1526,6 +1821,225 @@ _FAKE_ADB = '\n'.join([
     ''])
 
 
+def test_the_matrix_scenarios_agree_across_the_three_tools():
+    """
+    hitl_matrix.sh (plan B on the board), hitl_matrix_host.sh (the Rust board) and hitl_matrix_compare.py (plan B's
+    reference, the families) each carry the 12-scenario table: a scenario that drifted in one would compare two
+    different flights under one name. Every scenario sits in exactly one family. NEGATIVE: a doctored table is caught.
+    """
+    def table(text: str) -> list:
+        block = text.split("<<'SCN'\n", 1)[1].split('\nSCN', 1)[0]
+        return [tuple(line.split()) for line in block.splitlines() if line.strip()]
+
+    expected = [(name, '%.2f' % noise, '%.1f' % wind, '%.1f' % bearing, str(spike))
+                for name, noise, wind, bearing, spike in hitl_matrix_compare.SCENARIOS]
+    tables = {}
+    for script in ('hitl_matrix.sh', 'hitl_matrix_host.sh'):
+        with open(os.path.join(_ROOT, 'tools', script)) as handle:
+            tables[script] = table(handle.read())
+        assert tables[script] == expected, (script, tables[script])
+    members = [name for names, _ in hitl_matrix_compare.FAMILIES.values() for name in names]
+    assert sorted(members) == sorted(name for name, *_ in expected), members
+    doctored = tables['hitl_matrix.sh'][:]
+    doctored[7] = ('wind06', '0.10', '6.0', '30.0', 'False')
+    assert doctored != expected
+
+
+def test_the_matrix_gates_judge_the_stage_machine_everywhere_and_the_miss_by_family():
+    """
+    hitl_matrix_compare.judge: the apogee (3 % of plan B's seed range) and GLIDING (0.5 s) gate every scenario, the
+    miss only the wind (7.7 m) and the low-noise (11.9 m) families, and a Rust flight must reach DONE. Inside passes;
+    NEGATIVE: each gate failed alone, and a high-noise miss far outside plan B's range still passes (not gated).
+    """
+    planb = [{'apogee_m': 270.0, 'gliding_s': 9.0, 'miss_m': 50.0},
+             {'apogee_m': 274.0, 'gliding_s': 9.4, 'miss_m': 60.0}]
+    rust = {'done': True, 'apogee_m': 272.0, 'gliding_s': 9.2, 'miss_m': 55.0}
+    assert hitl_matrix_compare.judge('wind06', rust, planb) == []
+    assert hitl_matrix_compare.judge('wind06', dict(rust, miss_m=67.6), planb) == [], 'inside 60 + 7.7'
+    assert hitl_matrix_compare.judge('wind06', dict(rust, miss_m=67.8), planb)[0].startswith('miss_m 67.8')
+    assert hitl_matrix_compare.judge('noise10', dict(rust, miss_m=71.8), planb) == [], 'inside 60 + 11.9'
+    assert hitl_matrix_compare.judge('noise10', dict(rust, miss_m=72.0), planb)[0].startswith('miss_m')
+    assert hitl_matrix_compare.judge('noise100', dict(rust, miss_m=400.0), planb) == [], 'high noise: not gated'
+    assert hitl_matrix_compare.judge('corner_stress', dict(rust, miss_m=0.0), planb) == []
+    assert hitl_matrix_compare.judge('noise100', dict(rust, apogee_m=250.0), planb)[0].startswith('apogee_m')
+    assert hitl_matrix_compare.judge('noise100', dict(rust, gliding_s=10.0), planb)[0].startswith('gliding_s')
+    assert hitl_matrix_compare.judge('noise100', dict(rust, done=False), planb) == ['no DONE']
+    assert hitl_matrix_compare.judge('wind06', dict(rust, miss_m=None), planb) == ['miss_m missing']
+    try:
+        hitl_matrix_compare.family('noise07')
+    except KeyError:
+        pass
+    else:
+        raise AssertionError('an unknown scenario has a family')
+
+
+def test_hitl_host_frames_are_the_boards_bytes():
+    """
+    The host's sim-link codec against the bytes crates/sim_link pins (src/avionics/crates/sim_link/src/tests.rs):
+    a SENSORS frame with every field but the laser's, a FINS answer, and the refusals.
+    """
+    fields = {'accel': [0.0, 0.0, 1.0], 'rate': [1.5, -2.25, 0.5], 'attitude': [123.5, -10.0, 5.25],
+              'mag': [1000.0, -200.0, 700.0], 'altitude': 12.5, 'elevation': 2.5, 'agl': None, 'airspeed': 12.0,
+              'dynamic_pressure': 88.2, 'position': [455000000, -735000000], 'speed': 11.5, 'course': 270.0}
+    full = ('43534c310101bf0f070000003930000000000000000000000000803f0000c03f000010c00000003f0000f742000020c10000a84'
+            '000007a44000048c300002f44000048410000204000000000000040416666b042c0bf1e1b40ca30d400003841000087433a68f729')
+    assert hitl_host.encode_sensors(7, 12345, fields).hex() == full
+    answer = bytes.fromhex('43534c31010201000700000092100000030101005f0055005a000000cdd3a798')
+    assert hitl_host.decode_fins(answer) == {'seq': 7, 'uptime_ms': 4242, 'stage': 3, 'armed': True, 'launched': True,
+                                             'fins': [95, 85, 90]}
+    passive = bytearray(answer)
+    passive[6] = 0  # no fins: re-seal the CRC
+    passive[28:] = (__import__('binascii').crc32(bytes(passive[:28]))).to_bytes(4, 'little')
+    assert hitl_host.decode_fins(bytes(passive))['fins'] is None
+    for broken in (answer[:31], b'X' + answer[1:], answer[:5] + b'\x01' + answer[6:], answer[:-1] + b'\x00'):
+        assert hitl_host.decode_fins(broken) is None, broken.hex()
+
+
+def test_recorder_flight_anchors_a_weak_boost_on_the_stage_machine():
+    """
+    A HITL boost is the sim's ~3 g: under noise no 0.3 s of |a| holds recorder_flight's 3.0 g, so the cut found no
+    flight in sessions that flew to DONE. staged() gives the stage machine's first BOOSTING row as the anchor instead.
+    NEGATIVE: a session whose stage machine never boosted has none (ValueError), and ignition() still refuses the weak
+    boost itself (the IMU rule is unchanged for real flights).
+    """
+    rows = [(1_000_000, '1000000;setting;boot'), (2_500_000, '2500000;boosting;launch |a|=3.0g dwell=100ms'),
+            (12_000_000, '12000000;gliding;apogee 273m')]
+    assert recorder_flight.staged(rows, ('stage', 'reason')) == 2_500_000
+    try:
+        recorder_flight.staged(rows[:1], ('stage', 'reason'))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a session with no BOOSTING row was anchored')
+    weak = [(t, '%d;0.0;0.0;%.2f;0;0;0;1' % (t, 3.0 + (0.1 if t % 20_000 else -0.1)))
+            for t in range(2_500_000, 3_200_000, 10_000)]
+    try:
+        recorder_flight.ignition(weak, recorder_flight._FIELDS['imu_lsm6dso32'])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a 3 g boost dipping under 3.0 g passed the IMU rule')
+
+
+def test_the_sim_link_codec_round_trips_both_ways():
+    """
+    hitl_host's two halves of each frame agree: a SENSORS frame encode_sensors writes, decode_sensors reads back field
+    for field (a float32 within its rounding, the position exact, an absent field absent), and a FINS answer
+    encode_fins writes, decode_fins reads back. NEGATIVE: a flipped byte fails the CRC, a FINS frame is no SENSORS one.
+    """
+    fields = {'accel': [0.0, 0.5, 1.25], 'elevation': 123.5, 'position': [255143790, -803917950], 'course': 210.0}
+    decoded = hitl_host.decode_sensors(hitl_host.encode_sensors(9, 4321, fields))
+    assert decoded['seq'] == 9 and decoded['sim_time_ms'] == 4321, decoded
+    assert decoded['fields'] == fields, decoded['fields']
+    answer = hitl_host.encode_fins(9, 777, 3, True, True, [80, 100, 95])
+    assert hitl_host.decode_fins(answer) == {'seq': 9, 'uptime_ms': 777, 'stage': 3, 'armed': True, 'launched': True,
+                                             'fins': [80, 100, 95]}
+    assert hitl_host.decode_fins(hitl_host.encode_fins(1, 0, 1, False, False, None))['fins'] is None
+    broken = bytearray(hitl_host.encode_sensors(9, 4321, fields))
+    broken[30] ^= 0x10
+    assert hitl_host.decode_sensors(bytes(broken)) is None
+    assert hitl_host.decode_sensors(answer) is None
+
+
+def test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains():
+    """
+    hitl_config installs the board's own config with its flight loop on and plan B's HITL test gains (config_hitl), so
+    the Rust glide is flown as plan B's was; the rest of the board's flight entry (its stages, its limits) stays its
+    own. NEGATIVE: a config with no flight entry, or two, is refused -- HITL flies exactly one loop.
+    """
+    args = argparse.Namespace(motor='F15', glider_g=285, sim_hz=50, noise=0.0, spike=False, wind=0.0,
+                              wind_dir=0.0, boost_axis='z', gnss_drift=0.0, gnss_drift_dir=0.0, pad_dwell_s=0.0,
+                              inject_hz=0)
+    saved = {'components': [{'name': 'flight', 'activity': 'flight', 'enabled': False, 'bank_limit': 33,
+                             'gains': {'roll': {}, 'pitch': {}, 'yaw': {}}},
+                            {'name': 'watchdog', 'activity': 'watchdog', 'enabled': True}],
+             'sensors': [{'name': 'baro_bmp280', 'driver': 'bmp280'}]}
+    hitl = hitl_host.hitl_config(saved, {'baro_bmp280'}, args)
+    flight = hitl['components'][0]
+    assert flight['enabled'] and flight['bank_limit'] == 33, flight
+    assert flight['gains'] == {'roll': {'kp': 2.0, 'kd': 0.2}, 'pitch': {'kp': 1.5}, 'yaw': {'kp': 1.5, 'kd': 0.1}}
+    assert saved['components'][0]['enabled'] is False, 'the saved config itself is untouched'
+    assert hitl['components'][1]['enabled'] is False and hitl['sensors'] == []
+    assert hitl['components'][-1]['activity'] == 'hitl' and hitl['components'][-1]['liftoff_g'] > 285
+    assert (flight['glide_ratio'], flight['stall_speed_1g']) == (5.5, 9.0), 'TMS-7 by default'
+    eight = hitl_host.hitl_config(saved, set(), argparse.Namespace(**dict(vars(args), airframe='tms8')))
+    assert (eight['components'][0]['glide_ratio'], eight['components'][0]['stall_speed_1g']) == (8.0, 9.0)
+    for components in ([], [saved['components'][0], dict(saved['components'][0], name='flight_2')]):
+        try:
+            hitl_host.hitl_config({'components': components}, set(), args)
+        except ValueError as error:
+            assert 'flight entries' in str(error), error
+        else:
+            raise AssertionError('accepted %d flight entries' % len(components))
+
+
+def test_hitl_host_sets_boostings_law_over_the_boards_config():
+    """
+    --boost-law sets BOOSTING's law over the board's own flight entry (doc/specs/boost-control.md BC4): passive takes
+    BOOSTING out of the control stages, hold puts it in with plan B's hold, lean with `boost_law: lean`; the other
+    stages stay the board's. NEGATIVE: `config` (the default, and a Namespace without the attribute) changes nothing,
+    a hold over a lean config drops the lean, and the saved config itself is never touched.
+    """
+    args = argparse.Namespace(motor='F15', glider_g=285, sim_hz=50, noise=0.0, spike=False, wind=0.0,
+                              wind_dir=0.0, boost_axis='z', gnss_drift=0.0, gnss_drift_dir=0.0, pad_dwell_s=0.0,
+                              inject_hz=0)
+    saved = {'components': [{'name': 'flight', 'activity': 'flight', 'boost_law': 'lean',
+                             'stages': {'boosting': {}, 'gliding': {'pitch': -6}}}]}
+    def flown(law):
+        """The flight entry hitl_config installs under `law` (None: no --boost-law attribute at all)."""
+        namespace = args if law is None else argparse.Namespace(**dict(vars(args), boost_law=law))
+        return hitl_host.hitl_config(saved, set(), namespace)['components'][0]
+    passive, hold, lean = flown('passive'), flown('hold'), flown('lean')
+    assert passive['stages'] == {'gliding': {'pitch': -6}} and 'boost_law' not in passive, passive
+    assert hold['stages'] == {'boosting': {}, 'gliding': {'pitch': -6}} and 'boost_law' not in hold, hold
+    assert lean['stages'] == hold['stages'] and lean['boost_law'] == 'lean', lean
+    for unchanged in (flown('config'), flown(None)):
+        assert unchanged['stages'] == saved['components'][0]['stages'] and unchanged['boost_law'] == 'lean'
+    ceiled = hitl_host.hitl_config(saved, set(), argparse.Namespace(**dict(vars(args), boost_law='lean',
+                                                                            boost_limit=10)))
+    assert ceiled['components'][0]['boost_limit_deg'] == 10, '--boost-limit: the boost ceiling'
+    assert 'boost_limit_deg' not in lean, 'no --boost-limit: the config has none and gets none'
+    bare = {'components': [{'name': 'flight', 'activity': 'flight'}]}
+    held = hitl_host.hitl_config(bare, set(), argparse.Namespace(**dict(vars(args), boost_law='hold')))
+    assert held['components'][0]['stages'] == {'boosting': {}}, 'a config with no stages gets BOOSTING'
+    assert saved['components'][0]['stages'] == {'boosting': {}, 'gliding': {'pitch': -6}}, 'the saved one untouched'
+
+
+def test_boost_sweep_scores_a_flight_and_keeps_the_matrix_out_of_the_grid():
+    """
+    boost_sweep scores a flight from hitl_host.py's BOOST and LANDED lines, the SITL's and a board's alike (BC4), and
+    the grid's summary takes the grid's flights only: the matrix's scenarios (the stack's own margin, -1) go to
+    matrix_summary, which counts done flights only. NEGATIVE: an output with no lines scores -1, not looped, outcome
+    none; a TIMEOUT scores timeout.
+    """
+    out = ('SESSION 001 F15\nDONE\nLANDED miss=12.5 inside=True aloft=98.0 apogee=171\n'
+           'BOOST path_min=74.0 tilt_max=21.5 looped=False burnout=48.2\n')
+    score = boost_sweep._score(out)
+    assert score == {'outcome': 'done', 'path_min_deg': 74.0, 'tilt_max_deg': 21.5, 'looped': False,
+                     'burnout_ms': 48.2, 'apogee_m': 171, 'aloft_s': 98.0, 'miss_m': 12.5, 'inside': True}, score
+    empty = boost_sweep._score('')
+    assert (empty['outcome'], empty['path_min_deg'], empty['looped'], empty['apogee_m']) == ('none', -1.0, False, -1)
+    assert boost_sweep._score('TIMEOUT 3\n')['outcome'] == 'timeout'
+    looped = boost_sweep._score(out.replace('looped=False', 'looped=True'))
+    grid = [dict(score, law='lean', margin_cal=0.5, wind_ms=3.0, run=run, board='taster', scenario='m0.5_w3_r%d' % run)
+            for run in (1, 2)] + [dict(looped, law='lean', margin_cal=0.5, wind_ms=6.0, run=1, board='TMS-7F',
+                                       scenario='m0.5_w6_r1')]
+    matrix = [dict(score, law='lean', margin_cal=-1.0, wind_ms=0.0, run=1, board='taster', scenario='noise05'),
+              dict(empty, law='lean', margin_cal=-1.0, wind_ms=0.0, run=1, board='taster', scenario='noise10')]
+    lines = boost_sweep.summary(grid + matrix)
+    assert [(line['margin_cal'], line['wind_ms'], line['flights'], line['loops']) for line in lines] == [
+        (0.5, 3.0, 2, 0), (0.5, 6.0, 1, 1)], lines
+    assert boost_sweep.matrix_summary(grid + matrix) == [
+        {'law': 'lean', 'flights': 1, 'loops': 0, 'median_path_min_deg': 74.0, 'median_miss_m': 12.5, 'in_zone': 1,
+         'median_apogee_m': 171}]
+    # --resume reads runs.csv back in its own types: a resumed row equals the row written
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'runs.csv')
+        boost_sweep._write(path, grid + matrix, boost_sweep._COLUMNS)
+        back = [boost_sweep._parsed(row) for row in boost_sweep._read(path)]
+    assert back == [{column: row[column] for column in boost_sweep._COLUMNS} for row in grid + matrix], back
+
+
 def test_flight_pull_takes_a_session_not_a_junk_name():
     """
     flight_pull.sh with no session pulls the newest one: the session whose second-newest file is the newest.
@@ -1609,6 +2123,10 @@ test_recorder_flight_salvages_a_wrapped_dump()
 test_recorder_flight_reads_an_unwrapped_dump_as_before()
 test_assemble_capture_keeps_a_wrapped_capture_strict()
 test_recorder_flight_error_matrix()
+test_recorder_flight_reads_separation_with_and_without_the_port_s_columns()
+test_every_reader_takes_a_separation_blip_as_a_word()
+test_recorder_flight_knows_the_rust_streams_as_declared()
+test_recorder_flight_reads_a_barometer_with_and_without_its_change()
 test_recorder_flight_places_salvage_across_a_wrap()
 test_a_label_never_takes_another_sessions_files()
 test_flight_pull_takes_a_session_not_a_junk_name()
@@ -1618,13 +2136,283 @@ test_recorder_flight_times_the_log_from_this_boot_only()
 test_recorder_flight_files_a_log_line_found_in_a_stream()
 test_recorder_flight_never_times_by_a_wrap_its_file_missed()
 test_every_reader_takes_a_damaged_byte()
+test_the_matrix_scenarios_agree_across_the_three_tools()
+test_the_matrix_gates_judge_the_stage_machine_everywhere_and_the_miss_by_family()
+test_hitl_host_frames_are_the_boards_bytes()
+test_recorder_flight_anchors_a_weak_boost_on_the_stage_machine()
+test_the_sim_link_codec_round_trips_both_ways()
+test_hitl_host_flies_the_boards_loop_with_plan_b_s_test_gains()
+test_hitl_host_sets_boostings_law_over_the_boards_config()
+test_boost_sweep_scores_a_flight_and_keeps_the_matrix_out_of_the_grid()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
       'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '
       'airspeed calibration fit, parser edge cases, session-tag eras (boot id included), '
       'spliced-capture detection, sim-capture refusal, provider/consumer closure, '
       'the GNSS field lists as gnss.py declares them, '
       'recorder_flight on wrapped + unwrapped dumps, assemble_capture strictness, the recorder_flight error '
-      'matrix (every unproven line counted), salvage across a ticks wrap (a sparse stream too), label-prefix '
+      'matrix (every unproven line counted), separation.csv with and without its moment and duration (and its '
+      "blips), every Rust stream's columns as streams.rs and plan B declare them, a barometer with and without its "
+      'change (and vetoes.csv), '
+      'salvage across a ticks wrap (a sparse stream too), label-prefix '
       'collisions and junk tails, flight_pull session pick (byte-safe, never a label), every boot of the session '
       'index, the flight\'s UTC across a wrap, the log timeline of this boot only, a log line found in a stream, '
       'nothing timed by a wrap its file missed, a damaged byte through every reader (and the report, names too)')
+
+
+def test_stack_compare_reads_both_stacks_rows_and_their_cadence():
+    """
+    stack_compare reads a plan B capture (plain rows, the uptime wrapping at 2^30 us) and a Rust session (each row in
+    its integrity wrapper) alike: the flight window from BOOSTING to DONE, each stream's cadence, each health column's
+    spread. NEGATIVE: a damaged row (another width) is left out, a missing stream reads as none, a session without
+    BOOSTING is refused.
+    """
+    folder = _folder()
+    wrap = stack_compare.UPTIME_WRAP
+    start = wrap - 300_000  # plan B: the uptime wraps 0.3 s into the flight
+    planb = os.path.join(folder, 'planb')
+    with open(planb + '_sequencer.csv', 'w') as stream:
+        stream.write('uptime;stage;reason\n%d;setting;x\n%d;boosting;x\n%d;done;x\n'
+                     % (start - 1_000_000, start, (start + 2_000_000) % wrap))
+    with open(planb + '_flight.csv', 'w') as stream:
+        stream.write('uptime;stage\n' + ''.join('%d;2\n' % ((start + i * 100_000) % wrap) for i in range(21)))
+        stream.write('%d;2;damaged\n' % ((start + 50_000) % wrap))
+    with open(planb + '_health.csv', 'w') as stream:
+        stream.write('uptime;temp;mem_free;load\n%d;33;1000;10\n%d;35;3000;30\n' % (start, (start + 1_000_000) % wrap))
+    flight = stack_compare.summary(planb)
+    assert flight['stages'] == {'boosting': 0.0, 'done': 2.0}, flight['stages']
+    cadence = flight['streams']['flight']
+    assert cadence['median'] == 100.0 and cadence['max'] == 100.0 and abs(cadence['hz'] - 10.0) < 1e-9, cadence
+    assert flight['streams']['fins'] is None, 'no fins stream: none'
+    assert flight['health']['temp'] == (33.0, 34.0, 35.0) and flight['health']['load'] == (10.0, 20.0, 30.0)
+    # a Rust session: wrapped rows, no wrap
+    rust = os.path.join(folder, '000001')
+    def wrapped(line):
+        return '{%s};%s;<%s>\n' % ('0' * 8, line, 'f' * 8)
+    with open(rust + '_sequencer.csv', 'w') as stream:
+        stream.write(wrapped('uptime;stage;reason') + wrapped('1000000;boosting;x') + wrapped('3000000;done;x'))
+    with open(rust + '_flight.csv', 'w') as stream:
+        stream.write(wrapped('uptime;stage') + ''.join(wrapped('%d;2' % (1_000_000 + i * 110_000)) for i in range(10)))
+    with open(rust + '_health.csv', 'w') as stream:
+        stream.write(wrapped('uptime;temp;mem_free;load') + wrapped('2000000;35.3;23000000;37'))
+    flight = stack_compare.summary(rust)
+    assert flight['streams']['flight']['median'] == 110.0, flight['streams']['flight']
+    assert flight['health']['mem_free'] == (23e6, 23e6, 23e6)
+    text = stack_compare.table({'plan B': stack_compare.summary(planb), 'Rust': flight})
+    assert text.splitlines()[1] == '|---|---|---|', text.splitlines()[1]
+    # negative: no BOOSTING
+    lone = os.path.join(folder, 'lone')
+    with open(lone + '_sequencer.csv', 'w') as stream:
+        stream.write('uptime;stage;reason\n1;setting;x\n')
+    try:
+        stack_compare.summary(lone)
+    except ValueError as error:
+        assert 'BOOSTING' in str(error), error
+    else:
+        raise AssertionError('a session without BOOSTING was read')
+
+
+test_stack_compare_reads_both_stacks_rows_and_their_cadence()
+
+
+def test_recorder_console_reads_its_replies_past_the_log():
+    """
+    The flight recorder's console replies interleave with its log and status lines: the reader keeps a reply's own
+    lines, a `get` is checked by its size and CRC-32, and a cut or damaged one is refused.
+    """
+    import base64
+    import binascii
+    status = 'I (5000) flight_recorder: recorder :: 10 bytes, 1 lines good'
+    text = '\r\n'.join(['ls 000670/', status, 'ls beacon.csv;279628', 'ls :: 2 entries', 'df 1 2', ''])
+    lines = recorder_console.reply_lines(text, 'ls')
+    assert recorder_console.parse_ls(lines) == [('000670/', None), ('beacon.csv', 279628)], lines
+    assert recorder_console.reply_lines(text, 'df') == ['df 1 2']
+    assert recorder_console.reply_lines('ls a/\r\nls b;1\r\n', 'ls') == []  # not ended yet
+    assert recorder_console.reply_lines("err rm: / is the card's root\n", 'rm') == ["err rm: / is the card's root"]
+    files = recorder_console.parse_files(['file 000670/recordings/a;b.csv;12;0000abcd', 'files :: 1 files, 12 bytes'])
+    assert files == [('000670/recordings/a;b.csv', 12, 0xabcd)], files
+    data = bytes(range(256)) * 20
+    chunks = [base64.b64encode(data[at:at + 3072]).decode() for at in range(0, len(data), 3072)]
+    reply = ['get %d' % len(data)] + chunks[:1] + [status] + chunks[1:] + ['get :: %08x' % binascii.crc32(data)]
+    assert recorder_console.decode_get(recorder_console.reply_lines('\n'.join(reply) + '\n', 'get')) == data
+    # negatives: a chunk lost, a damaged CRC, a refusal, a reply cut before its end
+    for broken in (reply[:1] + reply[3:], reply[:-1] + ['get :: 00000000'], ['err get: /sd/x: No such file'],
+                   reply[:-1]):
+        try:
+            recorder_console.decode_get(broken)
+        except ValueError:
+            continue
+        raise AssertionError('a broken get was read: %r' % broken[:2])
+
+
+test_recorder_console_reads_its_replies_past_the_log()
+
+
+def test_board_clean_keeps_the_running_session_videos_and_the_index():
+    """
+    The cleanup before a test run removes every session but the running one, and never `videos/` (the videos
+    partition's mount point) nor the global index; under `videos/` it removes the other sessions' videos only.
+    """
+    root = [['000374/', None], ['sessions.csv', 79468], ['videos/', None], ['COLUDO/', None], ['000693/', None],
+            ['Videos/', None], ['flight-a/', None]]
+    assert board_clean.doomed(root, '000693') == ['000374', 'COLUDO', 'flight-a'], board_clean.doomed(root, '000693')
+    videos = [['000408/', None], ['000693/', None]]
+    assert board_clean.doomed(videos, '000693', 'videos') == ['videos/000408']
+    # negative: an empty card and a card holding only the running session leave nothing to remove
+    assert board_clean.doomed([], '000693') == []
+    assert board_clean.doomed([['000693/', None], ['sessions.csv', 1], ['videos/', None]], '000693') == []
+
+
+test_board_clean_keeps_the_running_session_videos_and_the_index()
+
+
+def test_partition_ab_reads_a_run_and_its_backlog_over_the_flight_only():
+    """
+    The layout A/B's row: hitl_host's CONTROL / VIDEO / RING / DF params, and the saver's backlog from recorder.log's
+    status lines between the stage's boosting and done lines only (the pad and the tail after DONE left out).
+    """
+    host = '\n'.join([
+        'SESSION 000696 F15 noise 0.0 wind 0.0', 'VIDEO START ok video /sdcard/videos/000696/14837.h264', 'DONE',
+        'CONTROL ok control schedule_hz=100 overruns=0 late_max_us=42 work_max_us=1002',
+        'VIDEO ok video running captured=2000 missed=20 dropped=0 write_us_max=315687 sd_busy_pct=41.7 '
+        'encode_us_max=131398',
+        'RING ok ring unsaved=90 unsaved_s=22.6', 'DF ok df layout=one_partition recordings=14787/14900'])
+
+    def line(uptime, text):
+        return '{0badc0de};%d %s;<0badc0de>' % (uptime, text)
+
+    def status(writer, saver):
+        return line(1, "Recorder :: {'ring': {'writer': (%d, %d), 'saver': (%d, %d), 'rate': 1}}" % (writer + saver))
+
+    recorder = '\n'.join([
+        status((10, 0), (1, 0)),  # on the pad: before boosting, left out
+        line(2, 'sequencer :: stage -> boosting (launch)'),
+        status((20, 100), (20, 0)),  # 100 B behind
+        status((22, 0), (20, 0)),  # two blocks behind
+        'a torn line',  # not a record: skipped
+        status((30, 0), (10, 0)),  # 20 blocks = 80 KiB, above 64 KiB
+        line(3, 'sequencer :: stage -> done (stationary 1.0g)'),
+        status((40, 0), (1, 0))])  # after DONE, left out
+    assert partition_ab.backlog(recorder) == [100, 2 * 4096, 20 * 4096], partition_ab.backlog(recorder)
+    entry = partition_ab.row('taster', host, recorder)
+    assert entry['layout'] == 'one_partition' and entry['session'] == '000696' and entry['outcome'] == 'done'
+    assert entry['missed_pct'] == 1.0 and entry['write_max_ms'] == 315.7 and entry['unsaved_s'] == 22.6, entry
+    assert entry['backlog_peak_kb'] == 80.0 and entry['backlog_over_64kb_s'] == 1, entry
+    second = dict(entry, layout='two_partitions', missed_pct=0.5)
+    text = partition_ab.table([entry, second, dict(second, missed_pct=1.5)])
+    assert '| missed_pct | 1 [1] | 1 [1.5] |' in text, text  # the mean, the worst in brackets
+    assert text.splitlines()[0] == '| | one_partition (1 runs) | two_partitions (2 runs) |', text.splitlines()[0]
+    # negatives: no SESSION is no run; a run with no flight has no backlog (-1, never a zero that reads as good)
+    try:
+        partition_ab.host_figures('DONE')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('a log with no SESSION was read as a run')
+    assert partition_ab.row('taster', host, status((2, 0), (1, 0)))['backlog_peak_kb'] == -1.0
+
+
+test_partition_ab_reads_a_run_and_its_backlog_over_the_flight_only()
+
+
+def test_sitl_matrix_scores_by_the_physics_and_summarises_per_combination():
+    """
+    The airframe study's pieces: hitl_host.landing measures the body against the zone (metres from its centre,
+    inside its rectangle), and sitl_matrix.summary takes medians per airframe, mass and boost CdA, counting the
+    flights in the zone and those that never reached DONE.
+    """
+    zone = [[25.514944, -80.392972], [25.514583, -80.391111]]
+    centre = ((zone[0][0] + zone[1][0]) / 2.0, (zone[0][1] + zone[1][1]) / 2.0)
+    miss, inside = hitl_host.landing(centre, zone)
+    assert miss < 0.01 and inside
+    miss, inside = hitl_host.landing((centre[0] + 30.0 / 111320.0, centre[1]), zone)  # 30 m north: past the 20 m half
+    assert 29.0 < miss < 31.0 and not inside, (miss, inside)
+    row = {'airframe': 'tms8', 'mass_g': 285, 'boost_cda': '-', 'scenario': 'wind00', 'run': 1, 'outcome': 'done',
+           'miss_m': 40.0, 'inside': True, 'aloft_s': 116.0, 'apogee_m': 231}
+    rows = [row, dict(row, miss_m=60.0, inside=False, run=2),
+            dict(row, outcome='timeout', miss_m=-1.0, inside=False, aloft_s=-1.0, apogee_m=-1, run=3),
+            dict(row, airframe='tms7', miss_m=90.0, inside=False)]
+    lines = {line['airframe']: line for line in sitl_matrix.summary(rows)}
+    assert lines['tms8']['flights'] == 3 and lines['tms8']['median_miss_m'] == 50.0, lines['tms8']
+    assert lines['tms8']['in_zone'] == 1 and lines['tms8']['not_done'] == 1, lines['tms8']
+    assert lines['tms7']['median_miss_m'] == 90.0 and lines['tms7']['in_zone'] == 0
+    assert len(sitl_matrix.SCENARIOS) == 10, 'the ten scenarios of the pre-flight report'
+
+
+test_sitl_matrix_scores_by_the_physics_and_summarises_per_combination()
+
+
+def test_gen_avionics_docs_reads_the_public_surface_and_never_counts_braces_in_text():
+    """
+    tools/gen_avionics_docs.py parses Rust without building it: the lexer blanks comments, strings, raw strings and
+    char literals (a `format!("{name}")` or a `'{'` would move the brace depth), the scanner lists each public item
+    with its doc, a type's public methods, the constants, and leaves `pub(crate)`, private items and test code out.
+    NEGATIVE: an unbalanced brace inside a string, a raw string and a char must not end the impl early.
+    """
+    source = r'''//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
+//! A probe module.
+
+/// The answer.
+pub const ANSWER: u32 = 42;
+
+/// A part.
+#[derive(Clone)]
+pub struct Part {
+    count: u32,
+}
+
+impl Part {
+    /// Make one.
+    pub fn new(
+        count: u32,
+    ) -> Part {
+        let _text = format!("{count} }} {{");
+        let _raw = r#"}}}"#;
+        let _brace = '}';
+        Part { count }
+    }
+
+    /// Hidden.
+    fn private(&self) {}
+
+    /// Its count.
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+}
+
+pub(crate) fn internal() {}
+
+/// Free.
+pub fn free(value: &str) -> usize {
+    value.len()
+}
+
+#[cfg(test)]
+mod tests {
+    pub fn helper() {}
+}
+'''
+    blanked = gen_avionics_docs.blank(source)
+    assert len(blanked) == len(source) and blanked.count('\n') == source.count('\n')
+    assert blanked.count('{') == blanked.count('}'), 'only code braces are left, and they balance'
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'probe.rs')
+        with open(path, 'w') as handle:
+            handle.write(source)
+        module = gen_avionics_docs.scan(path)
+    assert module['doc'] == 'A probe module.', module['doc']
+    assert [(text, doc) for text, doc, _methods in module['types']] == [('pub struct Part', 'A part.')]
+    assert module['types'][0][2] == [('fn new(count: u32) -> Part', 'Make one.'),
+                                     ('fn count(&self) -> u32', 'Its count.')], module['types'][0][2]
+    assert module['functions'] == [('pub fn free(value: &str) -> usize', 'Free.')], module['functions']
+    assert module['constants'] == [('const ANSWER: u32 = 42', 'The answer.')], module['constants']
+    assert module['tested'], 'an inline mod tests counts'
+    assert gen_avionics_docs.module_path('drivers', '/x/src', '/x/src/lib.rs') == 'drivers'
+    assert gen_avionics_docs.module_path('drivers', '/x/src', '/x/src/bmp280.rs') == 'drivers::bmp280'
+    assert gen_avionics_docs.module_path('firmware', '/x/src', '/x/src/commands/mod.rs') == 'firmware::commands'
+    names = [name for name, *_rest in gen_avionics_docs.crates()]
+    assert names.index('drivers') < names.index('firmware') and names.index('databoard') < names.index('controller')
+
+
+test_gen_avionics_docs_reads_the_public_surface_and_never_counts_braces_in_text()
