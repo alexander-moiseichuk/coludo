@@ -1206,11 +1206,20 @@ board can no longer hang silently.
     fired whenever the magnitude passed through the 0.7-1.3 g band (the burn's tail, the coast), snapping the estimate
     back to nose-up while the stack pitched over;
   - the GNSS course and speed reach it (the port had left them out, so the heading was the gyro's from power-up).
-  The pulls' strengths, gates and orders, mirroring, blind and the magnetic latch are plan B's; the golden fixture
-  still compares every flag on every tick, and every angle of the 17 scenarios that turn about one axis from level.
-  SITL, TMS-8's config, F15, `--no-attitude` (the sim's sensors as a real airframe's): the lean boost on the filter
-  alone holds the 6-DoF stack vertical (path minimum 89.6 deg, lean at most 0.6), and the glide tracks the truth to 1-2
-  deg at noise 0 (the 6-DoF flight lands in the zone, 11.6 m), a few degrees at the sim's noise 0.1.
+  - the GYRO BIAS learned while the board rests in SETTING (`gyro_bias_s`, 10 s; still: every axis under 1.5 deg/s,
+    the accelerometer within 0.05 g of 1 g) and taken off every rate, held from the launch on: a real gyro's bias (to
+    0.58 deg/s measured) otherwise drifts the attitude through every gated turn;
+  - the CENTRIPETAL correction (`centripetal`, on): omega x V at the flight law's airspeed taken off the accelerometer
+    before it pulls; the turn gate stays (opened, the airspeed estimate's error cost more);
+  - only a CURRENT winner is mirrored (under 50 ms old): the HITL sim's 1 s window held its last attitude after it
+    stopped publishing, and the filter copied it frozen for a second.
+  The pulls' strengths, gates and orders, blind and the magnetic latch are plan B's; the golden fixture still compares
+  every flag on every tick, and every angle of the 17 scenarios that turn about one axis from level. `gyro_bias_s: 0`
+  and `centripetal: false` give plan B's filter back.
+  SITL, TMS-8's config, F15, `--no-attitude` (the sim's sensors as a real airframe's) with the measured IMU's noise and
+  bias (`--imu-noise real`), scored against the truth (`--score`): the boost's tilt error ~1 deg RMS, the glide's
+  0.5-0.6 (3.2 before the bias and the centripetal), no boost loop at 0-6 m/s, and the landing as on the sim's own
+  attitude ([`../sims/TMS-8-attitude_filter`](../sims/TMS-8-attitude_filter/)).
 - **The BNO055 backup (2026-10-14, the same audit):** it published its fused Euler in the chip's own frame (Bosch's
   heading, roll and pitch about its sensor axes), so a failover handed the law roll and pitch swapped (the rod's 75
   degrees of pitch as roll). It now publishes the filter's aerospace frame through its `axes` (drivers bno055

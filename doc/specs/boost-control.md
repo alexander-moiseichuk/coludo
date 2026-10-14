@@ -199,10 +199,12 @@ the board's attitude filter only mirrored it. TMS-8 has no BNO055, so in flight 
 which had never flown a boost. `hitl_host --no-attitude` (the sim's sensors as a real airframe's) flew it, and the
 plan B filter the port carried failed: its Euler-rate kinematics scrambled under the boost's spin and its accelerometer
 pull read thrust and drag as gravity; on it the lean law looped the 6-DoF stack at 56 m. With the filter fixed (a
-quaternion, no accelerometer pull in BOOSTING; doc/specs/avionics-port.md M9) the SITL on the filter alone, TMS-8's
-config, 7D's stack, noise 0.1, 3 seeds: no loop at 0 and 3 m/s (path minimum 86-90 deg, as on the sim's attitude),
-and at 6 m/s 3 loops of 3 later in the burn (path minimum 46-52 deg) where the sim's attitude looped 1 of 3: the edge
-moves toward calm by a fraction of a margin step. A TMS-8 boost study should fly `--no-attitude`.
+quaternion, no accelerometer pull in BOOSTING, the gyro bias learned on the pad; doc/specs/avionics-port.md M9) the
+SITL on the filter alone, TMS-8's config, 7D's stack, the measured IMU, 3 seeds: no loop at 0, 3 or 6 m/s (path
+minimum 86-90 deg calm and 3 m/s, 51-57 at 6 m/s, where the sim's attitude looped 1 of 3), the boost's tilt error ~1
+degree RMS. On the boards the filter holds the boost closer to vertical than the sim's published attitude (lean
+0.2-0.4 deg against 3.6-4.8: the law no longer chases attitude noise). A TMS-8 boost study should fly `--no-attitude`
+([`../sims/TMS-8-attitude_filter`](../sims/TMS-8-attitude_filter/)).
 
 ## 3. Not in this plan
 
