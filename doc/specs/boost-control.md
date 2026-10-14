@@ -46,7 +46,7 @@ Each stage is committed on its own proof. The firmware changes only from BC3 on.
 | BC2 | the passive envelope: where an uncontrolled stack departs (margin x asymmetry x wind x rod exit speed) | done: `doc/sims/TMS-7-boost_envelope` |
 | BC3 | the boost law for vertical flight: the lean of the body axis + roll damping, the gyro-integrated attitude, the rod gate | host tests; the SITL sweep with control |
 | BC4 | HITL on the taster, servos moving: the full matrix with metrics and plotly pictures | done: `doc/sims/TMS-7-boost_control` |
-| BC5 | turn it on: BOOSTING a control stage in the flight configs | the operator's decision, on BC2-BC4 |
+| BC5 | turn it on: BOOSTING a control stage in the flight configs | decided 2026-10-14: law A (lean, no ceiling) in `launches/next/TMS-8` |
 
 ### BC1: the 6-DoF boost
 
@@ -185,8 +185,14 @@ off), the deciding cell with 12 more, the 12-scenario matrix on each board, agai
 - **The matrix at TMS-7D's own +0.71 cal:** the landing unchanged (median miss 88.5-90.0 m on both laws and boards),
   up to ~6 degrees of path with a noisy attitude, 6 m/s and up loop with either law.
 
-For BC5: the lean law with no boost ceiling keeps its gain; +-10 gives up 6 m/s, 20 is borderline. The operator
-weighs the fins' load under thrust (45 degrees at 15 m/s) against that edge. Margin still dominates.
+For BC5: the lean law with no boost ceiling keeps its gain; +-10 gives up 6 m/s, 20 is borderline. The governor's
+1/v^2 cap already holds the fins' aerodynamic moment about constant, so a ceiling only takes authority between 15 and
+35 m/s, just off the rod. Margin still dominates.
+
+**BC5 decided (the operator, 2026-10-14): law A** -- the lean law, no ceiling, in TMS-8's config: "after coming out
+from the rod (1.5 m) the glider tries to be as vertical as possible until separation". The 15 m/s gate engages it a
+metre or two above a 1.5 m rod's top; BOOSTING ends at the separation switch (the baro apogee as the fallback).
+Still open: a TMS-8 stack profile for the 6-DoF (its own margin; the figures above are 7D's).
 
 ## 3. Not in this plan
 
