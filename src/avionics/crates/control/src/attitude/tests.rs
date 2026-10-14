@@ -7,9 +7,9 @@
 //! tests/golden_magnetic_yaw.rs) hold the trajectories to plan B; these hold the rules, each with what must NOT happen.
 
 use super::{
-    Attitude, BLIND_CYCLES, CENTRIPETAL_SPEED, FIELDS, Fused, GYRO_BACK, GYRO_LOST, MagneticYaw, Orientation,
-    PROBE_FAILURE, Readings, STILL_G, STILL_RATE, STREAM, Settings, decimal_text, heading_centidegrees, pull,
-    rate_from_marks, signed_centidegrees, wrap_heading, wrap_signed,
+    Attitude, BLIND_CYCLES, CENTRIPETAL_SPEED, FIELDS, Fused, GYRO_BACK, GYRO_LOST, MIRROR_AGE_US, MagneticYaw,
+    Orientation, PROBE_FAILURE, Readings, STILL_G, STILL_RATE, STREAM, Settings, decimal_text, heading_centidegrees,
+    pull, rate_from_marks, signed_centidegrees, wrap_heading, wrap_signed,
 };
 use serde_json::json;
 
@@ -51,6 +51,7 @@ fn primary(heading: f32, roll: f32, pitch: f32) -> Option<Fused> {
     Some(Fused {
         orientation: Orientation { heading, roll, pitch },
         rank: 0,
+        age_us: 0,
     })
 }
 
@@ -263,6 +264,7 @@ fn never_mirror_a_backup_a_peer_or_itself() {
                     pitch: 15.0,
                 },
                 rank,
+                age_us: 0,
             }),
             ..Readings::default()
         };
@@ -488,6 +490,36 @@ fn the_centripetal_correction_holds_a_bank_the_accelerometer_reads_level() {
         .unwrap()
         .roll;
     assert!(slow < 5.0, "{slow}");
+}
+
+#[test]
+fn a_held_sample_is_not_mirrored() {
+    // the HITL sim stopped publishing: its last sample stays in its 1 s window, ever older, while the gyro rolls
+    let mut bench = Bench::seeded(0.0, 10.0, 0.0);
+    let held = |age_us: u32| Readings {
+        rate: Some([20.0, 0.0, 0.0]),
+        fused: Some(Fused {
+            orientation: Orientation {
+                heading: 0.0,
+                roll: 10.0,
+                pitch: 0.0,
+            },
+            rank: 0,
+            age_us,
+        }),
+        ..Readings::default()
+    };
+    // a current sample is mirrored, the gyro ignored
+    bench.tick(&held(MIRROR_AGE_US - 1));
+    assert!((bench.filter.orientation().roll - 10.0).abs() < 1e-4 && !bench.filter.free());
+    // NEGATIVE: a held one is not: the filter free-runs on the gyro, 0.4 degree a tick
+    bench.tick(&held(MIRROR_AGE_US));
+    assert!(bench.filter.free());
+    assert!(
+        (bench.filter.orientation().roll - 10.4).abs() < 1e-3,
+        "{:?}",
+        bench.filter.orientation()
+    );
 }
 
 #[test]

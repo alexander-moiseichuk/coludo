@@ -59,6 +59,7 @@ pub fn assemble(quantities: &Quantities, rank: i32, now_us: u64, ballistic: bool
         Some(Fused {
             orientation: Orientation::from_sample(winner.value),
             rank: attitude.rank(winner.source)?,
+            age_us: winner.age_us,
         })
     });
     Readings {

@@ -64,6 +64,8 @@ fn readings(input: &Value) -> Readings {
         Fused {
             orientation: Orientation { heading, roll, pitch },
             rank: i32::try_from(rank).expect("a rank within i32"),
+            // plan B's fixture holds a fresh winner, its age unwritten: current
+            age_us: 0,
         }
     });
     Readings {

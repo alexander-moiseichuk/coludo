@@ -109,6 +109,13 @@ pub use integration::{Pace, Quantities, assemble, on_backup};
 /// the gyro is gone. Plan B's `_BLIND_CYCLES`.
 pub const BLIND_CYCLES: u32 = 5;
 
+/// The oldest winner's sample the filter mirrors, microseconds: two of its periods and a margin. Plan B mirrored any
+/// sample inside its source's window, and the HITL sim's window is 1 s (the sim-link holds a sample through a
+/// bunched Wi-Fi frame): when the sim stopped publishing its attitude (an attitude drop, `hitl_host --no-attitude`'s
+/// separation window), the filter copied the last value, frozen, for a second while the glider rolled (a 24-degree
+/// error, 2026-10-14). A held sample is no attitude; the filter free-runs past it.
+pub const MIRROR_AGE_US: u32 = 50_000;
+
 /// [`Settings::gyro_bias`]: every axis of the gyro under this many degrees per second is a board at rest, its reading
 /// the bias (the biases measured run to 0.58).
 pub const STILL_RATE: f32 = 1.5;
@@ -325,6 +332,8 @@ pub struct Fused {
     /// The rank its source registered at (crates/databoard `Parameter::rank`): lower is preferred, and only a winner
     /// ranked below the filter's own number (the HITL sim at 0) is mirrored.
     pub rank: i32,
+    /// How old the winner's sample is, microseconds: only one younger than [`MIRROR_AGE_US`] is mirrored.
+    pub age_us: u32,
 }
 
 /// What one tick may read, each present only when a FRESH source vouches for it (see the module notes).
@@ -695,7 +704,7 @@ impl Attitude {
         let elapsed = self.step_seconds(now_us);
         let log = self.watch_gyro(readings.rate.is_some());
         match readings.fused {
-            Some(fused) if fused.rank < self.settings.rank => {
+            Some(fused) if fused.rank < self.settings.rank && fused.age_us < MIRROR_AGE_US => {
                 self.mirror(fused.orientation);
                 self.free = false;
             }
