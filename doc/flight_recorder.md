@@ -53,6 +53,9 @@ its own card. The box only listens.
 - **The module must always be powered.** With its 3V3 lead off, the card is fed through its protection diodes from
   the bus lines: the C6 then failed USB enumeration (-71), and once up the card answered its init but its SCR read
   failed CRC with the same bytes on every try.
+- **The battery takes over on a USB pull** (the soldered unit, 2026-10-14): the C6 kept running through a minute
+  off USB and back (its uptime ran on, the card stayed mounted, 0 errors, the same session filing), and the cell
+  charges again once USB is back (the SuperMini's own charger).
 - **Battery time (estimate, ESP32-C6 datasheet v1.5).** The beacon's access point keeps the receiver on: about
   80-85 mA. The operator's 60 s on / 60 s off cycle averages ~41 mA plus the off minute's draw, so a 120 mAh cell
   lasts ~2.1-2.4 h, against ~1.2 h always on. Measuring it is open: a LiPo run timed to the last beacon.
@@ -62,12 +65,15 @@ its own card. The box only listens.
 - Flash only with its own script, from a direct USB port. Through the hub, long transfers corrupt. The image is
   ~1.5 MB; IDF's default 1 MB slot boot-loops.
   `PORT=/dev/ttyACMn src/avionics/recorder/flash.sh src/avionics/target/riscv32imac-esp-espidf/release/flight_recorder`
-- Find its port by the sysfs USB serial (10:BD:A3:AC:E1:F4 on the bench one). Never esptool-probe every port: its
+- Find its port by the sysfs USB serial (14:C1:9F:E5:31:90 on the soldered unit, 10:BD:A3:AC:E1:F4 on the old bench
+  one). Never esptool-probe every port: its
   connect resets any ESP32 it reaches. Open the console with DTR and RTS both held (pyserial `dtr=True, rts=True`);
   releasing them one at a time resets the board.
 - The console: `tools/recorder_console.py ls|df|rm|get|pull` lists, measures, removes and pulls the card's files.
   Each pull is checked by size and CRC-32.
 - A status line every 5 s on the console: bytes and lines in, good and damaged, card errors, the beacon's state.
+- While the P4 streams (~14 KB/s) the console answers only small requests (`session.csv`, `df` at times): it runs
+  below the link's loop on purpose, so filing never waits. Pull whole sessions when the P4 is quiet or off.
 
 ## What it does
 
@@ -152,9 +158,12 @@ Stages 1-3 done 2026-10-11 on the taster and the C6 SuperMini; the card module s
   60 s silent, until power-off. Never in a HITL flight. The receiver keeps every report in its card's root `beacon.csv`
   and replays the last one at boot (the operator, 2026-10-11, in place of NVS): proven, on the air 0.6 s after a reset.
   Its page is the glider's own, with how old the report is.
-- Open: the battery time on a LiPo; the field range of the two beacons; the photos; the damaged lines (0.4-2 % of lines,
-  whole byte runs lost, the same with the old module) measured again on the soldered unit before any firmware change:
-  the bench link runs through three breadboard junctions and ~40 cm of wire at 921600 baud.
+- The soldered unit (2026-10-14: a new SuperMini, the card module and the battery soldered, flashed from the vendor
+  image): the card mounts, 0 errors; the battery carries it through a USB pull and charges after. Damaged lines 0.6 %
+  in steady state, doubling (1.3 %) while the taster's wires were handled; its side of the link is still breadboard and
+  Dupont wire.
+- Open: the battery time on a LiPo; the field range of the two beacons; the photos; the damaged lines measured again
+  with the P4's side soldered too, before any firmware change.
 
 ## Photos
 
