@@ -112,7 +112,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// The kinds of a deliberate panic (`panic kind=... confirm`).
-const PANIC_KINDS: &[&str] = &["rust", "fault", "abort", "oops", "twdt", "stall"];
+const PANIC_KINDS: &[&str] = &["rust", "fault", "abort", "oops", "twdt", "stall", "hang"];
 
 /// The system's own console command (the Glider Command Language): `panic kind=... confirm`, which proves a panic
 /// reboots the board, warm-starting a flight in the air (crate::warm), and lands in the panic log
@@ -128,14 +128,15 @@ pub fn register_system_commands() {
                 (C's abort()) reboot the board; oops records a non-fatal panic and goes on; twdt stops the \
                 supervisor feeding the task watchdog, which panics the board wdt_timeout_ms later (refused unless the \
                 task watchdog is armed); stall stops the control thread, and the supervisor's stall check restarts \
-                the board (refused unless it controls a flight and the check would restart it)",
+                the board (refused unless it controls a flight and the check would restart it); hang arms the \
+                restart's RTC watchdog and stops this core, which the watchdog must reset within 1 s",
         gate: firmware::gcl::Gate::Open,
         reach: firmware::gcl::Reach::Console,
         parameters: &[firmware::gcl::Parameter {
             name: "kind",
             kind: firmware::gcl::Kind::Choice(PANIC_KINDS),
             default: Some("rust"),
-            about: "rust, fault, abort, twdt, stall (each resets) or oops (does not)",
+            about: "rust, fault, abort, twdt, stall, hang (each resets) or oops (does not)",
         }],
         bare_words: &[firmware::gcl::CONFIRM],
         run: Box::new(|arguments| match arguments.text("kind") {
@@ -146,6 +147,8 @@ pub fn register_system_commands() {
             }
             // SAFETY: C's abort() never returns; it is the point of this kind.
             "abort" => unsafe { esp_idf_svc::sys::abort() },
+            // SAFETY: never returns: the RTC watchdog the restart arms resets the chip (components/safe_restart).
+            "hang" => unsafe { esp_idf_svc::sys::safe_restart_hang() },
             "oops" => {
                 panics_logger::oops(
                     "test-oops",

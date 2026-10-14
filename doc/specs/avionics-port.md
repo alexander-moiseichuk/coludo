@@ -161,6 +161,12 @@ VL53L1X (0x29 on i2c:1) has since moved to 7F. It carries a NEO-6M, three SG90s,
 - **System and streaming.**
   - `reboot` joins the shared table (SETTING-only). It replies `ok` and calls `esp_restart` 200 ms later. The
     console's own `reboot` uses the same handler, so its `ok rebooting` goes away.
+  - Every software restart goes through `components/safe_restart`: the other core stalled first (esp-idf#19171), then
+    IDF's P4 reset sequence line for line, but with the RTC watchdog ENABLED through it (2026-10-13). IDF's own
+    configures the watchdog after disabling it and never enables it, and the app runs with it off, so a stall in the
+    cache write-back or the resets hung the taster silently (an EN reset recovered it). Proven both ways on the taster:
+    10 reboots unchanged (SW_CPU_RESET, reset cause software, 1.0 s to the boot line); `panic kind=hang` (the guard
+    armed, the core stopped) reset by the watchdog 1.2 s later (CHIP_LP_WDT_RESET, reset cause watchdog).
   - `log [ms]` runs off a `log` crate bridge into a tee ring (temporary until M3's writer tee). `probe mission`
     logs its check through that bridge, as plan B does (`mission.py` `probe`: `probe: launch position ...`,
     then the verdict): the contract's stream tier opens a window across it and requires at least one line, the
