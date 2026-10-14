@@ -148,7 +148,13 @@ The thirteen video flights (the video run and the three pairs) against the thirt
   priorities is the lever if core 0 ever runs short (static affinity, from a per-thread `load` profile first).
 - **Watch the saver on a long flight:** the 63 s backlog is well inside the 20 MiB flash ring, but it is the camera
   and the saver sharing the card.
-- **Open: the servo rail reads 15-20 J lower with video** (61 against 76 J). The fins move the same degrees (r3: 27.9k
-  against 27.5k) and the rail's voltage is the same (4.68-4.71 V in flight); the INA226 averages 9 ms of every 100,
-  so the camera's load may shift its sampling phase against the 100 Hz fin moves. A 1 kHz bench capture settles it;
-  until then it is no finding.
+- **Resolved (2026-10-14): the servo rail reads lower with video because the fins move less, in HITL only.** The
+  INA226 is not at fault: eight noise10 flights on the taster, its rail read every 100 ms and every 10 ms, each with
+  and without video, give the same energy per degree (2.98 and 2.92 J per 1,000 degrees). With video the fins move
+  ~12 % fewer degrees (19.5k against 22.2k, all four pairs), and the energy follows. The cause is the sim-link: the
+  sensor frames reach the board over Wi-Fi through the C6, whose SDIO shares the P4's one SDMMC host with the card
+  the video writes to, so with video 18-22 % of the frames arrive bunched (under 5 ms after the last, 2-4 % without)
+  and stalls reach 0.7-1.5 s (41-125 ms without). The control loop then sees a coarser, stepped input and commands
+  fewer fin moves. A flight has no such link (its sensors are core 1's buses), so the video's HITL figures here
+  are pessimistic for the control, not a property of the glider. (The 27.9k-against-27.5k degrees above came from
+  another count; the controlled pairs settle it.)
