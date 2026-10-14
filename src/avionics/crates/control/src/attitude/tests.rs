@@ -7,9 +7,9 @@
 //! tests/golden_magnetic_yaw.rs) hold the trajectories to plan B; these hold the rules, each with what must NOT happen.
 
 use super::{
-    Attitude, BLIND_CYCLES, CENTRIPETAL_SPEED, FIELDS, Fused, GYRO_BACK, GYRO_LOST, MIRROR_AGE_US, MagneticYaw,
-    Orientation, PROBE_FAILURE, Readings, STILL_G, STILL_RATE, STREAM, Settings, decimal_text, heading_centidegrees,
-    pull, rate_from_marks, signed_centidegrees, wrap_heading, wrap_signed,
+    Attitude, BIAS_SLOTS, BLIND_CYCLES, CENTRIPETAL_SPEED, FIELDS, Fused, GYRO_BACK, GYRO_LOST, MIRROR_AGE_US,
+    MagneticYaw, Orientation, PROBE_FAILURE, Readings, STILL_G, STILL_RATE, STREAM, Settings, decimal_text,
+    heading_centidegrees, pull, rate_from_marks, signed_centidegrees, wrap_heading, wrap_signed,
 };
 use serde_json::json;
 
@@ -476,6 +476,64 @@ fn each_gyro_keeps_its_own_bias() {
         },
     );
     assert!(close(bench.filter.orientation().heading, heading, 0.01));
+}
+
+#[test]
+fn a_warm_start_flies_on_the_biases_the_crumb_carried() {
+    let settings = Settings {
+        gyro_bias: 2.0,
+        ..test_settings()
+    };
+    let at_rest = |rate: [f32; 3]| Readings {
+        rate: Some(rate),
+        acceleration: Some(gravity_at(0.0, 0.0)),
+        resting: true,
+        rate_rank: Some(1),
+        ..Readings::default()
+    };
+    // the pad: only the BMI323's slot learns, and only it is carried
+    let mut pad = Bench::new(settings);
+    assert_eq!(pad.filter.biases(), [None; BIAS_SLOTS], "nothing learned yet");
+    pad.ticks(1000, &at_rest([-0.3, 0.1, 0.25]));
+    let carried = pad.filter.biases();
+    assert!(
+        carried[0].is_none() && carried[2].is_none() && carried[3].is_none(),
+        "{carried:?}"
+    );
+    assert!(
+        carried[1].is_some_and(|bias| (bias[2] - 0.25).abs() < 1e-3),
+        "{carried:?}"
+    );
+    // the rebuilt filter, seeded, holds its heading in flight on that gyro
+    let mut rebuilt = Bench::new(settings);
+    rebuilt.filter.seed_biases(carried);
+    assert_eq!(rebuilt.filter.biases(), carried);
+    let flying = Readings {
+        resting: false,
+        ..at_rest([-0.3, 0.1, 0.25])
+    };
+    rebuilt.ticks(500, &flying);
+    assert!(close(rebuilt.filter.orientation().heading, 0.0, 0.01));
+    // NEGATIVE: unseeded, plan B's, the same gyro turns the heading
+    let mut raw = Bench::new(settings);
+    raw.ticks(500, &flying);
+    assert!(
+        !close(raw.filter.orientation().heading, 0.0, 1.0),
+        "{:?}",
+        raw.filter.orientation()
+    );
+    // NEGATIVE: a slot no filter could have learned (a damaged crumb) seeds nothing, nor does gyro_bias_s off
+    let mut damaged = Bench::new(settings);
+    damaged
+        .filter
+        .seed_biases([Some([2.0, 0.0, 0.0]), Some([f32::NAN, 0.0, 0.0]), None, None]);
+    assert_eq!(damaged.filter.biases(), [None; BIAS_SLOTS]);
+    let mut off = Bench::new(Settings {
+        gyro_bias: 0.0,
+        ..test_settings()
+    });
+    off.filter.seed_biases(carried);
+    assert_eq!(off.filter.biases(), [None; BIAS_SLOTS]);
 }
 
 #[test]

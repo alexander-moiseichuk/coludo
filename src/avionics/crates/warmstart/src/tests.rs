@@ -9,6 +9,7 @@ use super::{
     NO_STAGE, Nvs, NvsError, Pass, Reason, ResetReason, Restore, STAGE_KEY, Step, WARM_CAP, Write, clear, load,
     restore, save, should_restore,
 };
+use control::attitude::BIAS_SLOTS;
 use control::navigation::Position;
 use sequencer::{Flight, FlightWord, Request, Stage, Transition};
 use serde_json::{Value, json};
@@ -113,6 +114,7 @@ fn glide() -> Crumb {
             pad_altitude_m: Some(100.0),
             pitot_zero_pa: Some(-1.75),
             grounds_m: [None; GROUND_SLOTS],
+            gyro_bias: [None; BIAS_SLOTS],
             warm_starts: 0,
         },
     }
@@ -156,7 +158,8 @@ fn the_largest_crumb_fits_the_read_buffer() {
         longitude_e7: -1_799_999_999,
     };
     let crumb = Crumb {
-        stage: Some(i32::MIN),
+        // the writer's stage is a Stage id (Checkpoint::crumb), a u8
+        stage: Some(i32::from(u8::MAX)),
         stamp_s: Some(i64::MIN),
         armed: true,
         altitude_m: Some(-f32::MIN_POSITIVE),
@@ -169,6 +172,8 @@ fn the_largest_crumb_fits_the_read_buffer() {
             pad_altitude_m: Some(-f32::MIN_POSITIVE),
             pitot_zero_pa: Some(-f32::MIN_POSITIVE),
             grounds_m: [Some(-f32::MIN_POSITIVE); GROUND_SLOTS],
+            // the longest a freeze writes: rounded to 0.001, under the filter's 1.5 deg/s at rest
+            gyro_bias: [Some([-1.499; 3]); BIAS_SLOTS],
             warm_starts: u32::MAX,
         },
     };
@@ -579,7 +584,7 @@ fn restore_warm_starts_a_passed_gate_and_keeps_the_crumb() {
         panic!("no warm start");
     };
     assert_eq!(reason.to_string(), "recover gliding, 30s after checkpoint");
-    assert_eq!(plan, ApplyPlan::new(&glide(), SENSORS).unwrap());
+    assert_eq!(*plan, ApplyPlan::new(&glide(), SENSORS).unwrap());
     assert!(
         nvs.writes.is_empty(),
         "a warm start leaves the crumb for a second reset"
@@ -594,6 +599,7 @@ fn pad() -> Freeze {
         fresh_altitude_m: Some(120.0),
         pitot_zero_pa: Some(-1.75),
         grounds_m: [Some(120.0), Some(125.3), None],
+        gyro_bias: [Some([0.12345, -0.5678, 0.0004]), None, Some([1.0, -1.0, 0.0]), None],
     }
 }
 
@@ -723,6 +729,7 @@ fn a_freeze_without_a_fix_or_a_zone_keeps_what_it_can() {
         fresh_altitude_m: None,
         pitot_zero_pa: None,
         grounds_m: [None; GROUND_SLOTS],
+        gyro_bias: [None; BIAS_SLOTS],
         ..pad()
     };
     assert!(no_zone.step(Stage::Boosting, 0, None, bare).froze);
@@ -1443,6 +1450,38 @@ fn the_freeze_keeps_each_barometer_s_ground() {
     assert!(schedule.step(Stage::Boosting, 1, Some(150.0), pad).froze);
     let crumb = schedule.crumb(Stage::Boosting, Live::default(), 1000);
     assert_eq!(crumb.identity.grounds_m, [Some(120.0), Some(125.3), None]);
+}
+
+#[test]
+fn the_gyro_biases_freeze_rounded_round_trip_and_reach_the_plan() {
+    let mut schedule = Checkpoint::new(1.0, 0);
+    assert!(schedule.step(Stage::Boosting, 0, Some(150.0), pad).froze);
+    let frozen = [Some([0.123, -0.568, 0.0]), None, Some([1.0, -1.0, 0.0]), None];
+    assert_eq!(schedule.identity().gyro_bias, frozen, "rounded to 0.001 deg/s");
+    let crumb = schedule.crumb(Stage::Gliding, Live::default(), 1000);
+    let text = crumb.to_json();
+    assert!(
+        text.contains(r#""gyro_bias":[[0.123,-0.568,0.0],null,[1.0,-1.0,0.0]]"#),
+        "up to the last slot known: {text}"
+    );
+    let read = Crumb::from_json(&serde_json::from_str(&text).unwrap()).unwrap();
+    assert_eq!(read, crumb);
+    assert_eq!(ApplyPlan::new(&read, SENSORS).unwrap().gyro_bias, frozen);
+    // a plan B crumb carries none, and its plan seeds none
+    assert!(!glide().to_json().contains("gyro_bias"));
+    assert_eq!(ApplyPlan::new(&glide(), SENSORS).unwrap().gyro_bias, [None; BIAS_SLOTS]);
+    // NEGATIVE: a slot of the wrong shape reads as absent, a list past the slots reads what fits, a non-list nothing
+    let odd = json!({"stage": 3, "stamp": 1,
+                     "gyro_bias": [[0.1, 0.2], "x", [0.1, "y", 0.3], [0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]});
+    assert_eq!(
+        Crumb::from_json(&odd).unwrap().identity.gyro_bias,
+        [None, None, None, Some([0.1, 0.2, 0.3])]
+    );
+    let scalar = json!({"stage": 3, "stamp": 1, "gyro_bias": 0.1});
+    assert_eq!(
+        Crumb::from_json(&scalar).unwrap().identity.gyro_bias,
+        [None; BIAS_SLOTS]
+    );
 }
 
 #[test]

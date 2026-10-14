@@ -102,7 +102,8 @@ track (the navigation steers by the track), so a crosswind's crab reads as headi
 - The sim's separation jumps the attitude (sim_model begin_glide); `--no-attitude` hands the filter the truth for
   0.5 s there, a perfect gyro through the separation. A real separation's error is the gyro's over its pitch-over.
 - The measured IMU model is the parts at rest: the boost's vibration and the gyro's scale error are not in it.
-- A warm start flies without the learned gyro bias (the crumb does not carry it).
+- A warm start carries the learned gyro biases since 2026-10-14 (the crumb's `gyro_bias`, frozen at BOOSTING entry);
+  before, the rebuilt filter flew the raw gyro for the rest of the flight. No run here has a warm start.
 - 3 seeds a SITL cell, 1 a board run; the aerodynamics are BC1's fit and the sim's glide model (sink charged off trim).
 
 ## Files

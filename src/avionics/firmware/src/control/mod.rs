@@ -62,7 +62,7 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use serde_json::Value;
 use std::time::Duration;
 
-use control::attitude::Attitude;
+use control::attitude::{Attitude, BIAS_SLOTS};
 use controller::{ControlCore, DeviceEntry, FilterSetup, FlightSetup, SequencerSetup, Table};
 use databoard::{Parameter, Writer};
 use drivers::axes::Axes;

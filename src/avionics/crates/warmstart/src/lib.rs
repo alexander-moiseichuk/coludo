@@ -9,7 +9,7 @@
 //! The crumb lives in NVS, never in a file: a file write locks the scheduler and wears the data flash, while NVS
 //! commits to its own partition in milliseconds. It is two keys in the namespace [`NAMESPACE`], the same as plan B's,
 //! so a crumb plan B wrote reads back here and the other way round:
-//!  * [`CRUMB_KEY`], one JSON blob of at most [`BLOB_MAX`] bytes (about 250 in practice): full precision, no
+//!  * [`CRUMB_KEY`], one JSON blob of at most [`BLOB_MAX`] bytes (about 370 in practice): full precision, no
 //!    per-field key bookkeeping, and a new field is a member rather than an NVS schema change;
 //!  * [`STAGE_KEY`], the stage id as an i32, written LAST. It IS the flag: 0 ([`NO_STAGE`], what an unwritten key
 //!    reads as) means no flight was checkpointed, anything else is the stage to recover. Written last, a torn
@@ -18,8 +18,8 @@
 //!
 //! Only a FLYING board writes a crumb: armed (a disarmed passive flight must never warm-start into an armed stage)
 //! and launched by its own stage machine (an operator's held stage is a bench test, never a flight to resume). The
-//! recovery identity (the launch point, the zone, the pad altitude, the pitot tare) is frozen once, at BOOSTING
-//! entry, and rides every later crumb.
+//! recovery identity (the launch point, the zone, the pad altitude, the pitot tare, the gyro biases) is frozen once,
+//! at BOOSTING entry, and rides every later crumb.
 //!
 //! The pieces, each plan B's function as data, so the firmware's `warm.rs` and supervisor only move bytes:
 //!  * [`Crumb`], with [`Crumb::from_json`] and [`Crumb::to_json`], and [`save`]/[`clear`]/[`load`] over the [`Nvs`]
@@ -76,6 +76,7 @@
 //! (the firmware logs the [`Reason`] it gets back), and MicroPython's SOFT_RESET (an interpreter reboot without a
 //! chip reset), which has no ESP-IDF reason.
 
+use control::attitude::BIAS_SLOTS;
 use control::navigation::Position;
 use sequencer::{Flight, Stage};
 use serde::Serialize;
@@ -95,8 +96,9 @@ pub const STAGE_KEY: &str = "stage";
 /// `Stage.NULL`). Never a live stage.
 pub const NO_STAGE: i32 = 0;
 
-/// The read buffer for the crumb blob (plan B `_BLOB_MAX`). A crumb is about 250 bytes; the headroom is for new
-/// fields. A longer blob does not fit the buffer, so it reads as no crumb (a cold boot), on both firmwares.
+/// The read buffer for the crumb blob (plan B `_BLOB_MAX`). A real crumb is about 370 bytes (two gyros' biases),
+/// 410 with four; the largest the writer can produce, every field at the extreme of what it writes, is 507. A longer
+/// blob does not fit the buffer, so it reads as no crumb (a cold boot), on both firmwares.
 pub const BLOB_MAX: usize = 512;
 
 /// Unix seconds at 2000-01-01T00:00:00Z: the stamp's epoch is MicroPython's, so the firmware subtracts this from
@@ -174,6 +176,12 @@ pub struct Identity {
     /// B gave every one the pad altitude: a backup barometer carries its offset from the primary (5.3 m on TMS-7F),
     /// so its elevation read that much off after a warm start.
     pub grounds_m: [Option<f32>; GROUND_SLOTS],
+    /// Each gyro's bias in degrees per second as the attitude filter learned it on the pad (`gyro_bias`, the port's
+    /// own), by its rate-rank slot (control::attitude `BIAS_SLOTS`), rounded to 0.001 (0.1 degree over a 100 s
+    /// flight, and four slots stay about 100 bytes of the crumb); None for a slot never learned. A warm start seeds
+    /// the rebuilt filter with them, where plan B flew the raw gyro for the rest of the flight: a bias (up to 0.58
+    /// deg/s measured) drifts the attitude through every gated turn.
+    pub gyro_bias: [Option<[f32; 3]>; BIAS_SLOTS],
     /// The flight's warm starts so far (`warm_starts`, the port's own): [`WARM_CAP`] decides the arming.
     pub warm_starts: u32,
 }
@@ -236,6 +244,9 @@ struct Written {
     /// `grounds`, metres: the rebased barometers' own grounds, up to the last one known (the port's own).
     #[serde(skip_serializing_if = "Option::is_none")]
     grounds: Option<Vec<Option<f32>>>,
+    /// `gyro_bias`, degrees per second: each slot's [x, y, z], up to the last one known (the port's own).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gyro_bias: Option<Vec<Option<[f32; 3]>>>,
     /// `warm_starts`, the flight's warm starts so far (the port's own), written from the first.
     #[serde(skip_serializing_if = "is_zero")]
     warm_starts: u32,
@@ -275,6 +286,7 @@ impl Crumb {
                 pad_altitude_m: number(member("pad_altitude")),
                 pitot_zero_pa: number(member("pitot_zero")),
                 grounds_m: grounds(member("grounds")),
+                gyro_bias: gyro_bias(member("gyro_bias")),
                 warm_starts: member("warm_starts")
                     .as_u64()
                     .map_or(0, |count| u32::try_from(count).unwrap_or(u32::MAX)),
@@ -282,7 +294,7 @@ impl Crumb {
         })
     }
 
-    /// The blob text: compact JSON, well under [`BLOB_MAX`] bytes (about 250 for a full crumb).
+    /// The blob text: compact JSON, well under [`BLOB_MAX`] bytes (about 370 for a full crumb).
     pub fn to_json(&self) -> String {
         let identity = &self.identity;
         let written = Written {
@@ -295,6 +307,11 @@ impl Crumb {
                 .iter()
                 .rposition(Option::is_some)
                 .map(|last| identity.grounds_m[..=last].to_vec()),
+            gyro_bias: identity
+                .gyro_bias
+                .iter()
+                .rposition(Option::is_some)
+                .map(|last| identity.gyro_bias[..=last].to_vec()),
             warm_starts: identity.warm_starts,
             stage: self.stage,
             armed: self.armed,
@@ -322,6 +339,21 @@ fn grounds(value: &Value) -> [Option<f32>; GROUND_SLOTS] {
         }
     }
     grounds
+}
+
+/// The `gyro_bias` list, each three numbers or null, up to [`BIAS_SLOTS`]; a slot of any other shape, or the whole
+/// for a list of any other shape, absent.
+fn gyro_bias(value: &Value) -> [Option<[f32; 3]>; BIAS_SLOTS] {
+    let mut biases = [None; BIAS_SLOTS];
+    if let Some(list) = value.as_array() {
+        for (slot, item) in biases.iter_mut().zip(list) {
+            *slot = match item.as_array().map(Vec::as_slice) {
+                Some([x, y, z]) => number(x).zip(number(y)).zip(number(z)).map(|((x, y), z)| [x, y, z]),
+                _ => None,
+            };
+        }
+    }
+    biases
 }
 
 /// A JSON number as f32, absent for anything else (or for a number past f32's range).
@@ -621,7 +653,8 @@ impl Rebase {
 /// thread runs, in the field order, which is plan B's:
 ///  1. the mission's launch point and zone, BEFORE the arm: arming freezes the launch point from the live fix
 ///     unless one is set, and mid-air that fix is not the pad;
-///  2. the baro rebase, the pitot tare and the airspeed seed, before anything reads altitude or airspeed;
+///  2. the baro rebase, the pitot tare, the gyro biases and the airspeed seed, before anything reads altitude,
+///     airspeed or the gyro;
 ///  3. the checkpoint's identity, else the first checkpoint after the restore saves a crumb with none, and a second
 ///     reset skips the rebase and the tare (and a warm start into BOOSTING would freeze the mid-air altitude as the
 ///     pad);
@@ -635,6 +668,9 @@ pub struct ApplyPlan {
     /// The pitot tare in pascals for the SDP810 (plan B finds it as `airspeed_sdp810`), when the crumb carries one;
     /// 0.0 included. Absent leaves the driver's own tare alone, never zeroes it.
     pub pitot_zero_pa: Option<f32>,
+    /// The gyro biases to seed the attitude filter with ([`Identity::gyro_bias`]), before the control thread builds
+    /// it; all None leaves it to fly the raw gyro.
+    pub gyro_bias: [Option<[f32; 3]>; BIAS_SLOTS],
     /// The fused airspeed in m/s to seed the flight task with, when the crumb carries one. Recovery order is pitot,
     /// then this, then GNSS: the accel backbone integrates on from it, and the first in-band pitot read overrides it.
     pub airspeed_ms: Option<f32>,
@@ -674,6 +710,7 @@ impl ApplyPlan {
                 grounds_m: identity.grounds_m,
             }),
             pitot_zero_pa: identity.pitot_zero_pa,
+            gyro_bias: identity.gyro_bias,
             airspeed_ms: crumb.airspeed_ms,
             identity,
             stage,
@@ -706,8 +743,8 @@ pub enum Restore {
     Warm {
         /// The passing reason ([`Reason::Recover`]), for the boot log.
         reason: Reason,
-        /// What to restore.
-        plan: ApplyPlan,
+        /// What to restore, boxed (the decision is made once, at boot).
+        plan: Box<ApplyPlan>,
     },
 }
 
@@ -758,7 +795,10 @@ pub fn restore<'a>(
     }
     let (allowed, reason) = should_restore(Some(&crumb), separated, now_s);
     match ApplyPlan::new(&crumb, sensors).filter(|_plan| allowed) {
-        Some(plan) => Restore::Warm { reason, plan },
+        Some(plan) => Restore::Warm {
+            reason,
+            plan: Box::new(plan),
+        },
         None => {
             clear(nvs);
             Restore::Refused(reason)
@@ -791,6 +831,8 @@ pub struct Freeze {
     /// Each rebased barometer's own ground in metres, in the config order of [`REBASED_BAROS`] drivers; None for
     /// one with no fresh altitude and elevation.
     pub grounds_m: [Option<f32>; GROUND_SLOTS],
+    /// The attitude filter's gyro biases, degrees per second, by its slots; None for one never learned.
+    pub gyro_bias: [Option<[f32; 3]>; BIAS_SLOTS],
 }
 
 /// The live values a checkpoint records (plan B `_checkpoint`); each absent when its source is stale.
@@ -902,7 +944,8 @@ impl Checkpoint {
 
     /// Freeze the recovery identity (plan B `_freeze_static`): the launch and zone when the mission has a zone (the
     /// zone's centre standing in for a missing launch point, which keeps the crumb usable), the latched pad or else
-    /// a fresh reading, and the pitot tare (0.0 included).
+    /// a fresh reading, the pitot tare (0.0 included), each barometer's ground, and the gyro biases rounded to
+    /// 0.001 deg/s.
     fn freeze(&mut self, inputs: Freeze) {
         let mut identity = Identity::default();
         if let Some([first, second]) = inputs.zone {
@@ -917,6 +960,9 @@ impl Checkpoint {
         identity.pad_altitude_m = self.pad_m.or(inputs.fresh_altitude_m);
         identity.pitot_zero_pa = inputs.pitot_zero_pa;
         identity.grounds_m = inputs.grounds_m;
+        identity.gyro_bias = inputs
+            .gyro_bias
+            .map(|bias| bias.map(|axes| axes.map(|axis| (axis * 1000.0).round_ties_even() / 1000.0)));
         self.identity = identity;
     }
 

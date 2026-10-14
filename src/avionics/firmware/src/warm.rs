@@ -310,6 +310,9 @@ fn apply(plan: &ApplyPlan, mission: &mut Mission, members: &mut [Vec<Member>; 2]
             None => log::info!("warmstart :: pitot tare {zero} Pa not restored: no pitot came up"),
         }
     }
+    if plan.gyro_bias.iter().any(Option::is_some) {
+        crate::control::keep_warm_gyro_biases(plan.gyro_bias); // the filter's seed when the control thread starts
+    }
     if let Some(airspeed) = plan.airspeed_ms {
         crate::flight::keep_warm_airspeed(airspeed); // the flight law's seed when the control thread starts
     }
@@ -528,6 +531,7 @@ impl Keeping {
                 // a pitot that runs gives its zero offset, 0.0 Pa a valid tare
                 pitot_zero_pa: crate::sensors::pitot_zero_pa(),
                 grounds_m: own_grounds(topology, baros, now_us),
+                gyro_bias: crate::control::gyro_biases(),
             }
         };
         let stamp_s = || clock::epoch() - warmstart::UNIX_SECONDS_AT_2000;

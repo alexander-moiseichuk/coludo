@@ -325,6 +325,8 @@ fn replay_checkpoints(cadence: f32) -> Vec<String> {
                 pitot_zero_pa,
                 // plan B froze no barometer's own ground
                 grounds_m: [None; warmstart::GROUND_SLOTS],
+                // nor any gyro bias
+                gyro_bias: [None; control::attitude::BIAS_SLOTS],
             };
             let step = schedule.step(stage, input["now_us"].as_u64().expect("now_us"), altitude_m, freeze);
             let ticks_ms = input["ticks_ms"].as_u64().expect("ticks_ms");

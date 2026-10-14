@@ -1207,10 +1207,13 @@ board can no longer hang silently.
     back to nose-up while the stack pitched over;
   - the GNSS course and speed reach it (the port had left them out, so the heading was the gyro's from power-up).
   - the GYRO BIAS learned while the board rests in SETTING (`gyro_bias_s`, 10 s; still: every axis under 1.5 deg/s,
-    the accelerometer within 0.05 g of 1 g) and taken off every rate, held from the launch on: a real gyro's bias (to
-    0.58 deg/s measured) otherwise drifts the attitude through every gated turn;
-  - the CENTRIPETAL correction (`centripetal`, on): omega x V at the flight law's airspeed taken off the accelerometer
-    before it pulls; the turn gate stays (opened, the airspeed estimate's error cost more);
+    the accelerometer within 0.05 g of 1 g) and taken off every rate, each gyro its own (by its `rate` rank), held from
+    the launch on and carried across a warm start (the crumb's `gyro_bias`, each slot's at BOOSTING entry to 0.001
+    deg/s; plan B flew the raw gyro after one): a real gyro's bias (to 0.58 deg/s measured) otherwise drifts the
+    attitude through every gated turn;
+  - the CENTRIPETAL correction (`centripetal`, on): omega x V at the pitot's measured airspeed (never the governor's
+    estimate, which over-reads by design) taken off the accelerometer before it pulls; the turn gate stays (opened,
+    the airspeed's error cost more);
   - only a CURRENT winner is mirrored (under 50 ms old): the HITL sim's 1 s window held its last attitude after it
     stopped publishing, and the filter copied it frozen for a second.
   The pulls' strengths, gates and orders, blind and the magnetic latch are plan B's; the golden fixture still compares

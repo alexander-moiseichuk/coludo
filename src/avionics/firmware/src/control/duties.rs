@@ -12,6 +12,9 @@ pub(super) static ATTITUDE_ROW: [AtomicI32; 6] = [const { AtomicI32::new(0) }; 6
 pub(super) static ATTITUDE_SEEDED: AtomicBool = AtomicBool::new(false);
 /// Whether the filter is blind (no fresh gyro for its blind window).
 pub(super) static ATTITUDE_BLIND: AtomicBool = AtomicBool::new(false);
+/// The filter's gyro biases, f32 bits by slot and axis, NaN for a slot never learned: handed on after each step at
+/// rest in SETTING, or kept from a warm start's crumb before the control thread starts ([`keep_warm_gyro_biases`]).
+static GYRO_BIASES: [AtomicU32; 3 * BIAS_SLOTS] = [const { AtomicU32::new(f32::NAN.to_bits()) }; 3 * BIAS_SLOTS];
 /// The filter's entry name and the `rate` quantity it reads, once it runs (its probe's gyro check).
 pub(super) static ATTITUDE_NAME: OnceLock<(&'static str, Option<&'static Parameter<[f32; 3]>>)> = OnceLock::new();
 
@@ -63,6 +66,10 @@ impl controller::Hooks for Board<'_> {
         ATTITUDE_BLIND.store(blind, Ordering::Relaxed);
     }
 
+    fn gyro_biases(&mut self, biases: [Option<[f32; 3]>; BIAS_SLOTS]) {
+        store_gyro_biases(biases);
+    }
+
     fn fins(&mut self, angles: &[i32]) {
         let Some(fins) = self.fins.as_deref_mut() else {
             return;
@@ -108,6 +115,7 @@ pub(super) fn control_core(
             name: member.name,
             settings: member.settings,
             rows: crate::recorder::rows(member.name),
+            seed_biases: gyro_biases(),
         }),
         sequencer.map(|member| SequencerSetup {
             name: member.name,
@@ -136,15 +144,51 @@ pub(super) fn control_core(
     core
 }
 
+/// The filter's gyro biases, degrees per second by slot, None for one never learned: the crumb's at BOOSTING entry.
+pub fn gyro_biases() -> [Option<[f32; 3]>; BIAS_SLOTS] {
+    let mut biases = [None; BIAS_SLOTS];
+    for (slot, bias) in biases.iter_mut().enumerate() {
+        let axes = [0, 1, 2].map(|axis| f32::from_bits(GYRO_BIASES[3 * slot + axis].load(Ordering::Relaxed)));
+        *bias = (!axes[0].is_nan()).then_some(axes);
+    }
+    biases
+}
+
+/// Keeps a warm start's gyro biases for the filter's seed (crate::warm, before the control thread starts), logged
+/// here: a float formatted on the control thread costs its stack.
+pub fn keep_warm_gyro_biases(biases: [Option<[f32; 3]>; BIAS_SLOTS]) {
+    store_gyro_biases(biases);
+    for (slot, bias) in biases.iter().enumerate() {
+        if let Some([x, y, z]) = bias {
+            log::info!("attitude :: gyro {slot} bias ({x}, {y}, {z}) deg/s kept as the filter's seed (warm start)");
+        }
+    }
+}
+
+/// [`GYRO_BIASES`] set to `biases`.
+fn store_gyro_biases(biases: [Option<[f32; 3]>; BIAS_SLOTS]) {
+    for (slot, bias) in biases.iter().enumerate() {
+        for (axis, value) in bias.unwrap_or([f32::NAN; 3]).into_iter().enumerate() {
+            GYRO_BIASES[3 * slot + axis].store(value.to_bits(), Ordering::Relaxed);
+        }
+    }
+}
+
 /// What `inspect` shows of the attitude filter (plan B tasks/attitude.py `inspect`): its flags, angles and magnetic
-/// reference as the filter last published them; None when no filter runs.
+/// reference as the filter last published them, and the port's own `gyro_bias` (each slot's, deg/s, null for one
+/// never learned); None when no filter runs.
 pub fn attitude_inspection() -> Option<serde_json::Value> {
     ATTITUDE_NAME.get()?;
-    Some(control::attitude::inspection(
+    let mut inspection = control::attitude::inspection(
         ATTITUDE_ROW.each_ref().map(|value| value.load(Ordering::Relaxed)),
         ATTITUDE_SEEDED.load(Ordering::Relaxed),
         ATTITUDE_BLIND.load(Ordering::Relaxed),
-    ))
+    );
+    // to 0.001 deg/s, as the crumb carries them (an f32 widened to JSON's f64 prints 17 digits)
+    let rounded =
+        gyro_biases().map(|bias| bias.map(|axes| axes.map(|axis| (f64::from(axis) * 1000.0).round() / 1000.0)));
+    inspection["gyro_bias"] = serde_json::json!(rounded);
+    Some(inspection)
 }
 
 /// The attitude filter's probe (plan B tasks/attitude.py `probe`), on the executor: its name and verdict, the gyro

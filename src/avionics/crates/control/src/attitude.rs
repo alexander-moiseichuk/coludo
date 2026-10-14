@@ -210,8 +210,9 @@ pub struct Settings {
     /// deg/s) that the turn gate leaves to drift the attitude through every turn, 10 degrees in a 20 s orbit; learned
     /// on the pad and taken off every rate, it is gone. Learned only while still (every axis under
     /// [`STILL_RATE`] and the accelerometer within [`STILL_G`] of 1 g), held from the launch on, each gyro its own
-    /// (by its `rate` rank). Not across a warm start: a mid-air reset rebuilds the filter with no bias, and it flies
-    /// the raw gyro (plan B's) for the rest of that flight; the crumb does not carry it.
+    /// (by its `rate` rank). Across a warm start too: the crumb carries them (crates/warmstart `gyro_bias`, frozen at
+    /// BOOSTING entry) and the rebuilt filter is seeded with them ([`Attitude::seed_biases`]), where plan B flew the
+    /// raw gyro for the rest of that flight.
     pub gyro_bias: f32,
     /// `centripetal`: take the turn's centripetal acceleration (the body rates across the airspeed) off the
     /// accelerometer before it pulls, true; false = plan B's. In a coordinated turn the accelerometer reads the load down
@@ -639,6 +640,8 @@ pub struct Attitude {
     /// Each gyro's bias in degrees per second, by its `rate` rank ([`bias_slot`]), learned at rest in SETTING
     /// ([`Settings::gyro_bias`]); 0 until then.
     biases: [[f32; 3]; BIAS_SLOTS],
+    /// Which slots learned (or were seeded with) a bias: the ones the crumb carries.
+    learned: [bool; BIAS_SLOTS],
     /// The slot of the last tick's `rate` source.
     rate_slot: usize,
     /// The orientation was ever anchored: mirrored, or tilted toward gravity. A filter built mid-flight (a warm start)
@@ -649,7 +652,7 @@ pub struct Attitude {
 
 /// The gyro biases the filter keeps apart, by `rate` rank (the LSM6DSO32 at 0, the BMI323 at 1 in config_default);
 /// a rank past them shares the last.
-const BIAS_SLOTS: usize = 4;
+pub const BIAS_SLOTS: usize = 4;
 
 /// The bias slot of a `rate` source's rank (0 when unknown).
 fn bias_slot(rank: Option<i32>) -> usize {
@@ -682,6 +685,7 @@ impl Attitude {
             last_us: now_us,
             acceleration_us: now_us,
             biases: [[0.0; 3]; BIAS_SLOTS],
+            learned: [false; BIAS_SLOTS],
             rate_slot: 0,
             anchored: false,
         }
@@ -691,6 +695,30 @@ impl Attitude {
     /// or before any rest).
     pub fn bias(&self) -> [f32; 3] {
         self.biases[self.rate_slot]
+    }
+
+    /// Each slot's gyro bias, degrees per second, None for one never learned: what a warm start carries.
+    pub fn biases(&self) -> [Option<[f32; 3]>; BIAS_SLOTS] {
+        let mut biases = [None; BIAS_SLOTS];
+        for ((carried, bias), learned) in biases.iter_mut().zip(self.biases).zip(self.learned) {
+            *carried = learned.then_some(bias);
+        }
+        biases
+    }
+
+    /// Seeds the gyro biases a warm start carried ([`Settings::gyro_bias`]), before the first tick. A slot that is
+    /// not finite or reads [`STILL_RATE`] or more on an axis is no bias the filter could have learned (a damaged
+    /// crumb): it stays 0, as does every slot with `gyro_bias_s` off.
+    pub fn seed_biases(&mut self, biases: [Option<[f32; 3]>; BIAS_SLOTS]) {
+        if self.settings.gyro_bias <= 0.0 {
+            return;
+        }
+        for (slot, bias) in biases.iter().enumerate() {
+            if let Some(bias) = bias.filter(|bias| bias.iter().all(|axis| axis.abs() < STILL_RATE)) {
+                self.biases[slot] = bias;
+                self.learned[slot] = true;
+            }
+        }
     }
 
     /// The knobs.
@@ -875,6 +903,7 @@ impl Attitude {
             return;
         }
         let step = (elapsed / time_constant).min(1.0);
+        self.learned[self.rate_slot] = true;
         for (bias, axis) in self.biases[self.rate_slot].iter_mut().zip(rate) {
             *bias += (axis - *bias) * step;
         }

@@ -18,7 +18,7 @@
 //! gptimer, the SPI IMU, the separation switch, the GPIO interrupts and the lapse watches. Nothing here allocates or
 //! formats text on a tick but the machine's own transition (six or fewer a flight).
 
-use control::attitude::{Attitude, Pace, Quantities, Readings, assemble};
+use control::attitude::{Attitude, BIAS_SLOTS, Pace, Quantities, Readings, assemble};
 use control::flight::FlightLaw;
 use control::guidance::Landing;
 use control::navigation::Position;
@@ -52,6 +52,9 @@ pub trait Hooks {
     /// The attitude filter's state after a step: its row, whether it mirrored a source that outranks it, whether it
     /// is blind.
     fn attitude(&mut self, row: [i32; 6], seeded: bool, blind: bool);
+    /// The filter's gyro biases after a step at rest in SETTING (`Attitude::biases`), for the crumb's freeze at
+    /// BOOSTING entry; a host that never warm starts ignores them.
+    fn gyro_biases(&mut self, _biases: [Option<[f32; 3]>; BIAS_SLOTS]) {}
     /// The law actuated: its whole-degree fin angles, by the mixer's surfaces.
     fn fins(&mut self, angles: &[i32]);
     /// A flight.csv sample was taken: the law's vitals.
@@ -78,6 +81,8 @@ pub struct FilterSetup {
     pub settings: control::attitude::Settings,
     /// attitude.csv.
     pub rows: Rows<'static>,
+    /// A warm start's gyro biases (crates/warmstart `gyro_bias`), the filter's seed; all None on a cold boot.
+    pub seed_biases: [Option<[f32; 3]>; BIAS_SLOTS],
 }
 
 /// The flight loop's setup.
@@ -256,9 +261,11 @@ impl FilterDuty {
             setup.settings.period_ms,
             setup.settings.rank
         );
+        let mut filter = Box::new(Attitude::new(setup.settings, now_us));
+        filter.seed_biases(setup.seed_biases);
         Some(FilterDuty {
             name: setup.name,
-            attitude: Box::new(Attitude::new(setup.settings, now_us)),
+            attitude: filter,
             quantities: Quantities {
                 rate: topology.vector("rate"),
                 acceleration: topology.vector("accel"),
@@ -281,8 +288,9 @@ impl FilterDuty {
             return;
         }
         let read_us = hooks.now_us();
+        let resting = stage == Stage::Setting;
         let readings = Readings {
-            resting: stage == Stage::Setting,
+            resting,
             airspeed,
             ..assemble(&self.quantities, self.rank, read_us, stage == Stage::Boosting)
         };
@@ -292,6 +300,9 @@ impl FilterDuty {
         }
         let row = self.attitude.row();
         hooks.attitude(row, self.attitude.seeded(), self.attitude.blind());
+        if resting {
+            hooks.gyro_biases(self.attitude.biases());
+        }
         let Some(orientation) = step.published else {
             return;
         };
@@ -488,6 +499,8 @@ mod tests {
         reads: u32,
         /// The filter's state handed on.
         attitudes: u32,
+        /// The gyro biases handed on: how often, and the last.
+        biases: (u32, [Option<[f32; 3]>; BIAS_SLOTS]),
     }
 
     impl Hooks for Probe {
@@ -512,6 +525,10 @@ mod tests {
 
         fn attitude(&mut self, _row: [i32; 6], _seeded: bool, _blind: bool) {
             self.attitudes += 1;
+        }
+
+        fn gyro_biases(&mut self, biases: [Option<[f32; 3]>; BIAS_SLOTS]) {
+            self.biases = (self.biases.0 + 1, biases);
         }
 
         fn fins(&mut self, _angles: &[i32]) {}
@@ -584,15 +601,19 @@ mod tests {
             "components": [],
         });
         let topology = topology_of(document);
+        let seed = [Some([0.25, -0.5, 0.125]), None, None, None];
         let setup = || FilterSetup {
             name: "attitude",
             settings: control::attitude::Settings::from_json(&json!({"period_ms": 20})),
             rows: Rows::new("attitude", "row", None),
+            seed_biases: seed,
         };
         let mut core = ControlCore::new(topology, 10_000, 10_000_000, Some(setup()), None, None);
         assert_eq!(core.filter(), Some("attitude"));
         let (_, probe) = stepped(&mut core, 10, false);
         assert_eq!(probe.attitudes, 5, "every other 10 ms tick");
+        // at rest in SETTING each step hands the biases on, a warm start's seed among them
+        assert_eq!(probe.biases, (5, seed));
         // NEGATIVE: at DONE the filter is stopped, as the board's IMU is
         let mut core = ControlCore::new(topology, 10_000, 10_000_000, Some(setup()), None, None);
         let (_, probe) = stepped(&mut core, 10, true);
@@ -611,6 +632,7 @@ mod tests {
                 name: "attitude",
                 settings: control::attitude::Settings::from_json(&json!({})),
                 rows: Rows::new("attitude", "row", None),
+                seed_biases: [None; BIAS_SLOTS],
             }),
             None,
             None,

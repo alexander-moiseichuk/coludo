@@ -201,6 +201,7 @@ fn control_core(document: &'static Value, topology: &'static Topology, tick_us: 
             name: attitude.name,
             settings: control::attitude::Settings::from_json(&Value::Object(attitude.fields.clone())),
             rows: Rows::new(attitude.name, "row", None),
+            seed_biases: [None; control::attitude::BIAS_SLOTS],
         }),
         None => {
             eprintln!("sitl :: no enabled attitude filter in the config: a dropped attitude leaves the law none");
