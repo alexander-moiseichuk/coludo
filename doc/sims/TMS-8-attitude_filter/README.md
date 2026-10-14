@@ -83,7 +83,6 @@ track (the navigation steers by the track), so a crosswind's crab reads as headi
 | taster | `d2fad7d` | the filter, 6-DoF | 48.5 m | 55.2 s | **89.9 / 0.2 deg** |
 | TMS-7F | `d2fad7d` | the sim's attitude, 6-DoF | 90.8 m | 69.1 s | 88.5 / 3.6 deg |
 | TMS-7F | `d2fad7d` | the filter, 6-DoF | 76.6 m | 51.2 s | **89.7 / 0.4 deg** |
-
 | taster | `c593ca4` | the sim's attitude, vertical (+-10 %) | 83.6 m | 99.8 s | |
 | taster | `c593ca4` | the filter, vertical | 71.1 m | 77.7 s | |
 | taster | `c593ca4` | the filter, 6-DoF | 115.0 m | 47.9 s | **89.6 / 0.6 deg** |
@@ -92,7 +91,7 @@ track (the navigation steers by the track), so a crosswind's crab reads as headi
 | TMS-7F | `c593ca4` | the filter, 6-DoF | 71.3 m | 64.3 s | **89.8 / 0.3 deg** |
 
 - **The board's filter holds the boost closer to vertical than the sim's published attitude**: the lean law chasing a
-  noisy published attitude leaned 3.6-4.8 degrees; on the filter, which integrates the gyro, 0.2-0.4.
+  noisy published attitude leaned 3.6-4.8 degrees; on the filter, which integrates the gyro, 0.2-0.6.
 - The filter carried each filter-alone flight (`free_rows`: its free-running attitude.csv rows, all but the pad's
   settling and the separation's half second); the sim's-attitude flights mirrored it.
 - The realtime glides on the filter run shorter than the SITL's (48-90 s against 63-89): one seed each, the landings
