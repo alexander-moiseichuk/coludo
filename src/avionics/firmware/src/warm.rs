@@ -23,9 +23,9 @@
 //! freeze_launch at BOOSTING entry did; the zone's centre stands in when there is none.
 //!
 //! The airspeed seed goes to the flight law when the control thread starts (crate::flight, M13); M10 restores the
-//! pitot tare. Not restored yet, logged once at the restore when a crumb carries it: the ground of a barometer other
-//! than the ICP-10111. A warm-started flight records no video (the camera starts only when armed in SETTING) and never
-//! rejoins the link (it is launched).
+//! pitot tare; every barometer that came up is rebased to the crumb's pad through its `ground` update (the ICP-10111,
+//! the BMP280 and, since M9, the BMP581). A warm-started flight records no video (the camera starts only when armed in
+//! SETTING) and never rejoins the link (it is launched).
 //!
 //! The crumb lives in the shared `nvs` partition, namespace `coludo`, which plan B and the boot count share, while
 //! the session-start record stays in `cfg`.

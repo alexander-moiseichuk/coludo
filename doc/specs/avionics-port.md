@@ -1122,7 +1122,7 @@ honest. TMS-7F arms on a bench copy of its config (the not-ported entries remove
   hands-free altitude launch on TMS-7F (a bench copy without the IMU entries, so the at-rest veto stays off).
 - The restore runs on main after the owners' bring-up and before the control thread takes the flight word's writer
   (`FlightWriter::restore`); it commits the stage, the arming and `launched`, and rebases every barometer that
-  publishes an elevation to the crumb's pad (the BMP581 says it does not, until M9). After a warm start
+  publishes an elevation to the crumb's pad (the BMP581 too since M9: its `update {"ground": m}`). After a warm start
   `sequencer.csv` opens with `<stage>;external` only.
 - The supervisor (core 0, a 100 ms grid) runs the checkpoint, the health row and the watchdog. It reconfigures the
   TWDT to panic and subscribes itself alone (§6); its console lines go through the printer's queue, so a long `tlm`
@@ -1131,7 +1131,7 @@ honest. TMS-7F arms on a bench copy of its config (the not-ported entries remove
   (stage=X) -> reset`, waits for the printer (at most 100 ms) and restarts. A stall restart's own warm start
   never stall-restarts again (`warmstart::stall_restart_suppressed`), so a stall that returns every boot leaves the
   board stalled rather than cycling it.
-- Deferred: the pitot tare restore (M10), the airspeed seed (M13), the BMP581 rebase (M9), `freeze_launch` from a
+- Deferred (all since done but the last two, see M13's notes): the pitot tare restore (M10), the airspeed seed (M13), the BMP581 rebase (M9), `freeze_launch` from a
   GNSS fix (M11), the HITL warm-gate comparison and Q19's step 2 (M12/M14), a BOOSTING crumb whose latch already reads
   separated (M13, with the boost law), a cap on warm cycles (M13/M14), a watchdog through bring-up (later: a guard
   shorter than a failing part's slowest bring-up would turn a slow boot into a reset loop).
