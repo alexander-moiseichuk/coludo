@@ -74,7 +74,11 @@ Required hardware and the phased development roadmap. Architecture lives in
     refusal, the golden tag moved to `micropython_plan_B_3`); the fins' 3-degree grid as every servo's default and
     the endgame's turn kept across the heading wrap (10-13, `doc/sims/TMS-7-servo_step`, `TMS-7-rust_hitl_m14` §3g);
     `runtime.csv` (internal/DMA RAM, per-core load, control timing).
-  - **Open:** BC4/BC5 (boost control on the board, then the operator's call); the MG90S on the bench; the TMS-8
+  - **Done 10-13:** BC4 (boost control on the boards, `doc/sims/TMS-7-boost_control`: the lean law keeps its gain
+    uncapped, a +-10 ceiling gives up 6 m/s; `boost_limit_deg` added); the MG90S on the taster's yaw
+    (`doc/sims/TMS-7-mg90s_yaw`); the ring_eraser sleeping through erases (17.8 -> 1.8 % of core 0); the restart
+    guarded by the RTC watchdog (a silent hang in a reboot); the C6 recorder's 3.3 V card module.
+  - **Open:** BC5 (the operator's call on the boost law and its ceiling); the TMS-8
     launch config (drafted; the airframe's trims, IMU axes and GNSS remain); the 7C proofs (a rail power cycle
     restoring the BNO055 profile, a hand rotation on the BNO055 alone); the field-day checks
     ([`field_checks.md`](field_checks.md): a real GNSS fix, the beacons' range, the batteries' time).

@@ -45,7 +45,7 @@ Each stage is committed on its own proof. The firmware changes only from BC3 on.
 | BC1 | a 6-DoF boost in the simulator, the measured F15, per-airframe stack parameters (as built: below) | done |
 | BC2 | the passive envelope: where an uncontrolled stack departs (margin x asymmetry x wind x rod exit speed) | done: `doc/sims/TMS-7-boost_envelope` |
 | BC3 | the boost law for vertical flight: the lean of the body axis + roll damping, the gyro-integrated attitude, the rod gate | host tests; the SITL sweep with control |
-| BC4 | HITL on the taster, servos moving: the full matrix with metrics and plotly pictures | `doc/sims/TMS-7-boost_control/` |
+| BC4 | HITL on the taster, servos moving: the full matrix with metrics and plotly pictures | done: `doc/sims/TMS-7-boost_control` |
 | BC5 | turn it on: BOOSTING a control stage in the flight configs | the operator's decision, on BC2-BC4 |
 
 ### BC1: the 6-DoF boost
@@ -165,6 +165,28 @@ law on the taster with servos moving; until then the default stays the hold.
 1.5 and 2.5 m): a longer rail moves the loop's edge ~0.2-0.5 caliber, the lean law another ~0.5. On a 2.5 m rail with
 the lean law 4.5 m/s flies from 0.2 cal and 6 m/s from 0.8; on today's ~1 m rod passive, 1.0 and 1.5. Where nothing
 loops the rail buys height too: 6 m/s at 1.5 cal passive, 87 m apogee on 1 m against 179 m on 2.5 m.
+
+### BC4 as flown (2026-10-13)
+
+[TMS-7-boost_control](../sims/TMS-7-boost_control/): 128 grid flights on the taster (servos moving) and TMS-7F (rail
+off), the deciding cell with 12 more, the 12-scenario matrix on each board, against 288 SITL flights.
+
+- **Found first:** the lean law engaged at the rod gate's 15 m/s under the governor's full 45 degrees, its roll
+  damping at the cap through the burn. The boost's own ceiling this plan names (the operator's +-10, 2026-06-25) was
+  not in BC3: `f78715b` adds it, the flight entry's `boost_limit_deg` (BOOSTING only; absent = plan B's cap).
+- **The board agrees with the SITL:** the loop verdict in 125 of 128 flights, the path minimum to a median of 0.0
+  degrees; the three that differ are marginal cells where the board's Wi-Fi latency tipped a flight over.
+- **The board's loop edge** (passive / lean@10 / lean@15 / lean): 3 m/s 0.5 / 0.2 / 0.2 / 0.2 cal, 4.5 m/s 1.0 /
+  0.5 / 0.5 / 0.5, 6 m/s 1.5 / 1.5 / 1.5 / **1.0**. At the deciding cell (1.0 cal, 6 m/s) the uncapped law looped 0
+  of 6, lean@20 1 of 4, lean@15 6 of 6: a ceiling binds only below ~29 m/s, and that early authority is what holds
+  the lean. Every law costs under a degree in calm air.
+- **On the hardware:** the ceilings hold (largest deflection 9 / 15 / 45 degrees); the taster's servo rail takes
+  2.5 / 3.3 / 3.6 J per 3 s burn (passive 0.08), peaks ~870 mA; the control tick at most 19 us late.
+- **The matrix at TMS-7D's own +0.71 cal:** the landing unchanged (median miss 88.5-90.0 m on both laws and boards),
+  up to ~6 degrees of path with a noisy attitude, 6 m/s and up loop with either law.
+
+For BC5: the lean law with no boost ceiling keeps its gain; +-10 gives up 6 m/s, 20 is borderline. The operator
+weighs the fins' load under thrust (45 degrees at 15 m/s) against that edge. Margin still dominates.
 
 ## 3. Not in this plan
 
